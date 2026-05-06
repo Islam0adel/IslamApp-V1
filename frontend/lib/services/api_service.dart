@@ -4,15 +4,15 @@ import '../core/constants.dart';
 import '../models/transaction_model.dart';
 
 class ApiService {
-  // الرابط الأساسي للسيرفر من ملف constants
+  // استخدام الرابط الأساسي من ملف Constants
+  // تأكد إنك في ملف constants.dart حاطط رابط الـ Hugging Face
   final String baseUrl = ApiConstants.baseUrl;
 
   // 1. دالة تسجيل الدخول (Login)
-  // مرتبطة بـ auth.py في الباك إند
   Future<Map<String, dynamic>> login(String email, String password) async {
     try {
       final response = await http.post(
-        Uri.parse('${ApiConstants.baseUrl}/auth/login'),
+        Uri.parse('$baseUrl/auth/login'), // تم توحيد المتغير هنا
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'email': email,
@@ -32,7 +32,6 @@ class ApiService {
   }
 
   // 2. دالة جلب كل المعاملات (Daily Entries)
-  // كانت في البرنامج القديم بتجيب البيانات من Firestore
   Future<List<TransactionModel>> getTransactions() async {
     try {
       final response = await http.get(
@@ -42,7 +41,6 @@ class ApiService {
 
       if (response.statusCode == 200) {
         List data = jsonDecode(response.body);
-        // تحويل قائمة الـ JSON إلى قائمة من الـ Objects
         return data.map((item) => TransactionModel.fromJson(item)).toList();
       } else {
         throw Exception('فشل في جلب بيانات الدفتر');
@@ -52,8 +50,7 @@ class ApiService {
     }
   }
 
-  // 3. دالة إضافة معاملة جديدة (إيراد أو مصروف)
-  // دي اللي بترميهم في Firestore عن طريق FastAPI
+  // 3. دالة إضافة معاملة جديدة
   Future<bool> addTransaction(TransactionModel transaction) async {
     try {
       final response = await http.post(
@@ -77,7 +74,7 @@ class ApiService {
   Future<Map<String, dynamic>> register(String email, String password) async {
     try {
       final response = await http.post(
-        Uri.parse('${ApiConstants.baseUrl}/auth/register'),
+        Uri.parse('$baseUrl/auth/register'), // تم توحيد المتغير هنا
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'email': email,
