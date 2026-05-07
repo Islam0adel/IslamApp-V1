@@ -50,8 +50,8 @@ class _HomePageState extends State<HomePage> {
         children: [
           // 1. القائمة الجانبية على اليمين (الخلفية الكحلي)
           Container(
-            width: 280,
-            color: const Color(0xFF1A237E),
+            width: 240,
+            color: Color.fromARGB(255, 80, 90, 207),
             child: Column(
               children: [
                 const SizedBox(height: 50),
@@ -104,7 +104,7 @@ class _HomePageState extends State<HomePage> {
                             const Text("شركة بيت اللوز", 
                               style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Color(0xFF1A237E))),
                             const SizedBox(height: 5),
-                            Text("المستخدم: إسلام عادل", style: TextStyle(color: Colors.grey[700], fontSize: 18)),
+                            Text("مرحبا: إسلام عادل", style: TextStyle(color: Colors.grey[700], fontSize: 18)),
                           ],
                         ),
                         // ركن الوقت والمؤقت
@@ -113,7 +113,7 @@ class _HomePageState extends State<HomePage> {
                           children: [
                             _buildInfoTile(Icons.calendar_today, _currentDate),
                             _buildInfoTile(Icons.access_time, _currentTime),
-                            _buildInfoTile(Icons.timer_outlined, "مدة الجلسة: ${_formatTimer(_secondsElapsed)}", isHighlight: true),
+                            _buildInfoTile(Icons.timer_outlined, "وقت الدخول: ${_formatTimer(_secondsElapsed)}", isHighlight: true),
                           ],
                         ),
                       ],
@@ -134,7 +134,7 @@ class _HomePageState extends State<HomePage> {
                         border: Border.all(color: Colors.white),
                       ),
                       child: const Center(
-                        child: Text("هنا سيتم عرض تقارير مبيعات سريعة", style: TextStyle(color: Colors.grey)),
+                        child: Text("هنا سيتم عرض تقارير سريعة", style: TextStyle(color: Colors.grey)),
                       ),
                     ),
                   )
