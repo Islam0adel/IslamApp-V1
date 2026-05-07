@@ -1,4 +1,4 @@
-name: Sync Backend to Hugging Face Space
+name: Sync Full Project to Hugging Face Space
 
 on:
   push:
@@ -10,36 +10,44 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Sync backend to Hugging Face
+      - name: Sync FULL project to Hugging Face
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           git config --global user.email "actions@github.com"
           git config --global user.name "GitHub Actions"
 
-          # clone HF space
+          # clone Hugging Face space
           git clone https://Islamadel:$HF_TOKEN@huggingface.co/spaces/Islamadel/islam-app-api hf-space
 
-          # delete old content
-          rm -rf hf-space/*
-
-          # copy backend only
-          cp -r backend/* hf-space/
-
+          # ادخل على فولدر الـ space
           cd hf-space
 
-          # IMPORTANT FIX: remove existing git config issues
+          # امسح القديم
+          rm -rf *
+
+          # ارجع للمشروع الأساسي
+          cd ..
+
+          # انسخ المشروع كامل (كل حاجة)
+          cp -r ./* hf-space/
+
+          # ادخل تاني على space
+          cd hf-space
+
+          # حل مشاكل git
           rm -rf .git
           git init
 
+          # ربط الريموت
           git remote add origin https://Islamadel:$HF_TOKEN@huggingface.co/spaces/Islamadel/islam-app-api
 
           git add .
 
-          git commit -m "Auto sync backend from GitHub" || echo "No changes"
+          git commit -m "Auto sync full project from GitHub" || echo "No changes"
 
           git branch -M main
 
