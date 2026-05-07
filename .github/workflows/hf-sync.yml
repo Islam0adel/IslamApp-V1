@@ -1,4 +1,4 @@
-name: Sync to HuggingFace
+name: Sync Backend to Hugging Face Space
 
 on:
   push:
@@ -6,28 +6,38 @@ on:
       - main
 
 jobs:
-  sync-to-hf:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Push backend to Hugging Face
+      - name: Sync backend to Hugging Face
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           git config --global user.email "actions@github.com"
           git config --global user.name "GitHub Actions"
 
+          # clone HF space repo
           git clone https://Islamadel:$HF_TOKEN@huggingface.co/spaces/Islamadel/islam-app-api hf-space
 
-          rsync -av --delete backend/ hf-space/
+          # remove old files in space repo
+          rm -rf hf-space/*
+
+          # copy backend only
+          cp -r backend/* hf-space/
 
           cd hf-space
 
+          git init
+          git remote add origin https://Islamadel:$HF_TOKEN@huggingface.co/spaces/Islamadel/islam-app-api
+
           git add .
 
-          git commit -m "Auto sync from GitHub" || echo "No changes"
+          git commit -m "Auto sync backend from GitHub" || echo "No changes"
 
-          git push
+          git branch -M main
+
+          git push origin main --force
