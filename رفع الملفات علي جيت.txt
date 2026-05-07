@@ -4,6 +4,10 @@ git add .
 git commit -m "Optimize flutter install script for Vercel"
 git push origin main
 
+
+git add .
+git commit -m "fix github action"
+git push origin main
 ـــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــ
 
 الرفع بالقوة (Force Push):
