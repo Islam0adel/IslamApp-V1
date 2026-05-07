@@ -1,20 +1,18 @@
-FROM python:3.12
+FROM python:3.11
 
-# تحديد مكان العمل داخل الحاوية
-WORKDIR /code
+WORKDIR /app
 
-# 1. نسخ ملف المكتبات (بما أنه الآن داخل backend)
-COPY ./requirements.txt /code/requirements.txt
+# نسخ requirements من root
+COPY requirements.txt .
 
-# 2. تثبيت المكتبات
-RUN pip install --no-cache-dir --upgrade -r /code/requirements.txt
+# تثبيت المكتبات
+RUN pip install --no-cache-dir -r requirements.txt
 
-# 3. نسخ محتويات فولدر backend بالكامل إلى داخل /code
-COPY ./backend /code/
+# نسخ الباك اند فقط
+COPY backend/ /app/backend/
 
-# 4. إضافة المسار لبيئة بايثون عشان يشوف الموديولات صح
-ENV PYTHONPATH=/code
+# ندخل على backend ونشغل التطبيق
+WORKDIR /app/backend
 
-# 5. تشغيل السيرفر
-# بما أننا نسخنا محتويات backend جوه /code، فالسيرفر هيلاقي فولدر app جواه مباشرة
+# لو FastAPI (عدّل الاسم لو مختلف)
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "7860"]
