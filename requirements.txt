@@ -1,7 +1,0 @@
-fastapi
-uvicorn
-firebase-admin
-pydantic
-google-cloud-firestore
-python-multipart
-pydantic[email]>=2.0.0
