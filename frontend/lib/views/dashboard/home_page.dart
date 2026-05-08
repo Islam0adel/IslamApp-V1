@@ -121,7 +121,7 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
-  // تصميم محتوى القائمة الجانبية (ثابت للموبايل والكمبيوتر)
+// تصميم محتوى القائمة الجانبية (ثابت للموبايل والكمبيوتر)
   Widget _buildSidebarContent(bool isDark, bool inDrawer) {
     return Column(
       children: [
