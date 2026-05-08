@@ -1,0 +1,8 @@
+backend/app/core/serviceAccountKey.json
+# وأيضاً يفضل إضافة ملفات البيئة والمكتبات المحلية
+node_modules/
+.env
+__pycache__/
+*.pyc
+.flutter-plugins
+.dart_tool/
