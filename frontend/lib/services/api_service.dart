@@ -22,12 +22,28 @@ class ApiService {
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
       } else {
-        // قراءة تفاصيل الخطأ من السيرفر (FastAPI detail)
         final errorData = jsonDecode(response.body);
         throw errorData['detail'] ?? 'فشل تسجيل الدخول';
       }
     } catch (e) {
-      // إرسال رسالة الخطأ الحقيقية بدل "السيرفر غير متاح"
+      throw e.toString().replaceAll('Exception: ', '');
+    }
+  }
+
+  // دالة طلب إعادة تعيين كلمة السر
+  Future<void> resetPassword(String email) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/auth/reset-password'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'email': email.trim().toLowerCase()}),
+      );
+
+      if (response.statusCode != 200) {
+        final errorData = jsonDecode(response.body);
+        throw errorData['detail'] ?? 'فشل إرسال رابط الاستعادة';
+      }
+    } catch (e) {
       throw e.toString().replaceAll('Exception: ', '');
     }
   }

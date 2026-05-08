@@ -2,22 +2,19 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, EmailStr
 from app.core.firebase_setup import db
 from google.cloud import firestore
+from firebase_admin import auth  # ضروري لإدارة كلمات المرور
 
 router = APIRouter()
 
-# موديل التسجيل
 class UserRegister(BaseModel):
     name: str
     email: EmailStr
     password: str
     company_code: str
 
-# موديل تسجيل الدخول (إضافة لضمان استقرار السيرفر)
-class UserLogin(BaseModel):
+class ResetPasswordRequest(BaseModel):
     email: EmailStr
-    password: str
 
-# القائمة الثابتة للأكواد (مؤقتاً)
 COMPANY_MAP = {
     "01": "شركة إسلام",
     "02": "شركة بيت اللوز",
@@ -29,8 +26,6 @@ async def register(user: UserRegister):
     try:
         email_clean = user.email.strip().lower()
         code = user.company_code.strip()
-        
-        # تحديد اسم الشركة بناءً على الكود، لو الكود مش موجود يكتب "شركة غير معروفة"
         company_name = COMPANY_MAP.get(code, "شركة غير معروفة")
 
         user_ref = db.collection("users").document(email_clean)
@@ -39,7 +34,7 @@ async def register(user: UserRegister):
             "email": email_clean,
             "password": user.password,
             "company_code": code,
-            "company_name": company_name, # حفظ الاسم بناءً على الكود
+            "company_name": company_name,
             "created_at": firestore.SERVER_TIMESTAMP,
         }
         user_ref.set(user_data)
@@ -60,7 +55,6 @@ async def login(user_data_in: dict):
         data = user_doc.to_dict()
         
         if data["password"] == password:
-            # نأخذ اسم الشركة المسجل في فايربيز أو نحدده من الكود لو مكانش متسجل
             company_code = data.get("company_code", "00")
             company_name = data.get("company_name") or COMPANY_MAP.get(company_code, "شركة عامة")
 
@@ -74,3 +68,16 @@ async def login(user_data_in: dict):
             raise HTTPException(status_code=401, detail="كلمة المرور خطأ")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# دالة إعادة تعيين كلمة المرور الجديدة
+
+
+@router.post("/reset-password")
+async def reset_password(request: ResetPasswordRequest): # تأكد إنها ResetPasswordRequest
+    try:
+        # فايربيز بيحتاج الإيميل عشان يبعت الرابط
+        auth.generate_password_reset_link(request.email)
+        return {"status": "success", "message": "تم إرسال الرابط"}
+    except Exception as e:
+        # لو الإيميل مش موجود في Firebase Auth هيطلع 404
+        raise HTTPException(status_code=404, detail="البريد الإلكتروني غير مسجل")

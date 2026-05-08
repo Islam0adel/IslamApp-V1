@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
-import '../../views/widgets/glass_card.dart'; // المسار الجديد اللي ظبطته
+import '../../views/widgets/glass_card.dart'; 
 import '../../services/api_service.dart';
 import '../dashboard/home_page.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -15,9 +16,23 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passwordController = TextEditingController();
   final _apiService = ApiService();
   bool _isLoading = false;
-  bool _rememberMe = false; // خاصية تذكرني
+  bool _rememberMe = false;
 
-  // دالة تسجيل الدخول
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedCredentials(); // تحميل البيانات عند تشغيل الصفحة
+  }
+
+  void _loadSavedCredentials() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _emailController.text = prefs.getString('saved_email') ?? '';
+      _passwordController.text = prefs.getString('saved_password') ?? '';
+      _rememberMe = prefs.getBool('remember_me') ?? false;
+    });
+  }
+
   void _handleLogin() async {
     if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
       _showSnackBar('برجاء ملء البيانات', Colors.orange);
@@ -31,9 +46,22 @@ class _LoginScreenState extends State<LoginScreen> {
         _passwordController.text,
       );
 
+      // منطق تذكرني
+      final prefs = await SharedPreferences.getInstance();
+      if (_rememberMe) {
+        await prefs.setString('saved_email', _emailController.text.trim());
+        await prefs.setString('saved_password', _passwordController.text);
+        await prefs.setBool('remember_me', true);
+        await prefs.setString('user_name', result['name']); // حفظ الاسم للدخول التلقائي
+        await prefs.setString('company_name', result['company_name'] ?? 'شركتي');
+      } else {
+        await prefs.remove('saved_email');
+        await prefs.remove('saved_password');
+        await prefs.setBool('remember_me', false);
+      }
+
       if (mounted) {
         _showSnackBar('أهلاً بك: ${result['name']}', Colors.green);
-        
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
@@ -46,7 +74,24 @@ class _LoginScreenState extends State<LoginScreen> {
         );
       }
     } catch (e) {
-      // هنا هيظهر لك الخطأ الحقيقي اللي جاي من البايثون
+      _showSnackBar(e.toString(), Colors.red);
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // دالة نسيت كلمة المرور
+  void _handleForgotPassword() async {
+    if (_emailController.text.isEmpty) {
+      _showSnackBar('اكتب بريدك الإلكتروني أولاً في الخانة فوق', Colors.orange);
+      return;
+    }
+    
+    setState(() => _isLoading = true);
+    try {
+      await _apiService.resetPassword(_emailController.text.trim());
+      _showSnackBar('تم إرسال رابط استعادة كلمة المرور لبريدك', Colors.green);
+    } catch (e) {
       _showSnackBar(e.toString(), Colors.red);
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -76,10 +121,7 @@ class _LoginScreenState extends State<LoginScreen> {
           child: Column(
             children: [
               const SizedBox(height: 80),
-              const Text(
-                'IslamApp V1.0',
-                style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 2),
-              ),
+              const Text('IslamApp V1.0', style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.white)),
               const SizedBox(height: 50),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -92,7 +134,6 @@ class _LoginScreenState extends State<LoginScreen> {
                       const SizedBox(height: 15),
                       _buildTextField(Icons.lock, 'كلمة المرور', _passwordController, obscure: true),
                       
-                      // سطر تذكرني ونسيت كلمة المرور
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
@@ -107,7 +148,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             ],
                           ),
                           TextButton(
-                            onPressed: () {}, // هنربطها بدالة resetPassword لاحقاً
+                            onPressed: _handleForgotPassword, // تم الربط
                             child: const Text('نسيت كلمة المرور؟', style: TextStyle(color: Colors.white70, fontSize: 12)),
                           ),
                         ],
@@ -126,7 +167,6 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                       
                       const SizedBox(height: 20),
-                      // زر إنشاء حساب (عشان تقدر تجرب)
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
@@ -142,10 +182,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
               const SizedBox(height: 50),
-              const Text(
-                'executed by Islam Adel',
-                style: TextStyle(color: Colors.white54, fontSize: 13, fontStyle: FontStyle.italic),
-              ),
+              const Text('executed by Islam Adel', style: TextStyle(color: Colors.white54, fontSize: 13, fontStyle: FontStyle.italic)),
               const SizedBox(height: 20),
             ],
           ),
