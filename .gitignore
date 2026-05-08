@@ -1,4 +1,4 @@
-backend/serviceAccountKey.json
+backend/app/core/serviceAccountKey.json
 # وأيضاً يفضل إضافة ملفات البيئة والمكتبات المحلية
 node_modules/
 .env

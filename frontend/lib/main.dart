@@ -1,94 +1,48 @@
 import 'package:flutter/material.dart';
+import 'core/theme.dart';
 import 'views/auth/login_screen.dart';
-import 'views/dashboard/home_page.dart';
+import 'views/auth/register_screen.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const IslamApp());
 }
 
-class IslamApp extends StatelessWidget {
+class IslamApp extends StatefulWidget {
   const IslamApp({super.key});
+
+  // دالة ذكية لتغيير الثيم من أي صفحة في البرنامج
+  static _IslamAppState of(BuildContext context) =>
+      context.findAncestorStateOfType<_IslamAppState>()!;
+
+  @override
+  State<IslamApp> createState() => _IslamAppState();
+}
+
+class _IslamAppState extends State<IslamApp> {
+  ThemeMode _themeMode = ThemeMode.system; // بيتبع إعدادات الموبايل تلقائياً
+
+  void changeTheme(ThemeMode themeMode) {
+    setState(() {
+      _themeMode = themeMode;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'IslamApp 1.0',
-      debugShowCheckedModeBanner: false, // إخفاء علامة الـ Debug
-      
-      // إعدادات الثيم فائق الجمال
-      theme: ThemeData(
-        useMaterial3: true,
-        // اللون الأساسي (الكحلي الملكي)
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1A237E),
-          primary: const Color(0xFF1A237E),
-          secondary: const Color(0xFF00C853), // الأخضر للنجاح والإيرادات
-          surface: Colors.white,
-        ),
-        
-        // ضبط الخطوط (Cairo بيدي شكل احترافي جداً)
-        fontFamily: 'Cairo', 
-        
-        // تنسيق الـ AppBar بشكل موحد
-        appBarTheme: const AppBarTheme(
-          centerTitle: true,
-          backgroundColor: Colors.white,
-          elevation: 0,
-          titleTextStyle: TextStyle(
-            color: Color(0xFF1A237E),
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-            fontFamily: 'Cairo',
-          ),
-          iconTheme: IconThemeData(color: Color(0xFF1A237E)),
-        ),
-
-        // تنسيق الأزرار بشكل دائري وشيك
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF1A237E),
-            foregroundColor: Colors.white,
-            minimumSize: const Size(double.infinity, 55),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(15),
-            ),
-            textStyle: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              fontFamily: 'Cairo',
-            ),
-          ),
-        ),
-
-        // تنسيق حقول الإدخال (TextFields)
-        inputDecorationTheme: InputDecorationTheme(
-          filled: true,
-          fillColor: Colors.grey[50],
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(15),
-            borderSide: BorderSide(color: Colors.grey[300]!),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(15),
-            borderSide: BorderSide(color: Colors.grey[200]!),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(15),
-            borderSide: const BorderSide(color: Color(0xFF1A237E), width: 2),
-          ),
-        ),
-      ),
-
-      // الصفحة التي يبدأ منها البرنامج
-      home: LoginScreen(),
-
-      // تعريف المسارات لسهولة التنقل
+      title: 'IslamApp V1.0',
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.lightTheme,
+      darkTheme: AppTheme.darkTheme,
+      themeMode: _themeMode,
+      // البداية من صفحة اللوج إن الزجاجية
+      home: const LoginScreen(),
       routes: {
-        '/login': (context) => LoginScreen(),
-        '/home': (context) => const HomePage(),
+        '/login': (context) => const LoginScreen(),
+        '/register': (context) => const RegisterScreen(),
       },
-
-      // دعم اللغة العربية والاتجاه من اليمين لليسار
+      // دعم اللغة العربية
       builder: (context, child) {
         return Directionality(
           textDirection: TextDirection.rtl,
