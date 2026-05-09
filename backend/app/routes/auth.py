@@ -73,11 +73,25 @@ async def login(user_data_in: dict):
 
 
 @router.post("/reset-password")
-async def reset_password(request: ResetPasswordRequest): # تأكد إنها ResetPasswordRequest
+async def reset_password(request: ResetPasswordRequest):
     try:
-        # فايربيز بيحتاج الإيميل عشان يبعت الرابط
-        auth.generate_password_reset_link(request.email)
-        return {"status": "success", "message": "تم إرسال الرابط"}
+        # 1. بنجرب نولد الرابط عشان نتأكد إن المستخدم موجود أصلاً في Firebase Auth
+        # الدالة دي هترمي Exception لو الإيميل مش مسجل في قائمة الـ Users بفايربيز
+        link = auth.generate_password_reset_link(request.email)
+        
+        # 2. لو إنت عاوز فايربيز هو اللي يبعت الإيميل "تلقائياً" بالـ Template بتاعك
+        # الأفضل في Python Admin SDK إنك تبعت الرابط ده للمستخدم عبر خدمة إيميل
+        # لكن لو عاوز فايربيز يبعته مباشرة "زي الموبايل"، فده بيتم غالباً من جهة Flutter
+        
+        # كحل سريع وممتاز للباك إند:
+        print(f"الرابط اتولد بنجاح: {link}") # عشان تشوفه في الـ Logs للتجربة
+        
+        return {
+            "status": "success", 
+            "message": "تم إنشاء رابط استعادة كلمة المرور بنجاح"
+        }
+    except auth.UserNotFoundError:
+        raise HTTPException(status_code=404, detail="البريد الإلكتروني غير مسجل في النظام")
     except Exception as e:
-        # لو الإيميل مش موجود في Firebase Auth هيطلع 404
-        raise HTTPException(status_code=404, detail="البريد الإلكتروني غير مسجل")
+        print(f"Error: {e}")
+        raise HTTPException(status_code=500, detail="حدث خطأ أثناء محاولة إرسال الإيميل")
