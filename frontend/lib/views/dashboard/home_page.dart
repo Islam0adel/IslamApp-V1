@@ -148,7 +148,7 @@ class _HomePageState extends State<HomePage> {
     ? Column( // في الموبايل المعلومات تحت بعض
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text("مرحباً بك: ${widget.userName}", style: TextStyle(color: isDark ? Colors.white70 : Colors.grey[800], fontSize: 18)),
+          Text("Welcome : ${widget.userName}", style: TextStyle(color: isDark ? Colors.white70 : Colors.grey[800], fontSize: 18)),
           const SizedBox(height: 15),
           GlassCard(
             child: Row(
@@ -156,6 +156,7 @@ class _HomePageState extends State<HomePage> {
               children: [
                 _buildInfoRow(Icons.calendar_today, _currentDate, isDark),
                 _buildInfoRow(Icons.access_time, _currentTime, isDark),
+                _buildInfoRow(Icons.timer_outlined, "Log Time: ${_formatTimer(_secondsElapsed)}", isDark, isHighlight: true),
               ],
             ),
           ),
@@ -167,9 +168,9 @@ class _HomePageState extends State<HomePage> {
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text("المؤسسة الحالية", style: TextStyle(color: isDark ? Colors.white54 : Colors.grey[600], fontSize: 16)),
+              Text("Company", style: TextStyle(color: isDark ? Colors.white54 : Colors.grey[600], fontSize: 16)),
               Text(widget.companyName, style: TextStyle(fontSize: 34, fontWeight: FontWeight.bold, color: isDark ? Colors.blue[400] : const Color(0xFF1A237E))),
-              Text("مرحباً بك: ${widget.userName}", style: TextStyle(color: isDark ? Colors.white70 : Colors.grey[800], fontSize: 18)),
+              Text("Welcome: ${widget.userName}", style: TextStyle(color: isDark ? Colors.white70 : Colors.grey[800], fontSize: 18)),
             ],
           ),
           GlassCard(
@@ -178,7 +179,7 @@ class _HomePageState extends State<HomePage> {
               children: [
                 _buildInfoRow(Icons.calendar_today, _currentDate, isDark),
                 _buildInfoRow(Icons.access_time, _currentTime, isDark),
-                _buildInfoRow(Icons.timer_outlined, "مدة الجلسة: ${_formatTimer(_secondsElapsed)}", isDark, isHighlight: true),
+                _buildInfoRow(Icons.timer_outlined, "Log Time: ${_formatTimer(_secondsElapsed)}", isDark, isHighlight: true),
               ],
             ),
           ),
