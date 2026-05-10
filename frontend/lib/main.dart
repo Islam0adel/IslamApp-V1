@@ -7,7 +7,7 @@ import 'views/auth/register_screen.dart';
 import 'views/dashboard/home_page.dart';
 import 'views/auth/forgot_password_screen.dart';
 // تأكد من استيراد ملف firebase_options.dart الذي ينتج عن ربط المشروع بفايربيز
-// import 'firebase_options.dart'; 
+import 'firebase_options.dart'; 
 
 void main() async {
   // 1. تأمين ربط العناصر قبل أي عمليات أخرى
@@ -15,7 +15,7 @@ void main() async {
 
   // 2. تهيئة فايربيز (ضروري جداً لشغل المحترفين الجديد)
   await Firebase.initializeApp(
-    // options: DefaultFirebaseOptions.currentPlatform, // فك التعليق بعد ربط المشروع
+    options: DefaultFirebaseOptions.currentPlatform, // فك التعليق بعد ربط المشروع
   );
   
   // 3. قراءة حالة الدخول من الذاكرة المحلية
