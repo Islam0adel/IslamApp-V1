@@ -4,6 +4,7 @@ import 'core/theme.dart';
 import 'views/auth/login_screen.dart';
 import 'views/auth/register_screen.dart';
 import 'views/dashboard/home_page.dart'; // استيراد صفحة الهوم
+import 'views/auth/forgot_password_screen.dart';
 
 void main() async {
   // لازم نضمن إن كل حاجة جاهزة قبل ما نقرأ من الذاكرة
@@ -64,9 +65,10 @@ class _IslamAppState extends State<IslamApp> {
       // البداية من الصفحة اللي حددناها فوق (إما هوم أو لوجين)
       home: widget.initialScreen,
       routes: {
-        '/login': (context) => const LoginScreen(),
-        '/register': (context) => const RegisterScreen(),
-      },
+              '/login': (context) => const LoginScreen(),
+              '/register': (context) => const RegisterScreen(),
+              '/forgot-password': (context) => const ForgotPasswordScreen(), // المسار الجديد
+            },
       builder: (context, child) {
         return Directionality(
           textDirection: TextDirection.rtl,
