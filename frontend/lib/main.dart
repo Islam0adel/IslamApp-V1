@@ -1,33 +1,38 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart'; // ضرورية لقراءة حالة الدخول
+import 'package:firebase_core/firebase_core.dart'; // سطر جديد
+import 'package:shared_preferences/shared_preferences.dart';
 import 'core/theme.dart';
 import 'views/auth/login_screen.dart';
 import 'views/auth/register_screen.dart';
-import 'views/dashboard/home_page.dart'; // استيراد صفحة الهوم
+import 'views/dashboard/home_page.dart';
 import 'views/auth/forgot_password_screen.dart';
+// تأكد من استيراد ملف firebase_options.dart الذي ينتج عن ربط المشروع بفايربيز
+// import 'firebase_options.dart'; 
 
 void main() async {
-  // لازم نضمن إن كل حاجة جاهزة قبل ما نقرأ من الذاكرة
+  // 1. تأمين ربط العناصر قبل أي عمليات أخرى
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 2. تهيئة فايربيز (ضروري جداً لشغل المحترفين الجديد)
+  await Firebase.initializeApp(
+    // options: DefaultFirebaseOptions.currentPlatform, // فك التعليق بعد ربط المشروع
+  );
   
-  // قراءة حالة "تذكرني" والبيانات المحفوظة
+  // 3. قراءة حالة الدخول من الذاكرة المحلية
   final prefs = await SharedPreferences.getInstance();
   final bool rememberMe = prefs.getBool('remember_me') ?? false;
   final String? userName = prefs.getString('user_name');
   final String? companyName = prefs.getString('company_name');
   final String? companyCode = prefs.getString('company_code');
 
-  // تحديد الصفحة اللي هيبدأ منها البرنامج
   Widget initialScreen;
   if (rememberMe && userName != null) {
-    // لو فاكرني ومعايا الاسم، ادخل على الهوم علطول
     initialScreen = HomePage(
       userName: userName,
       companyName: companyName ?? 'شركتي',
       companyCode: companyCode ?? '00',
     );
   } else {
-    // لو مش فاكرني، روح لصفحة الدخول
     initialScreen = const LoginScreen();
   }
 
@@ -62,13 +67,12 @@ class _IslamAppState extends State<IslamApp> {
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: _themeMode,
-      // البداية من الصفحة اللي حددناها فوق (إما هوم أو لوجين)
       home: widget.initialScreen,
       routes: {
-              '/login': (context) => const LoginScreen(),
-              '/register': (context) => const RegisterScreen(),
-              '/forgot-password': (context) => const ForgotPasswordScreen(), // المسار الجديد
-            },
+        '/login': (context) => const LoginScreen(),
+        '/register': (context) => const RegisterScreen(),
+        '/forgot-password': (context) => const ForgotPasswordScreen(),
+      },
       builder: (context, child) {
         return Directionality(
           textDirection: TextDirection.rtl,
