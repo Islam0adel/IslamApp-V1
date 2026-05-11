@@ -31,7 +31,7 @@ migrate_working_dir/
 .pub/
 /build/
 /windows/
-# lib/firebase_options.dart
+lib/firebase_options.dart
 
 
 # Symbolication related

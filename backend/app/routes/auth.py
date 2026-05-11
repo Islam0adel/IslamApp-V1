@@ -33,16 +33,28 @@ async def register(user: UserRegister):
         email_clean = user.email.strip().lower()
         comp_code = user.company_code.strip()
         job_code = user.job_code.strip()
+
+        # 1. التحقق من أن كود الشركة وكود الوظيفة "صحيحين" ومعرفين في الـ MAPS عندك
+        # لو الكود مش موجود في الـ Map، هنرفض التسجيل فوراً
+        if comp_code not in COMPANY_MAP:
+            raise HTTPException(status_code=403, detail="كود الشركة غير صحيح أو غير مسجل في النظام")
         
-        company_name = COMPANY_MAP.get(comp_code, "شركة غير معروفة")
-        job_title = USER_ROLES.get(job_code, "غير محدد")
+        if job_code not in USER_ROLES:
+            raise HTTPException(status_code=403, detail="كود الوظيفة غير صحيح")
+
+        # 2. (اختياري) لو عاوز تربط أكواد موظفين معينة بكل شركة في قاعدة البيانات
+        # ممكن تعمل Collection في Firestore اسمه "valid_codes" وتتأكد منه هنا
+        # حالياً الاعتماد على COMPANY_MAP و USER_ROLES هو حل ممتاز وسريع.
+
+        company_name = COMPANY_MAP.get(comp_code)
+        job_title = USER_ROLES.get(job_code)
 
         user_ref = db.collection("users").document(email_clean)
         
         if user_ref.get().exists:
             raise HTTPException(status_code=400, detail="هذا البريد مسجل بالفعل في قاعدة البيانات")
 
-        # تخزين البيانات الشخصية والصلاحيات فقط (بدون كلمة المرور)
+        # تخزين البيانات الشخصية والصلاحيات
         user_data = {
             "uid": user.uid,
             "name": user.name.strip(),
@@ -56,6 +68,7 @@ async def register(user: UserRegister):
         
         user_ref.set(user_data)
         return {"status": "success", "message": f"تم تسجيل {job_title} في {company_name}"}
+
     except Exception as e:
         if isinstance(e, HTTPException): raise e
         raise HTTPException(status_code=500, detail=str(e))

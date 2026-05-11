@@ -1,0 +1,31 @@
+name: Deploy Flutter Web
+on:
+  push:
+    branches:
+      - main # أو اسم البرانش بتاعك
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Restore Firebase Options
+        run: |
+          echo "${{ secrets.FIREBASE_OPTIONS_B64 }}" | base64 --decode > lib/firebase_options.dart
+
+      - name: Build Web
+        run: |
+          flutter pub get
+          flutter build web --base-href "/${{ github.event.repository.name }}/"
+
+      - name: Deploy to GitHub Pages
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: build/web
+          branch: gh-pages
