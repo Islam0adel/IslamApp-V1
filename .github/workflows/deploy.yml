@@ -17,9 +17,12 @@ jobs:
 
       - name: Restore Firebase Options
         run: |
-          echo "${{ secrets.FIREBASE_OPTIONS_B64 }}" | base64 --decode > lib/firebase_options.dart
+          # بنأكد عليه يدخل فولدر الـ frontend لو مش موجود جواه
+          mkdir -p frontend/lib 
+          echo "${{ secrets.FIREBASE_OPTIONS_B64 }}" | base64 --decode > frontend/lib/firebase_options.dart
 
       - name: Build Web
+        working-directory: frontend # مهم جداً عشان الأوامر تتنفذ في مكانها الصح
         run: |
           flutter pub get
           flutter build web --base-href "/${{ github.event.repository.name }}/"
