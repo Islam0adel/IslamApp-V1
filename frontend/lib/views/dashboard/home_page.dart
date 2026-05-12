@@ -76,7 +76,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     double width = MediaQuery.of(context).size.width;
-    bool isDesktop = width > 400;
+    bool isDesktop = width > 900;
 
     return Scaffold(
       body: Container(
@@ -186,7 +186,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       crossAxisCount: crossCount,
       mainAxisSpacing: 15,
       crossAxisSpacing: 15,
-      childAspectRatio: 1.1,
+      childAspectRatio: 2.2,
       children: [
         _moduleCard("حركة الخزينة", Icons.account_balance_wallet_rounded, Colors.tealAccent, () {}),
         _moduleCard("حسابات الموردين", Icons.local_shipping_rounded, Colors.orangeAccent, () {}),
