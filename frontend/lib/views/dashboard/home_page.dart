@@ -76,7 +76,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     double width = MediaQuery.of(context).size.width;
-    bool isDesktop = width > 900;
+    bool isDesktop = width > 400;
 
     return Scaffold(
       body: Container(
