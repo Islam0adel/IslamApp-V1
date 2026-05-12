@@ -172,7 +172,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   Widget _buildMainGrid(bool isDesktop) {
     return GridView.count(
       // 4 أزرار في السطر للابتوب و 2 للموبايل
-      crossAxisCount: isDesktop ? 4 : 2,
+      crossAxisCount: isDesktop ? 3 : 2,
       mainAxisSpacing: 15,
       crossAxisSpacing: 15,
       // التعديل المطلوب هنا للتحكم في حجم الزر على اللاب
