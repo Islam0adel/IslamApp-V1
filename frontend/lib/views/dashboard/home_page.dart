@@ -96,23 +96,24 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               padding: const EdgeInsets.all(20),
               child: Column(
                 children: [
-                  // --- الجزء العلوي (Header) ---
+                  // الهيدر (الاسم والشركة + وقت النشاط)
                   _buildHeader(isDesktop),
                   
                   const SizedBox(height: 10),
-                  // التاريخ والوقت (تحت الاسم في الموبايل، وجمب بعض في اللاب)
+                  
+                  // الوقت والتاريخ
                   _buildDateTimeBar(isDesktop),
 
                   const SizedBox(height: 25),
 
-                  // --- الجزء الأوسط (التبويبات الكبيرة) ---
+                  // التبويبات الكبيرة (Responsive)
                   Expanded(
-                    child: _buildMainGrid(isDesktop ? 3 : 2),
+                    child: _buildMainGrid(isDesktop),
                   ),
 
                   const SizedBox(height: 15),
 
-                  // --- الجزء السفلي (أزرار الدعم والخروج) ---
+                  // أزرار الوصول السريع تحت
                   _buildBottomActions(),
                 ],
               ),
@@ -123,7 +124,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
   }
 
-  // الهيدر: اسم المستخدم والشركة + وقت النشاط (أحمر فوق عالشمال)
   Widget _buildHeader(bool isDesktop) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -144,7 +144,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             ),
           ],
         ),
-        // وقت النشاط (أحمر فاقع)
         Column(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
@@ -159,34 +158,25 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
   }
 
-  // بار التاريخ والوقت
   Widget _buildDateTimeBar(bool isDesktop) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 5),
-      alignment: Alignment.centerRight,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          Text(_currentTime, style: const TextStyle(color: Colors.white38, fontSize: 12)),
-          if (isDesktop) ...[
-            const SizedBox(width: 15),
-            Text(_currentDate, style: const TextStyle(color: Colors.white38, fontSize: 12)),
-          ] else ...[
-             const SizedBox(width: 10),
-             Text(_currentDate, style: const TextStyle(color: Colors.white38, fontSize: 12)),
-          ]
-        ],
-      ),
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        Text(_currentTime, style: const TextStyle(color: Colors.white38, fontSize: 12)),
+        const SizedBox(width: 15),
+        Text(_currentDate, style: const TextStyle(color: Colors.white38, fontSize: 12)),
+      ],
     );
   }
 
-  // شبكة الأزرار الكبيرة (الترتيب الجديد)
-  Widget _buildMainGrid(int crossCount) {
+  Widget _buildMainGrid(bool isDesktop) {
     return GridView.count(
-      crossAxisCount: crossCount,
+      // 4 أزرار في السطر للابتوب و 2 للموبايل
+      crossAxisCount: isDesktop ? 4 : 2,
       mainAxisSpacing: 15,
       crossAxisSpacing: 15,
-      childAspectRatio: 2.2,
+      // التعديل المطلوب هنا للتحكم في حجم الزر على اللاب
+      childAspectRatio: isDesktop ? 2.2 : 1.1, 
       children: [
         _moduleCard("حركة الخزينة", Icons.account_balance_wallet_rounded, Colors.tealAccent, () {}),
         _moduleCard("حسابات الموردين", Icons.local_shipping_rounded, Colors.orangeAccent, () {}),
@@ -208,16 +198,15 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, color: color, size: 35),
-            const SizedBox(height: 12),
-            Text(title, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+            Icon(icon, color: color, size: 28), // صغرت الأيقونة شوية لتناسب الحجم الجديد
+            const SizedBox(height: 8),
+            Text(title, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
           ],
         ),
       ),
     );
   }
 
-  // أزرار الدعم والخروج (تحت خالص)
   Widget _buildBottomActions() {
     return Row(
       children: [
