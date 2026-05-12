@@ -171,19 +171,28 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
   Widget _buildMainGrid(bool isDesktop) {
     return GridView.count(
-      // 4 أزرار في السطر للابتوب و 2 للموبايل
+      // 3 أزرار في السطر للابتوب و 2 للموبايل (زي ما إنت محدد)
       crossAxisCount: isDesktop ? 3 : 2,
       mainAxisSpacing: 15,
       crossAxisSpacing: 15,
-      // التعديل المطلوب هنا للتحكم في حجم الزر على اللاب
+      shrinkWrap: true, // أضفت دي عشان الجريد مياخدش مساحة لانهائية ويعمل Overflow
+      physics: const NeverScrollableScrollPhysics(), // عشان الصفحة تسكرول كلها كحته واحدة
       childAspectRatio: isDesktop ? 2.2 : 1.1, 
       children: [
-        _moduleCard("حركة الخزينة", Icons.account_balance_wallet_rounded, Colors.tealAccent, () {}),
+        _moduleCard("حركة الخزينة", Icons.account_balance_wallet_rounded, Colors.tealAccent, () {
+          // هنا هنربط صفحة الخزينة لما نخلصها
+        }),
         _moduleCard("حسابات الموردين", Icons.local_shipping_rounded, Colors.orangeAccent, () {}),
         _moduleCard("التقارير", Icons.analytics_rounded, Colors.purpleAccent, () {}),
         _moduleCard("حركة الجرد", Icons.inventory_2_rounded, Colors.amberAccent, () {}),
         _moduleCard("التكويد", Icons.api_rounded, Colors.blueAccent, () {
-          Navigator.push(context, MaterialPageRoute(builder: (context) => const CodingPage()));
+          // التعديل الجوهري هنا: بنمرر كود الشركة اللي جاي للهوم باج أصلاً
+          Navigator.push(
+            context, 
+            MaterialPageRoute(
+              builder: (context) => CodingPage(companyCode: widget.companyCode)
+            ),
+          );
         }),
         _moduleCard("الإعدادات", Icons.settings_suggest_rounded, Colors.blueGrey, () {}),
       ],

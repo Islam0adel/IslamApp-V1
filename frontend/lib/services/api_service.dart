@@ -7,19 +7,16 @@ class ApiService {
   final String baseUrl = ApiConstants.baseUrl;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
-  // 1. تسجيل الدخول الاحترافي (Firebase Auth + FastAPI)
+  // 1. تسجيل الدخول
   Future<Map<String, dynamic>> login(String email, String password) async {
     try {
-      // أ- الدخول عبر فايربيز (التعامل مع الباسورد المشفر يتم هنا تلقائياً)
       UserCredential userCredential = await _auth.signInWithEmailAndPassword(
         email: email.trim().toLowerCase(),
         password: password,
       );
 
-      // ب- الحصول على الـ Token الخاص بالجلسة
       String? token = await userCredential.user?.getIdToken();
 
-      // ج- إرسال التوكن للباك إند لجلب بيانات الصلاحيات والشركة
       final response = await http.post(
         Uri.parse('$baseUrl/auth/verify-user'),
         headers: {
@@ -32,7 +29,7 @@ class ApiService {
         return jsonDecode(response.body);
       } else {
         final errorData = jsonDecode(response.body);
-        throw errorData['detail'] ?? 'فشل جلب بيانات الصلاحيات';
+        throw errorData['detail'] ?? 'فشل جلب بيانات المستخدم';
       }
     } on FirebaseAuthException catch (e) {
       throw _handleAuthError(e.code);
@@ -41,7 +38,7 @@ class ApiService {
     }
   }
 
-  // 2. التسجيل الاحترافي (إنشاء مستخدم في Auth ثم حفظ بياناته في Firestore)
+  // 2. التسجيل الجديد
   Future<void> register({
     required String name,
     required String email,
@@ -50,30 +47,27 @@ class ApiService {
     required String jobCode,
   }) async {
     try {
-      // أ- إنشاء الحساب في Firebase Auth
       UserCredential userCredential = await _auth.createUserWithEmailAndPassword(
         email: email.trim().toLowerCase(),
         password: password,
       );
 
-      // ب- إرسال البيانات الشخصية للباك إند لحفظها في Firestore
       final response = await http.post(
         Uri.parse('$baseUrl/auth/register'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'name': name.trim(),
-          'email': email.trim().toLowerCase(),
-          'uid': userCredential.user!.uid, // نرسل الـ UID لربط الحسابين
-          'company_code': companyCode.trim(),
-          'job_code': jobCode.trim(),
+          'name': name,
+          'email': email,
+          'uid': userCredential.user!.uid,
+          'company_code': companyCode,
+          'job_code': jobCode,
         }),
       );
 
       if (response.statusCode != 200) {
-        // إذا فشل حفظ البيانات في Firestore، نمسح المستخدم من Auth لضمان النزاهة
         await userCredential.user!.delete();
         final errorData = jsonDecode(response.body);
-        throw errorData['detail'] ?? 'فشل حفظ بيانات المستخدم';
+        throw errorData['detail'] ?? 'فشل حفظ البيانات';
       }
     } on FirebaseAuthException catch (e) {
       throw _handleAuthError(e.code);
@@ -82,7 +76,7 @@ class ApiService {
     }
   }
 
-  // 3. التحقق قبل إرسال رابط الاستعادة
+  // 3. التحقق قبل استعادة كلمة المرور
   Future<Map<String, dynamic>> verifyAndGetResetLink({
     required String email,
     required String companyCode,
@@ -106,14 +100,51 @@ class ApiService {
     }
   }
 
-  // دالة مساعدة لترجمة أخطاء فايربيز للعربية
+  // ================= الدوال الجديدة الخاصة بالتكويد والربط =================
+
+  // جلب بيانات التكويد (للقوائم المنسدلة وشاشة الإدارة)
+  Future<List<dynamic>> getCodingData(String companyCode, String category) async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/coding/list/$companyCode/$category'),
+    );
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      throw 'فشل جلب بيانات $category';
+    }
+  }
+
+  // حفظ أو تعديل تكويد (خزينة، مورد، إلخ)
+  Future<void> saveNewCode(String companyCode, String category, String code, String name) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/coding/save'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'company_code': companyCode,
+        'category': category,
+        'code': code,
+        'name': name,
+      }),
+    );
+    if (response.statusCode != 200) throw 'فشل حفظ الكود في السيرفر';
+  }
+
+  // حذف تكويد نهائياً
+  Future<void> deleteCode(String companyCode, String category, String code) async {
+    final response = await http.delete(
+      Uri.parse('$baseUrl/coding/delete/$companyCode/$category/$code'),
+    );
+    if (response.statusCode != 200) throw 'فشل حذف الكود من السيرفر';
+  }
+
+  // دالة ترجمة أخطاء فايربيز
   String _handleAuthError(String code) {
     switch (code) {
-      case 'user-not-found': return 'هذا البريد غير مسجل لدينا';
+      case 'user-not-found': return 'المستخدم غير موجود';
       case 'wrong-password': return 'كلمة المرور غير صحيحة';
-      case 'email-already-in-use': return 'البريد الإلكتروني مستخدم بالفعل';
+      case 'email-already-in-use': return 'البريد مسجل مسبقاً';
       case 'weak-password': return 'كلمة المرور ضعيفة جداً';
-      default: return 'حدث خطأ في نظام التوثيق: $code';
+      default: return 'حدث خطأ غير متوقع: $code';
     }
   }
 }

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import '../../views/widgets/glass_card.dart';
+import '../../services/api_service.dart';
 
 class CodingPage extends StatefulWidget {
-  const CodingPage({super.key});
+  final String companyCode; // لازم نمرر كود الشركة عشان نفصل البيانات
+  const CodingPage({super.key, required this.companyCode});
 
   @override
   State<CodingPage> createState() => _CodingPageState();
@@ -10,6 +12,13 @@ class CodingPage extends StatefulWidget {
 
 class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
   late AnimationController _animController;
+  final ApiService _apiService = ApiService();
+  
+  // وحدات التحكم في الإدخال
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _codeController = TextEditingController();
+  
+  bool _isLoading = false;
 
   @override
   void initState() {
@@ -23,178 +32,226 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
   @override
   void dispose() {
     _animController.dispose();
+    _nameController.dispose();
+    _codeController.dispose();
     super.dispose();
   }
 
-  // دالة لبناء أقسام التكويد (موردين، تصنيفات، إلخ)
-  Widget _buildCodingSection({
-    required String title,
-    required IconData icon,
-    required VoidCallback onTap,
-    required double delay,
-  }) {
-    return FadeTransition(
-      opacity: _animController,
-      child: SlideTransition(
-        position: Tween<Offset>(begin: const Offset(0, 0.1), end: Offset.zero)
-            .animate(CurvedAnimation(
-          parent: _animController,
-          curve: Interval(delay, 1.0, curve: Curves.easeOut),
-        )),
-        child: Padding(
-          padding: const EdgeInsets.only(bottom: 15),
-          child: InkWell(
-            onTap: onTap,
-            child: GlassCard(
-              child: ListTile(
-                leading: Icon(icon, color: Colors.white, size: 30),
-                title: Text(
-                  title,
-                  style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                trailing: const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white70, size: 18),
+  // 1. دالة لجلب البيانات وفتح شاشة الإدارة
+  void _openManageModal(String category, String title) async {
+    setState(() => _isLoading = true);
+    try {
+      List<dynamic> items = await _apiService.getCodingData(widget.companyCode, category);
+      setState(() => _isLoading = false);
+
+      if (!mounted) return;
+      
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (context) => _buildManagerSheet(title, category, items),
+      );
+    } catch (e) {
+      setState(() => _isLoading = false);
+      _showSnackBar("خطأ: $e", Colors.redAccent);
+    }
+  }
+
+  // 2. واجهة إدارة التكويدات (القائمة)
+  Widget _buildManagerSheet(String title, String category, List<dynamic> items) {
+    return StatefulBuilder(
+      builder: (context, setModalState) => Container(
+        height: MediaQuery.of(context).size.height * 0.85,
+        decoration: const BoxDecoration(
+          color: Color(0xFF1E293B),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+        ),
+        child: Column(
+          children: [
+            const SizedBox(height: 15),
+            Container(width: 50, height: 5, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(10))),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text("إدارة $title", style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                  ElevatedButton.icon(
+                    onPressed: () => _showAddEditDialog(category, title, null, setModalState, items),
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text("إضافة"),
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+                  ),
+                ],
               ),
             ),
-          ),
+            Expanded(
+              child: items.isEmpty 
+                ? const Center(child: Text("لا توجد بيانات مسجلة", style: TextStyle(color: Colors.white38)))
+                : ListView.builder(
+                    itemCount: items.length,
+                    itemBuilder: (context, index) {
+                      final item = items[index];
+                      return ListTile(
+                        leading: CircleAvatar(backgroundColor: Colors.white10, child: Text("${index + 1}", style: const TextStyle(color: Colors.white70))),
+                        title: Text(item['name'], style: const TextStyle(color: Colors.white)),
+                        subtitle: Text("كود: ${item['code']}", style: const TextStyle(color: Colors.white38)),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.edit, color: Colors.orangeAccent, size: 20),
+                              onPressed: () => _showAddEditDialog(category, title, item, setModalState, items),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete_forever, color: Colors.redAccent, size: 20),
+                              onPressed: () => _confirmDelete(category, item['code'], setModalState, items, index),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+            ),
+          ],
         ),
       ),
     );
+  }
+
+  // 3. ديالوج الإضافة أو التعديل
+  void _showAddEditDialog(String category, String title, Map<String, dynamic>? existingItem, Function setModalState, List items) {
+    bool isEdit = existingItem != null;
+    if (isEdit) {
+      _nameController.text = existingItem['name'];
+      _codeController.text = existingItem['code'];
+    } else {
+      _nameController.clear();
+      _codeController.clear();
+    }
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF0F172A),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(isEdit ? "تعديل $title" : "إضافة $title", style: const TextStyle(color: Colors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _nameController,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(labelText: "الاسم", labelStyle: TextStyle(color: Colors.white60)),
+            ),
+            const SizedBox(height: 15),
+            TextField(
+              controller: _codeController,
+              enabled: !isEdit, // الكود لا يُعدل لأنه المفتاح الأساسي
+              style: TextStyle(color: isEdit ? Colors.white38 : Colors.white),
+              decoration: const InputDecoration(labelText: "الكود", labelStyle: TextStyle(color: Colors.white60)),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text("إلغاء")),
+          ElevatedButton(
+            onPressed: () async {
+              if (_nameController.text.isEmpty || _codeController.text.isEmpty) return;
+              await _apiService.saveNewCode(widget.companyCode, category, _codeController.text, _nameController.text);
+              Navigator.pop(context);
+              _refreshInModal(category, setModalState, items);
+              _showSnackBar("تم الحفظ بنجاح", Colors.green);
+            },
+            child: const Text("حفظ"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 4. تأكيد الحذف
+  void _confirmDelete(String category, String code, Function setModalState, List items, int index) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF0F172A),
+        title: const Text("حذف؟", style: TextStyle(color: Colors.white)),
+        content: const Text("سيتم حذف التكويد نهائياً، هل أنت متأكد؟", style: TextStyle(color: Colors.white70)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text("إلغاء")),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () async {
+              await _apiService.deleteCode(widget.companyCode, category, code);
+              Navigator.pop(context);
+              _refreshInModal(category, setModalState, items);
+              _showSnackBar("تم الحذف", Colors.blueGrey);
+            },
+            child: const Text("حذف"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // تحديث البيانات داخل الـ Modal بدون قفله
+  void _refreshInModal(String category, Function setModalState, List items) async {
+    var newData = await _apiService.getCodingData(widget.companyCode, category);
+    setModalState(() {
+      items.clear();
+      items.addAll(newData);
+    });
+  }
+
+  void _showSnackBar(String msg, Color color) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: color));
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      extendBodyBehindAppBar: true,
+      appBar: AppBar(title: const Text("التكويد الأساسي"), backgroundColor: Colors.transparent, elevation: 0),
       body: Container(
-        width: double.infinity,
-        height: double.infinity,
         decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFF1A237E), Color(0xFF3949AB)],
-          ),
+          gradient: LinearGradient(colors: [Color(0xFF0F172A), Color(0xFF1E293B)]),
         ),
         child: SafeArea(
-          child: Column(
-            children: [
-              // الهيدر
-              Padding(
+          child: _isLoading 
+            ? const Center(child: CircularProgressIndicator())
+            : ListView(
                 padding: const EdgeInsets.all(20),
-                child: Row(
-                  children: [
-                    IconButton(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white),
-                    ),
-                    const Text(
-                      "صفحة التكويد",
-                      style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
-                    ),
-                  ],
-                ),
+                children: [
+                  _buildSection("تكويد الخزائن", Icons.account_balance_wallet, () => _openManageModal("safes", "الخزائن")),
+                  _buildSection("تكويد الموردين", Icons.local_shipping, () => _openManageModal("suppliers", "الموردين")),
+                  _buildSection("تكويد الأصناف", Icons.inventory_2, () => _openManageModal("items", "الأصناف")),
+                  _buildSection("تكويد المصروفات", Icons.payments, () => _openManageModal("expenses", "المصروفات")),
+                ],
               ),
-              // تكملة الـ Column داخل الـ SafeArea
-              Expanded(
-                child: ListView(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  children: [
-                    const SizedBox(height: 10),
-                    
-                    // قسم تكويد الموردين
-                    _buildCodingSection(
-                      title: "تكويد الموردين",
-                      icon: Icons.person_add_alt_1_rounded,
-                      onTap: () => _openCodingModal("الموردين"),
-                      delay: 0.2,
-                    ),
-
-                    // قسم تكويد التصنيفات (وارد / دفعة)
-                    _buildCodingSection(
-                      title: "تكويد التصنيفات",
-                      icon: Icons.category_rounded,
-                      onTap: () => _openCodingModal("التصنيفات"),
-                      delay: 0.4,
-                    ),
-
-                    // قسم تكويد الوظائف والأدوار
-                    _buildCodingSection(
-                      title: "تكويد الوظائف (الصلاحيات)",
-                      icon: Icons.admin_panel_settings_rounded,
-                      onTap: () => _openCodingModal("الوظائف"),
-                      delay: 0.6,
-                    ),
-
-                    // قسم تكويد الأكواد المسموحة للشركات
-                    _buildCodingSection(
-                      title: "أكواد الشركات المتعاقدة",
-                      icon: Icons.business_rounded,
-                      onTap: () => _openCodingModal("الشركات"),
-                      delay: 0.8,
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
         ),
       ),
     );
   }
 
-  // دالة لفتح نافذة إدخال الكود الجديد (Bottom Sheet زجاجي)
-  void _openCodingModal(String type) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent, // عشان يبان التأثير الزجاجي
-      isScrollControlled: true,
-      builder: (context) => Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+  Widget _buildSection(String title, IconData icon, VoidCallback onTap) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 15),
+      child: InkWell(
+        onTap: onTap,
         child: GlassCard(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+          child: Row(
             children: [
-              Text(
-                "إضافة كود جديد لـ $type",
-                style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 20),
-              _buildModalField("الاسم / المسمى", Icons.edit),
-              const SizedBox(height: 15),
-              _buildModalField("الكود التعريفي", Icons.numbers),
-              const SizedBox(height: 25),
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: ElevatedButton(
-                  onPressed: () => Navigator.pop(context),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    foregroundColor: const Color(0xFF1A237E),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                  ),
-                  child: const Text("حفظ الكود محلياً", style: TextStyle(fontWeight: FontWeight.bold)),
-                ),
-              ),
-              const SizedBox(height: 10),
+              Icon(icon, color: Colors.blueAccent, size: 28),
+              const SizedBox(width: 20),
+              Text(title, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+              const Spacer(),
+              const Icon(Icons.settings, color: Colors.white24),
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildModalField(String label, IconData icon) {
-    return TextField(
-      style: const TextStyle(color: Colors.white),
-      decoration: InputDecoration(
-        prefixIcon: Icon(icon, color: Colors.white70),
-        labelText: label,
-        labelStyle: const TextStyle(color: Colors.white70),
-        filled: true,
-        fillColor: Colors.white.withOpacity(0.05),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(15)),
       ),
     );
   }
 }
-  
