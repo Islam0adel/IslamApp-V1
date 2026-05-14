@@ -49,12 +49,12 @@ flutter:
     - assets/images/app_icon.png
 
   # تعريف خط Cairo عشان يشتغل مع الهوية البصرية
-  fonts:
-    - family: Cairo
-      fonts:
-        - asset: assets/fonts/Cairo-Regular.ttf
-        - asset: assets/fonts/Cairo-Bold.ttf
-          weight: 700
+  # fonts:
+  #   - family: Cairo
+  #     fonts:
+  #       - asset: assets/fonts/Cairo-Regular.ttf
+  #       - asset: assets/fonts/Cairo-Bold.ttf
+  #         weight: 700
 
 # إعدادات أيقونة البرنامج للـ Web
 flutter_launcher_icons:
