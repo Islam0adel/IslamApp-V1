@@ -42,21 +42,221 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       if (mounted) {
         setState(() {
           _secondsElapsed++;
-          _currentTime = DateFormat('hh:mm:ss a').format(DateTime.now());
+          _currentTime = DateFormat('hh:mm a').format(DateTime.now());
           _currentDate = DateFormat('yyyy-MM-dd').format(DateTime.now());
         });
       }
     });
   }
 
-  String _formatDuration(int totalSeconds) {
-    int h = totalSeconds ~/ 3600;
-    int m = (totalSeconds % 3600) ~/ 60;
-    int s = totalSeconds % 60;
+  // دالة تحويل الثواني لشكل وقت (00:00:00)
+  String _formatDuration(int seconds) {
+    int h = seconds ~/ 3600;
+    int m = (seconds % 3600) ~/ 60;
+    int s = seconds % 60;
     return "${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}";
   }
 
-  void _handleLogout() async {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      extendBodyBehindAppBar: true,
+      body: Container(
+        width: double.infinity,
+        height: double.infinity,
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFF020617), Color.fromARGB(255, 47, 54, 190), Color(0xFF020617)], // الخلفية المموجة الداكنة
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
+            child: Column(
+              children: [
+                // اسم البرنامج في الأعلى
+                const Text(
+                  "IslamApp V1.0",
+                  style: TextStyle(color: Color.fromARGB(213, 123, 248, 51), fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.2),
+                ),
+                const SizedBox(height: 10),
+                
+                // الهيدر (الشركة والمستخدم)
+                _buildHeader(),
+                const SizedBox(height: 15),
+
+                // وقت النشاط باللون الأحمر
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.timer, color: Colors.redAccent, size: 16),
+                    const SizedBox(width: 5),
+                    const Text("وقت النشاط: ", style: TextStyle(color: Colors.white70, fontSize: 13, fontFamily: 'Cairo')),
+                    Text(_formatDuration(_secondsElapsed), 
+                      style: const TextStyle(color: Colors.redAccent, fontSize: 14, fontWeight: FontWeight.bold, fontFamily: 'monospace')),
+                  ],
+                ),
+                const SizedBox(height: 15),
+
+                // الوقت والتاريخ جنب بعض (بيتقلبوا فوق بعض في الشاشات الصغيرة تلقائياً)
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  alignment: WrapAlignment.center,
+                  children: [
+                    _buildSmallInfo("الوقت", _currentTime, Icons.access_time, Colors.amber),
+                    _buildSmallInfo("التاريخ", _currentDate, Icons.calendar_today, Colors.lightBlueAccent),
+                  ],
+                ),
+                const SizedBox(height: 20),
+
+                _buildMenuGrid(), // الجزء القادم
+                const SizedBox(height: 20),
+                _buildBottomActions(),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    return GlassCard(
+      child: Row(
+        children: [
+          const Icon(Icons.business, color: Colors.amber, size: 30),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(widget.companyName, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+                Text("المستخدم: ${widget.userName}", style: const TextStyle(color: Colors.white60, fontSize: 12, fontFamily: 'Cairo')),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSmallInfo(String label, String value, IconData icon, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 16),
+          const SizedBox(width: 6),
+          Text("$label: ", style: const TextStyle(color: Colors.white70, fontSize: 11, fontFamily: 'Cairo')),
+          Text(value, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+  Widget _buildMenuGrid() {
+    return GridView.count(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      crossAxisCount: 2, // زرارين في كل صف عشان الحجم ميكبرش
+      mainAxisSpacing: 15,
+      crossAxisSpacing: 15,
+      childAspectRatio: 3.2, // نسبة العرض للطول عشان الزرار يبقى مستطيل صغير وشيك
+      children: [
+        _menuItem("حركة الخزينة", Icons.account_balance_wallet_rounded, Colors.greenAccent, () {
+          Navigator.push(context, MaterialPageRoute(builder: (c) => DailyPage(companyCode: widget.companyCode)));
+        }),
+        _menuItem("التكويد", Icons.code_rounded, Colors.amber, () {
+          Navigator.push(context, MaterialPageRoute(builder: (c) => CodingPage(companyCode: widget.companyCode)));
+        }),
+        
+        _menuItem("حسابات الموردين", Icons.local_shipping_rounded, Colors.lightBlueAccent, () {}),
+        _menuItem("حركة الجرد", Icons.inventory_2_rounded, Colors.orangeAccent, () {}),
+        _menuItem("التقارير", Icons.analytics_rounded, Colors.purpleAccent, () {}),
+        _menuItem("الاعدادات", Icons.settings_rounded, Colors.blueGrey, () {}),
+      ],
+    );
+  }
+
+  Widget _menuItem(String title, IconData icon, Color color, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(15),
+      child: GlassCard(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: color, size: 28), // حجم الأيقونة مناسب للموبايل
+            const SizedBox(height: 8),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13, // خط متوسط وواضح
+                fontWeight: FontWeight.bold,
+                fontFamily: 'Cairo'
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBottomActions() {
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: _bottomBtn("الدعم الفني", Icons.headset_mic_rounded, Colors.white60, () {}),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _bottomBtn("تسجيل الخروج", Icons.logout_rounded, Colors.redAccent, _handleLogout),
+            ),
+          ],
+        ),
+        const SizedBox(height: 15),
+      ],
+    );
+  }
+
+  Widget _bottomBtn(String label, IconData icon, Color color, VoidCallback action) {
+    return InkWell(
+      onTap: action,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.03),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white10),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: color, size: 18),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold, fontFamily: 'Cairo'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleLogout() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
     if (!mounted) return;
@@ -73,188 +273,4 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     _mainController.dispose();
     super.dispose();
   }
-
-  @override
-  Widget build(BuildContext context) {
-    double width = MediaQuery.of(context).size.width;
-    bool isDesktop = width > 900;
-
-    return Scaffold(
-      body: Container(
-        width: double.infinity,
-        height: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
-          ),
-        ),
-        child: SafeArea(
-          child: FadeTransition(
-            opacity: _mainController,
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                children: [
-                  // الهيدر (الاسم والشركة + وقت النشاط)
-                  _buildHeader(isDesktop),
-                  
-                  const SizedBox(height: 10),
-                  
-                  // الوقت والتاريخ
-                  _buildDateTimeBar(isDesktop),
-
-                  const SizedBox(height: 25),
-
-                  // التبويبات الكبيرة (Responsive)
-                  Expanded(
-                    child: _buildMainGrid(isDesktop),
-                  ),
-
-                  const SizedBox(height: 15),
-
-                  // أزرار الوصول السريع تحت
-                  _buildBottomActions(),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHeader(bool isDesktop) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Row(
-          children: [
-            CircleAvatar(
-              backgroundColor: Colors.blueAccent.withOpacity(0.1),
-              child: const Icon(Icons.person, color: Colors.blueAccent),
-            ),
-            const SizedBox(width: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(widget.userName, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-                Text(widget.companyName, style: const TextStyle(color: Colors.white60, fontSize: 12)),
-              ],
-            ),
-          ],
-        ),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            const Text("وقت النشاط", style: TextStyle(color: Colors.white38, fontSize: 10)),
-            Text(
-              _formatDuration(_secondsElapsed),
-              style: const TextStyle(color: Colors.redAccent, fontSize: 16, fontWeight: FontWeight.bold, fontFamily: 'monospace'),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildDateTimeBar(bool isDesktop) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.end,
-      children: [
-        Text(_currentTime, style: const TextStyle(color: Colors.white38, fontSize: 12)),
-        const SizedBox(width: 15),
-        Text(_currentDate, style: const TextStyle(color: Colors.white38, fontSize: 12)),
-      ],
-    );
-  }
-
-  Widget _buildMainGrid(bool isDesktop) {
-    return GridView.count(
-      // 3 أزرار في السطر للابتوب و 2 للموبايل (زي ما إنت محدد)
-      crossAxisCount: isDesktop ? 3 : 2,
-      mainAxisSpacing: 15,
-      crossAxisSpacing: 15,
-      shrinkWrap: true, // أضفت دي عشان الجريد مياخدش مساحة لانهائية ويعمل Overflow
-      physics: const NeverScrollableScrollPhysics(), // عشان الصفحة تسكرول كلها كحته واحدة
-      childAspectRatio: isDesktop ? 2.2 : 1.1, 
-      children: [
-        _moduleCard("حركة الخزينة", Icons.account_balance_wallet_rounded, Colors.tealAccent, () {
-            Navigator.push(
-              context, 
-              MaterialPageRoute(
-                builder: (context) => DailyPage(companyCode: widget.companyCode) // التعديل هنا: بنمرر الكود
-              ),
-            );
-          }),
-        _moduleCard("حسابات الموردين", Icons.local_shipping_rounded, Colors.orangeAccent, () {}),
-        _moduleCard("التقارير", Icons.analytics_rounded, Colors.purpleAccent, () {}),
-        _moduleCard("حركة الجرد", Icons.inventory_2_rounded, Colors.amberAccent, () {}),
-        _moduleCard("التكويد", Icons.api_rounded, Colors.blueAccent, () {
-          // التعديل الجوهري هنا: بنمرر كود الشركة اللي جاي للهوم باج أصلاً
-          Navigator.push(
-            context, 
-            MaterialPageRoute(
-              builder: (context) => CodingPage(companyCode: widget.companyCode)
-            ),
-          );
-        }),
-        _moduleCard("الإعدادات", Icons.settings_suggest_rounded, Colors.blueGrey, () {}),
-      ],
-    );
-  }
-
-  Widget _moduleCard(String title, IconData icon, Color color, VoidCallback onTap) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(20),
-      child: GlassCard(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: color, size: 28), // صغرت الأيقونة شوية لتناسب الحجم الجديد
-            const SizedBox(height: 8),
-            Text(title, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBottomActions() {
-    return Row(
-      children: [
-        Expanded(
-          child: _bottomBtn("الدعم الفني", Icons.headset_mic_rounded, Colors.white60, () {}),
-        ),
-        const SizedBox(width: 15),
-        Expanded(
-          child: _bottomBtn("تسجيل الخروج", Icons.logout_rounded, Colors.redAccent, _handleLogout),
-        ),
-      ],
-    );
-  }
-
-  Widget _bottomBtn(String label, IconData icon, Color color, VoidCallback action) {
-    return InkWell(
-      onTap: action,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.03),
-          borderRadius: BorderRadius.circular(15),
-          border: Border.all(color: Colors.white10),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: color, size: 18),
-            const SizedBox(width: 8),
-            Text(label, style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w600)),
-          ],
-        ),
-      ),
-    );
-  }
-}
+} // نهاية الكلاس تمام يا هندسة
