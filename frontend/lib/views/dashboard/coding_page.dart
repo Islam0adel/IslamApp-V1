@@ -85,7 +85,7 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
                       child: Column(
                         children: [
                           const Align(alignment: Alignment.centerRight, child: Text("اختر القسم", style: TextStyle(color: Colors.amber, fontSize: 14, fontFamily: 'Cairo'))),
-                          const SizedBox(height: 10),
+                          const SizedBox(height: 15),
                           Wrap(
                             spacing: 8, runSpacing: 8, alignment: WrapAlignment.center,
                             children: [

@@ -134,7 +134,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(widget.companyName, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
-                Text("المستخدم: ${widget.userName}", style: const TextStyle(color: Colors.white60, fontSize: 12, fontFamily: 'Cairo')),
+                Text("مرحبا: ${widget.userName}", style: const TextStyle(color: Colors.white60, fontSize: 12, fontFamily: 'Cairo')),
               ],
             ),
           ),
@@ -169,7 +169,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       crossAxisCount: 2, // زرارين في كل صف عشان الحجم ميكبرش
       mainAxisSpacing: 15,
       crossAxisSpacing: 15,
-      childAspectRatio: 3.2, // نسبة العرض للطول عشان الزرار يبقى مستطيل صغير وشيك
+      childAspectRatio: 2.2, // نسبة العرض للطول عشان الزرار يبقى مستطيل صغير وشيك
       children: [
         _menuItem("حركة الخزينة", Icons.account_balance_wallet_rounded, Colors.greenAccent, () {
           Navigator.push(context, MaterialPageRoute(builder: (c) => DailyPage(companyCode: widget.companyCode)));
