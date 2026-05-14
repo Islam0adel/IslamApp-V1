@@ -3,7 +3,6 @@ description: "IslamApp V 1.0 - Advanced Financial System"
 version: 1.0.0+1
 publish_to: 'none'
 
-# تحديد إصدار الـ SDK لضمان استقرار الأداء
 environment:
   sdk: '>=3.4.0 <4.0.0'
 
@@ -11,45 +10,56 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # مكتبة الـ HTTP للربط مع الـ FastAPI
+  # الربط مع الـ API
   http: ^1.1.0
 
-  # مكتبة حفظ البيانات محلياً (ضرورية لخاصية تذكرني)
+  # حفظ البيانات محلياً (تذكرني)
   shared_preferences: ^2.2.2
 
-  # المكتبة المسؤولة عن فتح روابط استعادة كلمة المرور
+  # فتح الروابط الخارجية
   url_launcher: ^6.2.1
 
-  # المكتبة الأساسية للتعامل مع الوقت والتاريخ والعملات
+  # الوقت والتاريخ والعملات
   intl: ^0.19.0
 
-  # مكتبة الرسوم البيانية لتقارير المبيعات
+  # الرسوم البيانية للتقارير
   fl_chart: ^0.66.0
 
-  # أيقونات أبل الجميلة
   cupertino_icons: ^1.0.6
 
-  firebase_auth: ^5.1.1  # أضف هذا السطر
-  firebase_core: ^3.1.1  # تأكد من وجوده
+  # فيربيز
+  firebase_auth: ^5.1.1
+  firebase_core: ^3.1.1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   
-  # مكتبة قواعد الكود لضمان نظافة البرمجة
   flutter_lints: ^3.0.0
 
+  # مكتبة الأيقونات
+  flutter_launcher_icons: ^0.13.1
+
 flutter:
-  # تفعيل نظام Material 3 للأشكال العصرية والانحناءات الزجاجية
   uses-material-design: true
 
-  # ---------------------------------------------------------
-  # ملاحظة: لو حابب تفعّل خط Cairo، فك التعليق عن الأسطر اللي تحت
-  # وتأكد من وجود الملفات في فولدر assets/fonts
-  # ---------------------------------------------------------
-  # fonts:
-  #   - family: Cairo
-  #     fonts:
-  #       - asset: assets/fonts/Cairo-Regular.ttf
-  #       - asset: assets/fonts/Cairo-Bold.ttf
-  #         weight: 700
+  # تعريف الأصول (الصور والأيقونات)
+  assets:
+    - assets/images/
+    - assets/images/app_icon.png
+
+  # تعريف خط Cairo عشان يشتغل مع الهوية البصرية
+  fonts:
+    - family: Cairo
+      fonts:
+        - asset: assets/fonts/Cairo-Regular.ttf
+        - asset: assets/fonts/Cairo-Bold.ttf
+          weight: 700
+
+# إعدادات أيقونة البرنامج للـ Web
+flutter_launcher_icons:
+  web:
+    generate: true
+    image_path: "assets/images/app_icon.png"
+    background_color: "#020617"
+    theme_color: "#020617"
