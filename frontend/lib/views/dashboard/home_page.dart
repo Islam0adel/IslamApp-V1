@@ -169,7 +169,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       crossAxisCount: 2, // زرارين في كل صف عشان الحجم ميكبرش
       mainAxisSpacing: 15,
       crossAxisSpacing: 15,
-      childAspectRatio: 2.2, // نسبة العرض للطول عشان الزرار يبقى مستطيل صغير وشيك
+      childAspectRatio: 1.1, // نسبة العرض للطول عشان الزرار يبقى مستطيل صغير وشيك
       children: [
         _menuItem("حركة الخزينة", Icons.account_balance_wallet_rounded, Colors.greenAccent, () {
           Navigator.push(context, MaterialPageRoute(builder: (c) => DailyPage(companyCode: widget.companyCode)));
