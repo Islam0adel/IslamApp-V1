@@ -1,83 +1,67 @@
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException
 from app.core.firebase_setup import db
-from google.cloud import firestore
-from typing import List, Optional
-from datetime import datetime
+from pydantic import BaseModel
+from typing import Optional
 
 router = APIRouter()
 
-# 1. تعريف شكل البيانات (Schema) للعملية المالية
-class Transaction(BaseModel):
-    date: str
-    type: str  # مثل: "توريد", "صرف"
-    category: str # مثل: "مبيعات", "مشتريات", "رواتب"
+class TransactionModel(BaseModel):
+    company_code: str
+    serial: int
+    treasury: str  # وحدنا الاسم
     amount: float
-    details: Optional[str] = None
-    userName: str  # اسم الموظف اللي عمل العملية
-    company_code: str  # كود الشركة (الأساسي للفصل)
+    statement: str
+    category: str  # وحدنا الاسم
+    date: str
+    type: str
 
-# 2. دالة إضافة عملية جديدة
-@router.post("/add")
-async def add_transaction(transaction: Transaction):
+@router.post("/save")
+async def save_transaction(data: TransactionModel):
     try:
-        # تحويل البيانات لقاموس (Dictionary)
-        transaction_data = transaction.dict()
+        doc_ref = db.collection("transactions").document(data.company_code)\
+            .collection("daily_records").document(str(data.serial))
         
-        # إضافة طابع زمني من السيرفر للتنظيم
-        transaction_data["server_timestamp"] = firestore.SERVER_TIMESTAMP
-        
-        # حفظ العملية في مجموعة transactions
-        # كل عملية بتنزل ومعاها الـ company_code بتاعها
-        db.collection("transactions").add(transaction_data)
-        
-        return {"status": "success", "message": "تم تسجيل العملية بنجاح"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"خطأ أثناء الحفظ: {str(e)}")
-
-# 3. دالة جلب العمليات (مفلترة بكود الشركة)
-@router.get("/all")
-async def get_transactions(company_code: str = Query(...)):
-    """
-    هذه الدالة هي المسؤولة عن 'الفصل'. 
-    تستقبل كود الشركة وبترجع فقط البيانات الخاصة بيها.
-    """
-    try:
-        # الاستعلام من فايربيز مع شرط المساواة (where)
-        docs = db.collection("transactions")\
-                 .where("company_code", "==", company_code)\
-                 .order_by("server_timestamp", direction=firestore.Query.DESCENDING)\
-                 .stream()
-        
-        transactions_list = []
-        for doc in docs:
-            data = doc.to_dict()
-            data["id"] = doc.id  # إضافة معرف الوثيقة
-            # تحويل الـ timestamp لنص عشان يتبعت للفلاتر صح لو محتاجه
-            if "server_timestamp" in data and data["server_timestamp"]:
-                data["server_timestamp"] = data["server_timestamp"].isoformat()
-            transactions_list.append(data)
-            
-        return transactions_list
-    except Exception as e:
-        # ملاحظة: لو أول مرة تشغل الـ OrderBy، فايربيز هيطلب منك عمل Index (رابط هيظهر في الـ Logs)
-        raise HTTPException(status_code=500, detail=f"خطأ أثناء جلب البيانات: {str(e)}")
-
-# 4. دالة لحذف عملية (اختياري)
-@router.delete("/delete/{doc_id}")
-async def delete_transaction(doc_id: str, company_code: str):
-    try:
-        doc_ref = db.collection("transactions").document(doc_id)
-        doc = doc_ref.get()
-        
-        if not doc.exists:
-            raise HTTPException(status_code=404, detail="العملية غير موجودة")
-            
-        # زيادة في الأمان: نتحقق إن اللي بيمسح تبع نفس الشركة
-        if doc.to_dict().get("company_code") != company_code:
-            raise HTTPException(status_code=403, detail="ليس لديك صلاحية لحذف هذه البيانات")
-            
-        doc_ref.delete()
-        return {"message": "تم الحذف بنجاح"}
+        # بنحفظ البيانات زي ما هي جاية من الموديل
+        doc_ref.set(data.dict())
+        return {"status": "success", "message": "تم الحفظ بنجاح"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/summary/{company_code}")
+async def get_summary(company_code: str):
+    try:
+        docs = db.collection("transactions").document(company_code)\
+            .collection("daily_records").stream()
+        
+        cash = 0.0
+        visa = 0.0
+        
+        for d in docs:
+            item = d.to_dict()
+            amt = float(item.get('amount', 0))
+            cat = item.get('category', '')
+
+            # منطق النقدي
+            if cat in ["ايراد", "تحويل من الفيزا"]:
+                cash += amt
+            elif cat not in ["فيزا", "تحويل من النقدي"]:
+                cash -= amt
+
+            # منطق الفيزا
+            if cat in ["فيزا", "تحويل من النقدي"]:
+                visa += amt
+            elif cat == "تحويل من الفيزا":
+                visa -= amt
+
+        return {"cash_balance": cash, "visa_balance": visa}
+    except Exception as e:
+        return {"cash_balance": 0.0, "visa_balance": 0.0}
+
+@router.get("/last_serial/{company_code}")
+async def get_last_serial(company_code: str):
+    try:
+        docs = db.collection("transactions").document(company_code)\
+            .collection("daily_records").order_by("serial", direction="DESCENDING").limit(1).get()
+        if not docs: return {"last_serial": 0}
+        return {"last_serial": docs[0].to_dict().get('serial', 0)}
+    except: return {"last_serial": 0}

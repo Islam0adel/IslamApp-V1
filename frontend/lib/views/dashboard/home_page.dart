@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../views/widgets/glass_card.dart';
 import '../auth/login_screen.dart';
 import 'coding_page.dart';
+import 'daily_page.dart';
 
 class HomePage extends StatefulWidget {
   final String userName;
@@ -180,8 +181,13 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       childAspectRatio: isDesktop ? 2.2 : 1.1, 
       children: [
         _moduleCard("حركة الخزينة", Icons.account_balance_wallet_rounded, Colors.tealAccent, () {
-          // هنا هنربط صفحة الخزينة لما نخلصها
-        }),
+            Navigator.push(
+              context, 
+              MaterialPageRoute(
+                builder: (context) => DailyPage(companyCode: widget.companyCode) // التعديل هنا: بنمرر الكود
+              ),
+            );
+          }),
         _moduleCard("حسابات الموردين", Icons.local_shipping_rounded, Colors.orangeAccent, () {}),
         _moduleCard("التقارير", Icons.analytics_rounded, Colors.purpleAccent, () {}),
         _moduleCard("حركة الجرد", Icons.inventory_2_rounded, Colors.amberAccent, () {}),

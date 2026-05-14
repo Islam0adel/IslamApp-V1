@@ -61,3 +61,7 @@ tree /f > project_structure.txt
 تشغيل سيرفر البايثون من التيرمينال
 uvicorn app.main:app --reload
 
+ـــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــ
+تشغيل علي اي متصفح
+flutter run -d web-server
+
