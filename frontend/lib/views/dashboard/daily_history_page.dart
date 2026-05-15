@@ -2,15 +2,24 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 // Alias عشان نحل مشكلة الـ Border والتعارض مع فلاتر
-import 'package:excel/excel.dart' as excel_lib; 
+
 import 'package:file_picker/file_picker.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../services/daily_service.dart';
 import 'daily_page.dart';
+import 'dart:typed_data'; // مهم جداً للويب
+import 'package:universal_html/html.dart' as html; // للتحميل في الويب
+import 'package:excel/excel.dart' as excel_lib;
 
 class DailyHistoryPage extends StatefulWidget {
   final String companyCode;
-  const DailyHistoryPage({super.key, required this.companyCode});
+  final String? userName; // خليه اختياري بعلامة الاستفهام
+
+  const DailyHistoryPage({
+    super.key,
+    required this.companyCode,
+    this.userName, // شيل كلمة required من هنا
+  });
 
   @override
   State<DailyHistoryPage> createState() => _DailyHistoryPageState();
@@ -38,7 +47,7 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
         DateFormat('yyyy-MM-dd').format(_fromDate),
         DateFormat('yyyy-MM-dd').format(_toDate),
       );
-      
+
       setState(() {
         _historyData = data;
         _applySorting();
@@ -63,65 +72,103 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
       }
     });
   }
-  // 3- دالة التصدير إلى Excel مع اختيار مكان الحفظ (للويندوز واللاب)
-  Future<void> _exportToExcel() async {
-    if (_historyData.isEmpty) {
-      _showSnackBar("لا توجد بيانات لتصديرها", Colors.orange);
-      return;
+
+// تأكد إنك بتمرر اسم المستخدم للصفحة دي أو بتجيبه من التخزين
+  // هفترض إن عندك متغير اسمه userName موجود في الصفحة
+
+Future<void> _exportToExcel() async {
+  // 1. التحقق من وجود بيانات
+  if (_historyData.isEmpty) {
+    _showSnackBar("لا توجد بيانات لتصديرها", Colors.orange);
+    return;
+  }
+
+  try {
+    // 2. إعداد اسم الملف مع التاريخ (مثال: تقرير_اليومية_15-5-2026.xlsx)
+    String formattedDate = "${DateTime.now().day}-${DateTime.now().month}-${DateTime.now().year}";
+    String fileName = "تقرير_اليومية_$formattedDate.xlsx";
+
+    // 3. إنشاء كائن Excel
+    var excel = excel_lib.Excel.createExcel();
+
+    // 4. حل مشكلة الشيتات الزائدة (مثل شيت فلاتر أو Sheet1)
+    // نقوم بتغيير اسم أول شيت افتراضي للمكتبة بدلاً من إنشاء شيت جديد
+    String defaultSheet = excel.tables.keys.first;
+    excel.rename(defaultSheet, 'Daily_Records');
+    excel_lib.Sheet sheetObject = excel['Daily_Records'];
+
+    // التأكد من حذف أي شيتات أخرى قد تظهر
+    for (var table in excel.tables.keys.toList()) {
+      if (table != 'Daily_Records') {
+        excel.delete(table);
+      }
     }
 
-    try {
-      var excel = excel_lib.Excel.createExcel();
-      excel_lib.Sheet sheetObject = excel['Daily_Records'];
+    // 5. إضافة سطر العناوين
+    sheetObject.appendRow([
+      excel_lib.TextCellValue("رقم الإذن"),
+      excel_lib.TextCellValue("المبلغ"),
+      excel_lib.TextCellValue("البيان"),
+      excel_lib.TextCellValue("التصنيف"),
+      excel_lib.TextCellValue("التاريخ"),
+    ]);
 
-      // العناوين المطلوبة
+    // 6. إضافة البيانات من القائمة
+    for (var row in _historyData) {
       sheetObject.appendRow([
-        excel_lib.TextCellValue("رقم الإذن"),
-        excel_lib.TextCellValue("المبلغ"),
-        excel_lib.TextCellValue("البيان"),
-        excel_lib.TextCellValue("التصنيف"),
-        excel_lib.TextCellValue("التاريخ"),
-        excel_lib.TextCellValue("الموظف"),
+        excel_lib.TextCellValue(row['serial']?.toString() ?? ""),
+        excel_lib.TextCellValue(row['amount']?.toString() ?? "0"),
+        excel_lib.TextCellValue(row['statement'] ?? ""),
+        excel_lib.TextCellValue(row['category'] ?? ""),
+        excel_lib.TextCellValue(row['date'] ?? ""),
       ]);
+    }
 
-      for (var row in _historyData) {
-        sheetObject.appendRow([
-          excel_lib.TextCellValue(row['serial'].toString()),
-          excel_lib.TextCellValue(row['amount'].toString()),
-          excel_lib.TextCellValue(row['statement'] ?? ""),
-          excel_lib.TextCellValue(row['category'] ?? ""),
-          excel_lib.TextCellValue(row['date'] ?? ""),
-          excel_lib.TextCellValue(row['employee'] ?? ""),
-        ]);
-      }
+    // 7. تحويل الملف إلى بايتات (Encode)
+    var fileBytes = excel.encode();
+    if (fileBytes == null) return;
 
-      // فتح نافذة الويندوز لاختيار مكان الحفظ
+    // 8. منطق التحميل حسب المنصة (ويب أو ويندوز)
+    if (identical(0, 0.0)) {
+      // --- كود الويب (تحميل مباشر للمتصفح) ---
+      final blob = html.Blob([fileBytes], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      final url = html.Url.createObjectUrlFromBlob(blob);
+      
+      final anchor = html.AnchorElement(href: url)
+        ..setAttribute("download", fileName)
+        ..click();
+      
+      html.Url.revokeObjectUrl(url);
+      _showSnackBar("تم تحميل $fileName بنجاح", Colors.green);
+    } else {
+      // --- كود الويندوز (حفظ في مسار محدد) ---
       String? selectedPath = await FilePicker.platform.saveFile(
         dialogTitle: 'اختر مكان حفظ ملف الإكسيل',
-        fileName: 'تقرير_اليومية.xlsx',
+        fileName: fileName,
         type: FileType.custom,
         allowedExtensions: ['xlsx'],
       );
 
       if (selectedPath != null) {
-        // التأكد من الامتداد في الويندوز
         if (!selectedPath.endsWith('.xlsx')) selectedPath += '.xlsx';
-        
         final file = File(selectedPath);
-        await file.writeAsBytes(excel.encode()!);
+        await file.writeAsBytes(fileBytes);
         _showSnackBar("تم حفظ الملف في: $selectedPath", Colors.green);
       }
-    } catch (e) {
-      _showSnackBar("فشل التصدير: $e", Colors.red);
     }
+  } catch (e) {
+    debugPrint("Export Error: $e");
+    _showSnackBar("فشل التصدير: $e", Colors.red);
   }
+}
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
-        title: const Text("معاينة الأذون", style: TextStyle(fontFamily: 'Cairo')),
+        title:
+            const Text("معاينة الأذون", style: TextStyle(fontFamily: 'Cairo')),
         backgroundColor: Colors.transparent,
         elevation: 0,
         actions: [
@@ -140,7 +187,9 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
                 _isCategoryGrouped = !_isCategoryGrouped;
                 _applySorting();
               });
-              _showSnackBar(_isCategoryGrouped ? "ترتيب حسب التصنيف" : "ترتيب حسب الإذن", Colors.indigo);
+              _showSnackBar(
+                  _isCategoryGrouped ? "ترتيب حسب التصنيف" : "ترتيب حسب الإذن",
+                  Colors.indigo);
             },
           ),
         ],
@@ -151,7 +200,8 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
         decoration: BoxDecoration(
           gradient: LinearGradient(
             colors: [Colors.black, Colors.indigo.shade900, Colors.black],
-            begin: Alignment.topLeft, end: Alignment.bottomRight,
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
         ),
         child: SafeArea(
@@ -160,14 +210,18 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
               _buildDateFilters(),
               _buildTableHeader(),
               Expanded(
-                child: _isLoading 
-                  ? const Center(child: CircularProgressIndicator(color: Colors.white))
-                  : _historyData.isEmpty 
-                    ? const Center(child: Text("لا توجد بيانات", style: TextStyle(color: Colors.white38)))
-                    : ListView.builder(
-                        itemCount: _historyData.length,
-                        itemBuilder: (context, index) => _buildDataRow(_historyData[index]),
-                      ),
+                child: _isLoading
+                    ? const Center(
+                        child: CircularProgressIndicator(color: Colors.white))
+                    : _historyData.isEmpty
+                        ? const Center(
+                            child: Text("لا توجد بيانات",
+                                style: TextStyle(color: Colors.white38)))
+                        : ListView.builder(
+                            itemCount: _historyData.length,
+                            itemBuilder: (context, index) =>
+                                _buildDataRow(_historyData[index]),
+                          ),
               ),
             ],
           ),
@@ -175,6 +229,7 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
       ),
     );
   }
+
   // 1. ويدجت فلتر التاريخ
   Widget _buildDateFilters() {
     return Padding(
@@ -187,7 +242,8 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
               setState(() => _fromDate = d!);
               _fetchData();
             }),
-            const Icon(Icons.arrow_forward_ios, color: Colors.white24, size: 15),
+            const Icon(Icons.arrow_forward_ios,
+                color: Colors.white24, size: 15),
             _datePickerBtn("إلى", _toDate, (d) {
               setState(() => _toDate = d!);
               _fetchData();
@@ -198,7 +254,8 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
     );
   }
 
-  Widget _datePickerBtn(String label, DateTime date, Function(DateTime?) onPick) {
+  Widget _datePickerBtn(
+      String label, DateTime date, Function(DateTime?) onPick) {
     return InkWell(
       onTap: () async {
         DateTime? p = await showDatePicker(
@@ -211,9 +268,11 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
       },
       child: Column(
         children: [
-          Text(label, style: const TextStyle(color: Colors.white60, fontSize: 12)),
-          Text(DateFormat('yyyy-MM-dd').format(date), 
-               style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          Text(label,
+              style: const TextStyle(color: Colors.white60, fontSize: 12)),
+          Text(DateFormat('yyyy-MM-dd').format(date),
+              style: const TextStyle(
+                  color: Colors.white, fontWeight: FontWeight.bold)),
         ],
       ),
     );
@@ -224,13 +283,30 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 15),
       margin: const EdgeInsets.symmetric(horizontal: 10),
-      decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(10)),
+      decoration: BoxDecoration(
+          color: Colors.white10, borderRadius: BorderRadius.circular(10)),
       child: Row(
         children: const [
-          Expanded(flex: 2, child: Text("المبلغ", style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold))),
-          Expanded(flex: 3, child: Text("البيان", style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold))),
-          Expanded(flex: 2, child: Text("التصنيف", style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold))),
-          Expanded(flex: 2, child: Text("التاريخ", style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold))),
+          Expanded(
+              flex: 2,
+              child: Text("المبلغ",
+                  style: TextStyle(
+                      color: Colors.cyan, fontWeight: FontWeight.bold))),
+          Expanded(
+              flex: 3,
+              child: Text("البيان",
+                  style: TextStyle(
+                      color: Colors.cyan, fontWeight: FontWeight.bold))),
+          Expanded(
+              flex: 2,
+              child: Text("التصنيف",
+                  style: TextStyle(
+                      color: Colors.cyan, fontWeight: FontWeight.bold))),
+          Expanded(
+              flex: 2,
+              child: Text("التاريخ",
+                  style: TextStyle(
+                      color: Colors.cyan, fontWeight: FontWeight.bold))),
         ],
       ),
     );
@@ -248,11 +324,24 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
         ),
         child: Row(
           children: [
-            Expanded(flex: 2, child: Text("${item['amount']}", style: const TextStyle(color: Colors.white))),
-            Expanded(flex: 3, child: Text("${item['statement']}", 
-                style: const TextStyle(color: Colors.white70, fontSize: 12), overflow: TextOverflow.ellipsis)),
-            Expanded(flex: 2, child: Text("${item['category']}", style: const TextStyle(color: Colors.white70))),
-            Expanded(flex: 2, child: Text("${item['date']}", style: const TextStyle(color: Colors.white60, fontSize: 11))),
+            Expanded(
+                flex: 2,
+                child: Text("${item['amount']}",
+                    style: const TextStyle(color: Colors.white))),
+            Expanded(
+                flex: 3,
+                child: Text("${item['statement']}",
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                    overflow: TextOverflow.ellipsis)),
+            Expanded(
+                flex: 2,
+                child: Text("${item['category']}",
+                    style: const TextStyle(color: Colors.white70))),
+            Expanded(
+                flex: 2,
+                child: Text("${item['date']}",
+                    style:
+                        const TextStyle(color: Colors.white60, fontSize: 11))),
           ],
         ),
       ),
@@ -282,13 +371,15 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.indigo.shade900,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (context) => Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           ListTile(
             leading: const Icon(Icons.edit, color: Colors.orange),
-            title: const Text("تعديل الإذن", style: TextStyle(color: Colors.white)),
+            title: const Text("تعديل الإذن",
+                style: TextStyle(color: Colors.white)),
             onTap: () {
               Navigator.pop(context);
               _editTransaction(item);
@@ -296,7 +387,8 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
           ),
           ListTile(
             leading: const Icon(Icons.delete, color: Colors.red),
-            title: const Text("حذف الإذن", style: TextStyle(color: Colors.white)),
+            title:
+                const Text("حذف الإذن", style: TextStyle(color: Colors.white)),
             onTap: () {
               Navigator.pop(context);
               _confirmDelete(item);
@@ -315,18 +407,23 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
         title: const Text("تأكيد الحذف"),
         content: Text("حذف إذن رقم ${item['serial']}؟"),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text("إلغاء")),
-          TextButton(onPressed: () async {
-            await _dailyService.deleteTransaction(widget.companyCode, item['serial']);
-            Navigator.pop(context);
-            _fetchData();
-          }, child: const Text("حذف", style: TextStyle(color: Colors.red))),
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("إلغاء")),
+          TextButton(
+              onPressed: () async {
+                await _dailyService.deleteTransaction(
+                    widget.companyCode, item['serial']);
+                Navigator.pop(context);
+                _fetchData();
+              },
+              child: const Text("حذف", style: TextStyle(color: Colors.red))),
         ],
       ),
     );
   }
 
-  void _showSnackBar(String m, Color c) => ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(content: Text(m, textAlign: TextAlign.center), backgroundColor: c)
-  );
+  void _showSnackBar(String m, Color c) =>
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(m, textAlign: TextAlign.center), backgroundColor: c));
 }
