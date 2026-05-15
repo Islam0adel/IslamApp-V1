@@ -31,6 +31,12 @@ dependencies:
   firebase_auth: ^5.1.1
   firebase_core: ^3.1.1
 
+  # التعامل مع الإكسيل والملفات
+  excel: ^4.0.3
+  path_provider: ^2.1.2
+  open_file: ^3.3.0
+  file_picker: ^8.0.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -44,11 +50,12 @@ flutter:
   uses-material-design: true
 
   # تعريف الأصول (الصور والأيقونات)
+  # تأكد أن المجلدات موجودة فعلياً في مشروعك بنفس الأسماء
   assets:
     - assets/images/
     - assets/images/app_icon.png
 
-  # تعريف خط Cairo عشان يشتغل مع الهوية البصرية
+  # # تعريف خط Cairo
   # fonts:
   #   - family: Cairo
   #     fonts:
@@ -56,10 +63,12 @@ flutter:
   #       - asset: assets/fonts/Cairo-Bold.ttf
   #         weight: 700
 
-# إعدادات أيقونة البرنامج للـ Web
+# إعدادات أيقونة البرنامج
 flutter_launcher_icons:
   web:
     generate: true
     image_path: "assets/images/app_icon.png"
     background_color: "#020617"
     theme_color: "#020617"
+  android: true
+  ios: true

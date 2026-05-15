@@ -1,13 +1,18 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:excel/excel.dart' as excel_lib;
+import 'package:file_picker/file_picker.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../services/daily_service.dart';
 import '../../services/api_service.dart';
-import 'daily_history_page.dart'; // استدعاء صفحة المعاينة
+import 'daily_history_page.dart';
 
 class DailyPage extends StatefulWidget {
   final String companyCode;
-  const DailyPage({super.key, required this.companyCode});
+  final Map<String, dynamic>? editItem;
+
+  const DailyPage({super.key, required this.companyCode, this.editItem});
 
   @override
   State<DailyPage> createState() => _DailyPageState();
@@ -34,27 +39,69 @@ class _DailyPageState extends State<DailyPage> {
   @override
   void initState() {
     super.initState();
-    _dateController.text = DateFormat('yyyy-MM-dd').format(DateTime.now());
-    _amountController.addListener(() => setState(() {})); // التحديث اللحظي
+    _amountController.addListener(() => setState(() {}));
     _loadInitialData();
+
+    if (widget.editItem != null) {
+      _amountController.text = widget.editItem!['amount'].toString();
+      _statementController.text = widget.editItem!['statement'] ?? "";
+      _dateController.text = widget.editItem!['date'] ?? DateFormat('yyyy-MM-dd').format(DateTime.now());
+      _currentSerial = widget.editItem!['serial'] ?? 1;
+      _selectedTreasury = widget.editItem!['treasury'];
+      _selectedCategory = widget.editItem!['category'];
+    } else {
+      _dateController.text = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    }
+  }
+
+  // --- منطق الأرصدة اللحظية حسب معادلتك ---
+  double get _liveCashBalance {
+    double val = double.tryParse(_amountController.text) ?? 0.0;
+    if (_selectedCategory == "ايراد" || _selectedCategory == "تحويل من الفيزا") {
+      return _cashBalance + val;
+    } else if (_selectedCategory != null && _selectedCategory != "فيزا" && _selectedCategory != "تحويل من النقدي") {
+      return _cashBalance - val; // باقي التصنيفات خصم من النقدي
+    }
+    return _cashBalance;
+  }
+
+  double get _liveVisaBalance {
+    double val = double.tryParse(_amountController.text) ?? 0.0;
+    if (_selectedCategory == "فيزا" || _selectedCategory == "تحويل من النقدي") {
+      return _visaBalance + val;
+    } else if (_selectedCategory == "تحويل من الفيزا") {
+      return _visaBalance - val;
+    }
+    return _visaBalance;
   }
 
   void _loadInitialData() async {
     setState(() => _isLoading = true);
     try {
       final summary = await _dailyService.getDailySummary(widget.companyCode);
-      final lastSerial = await _dailyService.getLastSerial(widget.companyCode);
       final safes = await _apiService.getCodingData(widget.companyCode, "safes");
       final types = await _apiService.getCodingData(widget.companyCode, "types");
 
       setState(() {
         _cashBalance = (summary['cash_balance'] ?? 0.0).toDouble();
         _visaBalance = (summary['visa_balance'] ?? 0.0).toDouble();
-        _currentSerial = lastSerial == 0 ? 1 : lastSerial + 1;
         _treasuries = safes;
         _categories = types;
+
+        if (widget.editItem == null && _selectedTreasury == null && _treasuries.isNotEmpty) {
+          var defaultSafe = _treasuries.firstWhere(
+            (s) => s['id'].toString() == "1" || s['code'].toString() == "1",
+            orElse: () => _treasuries.first
+          );
+          _selectedTreasury = defaultSafe['name'];
+        }
         _isLoading = false;
       });
+
+      if (widget.editItem == null) {
+        final lastSerial = await _dailyService.getLastSerial(widget.companyCode);
+        setState(() => _currentSerial = lastSerial == 0 ? 1 : lastSerial + 1);
+      }
     } catch (e) {
       setState(() => _isLoading = false);
     }
@@ -65,19 +112,33 @@ class _DailyPageState extends State<DailyPage> {
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
-        title: const Text("تسجيل اليومية", style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        centerTitle: true,
+        title: Column(
+    children: [
+      Text(
+        widget.editItem != null ? "تعديل حركة" : "تسجيل يومية",
+        style: const TextStyle(fontFamily: 'Cairo', fontSize: 16),
       ),
+      Text(
+        "إذن رقم: $_currentSerial", // هنا عرض رقم الإذن
+        style: const TextStyle(
+          fontFamily: 'Cairo', 
+          fontSize: 14, 
+          color: Colors.cyanAccent, 
+          fontWeight: FontWeight.bold
+        ),
+      ),
+    ],
+  ),
+  backgroundColor: Colors.transparent,
+  elevation: 0,
+  centerTitle: true,
+),
       body: Container(
-        height: double.infinity,
-        width: double.infinity,
+        height: double.infinity, width: double.infinity,
         decoration: BoxDecoration(
           gradient: LinearGradient(
             colors: [Colors.black, Colors.indigo.shade900, Colors.black],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
+            begin: Alignment.topLeft, end: Alignment.bottomRight,
           ),
         ),
         child: SafeArea(
@@ -87,13 +148,19 @@ class _DailyPageState extends State<DailyPage> {
                   padding: const EdgeInsets.all(20),
                   child: Column(
                     children: [
-                      _buildBalanceCards(), // الأرصدة لحظياً
+                      Row(
+                        children: [
+                          Expanded(child: _balanceCard("رصيد النقدي", _liveCashBalance, Colors.greenAccent)),
+                          const SizedBox(width: 15),
+                          Expanded(child: _balanceCard("رصيد الفيزا", _liveVisaBalance, Colors.cyanAccent)),
+                        ],
+                      ),
                       const SizedBox(height: 20),
-                      _buildInputForm(),    // فورم الإدخال (جلاس)
+                      _buildInputForm(),
                       const SizedBox(height: 25),
-                      _buildMainActions(),  // زر الحفظ
+                      _buildMainActions(),
                       const SizedBox(height: 15),
-                      _buildSecondaryActions(), // زر المعاينة والاستيراد
+                      _buildSecondaryActions(),
                     ],
                   ),
                 ),
@@ -102,145 +169,149 @@ class _DailyPageState extends State<DailyPage> {
     );
   }
 
-  // --- Widgets المقسمة لتصغير حجم الكود ---
-
-  Widget _buildBalanceCards() {
-    double input = double.tryParse(_amountController.text) ?? 0.0;
-    double tempCash = _cashBalance;
-    double tempVisa = _visaBalance;
-
-    if (_selectedCategory != null && input > 0) {
-      if (_selectedCategory == "ايراد" || _selectedCategory == "تحويل من الفيزا") tempCash += input;
-      else if (_selectedCategory != "فيزا" && _selectedCategory != "تحويل من النقدي") tempCash -= input;
-      if (_selectedCategory == "فيزا" || _selectedCategory == "تحويل من النقدي") tempVisa += input;
-      else if (_selectedCategory == "تحويل من الفيزا") tempVisa -= input;
-    }
-
-    return Row(
-      children: [
-        _balanceCard("نقدي", tempCash, Colors.greenAccent),
-        const SizedBox(width: 12),
-        _balanceCard("فيزا", tempVisa, Colors.lightBlueAccent),
-      ],
-    );
-  }
-
-  Widget _balanceCard(String label, double val, Color col) {
-    return Expanded(
-      child: GlassCard(
-        child: Column(
-          children: [
-            Text(label, style: const TextStyle(color: Colors.white70, fontSize: 13)),
-            Text(val.toStringAsFixed(2), style: TextStyle(color: col, fontSize: 18, fontWeight: FontWeight.bold)),
-          ],
-        ),
+  Widget _balanceCard(String title, double amount, Color color) {
+    return GlassCard(
+      child: Column(
+        children: [
+          Text(title, style: const TextStyle(color: Colors.white70, fontSize: 13, fontFamily: 'Cairo')),
+          const SizedBox(height: 5),
+          Text(amount.toStringAsFixed(2), style: TextStyle(color: color, fontSize: 19, fontWeight: FontWeight.bold)),
+        ],
       ),
     );
   }
-
+  // 1. نموذج الإدخال (الخزينة والتصنيف جنب بعض)
   Widget _buildInputForm() {
     return GlassCard(
       child: Column(
         children: [
-          Text("إذن رقم: $_currentSerial", style: const TextStyle(color: Colors.amber, fontSize: 20, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 20),
-          Row(
-            children: [
-              Expanded(flex: 2, child: _buildGlassDropdown("الخزينة", _selectedTreasury, _treasuries, (v) => setState(() => _selectedTreasury = v))),
-              const SizedBox(width: 10),
-              Expanded(flex: 1, child: _glassField("المبلغ", _amountController, isNum: true)),
-            ],
-          ),
+          _buildTextField(_amountController, "المبلغ", Icons.attach_money, isNumber: true),
           const SizedBox(height: 15),
           Row(
             children: [
-              Expanded(child: _buildGlassDropdown("التصنيف", _selectedCategory, _categories, (v) => setState(() => _selectedCategory = v))),
+              Expanded(
+                child: _buildDropdown("الخزينة", _selectedTreasury, _treasuries, 
+                    (val) => setState(() => _selectedTreasury = val)),
+              ),
               const SizedBox(width: 10),
-              Expanded(child: _glassField("التاريخ", _dateController, isDate: true)),
+              Expanded(
+                child: _buildDropdown("التصنيف", _selectedCategory, _categories, 
+                    (val) => setState(() => _selectedCategory = val)),
+              ),
             ],
           ),
           const SizedBox(height: 15),
-          _glassField("البيان / ملاحظات", _statementController),
+          _buildTextField(_statementController, "البيان", Icons.description),
+          const SizedBox(height: 15),
+          _buildDatePicker(),
         ],
       ),
     );
   }
 
-  Widget _buildMainActions() {
-    return SizedBox(
-      width: double.infinity,
-      height: 55,
-      child: ElevatedButton(
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.white.withOpacity(0.2),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-          side: const BorderSide(color: Colors.white24),
-        ),
-        onPressed: _handleSave,
-        child: const Text("حفظ الحركة", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-      ),
+// دالة الاستيراد المحدثة لمعالجة تنسيق التاريخ ونوع الحركة (Visa/Cash)
+  Future<void> _importFromExcel() async {
+    FilePickerResult? result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['xlsx'],
+      withData: true, 
     );
+
+    if (result != null) {
+      setState(() => _isLoading = true);
+      try {
+        var bytes = result.files.single.bytes;
+        if (bytes == null && result.files.single.path != null) {
+          bytes = File(result.files.single.path!).readAsBytesSync();
+        }
+
+        if (bytes == null) throw "تعذر قراءة بيانات الملف";
+
+        var excel = excel_lib.Excel.decodeBytes(bytes);
+
+        String defaultTreasury = _selectedTreasury ?? "الخزينة الرئيسية";
+
+        for (var table in excel.tables.keys) {
+          var rows = excel.tables[table]!.rows;
+          for (int i = 1; i < rows.length; i++) {
+            var row = rows[i];
+            if (row.isEmpty || row[0] == null || row[0]?.value == null) continue;
+
+            // 1. معالجة التاريخ: نأخذ أول 10 رموز فقط (yyyy-MM-dd) لتجنب صيغة الـ Z و الـ Time
+            String rawDate = row.length > 3 ? row[3]!.value.toString() : DateFormat('yyyy-MM-dd').format(DateTime.now());
+            String formattedDate = rawDate.length >= 10 ? rawDate.substring(0, 10) : rawDate;
+
+            // 2. معالجة التصنيف والنوع (Type): فحص لو الحركة فيزا
+            String categoryStr = (row.length > 2 && row[2] != null) ? row[2]!.value.toString() : "عام";
+            String calculatedType = (categoryStr == "فيزا" || categoryStr == "تحويل من النقدي") ? "visa" : "cash";
+
+            String amountStr = row[0]!.value.toString();
+            String statementStr = (row.length > 1 && row[1] != null) ? row[1]!.value.toString() : "";
+
+            await _dailyService.saveTransaction(
+              companyCode: widget.companyCode,
+              serial: _currentSerial++,
+              treasury: defaultTreasury,
+              amount: double.tryParse(amountStr) ?? 0.0,
+              statement: statementStr,
+              category: categoryStr,
+              date: formattedDate, // التاريخ المصلح
+              type: calculatedType, // النوع المصلح (visa أو cash)
+            );
+          }
+        }
+        
+        _showSnackBar("تم الاستيراد بنجاح وتصحيح التنسيقات", Colors.green);
+        _loadInitialData(); 
+        
+      } catch (e) {
+        _showSnackBar("خطأ في الاستيراد: $e", Colors.red);
+      } finally {
+        setState(() => _isLoading = false);
+      }
+    }
   }
 
-  Widget _buildSecondaryActions() {
-    return Row(
+  // 3. أزرار العمليات
+  Widget _buildMainActions() {
+    bool isEdit = widget.editItem != null;
+    return Column(
       children: [
-        Expanded(
-          child: _actionBtn("معاينة الأذون", Icons.visibility, () {
-            Navigator.push(context, MaterialPageRoute(builder: (c) => DailyHistoryPage(companyCode: widget.companyCode)));
-          }),
+        SizedBox(
+          width: double.infinity,
+          height: 55,
+          child: ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: isEdit ? Colors.orange.withOpacity(0.3) : Colors.white.withOpacity(0.2),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+              side: BorderSide(color: isEdit ? Colors.orangeAccent : Colors.white24),
+            ),
+            onPressed: _handleSave,
+            child: Text(isEdit ? "تعديل الإذن" : "حفظ الحركة", 
+                style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+          ),
         ),
-        const SizedBox(width: 10),
-        Expanded(child: _actionBtn("استيراد Excel", Icons.file_present, () {})),
+        if (!isEdit) ...[
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Colors.greenAccent),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+              ),
+              onPressed: _importFromExcel,
+              icon: const Icon(Icons.upload_file, color: Colors.greenAccent),
+              label: const Text("استيراد من إكسيل", style: TextStyle(color: Colors.greenAccent, fontFamily: 'Cairo')),
+            ),
+          ),
+        ]
       ],
     );
   }
 
-  // --- دالات مساعدة (Helper Functions) ---
-
-  Widget _glassField(String label, TextEditingController ctrl, {bool isNum = false, bool isDate = false}) {
-    return TextField(
-      controller: ctrl,
-      keyboardType: isNum ? TextInputType.number : TextInputType.text,
-      style: const TextStyle(color: Colors.white, fontSize: 14),
-      decoration: InputDecoration(
-        labelText: label,
-        labelStyle: const TextStyle(color: Colors.white70),
-        filled: true,
-        fillColor: Colors.white.withOpacity(0.05),
-        suffixIcon: isDate ? IconButton(icon: const Icon(Icons.calendar_month, color: Colors.amber, size: 20), onPressed: _pickDate) : null,
-        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Colors.white10)),
-        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Colors.amber)),
-      ),
-    );
-  }
-
-  Widget _buildGlassDropdown(String label, String? val, List items, Function(String?) onChg) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.white10)),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: val,
-          isExpanded: true,
-          dropdownColor: Colors.indigo.shade900,
-          hint: Text(label, style: const TextStyle(color: Colors.white70, fontSize: 13)),
-          items: items.map((i) => DropdownMenuItem<String>(value: i['name'], child: Text(i['name'], style: const TextStyle(color: Colors.white, fontSize: 13)))).toList(),
-          onChanged: onChg,
-        ),
-      ),
-    );
-  }
-
-  Widget _actionBtn(String txt, IconData ico, VoidCallback tap) {
-    return OutlinedButton.icon(
-      onPressed: tap,
-      icon: Icon(ico, size: 18, color: Colors.amber),
-      label: Text(txt, style: const TextStyle(color: Colors.white, fontSize: 12)),
-      style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.white10), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), padding: const EdgeInsets.symmetric(vertical: 12)),
-    );
-  }
-
+  // 4. دالة الحفظ المحدثة
   void _handleSave() async {
     if (_amountController.text.isEmpty || _selectedTreasury == null || _selectedCategory == null) {
       _showSnackBar("برجاء إكمال البيانات", Colors.orange);
@@ -258,20 +329,80 @@ class _DailyPageState extends State<DailyPage> {
         date: _dateController.text,
         type: (_selectedCategory == "فيزا" || _selectedCategory == "تحويل من النقدي") ? "visa" : "cash",
       );
-      _showSnackBar("تم الحفظ بنجاح", Colors.green);
-      _loadInitialData();
-      _amountController.clear();
-      _statementController.clear();
+
+      if (widget.editItem != null) {
+        Navigator.pop(context, true);
+      } else {
+        _showSnackBar("تم الحفظ بنجاح", Colors.green);
+        _amountController.clear();
+        _statementController.clear();
+        _loadInitialData();
+      }
     } catch (e) {
       _showSnackBar("خطأ: $e", Colors.red);
       setState(() => _isLoading = false);
     }
   }
 
-  void _showSnackBar(String m, Color c) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m, textAlign: TextAlign.center), backgroundColor: c));
+  // --- دوال المساعدة (TextField, Dropdown, DatePicker, SnackBar) ---
+  Widget _buildTextField(TextEditingController ctrl, String label, IconData icon, {bool isNumber = false}) {
+    return TextField(
+      controller: ctrl,
+      keyboardType: isNumber ? TextInputType.number : TextInputType.text,
+      style: const TextStyle(color: Colors.white),
+      decoration: InputDecoration(
+        prefixIcon: Icon(icon, color: Colors.white70),
+        labelText: label, labelStyle: const TextStyle(color: Colors.white70, fontFamily: 'Cairo'),
+        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.white10)),
+        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.cyanAccent)),
+        contentPadding: const EdgeInsets.symmetric(vertical: 18, horizontal: 15),
+      ),
+    );
+  }
+
+  Widget _buildDropdown(String label, String? value, List<dynamic> items, Function(String?) onChanged) {
+    return DropdownButtonFormField<String>(
+      value: value,
+      dropdownColor: Colors.indigo.shade900,
+      style: const TextStyle(color: Colors.white, fontSize: 13),
+      decoration: InputDecoration(
+        labelText: label, labelStyle: const TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 12),
+        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.white10)),
+        contentPadding: const EdgeInsets.symmetric(vertical: 15, horizontal: 10),
+      ),
+      items: items.map((item) => DropdownMenuItem<String>(value: item['name'], child: Text(item['name'] ?? ""))).toList(),
+      onChanged: onChanged,
+    );
+  }
+
+  Widget _buildDatePicker() {
+    return TextField(
+      controller: _dateController,
+      readOnly: true,
+      style: const TextStyle(color: Colors.white),
+      decoration: InputDecoration(
+        prefixIcon: const Icon(Icons.calendar_today, color: Colors.white70),
+        labelText: "التاريخ", labelStyle: const TextStyle(color: Colors.white70, fontFamily: 'Cairo'),
+        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.white10)),
+      ),
+      onTap: _pickDate,
+    );
+  }
+
+  Widget _buildSecondaryActions() {
+    return TextButton.icon(
+      onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => DailyHistoryPage(companyCode: widget.companyCode))),
+      icon: const Icon(Icons.history, color: Colors.cyanAccent),
+      label: const Text("معاينة الحركات", style: TextStyle(color: Colors.cyanAccent, fontFamily: 'Cairo')),
+    );
+  }
 
   Future<void> _pickDate() async {
     DateTime? p = await showDatePicker(context: context, initialDate: DateTime.now(), firstDate: DateTime(2020), lastDate: DateTime(2101));
     if (p != null) setState(() => _dateController.text = DateFormat('yyyy-MM-dd').format(p));
   }
+
+  void _showSnackBar(String m, Color c) => ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(content: Text(m, textAlign: TextAlign.center, style: const TextStyle(fontFamily: 'Cairo')), backgroundColor: c)
+  );
 }
