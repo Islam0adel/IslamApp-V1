@@ -6,5 +6,6 @@ __pycache__/
 *.pyc
 .flutter-plugins
 .dart_tool/
-frontend/assets/images/app_icon.png
-frontend/web/icons/Icon-512.png
+# frontend/assets/images/app_icon.png
+# frontend/web/icons/Icon-512.png
+# frontend\web\icons\Icon-maskable-512.png
