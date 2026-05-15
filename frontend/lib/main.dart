@@ -51,7 +51,8 @@ class IslamApp extends StatefulWidget {
 }
 
 class _IslamAppState extends State<IslamApp> {
-  ThemeMode _themeMode = ThemeMode.system;
+  // التعديل هنا: تم تغيير القيمة من system إلى dark لتفعيل الربط الديناميكي
+  ThemeMode _themeMode = ThemeMode.dark;
 
   void changeTheme(ThemeMode themeMode) {
     setState(() {

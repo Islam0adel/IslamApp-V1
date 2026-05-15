@@ -6,6 +6,7 @@ import '../../views/widgets/glass_card.dart';
 import '../auth/login_screen.dart';
 import 'coding_page.dart';
 import 'daily_page.dart';
+import 'settings_page.dart';
 
 class HomePage extends StatefulWidget {
   final String userName;
@@ -181,7 +182,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         _menuItem("حسابات الموردين", Icons.local_shipping_rounded, Colors.lightBlueAccent, () {}),
         _menuItem("حركة الجرد", Icons.inventory_2_rounded, Colors.orangeAccent, () {}),
         _menuItem("التقارير", Icons.analytics_rounded, Colors.purpleAccent, () {}),
-        _menuItem("الاعدادات", Icons.settings_rounded, Colors.blueGrey, () {}),
+        _menuItem("الاعدادات", Icons.settings_rounded, Colors.blueGrey, () {
+          Navigator.push(context, MaterialPageRoute(builder: (c) => const SettingsPage()));
+        }),
       ],
     );
   }
