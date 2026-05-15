@@ -12,6 +12,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Sync to Hugging Face
         env:
@@ -20,32 +22,19 @@ jobs:
           git config --global user.email "actions@github.com"
           git config --global user.name "GitHub Actions"
 
-          # clone space
+          # 1. عمل Clone للـ Space
           git clone https://Islamadel:$HF_TOKEN@huggingface.co/spaces/Islamadel/islam-app-api hf-space
 
-          # امسح محتوى الـ space
-          rm -rf hf-space/*
+          # 2. مسح محتوى الـ space القديم (ما عدا فولدر .git)
+          find hf-space -maxdepth 1 ! -name '.git' ! -name 'hf-space' -exec rm -rf {} +
 
-          # انسخ كل المشروع ما عدا hf-space نفسه
-          rsync -av --progress ./ ./hf-space \
-            --exclude hf-space \
-            --exclude .git
-            --exclude "frontend/assets/images/app_icon.png"
-            --exclude "frontend/web/icons/Icon-512.png"
-            --exclude "frontend\web\favicon.png"
-            --exclude "frontend\web\icons\Icon-maskable-512.png"
+          # 3. نسخة rsync في سطر واحد عشان نتجنب خطأ command not found
+          # ضفت لك كمان استبعاد لكل صور الأيقونات عشان نضمن إن مفيش حاجة ترفض الرفع
+          rsync -av --progress ./ ./hf-space --exclude hf-space --exclude .git --exclude .github --exclude "frontend/assets/images/*.png" --exclude "frontend/web/icons/*.png" --exclude "frontend\web\icons\Icon-maskable-512.png"
 
           cd hf-space
 
-          rm -rf .git
-          git init
-
-          git remote add origin https://Islamadel:$HF_TOKEN@huggingface.co/spaces/Islamadel/islam-app-api
-
+          # 4. الرفع لهيوجينج
           git add .
-
-          git commit -m "Auto sync full project" || echo "No changes"
-
-          git branch -M main
-
+          git commit -m "Auto sync: stripping binary files" || echo "No changes"
           git push -f origin main
