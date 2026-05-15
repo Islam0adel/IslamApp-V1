@@ -7,7 +7,6 @@ import 'package:file_picker/file_picker.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../services/daily_service.dart';
 import 'daily_page.dart';
-import 'dart:typed_data'; // مهم جداً للويب
 import 'package:universal_html/html.dart' as html; // للتحميل في الويب
 import 'package:excel/excel.dart' as excel_lib;
 
@@ -134,9 +133,9 @@ Future<void> _exportToExcel() async {
       final blob = html.Blob([fileBytes], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       final url = html.Url.createObjectUrlFromBlob(blob);
       
-      final anchor = html.AnchorElement(href: url)
-        ..setAttribute("download", fileName)
-        ..click();
+      // final anchor = html.AnchorElement(href: url)
+      //   ..setAttribute("download", fileName)
+      //   ..click();
       
       html.Url.revokeObjectUrl(url);
       _showSnackBar("تم تحميل $fileName بنجاح", Colors.green);
