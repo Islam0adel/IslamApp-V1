@@ -32,6 +32,9 @@ migrate_working_dir/
 /build/
 /windows/
 # lib/firebase_options.dart
+web\icons\Icon-maskable-512.png
+assets
+
 
 
 # Symbolication related
