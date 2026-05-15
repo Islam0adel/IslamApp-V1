@@ -36,7 +36,8 @@ jobs:
             --exclude ".github" \
             --exclude "frontend/assets/images/app_icon.png" \
             --exclude "frontend/web/icons/Icon-512.png"
-
+            --exclude "frontend\web\favicon.png"
+            --exclude "frontend\web\icons\Icon-maskable-512.png"
           cd hf-space
 
           # 4. رفع التعديلات (هنا بنستخدم الـ .git بتاع هيوجينج الأصلي اللي نزل مع الـ clone)
