@@ -78,7 +78,7 @@ async def get_summary(company_code: str):
             # منطق النقدي
             if cat in ["ايراد", "تحويل من الفيزا"]:
                 cash += amt
-            elif cat not in ["فيزا", "تحويل من النقدي"]:
+            elif cat not in ["فيزا"]:
                 cash -= amt
 
             # منطق الفيزا

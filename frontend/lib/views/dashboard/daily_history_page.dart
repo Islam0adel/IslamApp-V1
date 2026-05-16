@@ -83,20 +83,20 @@ Future<void> _exportToExcel() async {
   }
 
   try {
-    // 2. إعداد اسم الملف مع التاريخ (مثال: تقرير_اليومية_15-5-2026.xlsx)
-    String formattedDate = "${DateTime.now().day}-${DateTime.now().month}-${DateTime.now().year}";
+    // 2. إعداد اسم الملف مع التاريخ
+    String formattedDate =
+        "${DateTime.now().day}-${DateTime.now().month}-${DateTime.now().year}";
     String fileName = "تقرير_اليومية_$formattedDate.xlsx";
 
     // 3. إنشاء كائن Excel
     var excel = excel_lib.Excel.createExcel();
 
-    // 4. حل مشكلة الشيتات الزائدة (مثل شيت فلاتر أو Sheet1)
-    // نقوم بتغيير اسم أول شيت افتراضي للمكتبة بدلاً من إنشاء شيت جديد
+    // 4. حل مشكلة الشيتات الزائدة
     String defaultSheet = excel.tables.keys.first;
     excel.rename(defaultSheet, 'Daily_Records');
     excel_lib.Sheet sheetObject = excel['Daily_Records'];
 
-    // التأكد من حذف أي شيتات أخرى قد تظهر
+    // حذف أي شيتات أخرى
     for (var table in excel.tables.keys.toList()) {
       if (table != 'Daily_Records') {
         excel.delete(table);
@@ -112,7 +112,7 @@ Future<void> _exportToExcel() async {
       excel_lib.TextCellValue("التاريخ"),
     ]);
 
-    // 6. إضافة البيانات من القائمة
+    // 6. إضافة البيانات
     for (var row in _historyData) {
       sheetObject.appendRow([
         excel_lib.TextCellValue(row['serial']?.toString() ?? ""),
@@ -123,24 +123,35 @@ Future<void> _exportToExcel() async {
       ]);
     }
 
-    // 7. تحويل الملف إلى بايتات (Encode)
+    // 7. تحويل الملف إلى بايتات
     var fileBytes = excel.encode();
     if (fileBytes == null) return;
 
-    // 8. منطق التحميل حسب المنصة (ويب أو ويندوز)
+    // 8. منطق التحميل حسب المنصة
     if (identical(0, 0.0)) {
-      // --- كود الويب (تحميل مباشر للمتصفح) ---
-      final blob = html.Blob([fileBytes], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      // --- Flutter Web (كمبيوتر + موبايل) ---
+      final blob = html.Blob(
+        [fileBytes],
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      );
+
       final url = html.Url.createObjectUrlFromBlob(blob);
-      
-      // final anchor = html.AnchorElement(href: url)
-      //   ..setAttribute("download", fileName)
-      //   ..click();
-      
+
+      final anchor = html.AnchorElement(href: url)
+        ..setAttribute("download", fileName)
+        ..style.display = "none";
+
+      html.document.body?.append(anchor);
+
+      anchor.click();
+
+      anchor.remove();
+
       html.Url.revokeObjectUrl(url);
+
       _showSnackBar("تم تحميل $fileName بنجاح", Colors.green);
     } else {
-      // --- كود الويندوز (حفظ في مسار محدد) ---
+      // --- ويندوز ---
       String? selectedPath = await FilePicker.platform.saveFile(
         dialogTitle: 'اختر مكان حفظ ملف الإكسيل',
         fileName: fileName,
@@ -149,9 +160,13 @@ Future<void> _exportToExcel() async {
       );
 
       if (selectedPath != null) {
-        if (!selectedPath.endsWith('.xlsx')) selectedPath += '.xlsx';
+        if (!selectedPath.endsWith('.xlsx')) {
+          selectedPath += '.xlsx';
+        }
+
         final file = File(selectedPath);
         await file.writeAsBytes(fileBytes);
+
         _showSnackBar("تم حفظ الملف في: $selectedPath", Colors.green);
       }
     }
