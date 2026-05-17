@@ -74,12 +74,57 @@ class ApiService {
     throw jsonDecode(response.body)['detail'] ?? 'فشل التحقق من البيانات';
   }
 
+  // جلب قائمة الفروع دايناميك بدون تأخير بناءً على الـ baseUrl المركزي
+  Future<List<String>> getBranchesList(String companyCode) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/coding/list/$companyCode/branches'),
+        headers: {'Content-Type': 'application/json'},
+      ).timeout(const Duration(seconds: 3)); // لو السيرفر واقع ميعلقش البرنامج أكتر من 3 ثواني
+
+      if (response.statusCode == 200) {
+        List<dynamic> data = jsonDecode(response.body);
+        List<String> fetchedBranches = ["كل الفروع"];
+        for (var item in data) {
+          if (item['name'] != null) {
+            fetchedBranches.add(item['name'].toString());
+          }
+        }
+        return fetchedBranches;
+      }
+      return ["كل الفروع"];
+    } catch (e) {
+      return ["كل الفروع"]; // في حالة حدوث أي خطأ أو طوارئ يرجع الخيار الافتراضي فوراً
+    }
+  }
+
   // ================= 2. قسم التكويد الجديد (المنطق المحدث) =================
+
+// متغيرات ثابتة لحفظ الخزائن والتصنيفات مؤقتاً في الذاكرة لتوفير باقة الفايربيز
+  static List<dynamic>? _cachedSafes;
+  static List<dynamic>? _cachedTypes;
 
   // جلب قائمة الأكواد لأي قسم (خزائن، موردين، عملاء، إلخ)
   Future<List<dynamic>> getCodingData(String companyCode, String category) async {
+    // 1. لو المطلوب خزائن وهي محفوظة مسبقاً في الكاش، رجعها فوراً
+    if (category == "safes" && _cachedSafes != null) {
+      return _cachedSafes!;
+    }
+    // 2. لو المطلوب تصنيفات وهي محفوظة مسبقاً في الكاش، رجعها فوراً
+    if (category == "types" && _cachedTypes != null) {
+      return _cachedTypes!;
+    }
+
     final response = await http.get(Uri.parse('$baseUrl/coding/list/$companyCode/$category'));
-    if (response.statusCode == 200) return jsonDecode(response.body);
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body) as List<dynamic>;
+      
+      // حفظ البيانات المستلمة في الكاش لاستدعائها مجاناً في المرات القادمة
+      if (category == "safes") _cachedSafes = data;
+      if (category == "types") _cachedTypes = data;
+      
+      return data;
+    }
     throw 'فشل جلب بيانات $category';
   }
 
@@ -104,9 +149,11 @@ class ApiService {
     required String code,
     required String name,
     String? barcode,
-    double? price,
-    double? quantity,
-    double? totalValue,
+    double? wholesalePrice, // باراميتر سعر الجملة الجديد
+    double? sellingPrice,   // باراميتر سعر البيع الجديد
+    double? profitMargin,   // باراميتر هامش الربح الجديد
+    double? profitPercent,  // باراميتر نسبة الربح الجديدة
+    String? type,           // باراميتر نوع التصنيف المالي (وارد / صادر)
   }) async {
     final response = await http.post(
       Uri.parse('$baseUrl/coding/save'),
@@ -116,10 +163,12 @@ class ApiService {
         'category': category,
         'code': code,
         'name': name,
-        'barcode': barcode ?? "", // نبعت نص فارغ بدل null عشان البايثون ميزعلش
-        'price': price ?? 0.0,    // نبعت 0 بدل null
-        'quantity': quantity ?? 0.0,
-        'total_value': totalValue ?? 0.0,
+        'barcode': barcode ?? "", 
+        'wholesale_price': wholesalePrice ?? 0.0, // إرسال سعر الجملة للباك إند
+        'selling_price': sellingPrice ?? 0.0,     // إرسال سعر البيع للباك إند
+        'profit_margin': profitMargin ?? 0.0,     // إرسال هامش الربح للباك إند
+        'profit_percent': profitPercent ?? 0.0,   // إرسال نسبة الربح للباك إند
+        'type': type ?? "وارد",                   // إرسال نوع التصنيف (وارد/صادر)
       }),
     );
 
@@ -135,63 +184,10 @@ class ApiService {
     );
     if (response.statusCode != 200) throw 'فشل حذف الكود من السيرفر';
   }
-  // ================= 3. قسم العمليات المالية (Daily Transactions) =================
+ 
 
-  // جلب آخر معلومات (سيريال ورصيد) لبدء حركة جديدة
-  Future<Map<String, dynamic>> getLastTransactionInfo(String companyCode) async {
-    try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/transactions/last_info/$companyCode'),
-      );
-      if (response.statusCode == 200) return jsonDecode(response.body);
-      return {'serial': 0, 'balance': 0.0};
-    } catch (e) {
-      return {'serial': 0, 'balance': 0.0};
-    }
-  }
 
-  // جلب حركة معينة عن طريق السيريال (مهم جداً للتعديل والمعاينة)
-  Future<Map<String, dynamic>?> getTransactionBySerial(String companyCode, int serial) async {
-    final response = await http.get(
-      Uri.parse('$baseUrl/transactions/get/$companyCode/$serial'),
-    );
-    if (response.statusCode == 200) return jsonDecode(response.body);
-    return null;
-  }
 
-  // حفظ حركة يومية جديدة (إيراد أو مصروف)
-  Future<void> saveDailyTransaction(Map<String, dynamic> data) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/transactions/save'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(data),
-    );
-    if (response.statusCode != 200) {
-      final error = jsonDecode(response.body);
-      throw error['detail'] ?? 'فشل حفظ الحركة المالية';
-    }
-  }
-
-  // جلب قائمة الحركات المالية (لصفحة المعاينة والبحث بين تاريخين)
-  Future<List<dynamic>> getTransactionsList({
-    required String companyCode,
-    required String startDate,
-    required String endDate,
-  }) async {
-    final response = await http.get(
-      Uri.parse('$baseUrl/transactions/list/$companyCode?start_date=$startDate&end_date=$endDate'),
-    );
-    if (response.statusCode == 200) return jsonDecode(response.body);
-    throw 'فشل جلب سجل الحركات';
-  }
-
-  // حذف حركة مالية نهائياً (مع الحفاظ على السيريال)
-  Future<void> deleteDailyTransaction(String companyCode, int serial) async {
-    final response = await http.delete(
-      Uri.parse('$baseUrl/transactions/delete/$companyCode/$serial'),
-    );
-    if (response.statusCode != 200) throw 'فشل حذف الحركة من السيرفر';
-  }
 
   // ================= 4. أدوات مساعدة (Helpers) =================
 

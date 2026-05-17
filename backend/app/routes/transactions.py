@@ -15,7 +15,7 @@ class TransactionModel(BaseModel):
     category: str
     date: str
     type: str
-    employee: Optional[str] = "غير محدد" # حقل الموظف مهم لتقرير الإكسيل
+    employee: Optional[str] # حقل الموظف مهم لتقرير الإكسيل
 
 # 1. حفظ أو تحديث إذن (Save / Update)
 @router.post("/save")
@@ -62,8 +62,17 @@ async def delete_transaction(company_code: str, serial: int):
 
 # 4. ملخص الأرصدة (الدالة القديمة كما هي)
 @router.get("/summary/{company_code}")
-async def get_summary(company_code: str):
+async def get_summary(company_code: str, treasury: Optional[str] = None):
     try:
+        # 1. جلب قاموس بالتصنيفات لمعرفة نوع كل تصنيف (وارد/صادر) كاش في الذاكرة لسرعة الحساب
+        category_types = {}
+        types_docs = db.collection("coding").document(company_code).collection("types").stream()
+        for t_doc in types_docs:
+            t_data = t_doc.to_dict()
+            if t_data.get('name'):
+                category_types[t_data.get('name')] = t_data.get('type', 'صادر') # الافتراضي صادر لو مش محدد
+
+        # 2. جلب حركات اليومية
         docs = db.collection("transactions").document(company_code)\
             .collection("daily_records").stream()
         
@@ -72,20 +81,45 @@ async def get_summary(company_code: str):
         
         for d in docs:
             item = d.to_dict()
+            
+            # فلترة الحركات بناءً على الخزينة المختارة
+            if treasury and item.get('treasury') != treasury:
+                continue
+
             amt = float(item.get('amount', 0))
             cat = item.get('category', '')
+            tx_type = item.get('type', 'cash') # 'cash' أو 'visa' بناءً على طريقة دفع الحركة
 
-            # منطق النقدي
-            if cat in ["ايراد", "تحويل من الفيزا"]:
-                cash += amt
-            elif cat not in ["فيزا"]:
+            # ومعرفة نوع التصنيف الفعلي من الكاش اللي عملناه فوق (وارد أو صادر)
+            cat_direction = category_types.get(cat, 'صادر')
+
+            # --------------------------------------------------------
+            # أولاً: معالجة الحالات الخاصة (التحويلات الثابتة)
+            # --------------------------------------------------------
+            if cat == "تحويل من النقدي":
                 cash -= amt
-
-            # منطق الفيزا
-            if cat in ["فيزا", "تحويل من النقدي"]:
                 visa += amt
+                continue  # تخطي باقي الشروط للحركة دي
+                
             elif cat == "تحويل من الفيزا":
+                cash += amt
                 visa -= amt
+                continue  # تخطي باقي الشروط للحركة دي
+
+            # --------------------------------------------------------
+            # ثانياً: المنطق العام الديناميكي (بناءً على وارد وصادر وطريقة الدفع)
+            # --------------------------------------------------------
+            if tx_type == "cash":  # الحركة مدفوعة أو مستلمة نقداً
+                if cat_direction == "وارد":
+                    cash += amt
+                else:  # صادر (مصاريف، مشتريات، إلخ)
+                    cash -= amt
+                    
+            elif tx_type == "visa":  # الحركة مدفوعة أو مستلمة عبر الفيزا
+                if cat_direction == "وارد":
+                    visa += amt
+                else:  # صادر (مصاريف بالفيزا، إلخ)
+                    visa -= amt
 
         return {"cash_balance": cash, "visa_balance": visa}
     except Exception as e:

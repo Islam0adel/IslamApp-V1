@@ -5,12 +5,14 @@ import '../core/constants.dart';
 class DailyService {
   final String baseUrl = ApiConstants.baseUrl;
 
-  // 1. جلب الأرصدة (نقدي وفيزا) من السيرفر
-  Future<Map<String, dynamic>> getDailySummary(String companyCode) async {
+// 1. جلب الأرصدة (نقدي وفيزا) من السيرفر بناءً على الخزينة
+  Future<Map<String, dynamic>> getDailySummary(String companyCode, String? treasury) async {
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/transactions/summary/$companyCode'),
-      );
+      String url = '$baseUrl/transactions/summary/$companyCode';
+      if (treasury != null && treasury.isNotEmpty) {
+        url += '?treasury=${Uri.encodeComponent(treasury)}';
+      }
+      final response = await http.get(Uri.parse(url));
       if (response.statusCode == 200) return jsonDecode(response.body);
       throw 'فشل جلب ملخص الأرصدة';
     } catch (e) {

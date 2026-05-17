@@ -10,9 +10,15 @@ import 'daily_history_page.dart';
 
 class DailyPage extends StatefulWidget {
   final String companyCode;
+  final String selectedBranch; // الفرع المختار
   final Map<String, dynamic>? editItem;
 
-  const DailyPage({super.key, required this.companyCode, this.editItem});
+  const DailyPage({
+    super.key, 
+    required this.companyCode, 
+    this.selectedBranch = "كل الفروع", // 👈 خليناه اختياري وبقيمة افتراضية عشان ميعملش أي أيرور في بقية الملف
+    this.editItem,
+  });
 
   @override
   State<DailyPage> createState() => _DailyPageState();
@@ -59,8 +65,10 @@ class _DailyPageState extends State<DailyPage> {
     double val = double.tryParse(_amountController.text) ?? 0.0;
     if (_selectedCategory == "ايراد" || _selectedCategory == "تحويل من الفيزا") {
       return _cashBalance + val;
-    } else if (_selectedCategory != null && _selectedCategory != "فيزا" && _selectedCategory != "تحويل من النقدي") {
-      return _cashBalance - val; // باقي التصنيفات خصم من النقدي
+    } else if (_selectedCategory == "تحويل من النقدي") {
+      return _cashBalance - val; // تعديل: الخصم اللحظي الصريح عند التحويل من النقدي
+    } else if (_selectedCategory != null && _selectedCategory != "فيزا") {
+      return _cashBalance - val; // باقي التصنيفات تخصم طبيعي ما عدا الفيزا الصافية
     }
     return _cashBalance;
   }
@@ -75,35 +83,49 @@ class _DailyPageState extends State<DailyPage> {
     return _visaBalance;
   }
 
-  void _loadInitialData() async {
-    setState(() => _isLoading = true);
+void _loadInitialData() async {
+    // مؤشر التحميل يظهر فقط أول مرة لو القوائم لسه مجاتش من الكاش
+    if (_treasuries.isEmpty) {
+      setState(() => _isLoading = true);
+    }
     try {
-      final summary = await _dailyService.getDailySummary(widget.companyCode);
+      // 1. جلب قوائم الخزائن والتصنيفات (بتيجي فوراً ومجاناً من الكاش لو محملة قبل كده)
       final safes = await _apiService.getCodingData(widget.companyCode, "safes");
       final types = await _apiService.getCodingData(widget.companyCode, "types");
 
-      setState(() {
-        _cashBalance = (summary['cash_balance'] ?? 0.0).toDouble();
-        _visaBalance = (summary['visa_balance'] ?? 0.0).toDouble();
-        _treasuries = safes;
-        _categories = types;
+      // 2. تحديد الخزينة المستهدفة: لو المستخدم اختار خزينة نستخدمها، لو لسه أول مرة نضع الافتراضية
+      String? targetTreasury = _selectedTreasury;
+      if (widget.editItem == null && targetTreasury == null && safes.isNotEmpty) {
+        var defaultSafe = safes.firstWhere(
+          (s) => s['id'].toString() == "1" || s['code'].toString() == "1",
+          orElse: () => safes.first
+        );
+        targetTreasury = defaultSafe['name'];
+      }
 
-        if (widget.editItem == null && _selectedTreasury == null && _treasuries.isNotEmpty) {
-          var defaultSafe = _treasuries.firstWhere(
-            (s) => s['id'].toString() == "1" || s['code'].toString() == "1",
-            orElse: () => _treasuries.first
-          );
-          _selectedTreasury = defaultSafe['name'];
-        }
-        _isLoading = false;
-      });
+      // 3. جلب الأرصدة المحدثة بناءً على الخزينة المستهدفة حالياً (سواء 1 أو 2 أو غيرها)
+      final summary = await _dailyService.getDailySummary(widget.companyCode, targetTreasury);
 
+      // 4. جلب السيريال تلقائياً
+      int serialVal = _currentSerial;
       if (widget.editItem == null) {
         final lastSerial = await _dailyService.getLastSerial(widget.companyCode);
-        setState(() => _currentSerial = lastSerial == 0 ? 1 : lastSerial + 1);
+        serialVal = lastSerial == 0 ? 1 : lastSerial + 1;
+      }
+
+      if (mounted) {
+        setState(() {
+          _treasuries = safes;
+          _categories = types;
+          _selectedTreasury = targetTreasury; // تثبيت الخزينة المختارة في الواجهة
+          _currentSerial = serialVal;
+          _cashBalance = (summary['cash_balance'] ?? 0.0).toDouble();
+          _visaBalance = (summary['visa_balance'] ?? 0.0).toDouble();
+          _isLoading = false;
+        });
       }
     } catch (e) {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -191,7 +213,13 @@ class _DailyPageState extends State<DailyPage> {
             children: [
               Expanded(
                 child: _buildDropdown("الخزينة", _selectedTreasury, _treasuries, 
-                    (val) => setState(() => _selectedTreasury = val)),
+                  (val) {
+                    setState(() {
+                      _selectedTreasury = val;
+                    });
+                    _loadInitialData(); // تحديث الأرصدة فوراً بناءً على الخزينة الجديدة
+                  },
+                ),
               ),
               const SizedBox(width: 10),
               Expanded(

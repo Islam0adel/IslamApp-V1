@@ -5,37 +5,52 @@ from typing import Optional
 
 router = APIRouter()
 
-# التكويدات الافتراضية لقسم "التصنيف"
+# 1. التكويدات الافتراضية لقسم "التصنيف" (types)
 DEFAULT_TYPES = [
-    "ايراد",
-    "فيزا",
-    "استهلاكات بضاعة",
-    "انترنت",
-    "ايجار",
-    "بوفية",
-    "عمولة",
-    "صيانة",
-    "ضرائب",
-    "مرتبات",
-    "نظافة",
-    "تأمينات",
-    "نقل بضاعة",
-    "ارباح",
-    "بضاعة",
-    "تحويل من الفيزا",
-    "تحويل من النقدي"
+    {"name": "ايراد", "type": "وارد"},
+    {"name": "فيزا", "type": "وارد"},
+    {"name": "تحويل من الفيزا", "type": "وارد"},
+    {"name": "تحويل من النقدي", "type": "صادر"},
+    {"name": "استهلاكات بضاعة", "type": "صادر"},
+    {"name": "انترنت", "type": "صادر"},
+    {"name": "ايجار", "type": "صادر"},
+    {"name": "بوفية", "type": "صادر"},
+    {"name": "عمولة", "type": "صادر"},
+    {"name": "صيانة", "type": "صادر"},
+    {"name": "ضرائب", "type": "صادر"},
+    {"name": "مرتبات", "type": "صادر"},
+    {"name": "نظافة", "type": "صادر"},
+    {"name": "تأمينات", "type": "صادر"},
+    {"name": "نقل بضاعة", "type": "صادر"},
+    {"name": "ارباح", "type": "وارد"},
+    {"name": "بضاعة", "type": "صادر"}
 ]
 
-# موديل البيانات
+# 2. قاموس يحتوي على باقي التكويدات الافتراضية للأقسام الجديدة بالملي
+DEFAULT_CATEGORIES_DATA = {
+    "treasuries": [{"name": "الخزينة الرئيسية"}],            # الخزائن
+    "customers": [{"name": "عميل نقدي"}],                    # العملاء
+    "stores": [{"name": "المخزن الرئيسي"}],                  # المخازن
+    "branches": [{"name": "الفرع الرئيسي"}],                  # الفروع
+    "payment_methods": [                                    # طرق الدفع
+        {"name": "نقدي"},
+        {"name": "فيزا"},
+        {"name": "محفظة الكترونية"}
+    ]
+}
+
+# موديل البيانات المطور للأصناف والتصنيفات
 class CodingModel(BaseModel):
     company_code: str
     category: str
     code: str
     name: str
+    type: Optional[str] = "وارد"
     barcode: Optional[str] = ""
-    price: Optional[float] = 0.0
-    quantity: Optional[float] = 0.0
-    total_value: Optional[float] = 0.0
+    wholesale_price: Optional[float] = 0.0
+    selling_price: Optional[float] = 0.0
+    profit_margin: Optional[float] = 0.0
+    profit_percent: Optional[float] = 0.0
 
 
 @router.post("/save")
@@ -46,13 +61,16 @@ async def save_code(data: CodingModel):
             "code": data.code
         }
 
-        # لو القسم أصناف ضيف البيانات الإضافية
+        if data.category == "types":
+            save_data["type"] = data.type
+
         if data.category == "items":
             save_data.update({
                 "barcode": data.barcode,
-                "price": data.price,
-                "quantity": data.quantity,
-                "total_value": data.total_value
+                "wholesale_price": data.wholesale_price,
+                "selling_price": data.selling_price,
+                "profit_margin": data.profit_margin,
+                "profit_percent": data.profit_percent
             })
 
         db.collection("coding")\
@@ -67,6 +85,19 @@ async def save_code(data: CodingModel):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# قاموس يحتوي على التكويدات الافتراضية للأقسام لو فاضية
+DEFAULT_CATEGORIES_DATA = {
+    "treasuries": [{"name": "الخزينة الرئيسية"}],
+    "customers": [{"name": "عميل نقدي"}],
+    "stores": [{"name": "المخزن الرئيسي"}],
+    "branches": [{"name": "الفرع الرئيسي"}], # 👈 هنا هينزل الفرع الرئيسي تلقائياً لو الكوليكشن فاضي
+    "payment_methods": [
+        {"name": "نقدي"},
+        {"name": "فيزا"},
+        {"name": "محفظة الكترونية"}
+    ]
+}
+
 @router.get("/list/{company_code}/{category}")
 async def list_codes(company_code: str, category: str):
     try:
@@ -74,18 +105,27 @@ async def list_codes(company_code: str, category: str):
             .document(company_code)\
             .collection(category)
 
-        # لو قسم التصنيف، نتأكد إن التكويدات الافتراضية موجودة
-        if category == "types":
-            existing_docs = list(collection_ref.stream())
+        existing_docs = list(collection_ref.stream())
 
-            if len(existing_docs) == 0:
+        # الفحص الذكي: لو القسم لسه فاضي تماماً
+        if len(existing_docs) == 0:
+            if category == "types":
                 for index, name in enumerate(DEFAULT_TYPES, start=1):
                     code = str(index)
                     collection_ref.document(code).set({
                         "name": name,
                         "code": code
                     })
+            # توليد التكويدات الافتراضية لباقي الأقسام (بما فيها الفروع)
+            elif category in DEFAULT_CATEGORIES_DATA:
+                for index, item in enumerate(DEFAULT_CATEGORIES_DATA[category], start=1):
+                    code = str(index)
+                    collection_ref.document(code).set({
+                        "name": item["name"],
+                        "code": code
+                    })
 
+        # إعادة القراءة بعد ملء الافتراضيات
         docs = collection_ref.stream()
 
         results = []
@@ -94,9 +134,7 @@ async def list_codes(company_code: str, category: str):
             item_data["code"] = d.id
             results.append(item_data)
 
-        # ترتيب حسب الكود
         results.sort(key=lambda x: int(x["code"]))
-
         return results
 
     except Exception as e:
