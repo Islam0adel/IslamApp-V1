@@ -5,12 +5,12 @@ import '../core/constants.dart';
 class DailyService {
   final String baseUrl = ApiConstants.baseUrl;
 
-// 1. جلب الأرصدة (نقدي وفيزا) من السيرفر بناءً على الخزينة
-  Future<Map<String, dynamic>> getDailySummary(String companyCode, String? treasury) async {
+  // 1. جلب الأرصدة (نقدي وفيزا) مضافاً إليها الفرع النشط
+  Future<Map<String, dynamic>> getDailySummary(String companyCode, String? treasury, String branch) async {
     try {
-      String url = '$baseUrl/transactions/summary/$companyCode';
+      String url = '$baseUrl/transactions/summary/$companyCode?branch=${Uri.encodeComponent(branch)}';
       if (treasury != null && treasury.isNotEmpty) {
-        url += '?treasury=${Uri.encodeComponent(treasury)}';
+        url += '&treasury=${Uri.encodeComponent(treasury)}';
       }
       final response = await http.get(Uri.parse(url));
       if (response.statusCode == 200) return jsonDecode(response.body);
@@ -20,7 +20,7 @@ class DailyService {
     }
   }
 
-  // 2. حفظ حركة جديدة (أو تحديث إذن موجود)
+  // 2. حفظ حركة جديدة شاملة الفرع واسم الموظف المستخدم الفعلي
   Future<void> saveTransaction({
     required String companyCode,
     required int serial,
@@ -29,8 +29,9 @@ class DailyService {
     required String statement,
     required String category,
     required String date,
-    required String type, // cash or visa
-    String? employee, // حقل الموظف للتقارير
+    required String type,
+    String? employee,
+    required String branch, // حقل الفرع الجديد
   }) async {
     try {
       final response = await http.post(
@@ -46,6 +47,7 @@ class DailyService {
           'date': date,
           'type': type,
           'employee': employee ?? "غير محدد",
+          'branch': branch, // إرسال الفرع للباك إند
         }),
       );
 
@@ -57,7 +59,7 @@ class DailyService {
     }
   }
 
-  // 3. جلب آخر سيريال عشان الترقيم التلقائي
+  // 3. جلب آخر سيريال
   Future<int> getLastSerial(String companyCode) async {
     try {
       final response = await http.get(
@@ -72,17 +74,12 @@ class DailyService {
     }
   }
 
-  // 4. [جديد] جلب سجل الحركات للمعاينة بين تاريخين
-  Future<List<dynamic>> getTransactionsHistory(
-    String companyCode, 
-    String startDate, 
-    String endDate
-  ) async {
+  // 4. جلب سجل الحركات
+  Future<List<dynamic>> getTransactionsHistory(String companyCode, String startDate, String endDate) async {
     try {
       final response = await http.get(
         Uri.parse('$baseUrl/transactions/list/$companyCode?start_date=$startDate&end_date=$endDate'),
       );
-      
       if (response.statusCode == 200) {
         return jsonDecode(response.body) as List<dynamic>;
       } else {
@@ -93,13 +90,12 @@ class DailyService {
     }
   }
 
-  // 5. [جديد] حذف حركة مالية نهائياً
+  // 5. حذف حركة مالية نهائياً
   Future<void> deleteTransaction(String companyCode, int serial) async {
     try {
       final response = await http.delete(
         Uri.parse('$baseUrl/transactions/delete/$companyCode/$serial'),
       );
-      
       if (response.statusCode != 200) {
         throw 'فشل حذف الحركة من السيرفر';
       }

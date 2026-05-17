@@ -178,7 +178,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             child: Column(
               children: [
                 const Text(
-                  "IslamApp V1.0 - متعدد الفروع",
+                  "IslamApp V1.0",
                   style: TextStyle(color: Color.fromARGB(213, 123, 248, 51), fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.2),
                 ),
                 const SizedBox(height: 10),
@@ -295,7 +295,11 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       children: [
         // تعديل التوجيه: نمرر الـ _selectedBranch للشاشات الأخرى لتصفية الحركات بناءً عليه بالملي
         _menuItem("حركة الخزينة", Icons.account_balance_wallet_rounded, Colors.greenAccent, () {
-          Navigator.push(context, MaterialPageRoute(builder: (c) => DailyPage(companyCode: widget.companyCode, selectedBranch: _selectedBranch)));
+          Navigator.push(context, MaterialPageRoute(builder: (c) => DailyPage(
+            companyCode: widget.companyCode, 
+            selectedBranch: _selectedBranch,
+            userName: widget.userName, // 👈 تمرير اسم المستخدم
+          )));
         }),
         _menuItem("التكويد", Icons.code_rounded, Colors.amber, () {
           Navigator.push(context, MaterialPageRoute(builder: (c) => CodingPage(companyCode: widget.companyCode)));

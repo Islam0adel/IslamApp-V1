@@ -5,7 +5,7 @@ from typing import Optional
 
 router = APIRouter()
 
-# الموديل الموحد للبيانات
+# الموديل الموحد للبيانات المطور ليدعم الفروع والمستخدمين
 class TransactionModel(BaseModel):
     company_code: str
     serial: int
@@ -15,7 +15,8 @@ class TransactionModel(BaseModel):
     category: str
     date: str
     type: str
-    employee: Optional[str] # حقل الموظف مهم لتقرير الإكسيل
+    employee: Optional[str] = "غير محدد"  # يحمل اسم المستخدم الفعلي المسجل
+    branch: Optional[str] = "الالفرع الرئيسي"  # يحمل اسم الفرع
 
 # 1. حفظ أو تحديث إذن (Save / Update)
 @router.post("/save")
@@ -30,7 +31,7 @@ async def save_transaction(data: TransactionModel):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# 2. جلب قائمة الأذون للمعاينة (الجديدة)
+# 2. جلب قائمة الأذون للمعاينة المفلترة بالتاريخ
 @router.get("/list/{company_code}")
 async def get_transactions(company_code: str, start_date: str, end_date: str):
     try:
@@ -45,12 +46,11 @@ async def get_transactions(company_code: str, start_date: str, end_date: str):
             item = d.to_dict()
             results.append(item)
             
-        # ترتيب النتائج من الأحدث للأقدم حسب السيريال
         return sorted(results, key=lambda x: x.get('serial', 0), reverse=True)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# 3. حذف إذن (الجديدة)
+# 3. حذف إذن
 @router.delete("/delete/{company_code}/{serial}")
 async def delete_transaction(company_code: str, serial: int):
     try:
@@ -60,19 +60,17 @@ async def delete_transaction(company_code: str, serial: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# 4. ملخص الأرصدة (الدالة القديمة كما هي)
+# 4. ملخص الأرصدة المطور ليفحص الفرع المختار
 @router.get("/summary/{company_code}")
-async def get_summary(company_code: str, treasury: Optional[str] = None):
+async def get_summary(company_code: str, treasury: Optional[str] = None, branch: Optional[str] = "كل الفروع"):
     try:
-        # 1. جلب قاموس بالتصنيفات لمعرفة نوع كل تصنيف (وارد/صادر) كاش في الذاكرة لسرعة الحساب
         category_types = {}
         types_docs = db.collection("coding").document(company_code).collection("types").stream()
         for t_doc in types_docs:
             t_data = t_doc.to_dict()
             if t_data.get('name'):
-                category_types[t_data.get('name')] = t_data.get('type', 'صادر') # الافتراضي صادر لو مش محدد
+                category_types[t_data.get('name')] = t_data.get('type', 'صادر')
 
-        # 2. جلب حركات اليومية
         docs = db.collection("transactions").document(company_code)\
             .collection("daily_records").stream()
         
@@ -82,50 +80,47 @@ async def get_summary(company_code: str, treasury: Optional[str] = None):
         for d in docs:
             item = d.to_dict()
             
-            # فلترة الحركات بناءً على الخزينة المختارة
+            # 🟢 التصفية الذكية حسب الفرع:
+            item_branch = item.get('branch', 'الفرع الرئيسي')
+            if branch != "كل الفروع" and item_branch != branch:
+                continue
+
+            # فلترة الحركات بناءً على الخزينة
             if treasury and item.get('treasury') != treasury:
                 continue
 
             amt = float(item.get('amount', 0))
             cat = item.get('category', '')
-            tx_type = item.get('type', 'cash') # 'cash' أو 'visa' بناءً على طريقة دفع الحركة
+            tx_type = item.get('type', 'cash')
 
-            # ومعرفة نوع التصنيف الفعلي من الكاش اللي عملناه فوق (وارد أو صادر)
             cat_direction = category_types.get(cat, 'صادر')
 
-            # --------------------------------------------------------
-            # أولاً: معالجة الحالات الخاصة (التحويلات الثابتة)
-            # --------------------------------------------------------
             if cat == "تحويل من النقدي":
                 cash -= amt
                 visa += amt
-                continue  # تخطي باقي الشروط للحركة دي
+                continue
                 
             elif cat == "تحويل من الفيزا":
                 cash += amt
                 visa -= amt
-                continue  # تخطي باقي الشروط للحركة دي
+                continue
 
-            # --------------------------------------------------------
-            # ثانياً: المنطق العام الديناميكي (بناءً على وارد وصادر وطريقة الدفع)
-            # --------------------------------------------------------
-            if tx_type == "cash":  # الحركة مدفوعة أو مستلمة نقداً
+            if tx_type == "cash":
                 if cat_direction == "وارد":
                     cash += amt
-                else:  # صادر (مصاريف، مشتريات، إلخ)
+                else:
                     cash -= amt
-                    
-            elif tx_type == "visa":  # الحركة مدفوعة أو مستلمة عبر الفيزا
+            elif tx_type == "visa":
                 if cat_direction == "وارد":
                     visa += amt
-                else:  # صادر (مصاريف بالفيزا، إلخ)
+                else:
                     visa -= amt
 
         return {"cash_balance": cash, "visa_balance": visa}
     except Exception as e:
         return {"cash_balance": 0.0, "visa_balance": 0.0}
 
-# 5. جلب آخر سيريال (الدالة القديمة كما هي)
+# 5. جلب آخر سيريال
 @router.get("/last_serial/{company_code}")
 async def get_last_serial(company_code: str):
     try:
@@ -136,7 +131,6 @@ async def get_last_serial(company_code: str):
         
         if not docs:
             return {"last_serial": 0}
-        
         return {"last_serial": docs[0].to_dict().get("serial", 0)}
     except Exception as e:
         return {"last_serial": 0}

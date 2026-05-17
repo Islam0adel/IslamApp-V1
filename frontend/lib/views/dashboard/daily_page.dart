@@ -10,13 +10,15 @@ import 'daily_history_page.dart';
 
 class DailyPage extends StatefulWidget {
   final String companyCode;
-  final String selectedBranch; // الفرع المختار
+  final String selectedBranch; 
+  final String userName; 
   final Map<String, dynamic>? editItem;
 
   const DailyPage({
     super.key, 
     required this.companyCode, 
-    this.selectedBranch = "كل الفروع", // 👈 خليناه اختياري وبقيمة افتراضية عشان ميعملش أي أيرور في بقية الملف
+    required this.selectedBranch,
+    required this.userName, 
     this.editItem,
   });
 
@@ -60,15 +62,14 @@ class _DailyPageState extends State<DailyPage> {
     }
   }
 
-  // --- منطق الأرصدة اللحظية حسب معادلتك ---
   double get _liveCashBalance {
     double val = double.tryParse(_amountController.text) ?? 0.0;
     if (_selectedCategory == "ايراد" || _selectedCategory == "تحويل من الفيزا") {
       return _cashBalance + val;
     } else if (_selectedCategory == "تحويل من النقدي") {
-      return _cashBalance - val; // تعديل: الخصم اللحظي الصريح عند التحويل من النقدي
+      return _cashBalance - val;
     } else if (_selectedCategory != null && _selectedCategory != "فيزا") {
-      return _cashBalance - val; // باقي التصنيفات تخصم طبيعي ما عدا الفيزا الصافية
+      return _cashBalance - val;
     }
     return _cashBalance;
   }
@@ -83,17 +84,14 @@ class _DailyPageState extends State<DailyPage> {
     return _visaBalance;
   }
 
-void _loadInitialData() async {
-    // مؤشر التحميل يظهر فقط أول مرة لو القوائم لسه مجاتش من الكاش
+  void _loadInitialData() async {
     if (_treasuries.isEmpty) {
       setState(() => _isLoading = true);
     }
     try {
-      // 1. جلب قوائم الخزائن والتصنيفات (بتيجي فوراً ومجاناً من الكاش لو محملة قبل كده)
       final safes = await _apiService.getCodingData(widget.companyCode, "safes");
       final types = await _apiService.getCodingData(widget.companyCode, "types");
 
-      // 2. تحديد الخزينة المستهدفة: لو المستخدم اختار خزينة نستخدمها، لو لسه أول مرة نضع الافتراضية
       String? targetTreasury = _selectedTreasury;
       if (widget.editItem == null && targetTreasury == null && safes.isNotEmpty) {
         var defaultSafe = safes.firstWhere(
@@ -103,10 +101,8 @@ void _loadInitialData() async {
         targetTreasury = defaultSafe['name'];
       }
 
-      // 3. جلب الأرصدة المحدثة بناءً على الخزينة المستهدفة حالياً (سواء 1 أو 2 أو غيرها)
-      final summary = await _dailyService.getDailySummary(widget.companyCode, targetTreasury);
+      final summary = await _dailyService.getDailySummary(widget.companyCode, targetTreasury, widget.selectedBranch);
 
-      // 4. جلب السيريال تلقائياً
       int serialVal = _currentSerial;
       if (widget.editItem == null) {
         final lastSerial = await _dailyService.getLastSerial(widget.companyCode);
@@ -117,7 +113,7 @@ void _loadInitialData() async {
         setState(() {
           _treasuries = safes;
           _categories = types;
-          _selectedTreasury = targetTreasury; // تثبيت الخزينة المختارة في الواجهة
+          _selectedTreasury = targetTreasury;
           _currentSerial = serialVal;
           _cashBalance = (summary['cash_balance'] ?? 0.0).toDouble();
           _visaBalance = (summary['visa_balance'] ?? 0.0).toDouble();
@@ -129,32 +125,126 @@ void _loadInitialData() async {
     }
   }
 
+  // 🚀 إعادة بناء دالة الاستيراد لتأمين سحب البيانات المحددة وحقن الفرع والمستخدم تلقائياً
+  Future<void> _importFromExcel() async {
+    FilePickerResult? result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['xlsx'],
+      withData: true, 
+    );
+
+    if (result != null) {
+      setState(() => _isLoading = true);
+      try {
+        var bytes = result.files.single.bytes;
+        if (bytes == null && result.files.single.path != null) {
+          bytes = File(result.files.single.path!).readAsBytesSync();
+        }
+
+        if (bytes == null) throw "تعذر قراءة بيانات ملف الإكسيل";
+
+        var excel = excel_lib.Excel.decodeBytes(bytes);
+        String defaultTreasury = _selectedTreasury ?? "الخزينة الرئيسية";
+        String savingBranch = widget.selectedBranch == "كل الفروع" ? "الفرع الرئيسي" : widget.selectedBranch;
+
+        for (var table in excel.tables.keys) {
+          var rows = excel.tables[table]!.rows;
+          if (rows.isEmpty) continue;
+
+          // 1. قراءة الصف الأول ديناميكياً لتحديد أماكن الأعمدة
+          var headerRow = rows[0];
+          int amountIndex = -1;
+          int statementIndex = -1;
+          int categoryIndex = -1;
+          int dateIndex = -1;
+
+          for (int c = 0; c < headerRow.length; c++) {
+            if (headerRow[c] == null || headerRow[c]?.value == null) continue;
+            String headerText = headerRow[c]!.value.toString().trim().toLowerCase();
+
+            if (headerText.contains("المبلغ") || headerText.contains("amount")) {
+              amountIndex = c;
+            } else if (headerText.contains("البيان") || headerText.contains("statement") || headerText.contains("الشرح")) {
+              statementIndex = c;
+            } else if (headerText.contains("التصنيف") || headerText.contains("category") || headerText.contains("النوع")) {
+              categoryIndex = c;
+            } else if (headerText.contains("التاريخ") || headerText.contains("date")) {
+              dateIndex = c;
+            }
+          }
+
+          // التحقق من أن الأعمدة الأساسية تم العثور عليها لمنع الأخطاء
+          if (amountIndex == -1) {
+            throw "لم يتم العثور على عمود (المبلغ) في السطر الأول من شيت الإكسيل!";
+          }
+
+          // 2. نبدأ الآن من الصف الثاني i = 1 لقراءة الحركات بناءً على الكشافات المستخرجة
+          for (int i = 1; i < rows.length; i++) {
+            var row = rows[i];
+            if (row.isEmpty) continue;
+            
+            // التأكد من أن خانة المبلغ ليست فارغة للسطر الحالي
+            if (row.length <= amountIndex || row[amountIndex] == null || row[amountIndex]?.value == null) continue;
+
+            // أ. سحب القيم ديناميكياً بناءً على الكشافات (Indexes) المحددة
+            String amountStr = row[amountIndex]!.value.toString();
+            
+            String statementStr = (statementIndex != -1 && row.length > statementIndex && row[statementIndex] != null) 
+                ? row[statementIndex]!.value.toString() : "";
+                
+            String categoryStr = (categoryIndex != -1 && row.length > categoryIndex && row[categoryIndex] != null) 
+                ? row[categoryIndex]!.value.toString() : "عام";
+            
+            // معالجة التاريخ بديناميكية
+            String rawDate = (dateIndex != -1 && row.length > dateIndex && row[dateIndex] != null) 
+                ? row[dateIndex]!.value.toString() : DateFormat('yyyy-MM-dd').format(DateTime.now());
+            String formattedDate = rawDate.length >= 10 ? rawDate.substring(0, 10) : rawDate;
+
+            // ب. تحديد نوع الحركة دايناميك (visa أو cash) بناءً على اسم التصنيف المستورد ديناميكياً
+            String calculatedType = (categoryStr == "فيزا" || categoryStr == "تحويل من النقدي") ? "visa" : "cash";
+
+            // ج. رفع السطر المصفى إلى الباك إند
+            await _dailyService.saveTransaction(
+              companyCode: widget.companyCode,
+              serial: _currentSerial++,
+              treasury: defaultTreasury,
+              amount: double.tryParse(amountStr) ?? 0.0,
+              statement: statementStr,
+              category: categoryStr,
+              date: formattedDate,
+              type: calculatedType,
+              employee: widget.userName,       
+              branch: savingBranch,            
+            );
+          }
+        }
+        
+        _showSnackBar("تم استيراد الشيت ديناميكياً بنجاح وتجاهل الأعمدة الزائدة", Colors.green);
+        _loadInitialData(); 
+        
+      } catch (e) {
+        _showSnackBar("خطأ أثناء الاستيراد: $e", Colors.red);
+      } finally {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
         title: Column(
-    children: [
-      Text(
-        widget.editItem != null ? "تعديل حركة" : "تسجيل يومية",
-        style: const TextStyle(fontFamily: 'Cairo', fontSize: 16),
-      ),
-      Text(
-        "إذن رقم: $_currentSerial", // هنا عرض رقم الإذن
-        style: const TextStyle(
-          fontFamily: 'Cairo', 
-          fontSize: 14, 
-          color: Colors.cyanAccent, 
-          fontWeight: FontWeight.bold
+          children: [
+            Text(widget.editItem != null ? "تعديل حركة" : "تسجيل يومية", style: const TextStyle(fontFamily: 'Cairo', fontSize: 16)),
+            Text("إذن رقم: $_currentSerial", style: const TextStyle(fontFamily: 'Cairo', fontSize: 13, color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
+          ],
         ),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        centerTitle: true,
       ),
-    ],
-  ),
-  backgroundColor: Colors.transparent,
-  elevation: 0,
-  centerTitle: true,
-),
       body: Container(
         height: double.infinity, width: double.infinity,
         decoration: BoxDecoration(
@@ -170,6 +260,8 @@ void _loadInitialData() async {
                   padding: const EdgeInsets.all(20),
                   child: Column(
                     children: [
+                      Text("فرع العمل الحالي: ${widget.selectedBranch}", style: const TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+                      const SizedBox(height: 10),
                       Row(
                         children: [
                           Expanded(child: _balanceCard("رصيد النقدي", _liveCashBalance, Colors.greenAccent)),
@@ -197,12 +289,12 @@ void _loadInitialData() async {
         children: [
           Text(title, style: const TextStyle(color: Colors.white70, fontSize: 13, fontFamily: 'Cairo')),
           const SizedBox(height: 5),
-          Text(amount.toStringAsFixed(2), style: TextStyle(color: color, fontSize: 19, fontWeight: FontWeight.bold)),
+          Text(amount.toStringAsFixed(2), style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.bold)),
         ],
       ),
     );
   }
-  // 1. نموذج الإدخال (الخزينة والتصنيف جنب بعض)
+
   Widget _buildInputForm() {
     return GlassCard(
       child: Column(
@@ -212,14 +304,10 @@ void _loadInitialData() async {
           Row(
             children: [
               Expanded(
-                child: _buildDropdown("الخزينة", _selectedTreasury, _treasuries, 
-                  (val) {
-                    setState(() {
-                      _selectedTreasury = val;
-                    });
-                    _loadInitialData(); // تحديث الأرصدة فوراً بناءً على الخزينة الجديدة
-                  },
-                ),
+                child: _buildDropdown("الخزينة", _selectedTreasury, _treasuries, (val) {
+                  setState(() => _selectedTreasury = val);
+                  _loadInitialData();
+                }),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -237,70 +325,6 @@ void _loadInitialData() async {
     );
   }
 
-// دالة الاستيراد المحدثة لمعالجة تنسيق التاريخ ونوع الحركة (Visa/Cash)
-  Future<void> _importFromExcel() async {
-    FilePickerResult? result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['xlsx'],
-      withData: true, 
-    );
-
-    if (result != null) {
-      setState(() => _isLoading = true);
-      try {
-        var bytes = result.files.single.bytes;
-        if (bytes == null && result.files.single.path != null) {
-          bytes = File(result.files.single.path!).readAsBytesSync();
-        }
-
-        if (bytes == null) throw "تعذر قراءة بيانات الملف";
-
-        var excel = excel_lib.Excel.decodeBytes(bytes);
-
-        String defaultTreasury = _selectedTreasury ?? "الخزينة الرئيسية";
-
-        for (var table in excel.tables.keys) {
-          var rows = excel.tables[table]!.rows;
-          for (int i = 1; i < rows.length; i++) {
-            var row = rows[i];
-            if (row.isEmpty || row[0] == null || row[0]?.value == null) continue;
-
-            // 1. معالجة التاريخ: نأخذ أول 10 رموز فقط (yyyy-MM-dd) لتجنب صيغة الـ Z و الـ Time
-            String rawDate = row.length > 3 ? row[3]!.value.toString() : DateFormat('yyyy-MM-dd').format(DateTime.now());
-            String formattedDate = rawDate.length >= 10 ? rawDate.substring(0, 10) : rawDate;
-
-            // 2. معالجة التصنيف والنوع (Type): فحص لو الحركة فيزا
-            String categoryStr = (row.length > 2 && row[2] != null) ? row[2]!.value.toString() : "عام";
-            String calculatedType = (categoryStr == "فيزا" || categoryStr == "تحويل من النقدي") ? "visa" : "cash";
-
-            String amountStr = row[0]!.value.toString();
-            String statementStr = (row.length > 1 && row[1] != null) ? row[1]!.value.toString() : "";
-
-            await _dailyService.saveTransaction(
-              companyCode: widget.companyCode,
-              serial: _currentSerial++,
-              treasury: defaultTreasury,
-              amount: double.tryParse(amountStr) ?? 0.0,
-              statement: statementStr,
-              category: categoryStr,
-              date: formattedDate, // التاريخ المصلح
-              type: calculatedType, // النوع المصلح (visa أو cash)
-            );
-          }
-        }
-        
-        _showSnackBar("تم الاستيراد بنجاح وتصحيح التنسيقات", Colors.green);
-        _loadInitialData(); 
-        
-      } catch (e) {
-        _showSnackBar("خطأ في الاستيراد: $e", Colors.red);
-      } finally {
-        setState(() => _isLoading = false);
-      }
-    }
-  }
-
-  // 3. أزرار العمليات
   Widget _buildMainActions() {
     bool isEdit = widget.editItem != null;
     return Column(
@@ -319,19 +343,20 @@ void _loadInitialData() async {
                 style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
           ),
         ),
+        // 🟢 إرجاع زرار "استيراد من إكسيل" الأنيق مكانه في حالة وضع الإدخال الجديد فقط
         if (!isEdit) ...[
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           SizedBox(
             width: double.infinity,
             height: 50,
             child: OutlinedButton.icon(
               style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: Colors.greenAccent),
+                side: const BorderSide(color: Colors.greenAccent, width: 1.2),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
               ),
-              onPressed: _importFromExcel,
-              icon: const Icon(Icons.upload_file, color: Colors.greenAccent),
-              label: const Text("استيراد من إكسيل", style: TextStyle(color: Colors.greenAccent, fontFamily: 'Cairo')),
+              onPressed: _importFromExcel, // استدعاء دالة الاستيراد المطورة
+              icon: const Icon(Icons.upload_file, color: Colors.greenAccent, size: 20),
+              label: const Text("استيراد من إكسيل", style: TextStyle(color: Colors.greenAccent, fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
             ),
           ),
         ]
@@ -339,7 +364,6 @@ void _loadInitialData() async {
     );
   }
 
-  // 4. دالة الحفظ المحدثة
   void _handleSave() async {
     if (_amountController.text.isEmpty || _selectedTreasury == null || _selectedCategory == null) {
       _showSnackBar("برجاء إكمال البيانات", Colors.orange);
@@ -347,6 +371,8 @@ void _loadInitialData() async {
     }
     setState(() => _isLoading = true);
     try {
+      String savingBranch = widget.selectedBranch == "كل الفروع" ? "الفرع الرئيسي" : widget.selectedBranch;
+
       await _dailyService.saveTransaction(
         companyCode: widget.companyCode,
         serial: _currentSerial,
@@ -356,6 +382,8 @@ void _loadInitialData() async {
         category: _selectedCategory!,
         date: _dateController.text,
         type: (_selectedCategory == "فيزا" || _selectedCategory == "تحويل من النقدي") ? "visa" : "cash",
+        employee: widget.userName, 
+        branch: savingBranch, 
       );
 
       if (widget.editItem != null) {
@@ -372,7 +400,6 @@ void _loadInitialData() async {
     }
   }
 
-  // --- دوال المساعدة (TextField, Dropdown, DatePicker, SnackBar) ---
   Widget _buildTextField(TextEditingController ctrl, String label, IconData icon, {bool isNumber = false}) {
     return TextField(
       controller: ctrl,
@@ -405,12 +432,9 @@ void _loadInitialData() async {
 
   Widget _buildDatePicker() {
     return TextField(
-      controller: _dateController,
-      readOnly: true,
-      style: const TextStyle(color: Colors.white),
+      controller: _dateController, readOnly: true, style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(
-        prefixIcon: const Icon(Icons.calendar_today, color: Colors.white70),
-        labelText: "التاريخ", labelStyle: const TextStyle(color: Colors.white70, fontFamily: 'Cairo'),
+        prefixIcon: const Icon(Icons.calendar_today, color: Colors.white70), labelText: "التاريخ", 
         enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.white10)),
       ),
       onTap: _pickDate,
@@ -419,7 +443,11 @@ void _loadInitialData() async {
 
   Widget _buildSecondaryActions() {
     return TextButton.icon(
-      onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => DailyHistoryPage(companyCode: widget.companyCode))),
+      onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => DailyHistoryPage(
+        companyCode: widget.companyCode,
+        selectedBranch: widget.selectedBranch, 
+        userName: widget.userName,
+      ))),
       icon: const Icon(Icons.history, color: Colors.cyanAccent),
       label: const Text("معاينة الحركات", style: TextStyle(color: Colors.cyanAccent, fontFamily: 'Cairo')),
     );
