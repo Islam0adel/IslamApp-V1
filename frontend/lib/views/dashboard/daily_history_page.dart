@@ -7,6 +7,8 @@ import '../../services/daily_service.dart';
 import 'daily_page.dart';
 import 'package:universal_html/html.dart' as html; 
 import 'package:excel/excel.dart' as excel_lib;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
 
 class DailyHistoryPage extends StatefulWidget {
   final String companyCode;
@@ -57,27 +59,16 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
 
       setState(() {
         _historyData = filteredData;
-        _applySorting();
+        
+        // 🟢 ترتيب البيانات تلقائياً من الأحدث للأقدم بناءً على السيريال لضمان دقة الترتيب اللحظي
+        _historyData.sort((a, b) => int.parse(b['serial'].toString()).compareTo(int.parse(a['serial'].toString())));
+        
         _isLoading = false;
       });
     } catch (e) {
       setState(() => _isLoading = false);
       _showSnackBar("خطأ في التحميل: $e", Colors.red);
     }
-  }
-
-  void _applySorting() {
-    setState(() {
-      if (_isCategoryGrouped) {
-        _historyData.sort((a, b) {
-          int cmp = a['category'].compareTo(b['category']);
-          if (cmp != 0) return cmp;
-          return a['serial'].compareTo(b['serial']);
-        });
-      } else {
-        _historyData.sort((a, b) => a['serial'].compareTo(b['serial']));
-      }
-    });
   }
 
   Future<void> _exportToExcel() async {
@@ -158,6 +149,22 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
         title: const Text("معاينة الحركات", style: TextStyle(fontFamily: 'Cairo')),
         backgroundColor: Colors.transparent,
         elevation: 0,
+        // 🟢 تعديل الشرط 4: استبدال زر الرجوع ليقوم بفتح صفحة اليومية من الصفر لتحديث أرصدتها
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (context) => DailyPage(
+                  companyCode: widget.companyCode,
+                  selectedBranch: widget.selectedBranch,
+                  userName: widget.userName ?? "مدير",
+                ),
+              ),
+            );
+          },
+        ),
         actions: [
           IconButton(icon: const Icon(Icons.ios_share, color: Colors.greenAccent), onPressed: _exportToExcel, tooltip: "تصدير إكسيل"),
           IconButton(
@@ -165,7 +172,15 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
             onPressed: () {
               setState(() {
                 _isCategoryGrouped = !_isCategoryGrouped;
-                _applySorting();
+                
+                // 🟢 استبدال الدالة المكسورة بالترتيب اللحظي السليم
+                if (_isCategoryGrouped) {
+                  // ترتيب حسب الحروف الأبجدية للتصنيفات
+                  _historyData.sort((a, b) => (a['category'] ?? '').toString().compareTo((b['category'] ?? '').toString()));
+                } else {
+                  // إرجاع الترتيب التنازلي الطبيعي حسب السيريال (الأحدث للأقدم)
+                  _historyData.sort((a, b) => int.parse(b['serial'].toString()).compareTo(int.parse(a['serial'].toString())));
+                }
               });
             },
           ),
@@ -290,8 +305,9 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
     );
   }
 
-  void _editTransaction(Map<String, dynamic> item) async {
-    final result = await Navigator.push(
+  void _editTransaction(Map<String, dynamic> item) {
+    // 🟢 تعديل الشرط 4: غلق صفحة التاريخ وفتح صفحة اليومية ممررين لها بيانات التعديل
+    Navigator.pushReplacement(
       context,
       MaterialPageRoute(
         builder: (context) => DailyPage(
@@ -302,7 +318,6 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
         ),
       ),
     );
-    if (result == true) _fetchData();
   }
 
   void _showOptionsModal(Map<String, dynamic> item) {
@@ -333,14 +348,52 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
         title: const Text("تأكيد الحذف", style: TextStyle(fontFamily: 'Cairo')),
         content: Text("حذف إذن رقم ${item['serial']}؟", style: const TextStyle(fontFamily: 'Cairo')),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text("إلغاء", style: TextStyle(fontFamily: 'Cairo'))),
           TextButton(
-              onPressed: () async {
-                await _dailyService.deleteTransaction(widget.companyCode, item['serial']);
-                Navigator.pop(context);
+            onPressed: () => Navigator.pop(context), 
+            child: const Text("إلغاء", style: TextStyle(fontFamily: 'Cairo'))
+          ),
+          TextButton(
+            onPressed: () async {
+              try {
+                int serialToDelete = int.parse(item['serial'].toString());
+                
+                // 1. إرسال أمر الحذف النهائي وإعادة تمشيط الأرصدة في الباك إند
+                await _dailyService.deleteTransaction(widget.companyCode, serialToDelete);
+                
+                // 2. 🟢 تنظيف الكاش المحلي فوراً لضمان عدم ظهور الإذن مجدداً
+                final prefs = await SharedPreferences.getInstance();
+                final keys = prefs.getKeys();
+                
+                for (String key in keys) {
+                  if (key.startsWith('cached_history_${widget.companyCode}_')) {
+                    final cachedString = prefs.getString(key);
+                    if (cachedString != null && cachedString.isNotEmpty) {
+                      List<dynamic> localList = jsonDecode(cachedString) as List<dynamic>;
+                      
+                      // مسح الإذن المحذوف تماماً من ملف الكاش
+                      localList.removeWhere((localItem) => int.parse(localItem['serial'].toString()) == serialToDelete);
+                      
+                      // حفظ الكاش النظيف مجدداً
+                      await prefs.setString(key, jsonEncode(localList));
+                    }
+                  }
+                }
+
+                // 3. إغلاق النافذة المنبثقة
+                if (mounted) Navigator.pop(context);
+                
+                // 4. تحديث الـ UI والأرصدة في الشاشة لحظياً بناءً على الكاش النظيف الجديد
                 _fetchData();
-              },
-              child: const Text("حذف", style: TextStyle(color: Colors.red, fontFamily: 'Cairo'))),
+
+              } catch (e) {
+                if (mounted) Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text("خطأ أثناء الحذف: $e"), backgroundColor: Colors.red)
+                );
+              }
+            },
+            child: const Text("حذف", style: TextStyle(color: Colors.red, fontFamily: 'Cairo'))
+          ),
         ],
       ),
     );

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:firebase_auth/firebase_auth.dart';
 import '../core/constants.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class ApiService {
   final String baseUrl = ApiConstants.baseUrl;
@@ -104,24 +105,54 @@ class ApiService {
   static List<dynamic>? _cachedSafes;
   static List<dynamic>? _cachedTypes;
 
-  // جلب قائمة الأكواد لأي قسم (خزائن، موردين، عملاء، إلخ)
+  // جلب قائمة الأكواد لأي قسم (مطور بدعم الكاش الدائم في المتصفح / الجهاز لتوفير 100% من القراءات)
   Future<List<dynamic>> getCodingData(String companyCode, String category) async {
-    // 1. لو المطلوب خزائن وهي محفوظة مسبقاً في الكاش، رجعها فوراً
+    // 1. لو المطلوب خزائن وهي محفوظة مسبقاً في الذاكرة السريعة، رجعها فوراً
     if (category == "safes" && _cachedSafes != null) {
       return _cachedSafes!;
     }
-    // 2. لو المطلوب تصنيفات وهي محفوظة مسبقاً في الكاش، رجعها فوراً
+    // 2. لو المطلوب تصنيفات وهي محفوظة مسبقاً في الذاكرة السريعة، رجعها فوراً
     if (category == "types" && _cachedTypes != null) {
       return _cachedTypes!;
     }
 
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final String cacheKey = 'cached_coding_${companyCode}_$category';
+
+      // 3. الفحص الثاني: لو البيانات مخزنة في قرص الجهاز/المتصفح من المرات السابقة
+      if (prefs.containsKey(cacheKey)) {
+        final cachedDataString = prefs.getString(cacheKey);
+        if (cachedDataString != null && cachedDataString.isNotEmpty) {
+          final localData = jsonDecode(cachedDataString) as List<dynamic>;
+          
+          // حفظها في الذاكرة المؤقتة السريعة لاستدعائها مجاناً في المرات القادمة
+          if (category == "safes") _cachedSafes = localData;
+          if (category == "types") _cachedTypes = localData;
+          
+          return localData;
+        }
+      }
+    } catch (e) {
+      // في حال حدوث مشكلة في الـ SharedPreferences (مثل المتصفح المقيد)، يكمل الكود للسيرفر بشكل طبيعي كأمان
+      print('تحذير في الكاش المحلي: $e');
+    }
+
+    // 4. في حال لم يجد أي كاش محلي، يذهب للسيرفر (يحدث مرة واحدة فقط)
     final response = await http.get(Uri.parse('$baseUrl/coding/list/$companyCode/$category'));
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body) as List<dynamic>;
       
-      // حفظ البيانات المستلمة في الكاش لاستدعائها مجاناً في المرات القادمة
+      // حفظ البيانات المستلمة في الكاش السريع
       if (category == "safes") _cachedSafes = data;
       if (category == "types") _cachedTypes = data;
+      
+      try {
+        // حفظ البيانات في التخزين الدائم للجهاز
+        final prefs = await SharedPreferences.getInstance();
+        final String cacheKey = 'cached_coding_${companyCode}_$category';
+        await prefs.setString(cacheKey, jsonEncode(data));
+      } catch (_) {}
       
       return data;
     }

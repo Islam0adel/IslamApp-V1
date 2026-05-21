@@ -115,8 +115,37 @@ class _DailyPageState extends State<DailyPage> {
           _categories = types;
           _selectedTreasury = targetTreasury;
           _currentSerial = serialVal;
-          _cashBalance = (summary['cash_balance'] ?? 0.0).toDouble();
-          _visaBalance = (summary['visa_balance'] ?? 0.0).toDouble();
+          
+          double tempCash = (summary['cash_balance'] ?? 0.0).toDouble();
+          double tempVisa = (summary['visa_balance'] ?? 0.0).toDouble();
+
+          // 🟢 السر هنا لحل المشكلة الأولى: لو في وضع التعديل، نلغي أثر الإذن القديم من الرصيد مؤقتاً في الشاشة
+          if (widget.editItem != null) {
+            double oldAmount = double.tryParse(widget.editItem!['amount'].toString()) ?? 0.0;
+            String oldCategory = widget.editItem!['category'] ?? "";
+            String oldType = (oldCategory == "فيزا" || oldCategory == "تحويل من النقدي") ? "visa" : "cash";
+
+            if (oldCategory == "تحويل من النقدي") {
+              tempCash += oldAmount; // نعيد له ما تم خصمه
+              tempVisa -= oldAmount; // نخصم منه ما تم تحويله
+            } else if (oldCategory == "تحويل من الفيزا") {
+              tempCash -= oldAmount;
+              tempVisa += oldAmount;
+            } else {
+              // تحديد اتجاه الحركة بناءً على الكود الفعلي للتصنيفات المسحوبة
+              var foundType = types.firstWhere((t) => t['name'] == oldCategory, orElse: () => null);
+              String direction = foundType != null ? (foundType['type'] ?? "صادر") : "صادر";
+              
+              if (oldType == "cash") {
+                tempCash = (direction == "وارد") ? (tempCash - oldAmount) : (tempCash + oldAmount);
+              } else if (oldType == "visa") {
+                tempVisa = (direction == "وارد") ? (tempVisa - oldAmount) : (tempVisa + oldAmount);
+              }
+            }
+          }
+
+          _cashBalance = tempCash;
+          _visaBalance = tempVisa;
           _isLoading = false;
         });
       }
@@ -304,15 +333,26 @@ class _DailyPageState extends State<DailyPage> {
           Row(
             children: [
               Expanded(
-                child: _buildDropdown("الخزينة", _selectedTreasury, _treasuries, (val) {
-                  setState(() => _selectedTreasury = val);
-                  _loadInitialData();
+                child: _buildDropdown("الخزينة", _selectedTreasury, _treasuries, (v) {
+                  // التأكد من أن المستخدم اختار خزينة مختلفة فعلياً عن الحالية لمنع التكرار اللانهائي
+                  if (v != _selectedTreasury) {
+                    setState(() {
+                      _selectedTreasury = v;
+                    });
+                    // استدعاء جلب البيانات والأرصدة فقط عند التغيير الفعلي باليد
+                    _loadInitialData(); 
+                  }
                 }),
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: _buildDropdown("التصنيف", _selectedCategory, _categories, 
-                    (val) => setState(() => _selectedCategory = val)),
+                child: _buildDropdown("التصنيف", _selectedCategory, _categories, (val) {
+                  if (val != _selectedCategory) {
+                    setState(() {
+                      _selectedCategory = val;
+                    });
+                  }
+                }),
               ),
             ],
           ),
@@ -372,27 +412,60 @@ class _DailyPageState extends State<DailyPage> {
     setState(() => _isLoading = true);
     try {
       String savingBranch = widget.selectedBranch == "كل الفروع" ? "الفرع الرئيسي" : widget.selectedBranch;
+      
+      // فحص ما إذا كنا في وضع التعديل أم إدخال جديد لاتخاذ المسار البرمجي الصحيح
+      bool isEditMode = widget.editItem != null;
 
-      await _dailyService.saveTransaction(
-        companyCode: widget.companyCode,
-        serial: _currentSerial,
-        treasury: _selectedTreasury!,
-        amount: double.parse(_amountController.text),
-        statement: _statementController.text,
-        category: _selectedCategory!,
-        date: _dateController.text,
-        type: (_selectedCategory == "فيزا" || _selectedCategory == "تحويل من النقدي") ? "visa" : "cash",
-        employee: widget.userName, 
-        branch: savingBranch, 
-      );
+      if (isEditMode) {
+        // 🔄 1. في حالة التعديل: نتوجه للدالة الجديدة لإعادة ضبط السلسلة الحسابية في الباك إند
+        await _dailyService.updateTransaction(
+          companyCode: widget.companyCode,
+          serial: _currentSerial,
+          treasury: _selectedTreasury!,
+          amount: double.parse(_amountController.text),
+          statement: _statementController.text,
+          category: _selectedCategory!,
+          date: _dateController.text,
+          type: (_selectedCategory == "فيزا" || _selectedCategory == "تحويل من النقدي") ? "visa" : "cash",
+          employee: widget.userName, 
+          branch: savingBranch, 
+        );
+      } else {
+        // ➕ 2. في حالة الإدخال الجديد: نتوجه لدالة الحفظ العادية التراكمية
+        await _dailyService.saveTransaction(
+          companyCode: widget.companyCode,
+          serial: _currentSerial,
+          treasury: _selectedTreasury!,
+          amount: double.parse(_amountController.text),
+          statement: _statementController.text,
+          category: _selectedCategory!,
+          date: _dateController.text,
+          type: (_selectedCategory == "فيزا" || _selectedCategory == "تحويل من النقدي") ? "visa" : "cash",
+          employee: widget.userName, 
+          branch: savingBranch, 
+        );
+      }
 
-      if (widget.editItem != null) {
-        Navigator.pop(context, true);
+      // بعد نجاح العملية، نحدد السلوك بناءً على الوضع الحالي
+      if (isEditMode) {
+        // 🟢 تعديل الشرط 4: بعد حفظ التعديل، نغلق اليومية ونفتح التاريخ من جديد
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => DailyHistoryPage(
+                companyCode: widget.companyCode,
+                selectedBranch: widget.selectedBranch,
+                userName: widget.userName,
+              ),
+            ),
+          );
+        }
       } else {
         _showSnackBar("تم الحفظ بنجاح", Colors.green);
         _amountController.clear();
         _statementController.clear();
-        _loadInitialData();
+        _loadInitialData(); // إعادة تهيئة الداتا وجلب السيريال الجديد التالي
       }
     } catch (e) {
       _showSnackBar("خطأ: $e", Colors.red);
@@ -416,17 +489,30 @@ class _DailyPageState extends State<DailyPage> {
   }
 
   Widget _buildDropdown(String label, String? value, List<dynamic> items, Function(String?) onChanged) {
+    // خطوة أمان: التأكد من أن القيمة الممررة موجودة فعلياً داخل القائمة لتجنب أخطاء البناء في فلاتر
+    final bool hasValidValue = items.any((item) => item['name']?.toString() == value?.toString());
+    final String? selectedValue = hasValidValue ? value : null;
+
     return DropdownButtonFormField<String>(
-      value: value,
+      value: selectedValue,
       dropdownColor: Colors.indigo.shade900,
       style: const TextStyle(color: Colors.white, fontSize: 13),
       decoration: InputDecoration(
-        labelText: label, labelStyle: const TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 12),
+        labelText: label, 
+        labelStyle: const TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 12),
         enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.white10)),
         contentPadding: const EdgeInsets.symmetric(vertical: 15, horizontal: 10),
       ),
-      items: items.map((item) => DropdownMenuItem<String>(value: item['name'], child: Text(item['name'] ?? ""))).toList(),
-      onChanged: onChanged,
+      items: items.map((item) => DropdownMenuItem<String>(
+        value: item['name']?.toString(), 
+        child: Text(item['name'] ?? "")
+      )).toList(),
+      // حماية فائقة لمنع استدعاء الباك إند والسيرفر إلا في حالة التغيير الفعلي باليد
+      onChanged: (newValue) {
+        if (newValue != value) {
+          onChanged(newValue);
+        }
+      },
     );
   }
 
@@ -443,7 +529,8 @@ class _DailyPageState extends State<DailyPage> {
 
   Widget _buildSecondaryActions() {
     return TextButton.icon(
-      onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => DailyHistoryPage(
+      // 🟢 تعديل الشرط 4: استخدام pushReplacement لغلق صفحة اليومية وفتح صفحة التاريخ
+      onPressed: () => Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => DailyHistoryPage(
         companyCode: widget.companyCode,
         selectedBranch: widget.selectedBranch, 
         userName: widget.userName,
