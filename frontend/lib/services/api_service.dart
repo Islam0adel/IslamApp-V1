@@ -99,63 +99,90 @@ class ApiService {
     }
   }
 
-  // ================= 2. قسم التكويد الجديد (المنطق المحدث) =================
+// ================= 2. قسم التكويد الجديد (المنطق المحدث والمتزامن لحظياً) =================
 
-// متغيرات ثابتة لحفظ الخزائن والتصنيفات مؤقتاً في الذاكرة لتوفير باقة الفايربيز
+  // متغيرات ثابتة لحفظ الخزائن والتصنيفات مؤقتاً في الذاكرة لتوفير باقة الفايربيز
   static List<dynamic>? _cachedSafes;
   static List<dynamic>? _cachedTypes;
 
-  // جلب قائمة الأكواد لأي قسم (مطور بدعم الكاش الدائم في المتصفح / الجهاز لتوفير 100% من القراءات)
+  // جلب قائمة الأكواد لأي قسم (مطور بدعم الكاش والنبضة اللحظية لضمان التحديث اللحظي لجميع المستخدمين)
   Future<List<dynamic>> getCodingData(String companyCode, String category) async {
-    // 1. لو المطلوب خزائن وهي محفوظة مسبقاً في الذاكرة السريعة، رجعها فوراً
-    if (category == "safes" && _cachedSafes != null) {
-      return _cachedSafes!;
-    }
-    // 2. لو المطلوب تصنيفات وهي محفوظة مسبقاً في الذاكرة السريعة، رجعها فوراً
-    if (category == "types" && _cachedTypes != null) {
-      return _cachedTypes!;
-    }
+    final prefs = await SharedPreferences.getInstance();
+    final String cacheDataKey = 'cached_coding_${companyCode}_$category';
+    final String cacheVersionKey = 'cached_coding_version_${companyCode}_$category';
 
+    // 1. جلب رقم النسخة الحالي المنشور على السيرفر لهذا القسم (طلب خفيف جداً لمنع القراءات المكررة)
+    int serverVersion = 0;
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final String cacheKey = 'cached_coding_${companyCode}_$category';
+      final versionResponse = await http.get(Uri.parse('$baseUrl/coding/sync_version/$companyCode/$category'));
+      if (versionResponse.statusCode == 200) {
+        serverVersion = jsonDecode(versionResponse.body)['version'] ?? 0;
+      }
+    } catch (e) {
+      print('فشل فحص نبضة التحديث، سيتم الاعتماد على الكاش المحلي كأمان: $e');
+    }
 
-      // 3. الفحص الثاني: لو البيانات مخزنة في قرص الجهاز/المتصفح من المرات السابقة
-      if (prefs.containsKey(cacheKey)) {
-        final cachedDataString = prefs.getString(cacheKey);
+    // قراءة رقم النسخة المحفوظ محلياً في الجهاز سابقاً
+    int localVersion = prefs.getInt(cacheVersionKey) ?? -1;
+
+    // 2. الفحص الذكي: لو النسخة مطابقة تماماً، نعتمد على الكاش السريع في الذاكرة أو القرص فوراً (وفرنا باقة الإنترنت)
+    if (localVersion == serverVersion) {
+      // أ. لو المطلوب خزائن وهي محفوظة مسبقاً في الذاكرة السريعة، رجعها فوراً
+      if (category == "safes" && _cachedSafes != null) {
+        return _cachedSafes!;
+      }
+      // ب. لو المطلوب تصنيفات وهي محفوظة مسبقاً في الذاكرة السريعة، رجعها فوراً
+      if (category == "types" && _cachedTypes != null) {
+        return _cachedTypes!;
+      }
+
+      // ج. لو البيانات مخزنة في قرص الجهاز/المتصفح من المرات السابقة
+      if (prefs.containsKey(cacheDataKey)) {
+        final cachedDataString = prefs.getString(cacheDataKey);
         if (cachedDataString != null && cachedDataString.isNotEmpty) {
           final localData = jsonDecode(cachedDataString) as List<dynamic>;
           
-          // حفظها في الذاكرة المؤقتة السريعة لاستدعائها مجاناً في المرات القادمة
+          // إعادة ملء الذاكرة المؤقتة السريعة لاستدعائها مجاناً
           if (category == "safes") _cachedSafes = localData;
           if (category == "types") _cachedTypes = localData;
           
+          print('🎯 ذكاء التطبيق: البيانات مطابقة للسيرفر. تم العرض من الكاش المحلي بنجاح (صفر إنترنت).');
           return localData;
         }
       }
-    } catch (e) {
-      // في حال حدوث مشكلة في الـ SharedPreferences (مثل المتصفح المقيد)، يكمل الكود للسيرفر بشكل طبيعي كأمان
-      print('تحذير في الكاش المحلي: $e');
+    } else {
+      // 3. لو النسخة مختلفة (لأن مستخدم آخر قام بإضافة أو تعديل أو حذف)، نقوم بتصفير الكاش القديم فوراً لإجبار السيستم على التحديث
+      print('🌐 نظام التزامن: تم كشف إضافة/تعديل/حذف من مستخدم آخر! جاري تصفير الكاش القديم وسحب البيانات الجديدة...');
+      if (category == "safes") _cachedSafes = null;
+      if (category == "types") _cachedTypes = null;
     }
 
-    // 4. في حال لم يجد أي كاش محلي، يذهب للسيرفر (يحدث مرة واحدة فقط)
+    // 4. الذهاب للسيرفر لجلب القائمة النظيفة والحديثة (المسار المحدث مطابق للباك إند بالملي /coding/list)
     final response = await http.get(Uri.parse('$baseUrl/coding/list/$companyCode/$category'));
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body) as List<dynamic>;
       
-      // حفظ البيانات المستلمة في الكاش السريع
+      // حفظ البيانات المستلمة في الكاش السريع للرام (RAM)
       if (category == "safes") _cachedSafes = data;
       if (category == "types") _cachedTypes = data;
       
       try {
-        // حفظ البيانات في التخزين الدائم للجهاز
-        final prefs = await SharedPreferences.getInstance();
-        final String cacheKey = 'cached_coding_${companyCode}_$category';
-        await prefs.setString(cacheKey, jsonEncode(data));
+        // حفظ البيانات في التخزين الدائم للجهاز مع تثبيت رقم النسخة الجديد المزامر
+        await prefs.setString(cacheDataKey, jsonEncode(data));
+        await prefs.setInt(cacheVersionKey, serverVersion);
       } catch (_) {}
       
       return data;
     }
+    
+    // حماية ضد انقطاع الإنترنت: لو السيرفر لم يستجب والإنترنت مقطوع، نعرض الكاش المتوفر بدلاً من الكراش
+    if (prefs.containsKey(cacheDataKey)) {
+      final cachedDataString = prefs.getString(cacheDataKey);
+      if (cachedDataString != null && cachedDataString.isNotEmpty) {
+        return jsonDecode(cachedDataString) as List<dynamic>;
+      }
+    }
+
     throw 'فشل جلب بيانات $category';
   }
 
@@ -173,18 +200,17 @@ class ApiService {
   }
 
   // حفظ التكويد (يدعم السيريال التلقائي وتكويد الأصناف المتقدم)
-  // تعديل دالة الحفظ في api_service.dart لضمان إرسال كافة بيانات الأصناف
   Future<void> saveNewCode({
     required String companyCode,
     required String category,
     required String code,
     required String name,
     String? barcode,
-    double? wholesalePrice, // باراميتر سعر الجملة الجديد
-    double? sellingPrice,   // باراميتر سعر البيع الجديد
-    double? profitMargin,   // باراميتر هامش الربح الجديد
-    double? profitPercent,  // باراميتر نسبة الربح الجديدة
-    String? type,           // باراميتر نوع التصنيف المالي (وارد / صادر)
+    double? wholesalePrice, 
+    double? sellingPrice,   
+    double? profitMargin,   
+    double? profitPercent,  
+    String? type,           
   }) async {
     final response = await http.post(
       Uri.parse('$baseUrl/coding/save'),
@@ -195,11 +221,11 @@ class ApiService {
         'code': code,
         'name': name,
         'barcode': barcode ?? "", 
-        'wholesale_price': wholesalePrice ?? 0.0, // إرسال سعر الجملة للباك إند
-        'selling_price': sellingPrice ?? 0.0,     // إرسال سعر البيع للباك إند
-        'profit_margin': profitMargin ?? 0.0,     // إرسال هامش الربح للباك إند
-        'profit_percent': profitPercent ?? 0.0,   // إرسال نسبة الربح للباك إند
-        'type': type ?? "وارد",                   // إرسال نوع التصنيف (وارد/صادر)
+        'wholesale_price': wholesalePrice ?? 0.0, 
+        'selling_price': sellingPrice ?? 0.0,     
+        'profit_margin': profitMargin ?? 0.0,     
+        'profit_percent': profitPercent ?? 0.0,   
+        'type': type ?? "وارد",                   
       }),
     );
 
@@ -208,7 +234,7 @@ class ApiService {
     }
   }
 
-  // حذف التكويد مع رسالة تأكيد (كما طلبت في الورد)
+  // حذف التكويد المزامر مع السيرفر
   Future<void> deleteCode(String companyCode, String category, String code) async {
     final response = await http.delete(
       Uri.parse('$baseUrl/coding/delete/$companyCode/$category/$code'),

@@ -412,12 +412,11 @@ class _DailyPageState extends State<DailyPage> {
     setState(() => _isLoading = true);
     try {
       String savingBranch = widget.selectedBranch == "كل الفروع" ? "الفرع الرئيسي" : widget.selectedBranch;
-      
-      // فحص ما إذا كنا في وضع التعديل أم إدخال جديد لاتخاذ المسار البرمجي الصحيح
       bool isEditMode = widget.editItem != null;
 
+      Map<String, dynamic> updatedBalances = {};
+
       if (isEditMode) {
-        // 🔄 1. في حالة التعديل: نتوجه للدالة الجديدة لإعادة ضبط السلسلة الحسابية في الباك إند
         await _dailyService.updateTransaction(
           companyCode: widget.companyCode,
           serial: _currentSerial,
@@ -431,8 +430,7 @@ class _DailyPageState extends State<DailyPage> {
           branch: savingBranch, 
         );
       } else {
-        // ➕ 2. في حالة الإدخال الجديد: نتوجه لدالة الحفظ العادية التراكمية
-        await _dailyService.saveTransaction(
+        updatedBalances = await _dailyService.saveTransaction(
           companyCode: widget.companyCode,
           serial: _currentSerial,
           treasury: _selectedTreasury!,
@@ -446,9 +444,7 @@ class _DailyPageState extends State<DailyPage> {
         );
       }
 
-      // بعد نجاح العملية، نحدد السلوك بناءً على الوضع الحالي
       if (isEditMode) {
-        // 🟢 تعديل الشرط 4: بعد حفظ التعديل، نغلق اليومية ونفتح التاريخ من جديد
         if (mounted) {
           Navigator.pushReplacement(
             context,
@@ -465,7 +461,25 @@ class _DailyPageState extends State<DailyPage> {
         _showSnackBar("تم الحفظ بنجاح", Colors.green);
         _amountController.clear();
         _statementController.clear();
-        _loadInitialData(); // إعادة تهيئة الداتا وجلب السيريال الجديد التالي
+        
+        // 🟢 الحل المؤمن 100% لمنع الإيرور: استقبال الرد كـ dynamic وفحصه بمرونة
+        final dynamic lastSerialResponse = await _dailyService.getLastSerial(widget.companyCode);
+        
+        int nextSerial = 0;
+        if (lastSerialResponse is Map) {
+          nextSerial = int.parse((lastSerialResponse['last_serial'] ?? 0).toString());
+        }
+
+        setState(() {
+          // تحديث الأرصدة المعروضة بداخل كروت الصفحة فوراً بالقيم الفعلية الجديدة من السيرفر
+          if (updatedBalances.isNotEmpty) {
+            _cashBalance = double.parse(updatedBalances['cash_balance'].toString());
+            _visaBalance = double.parse(updatedBalances['visa_balance'].toString());
+          }
+          // تعيين السيريال التلقائي التالي للحركة القادمة بسلام
+          _currentSerial = nextSerial + 1; 
+          _isLoading = false;
+        });
       }
     } catch (e) {
       _showSnackBar("خطأ: $e", Colors.red);

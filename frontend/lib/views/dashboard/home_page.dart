@@ -61,90 +61,123 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     _loadBranchesAndCheck();
   }
 
-  // دالة جلب الفروع والفحص الذكي
+  // دالة جلب الفروع والفحص الذكي (المحدثة لقراءة التكويد المتزامن لحظياً)
   Future<void> _loadBranchesAndCheck() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      
-      // 🟢 تعديل ذكي: هنلغي قراءة الكاش أول ما يفتح عشان نخليه يسأل المستخدم إجباري دايماً
-      // String? savedBranch = prefs.getString('selected_branch'); // شيلنا السطر ده أو وقفناه
+      setState(() => _isLoadingBranches = true);
 
-      List<String> fetchedBranches = await _apiService.getBranchesList(widget.companyCode);
+      // 🎯 السر هنا: استخدام نفس الدالة الموحدة التي نستخدمها في صفحة التكويد
+      // هذا يضمن أن أي فرع تم إضافته أو حذفه في صفحة التكويد سيظهر هنا فوراً
+      List<dynamic> rawBranches = await _apiService.getCodingData(widget.companyCode, "branches");
 
-      if (mounted) {
-        setState(() {
-          _branches = fetchedBranches;
-          _isLoadingBranches = false;
-          
-          // 1. لو مفيش غير "كل الفروع" والفرع الرئيسي فقط (يعني فرع عمل وحيد بالسيستم)
-          if (_branches.length <= 2) {
-            _selectedBranch = _branches.length == 2 ? _branches[1] : "كل الفروع";
-            prefs.setString('selected_branch', _selectedBranch);
-          } 
-          // 2. لو فيه فروع متعددة (الرئيسي + أكتوبر + نصر...)
-          else {
-            _selectedBranch = "كل الفروع"; // نخليه يبدأ بـ "كل الفروع" كالعادة
-            
-            // 🚀 السطر السحري: هيطلع الرسالة في وش المستخدم فوراً وبدون شروط كاش
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              _showBranchSelectionDialog();
-            });
-          }
-        });
-      }
+      if (!mounted) return;
+
+      setState(() {
+        // تحويل البيانات من JSON إلى قائمة نصوص لعرضها في الـ Dropdown أو الـ List
+        _branches = ["كل الفروع"];
+        for (var b in rawBranches) {
+          _branches.add(b['name'].toString());
+        }
+        
+        _isLoadingBranches = false;
+
+        // منطق اختيار الفرع الافتراضي...
+        if (_branches.length > 1 && _selectedBranch == "كل الفروع") {
+           // لو مفيش فرع مختار، افتح النافذة ليختار المستخدم
+           WidgetsBinding.instance.addPostFrameCallback((_) {
+             _showBranchSelectionDialog();
+           });
+        }
+      });
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _branches = ["كل الفروع"];
-          _isLoadingBranches = false;
-        });
-      }
+      print("خطأ في ربط بيانات الهوم باج: $e");
+      setState(() => _isLoadingBranches = false);
     }
   }
 
   // نافذة اختيار الفرع الإجبارية عند الدخول أو التغيير
-  void _showBranchSelectionDialog() {
+  void _showBranchSelectionDialog() async {
+    // 1. التحديث اللحظي من السيرفر
+    setState(() => _isLoadingBranches = true);
+    
+    try {
+      List<dynamic> rawBranches = await _apiService.getCodingData(widget.companyCode, "branches");
+      
+      List<String> updatedBranches = ["كل الفروع"];
+      for (var b in rawBranches) {
+        if (b['name'] != null) updatedBranches.add(b['name'].toString());
+      }
+      
+      if (!mounted) return;
+
+      setState(() {
+        _branches = updatedBranches;
+        _isLoadingBranches = false;
+      });
+
+      // 2. الشرط الذكي: لا تفتح النافذة إذا كان هناك فرع واحد فقط (أو لا يوجد غير "كل الفروع")
+      // ملاحظة: إذا كان _branches تحتوي فقط على "كل الفروع" أو فرع واحد مكوّد، الطول سيكون 1 أو 2
+      if (_branches.length <= 2) {
+        // إذا كان هناك فرع واحد مكوّد، نختاره تلقائياً
+        if (_branches.length == 2) {
+           String autoBranch = _branches[1];
+           final prefs = await SharedPreferences.getInstance();
+           await prefs.setString('selected_branch', autoBranch);
+           setState(() => _selectedBranch = autoBranch);
+        }
+        return; // خروج: لا تفتح النافذة
+      }
+
+    } catch (e) {
+      if (mounted) setState(() => _isLoadingBranches = false);
+      return; // خروج في حالة الخطأ
+    }
+
+    // 3. فتح الديالوج فقط إذا كان هناك أكثر من فرع (أكثر من 2 يعني: كل الفروع + فرع 1 + فرع 2)
+    if (!mounted) return;
     showDialog(
       context: context,
-      barrierDismissible: _selectedBranch != "كل الفروع", // يمنع قفلها بالضغط خارجها لو لسه مأخترش
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF0F172A),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-        title: const Text(
-          "اختر فرع العمل الحالي",
-          textAlign: TextAlign.center,
-          style: TextStyle(color: Colors.white, fontFamily: 'Cairo', fontSize: 16, fontWeight: FontWeight.bold),
-        ),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: ListView.builder(
-            shrinkWrap: true,
-            itemCount: _branches.length,
-            itemBuilder: (context, index) {
-              String branchName = _branches[index];
-              bool isCurrent = _selectedBranch == branchName;
-              return Card(
-                color: isCurrent ? Colors.amber.withOpacity(0.2) : Colors.white.withOpacity(0.05),
-                margin: const EdgeInsets.symmetric(vertical: 5),
-                child: ListTile(
-                  title: Text(
-                    branchName,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: isCurrent ? Colors.amber : Colors.white, fontFamily: 'Cairo', fontSize: 14),
+      barrierDismissible: _selectedBranch != "كل الفروع",
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF0F172A),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          title: const Text(
+            "اختر فرع العمل الحالي",
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white, fontFamily: 'Cairo', fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: _branches.length,
+              itemBuilder: (context, index) {
+                String branchName = _branches[index];
+                bool isCurrent = _selectedBranch == branchName;
+                return Card(
+                  color: isCurrent ? Colors.amber.withOpacity(0.2) : Colors.white.withOpacity(0.05),
+                  margin: const EdgeInsets.symmetric(vertical: 5),
+                  child: ListTile(
+                    title: Text(
+                      branchName,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: isCurrent ? Colors.amber : Colors.white, fontFamily: 'Cairo', fontSize: 14),
+                    ),
+                    onTap: () async {
+                      final prefs = await SharedPreferences.getInstance();
+                      await prefs.setString('selected_branch', branchName);
+                      if (mounted) {
+                        setState(() {
+                          _selectedBranch = branchName;
+                        });
+                      }
+                      Navigator.pop(context);
+                    },
                   ),
-                  onTap: () async {
-                    final prefs = await SharedPreferences.getInstance();
-                    await prefs.setString('selected_branch', branchName);
-                    if (mounted) {
-                      setState(() {
-                        _selectedBranch = branchName;
-                      });
-                    }
-                    Navigator.pop(context);
-                  },
-                ),
-              );
-            },
+                );
+              },
+            ),
           ),
         ),
       ),

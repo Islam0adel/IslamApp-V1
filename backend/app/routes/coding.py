@@ -53,6 +53,33 @@ class CodingModel(BaseModel):
     profit_percent: Optional[float] = 0.0
 
 
+# دالة داخلية ذكية: ترفع رقم الـ version على السيرفر لإعلام تطبيق الموبايل لأي مستخدم بالتحديث فوراً
+def bump_coding_sync_version(company_code: str, category: str):
+    try:
+        sync_ref = db.collection("coding").document(company_code).collection("sync_tracking").document(category)
+        sync_doc = sync_ref.get()
+        if sync_doc.exists:
+            current_version = int(sync_doc.to_dict().get("version", 0))
+            sync_ref.update({"version": current_version + 1})
+        else:
+            sync_ref.set({"version": 1})
+    except Exception as e:
+        print(f"Error bumping coding sync version: {str(e)}")
+
+
+# دالة جلب رقم النسخة الحالية لمطابقتها داخل الموبايل (جديدة لربط التزامن الفوري)
+@router.get("/sync_version/{company_code}/{category}")
+async def get_coding_sync_version(company_code: str, category: str):
+    try:
+        sync_ref = db.collection("coding").document(company_code).collection("sync_tracking").document(category)
+        sync_doc = sync_ref.get()
+        if sync_doc.exists:
+            return {"version": int(sync_doc.to_dict().get("version", 0))}
+        return {"version": 0}
+    except Exception as e:
+        return {"version": 0}
+
+
 @router.post("/save")
 async def save_code(data: CodingModel):
     try:
@@ -79,24 +106,14 @@ async def save_code(data: CodingModel):
             .document(data.code)\
             .set(save_data)
 
+        # 🔥 ضرب نبضة التحديث اللحظي للقسم المتأثر على الشبكة
+        bump_coding_sync_version(data.company_code, data.category)
+
         return {"status": "success"}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# قاموس يحتوي على التكويدات الافتراضية للأقسام لو فاضية
-DEFAULT_CATEGORIES_DATA = {
-    "treasuries": [{"name": "الخزينة الرئيسية"}],
-    "customers": [{"name": "عميل نقدي"}],
-    "stores": [{"name": "المخزن الرئيسي"}],
-    "branches": [{"name": "الفرع الرئيسي"}], # 👈 هنا هينزل الفرع الرئيسي تلقائياً لو الكوليكشن فاضي
-    "payment_methods": [
-        {"name": "نقدي"},
-        {"name": "فيزا"},
-        {"name": "محفظة الكترونية"}
-    ]
-}
 
 @router.get("/list/{company_code}/{category}")
 async def list_codes(company_code: str, category: str):
@@ -107,13 +124,14 @@ async def list_codes(company_code: str, category: str):
 
         existing_docs = list(collection_ref.stream())
 
-        # الفحص الذكي: لو القسم لسه فاضي تماماً
+        # الفحص الذكي: لو القسم لسه فاضي تماماً نقوم بحقن البيانات الافتراضية
         if len(existing_docs) == 0:
             if category == "types":
-                for index, name in enumerate(DEFAULT_TYPES, start=1):
+                for index, item in enumerate(DEFAULT_TYPES, start=1):
                     code = str(index)
                     collection_ref.document(code).set({
-                        "name": name,
+                        "name": item["name"],
+                        "type": item["type"],
                         "code": code
                     })
             # توليد التكويدات الافتراضية لباقي الأقسام (بما فيها الفروع)
@@ -134,7 +152,8 @@ async def list_codes(company_code: str, category: str):
             item_data["code"] = d.id
             results.append(item_data)
 
-        results.sort(key=lambda x: int(x["code"]))
+        # الترتيب الذكي للأرقام والنصوص حتى لا يحدث خطأ في واجهة الـ UI
+        results.sort(key=lambda x: int(x["code"]) if x["code"].isdigit() else x["code"])
         return results
 
     except Exception as e:
@@ -149,6 +168,9 @@ async def delete_code(company_code: str, category: str, code: str):
             .collection(category)\
             .document(code)\
             .delete()
+
+        # 🔥 ضرب نبضة التحديث اللحظي للقسم المتأثر على الشبكة بعد الحذف
+        bump_coding_sync_version(company_code, category)
 
         return {"status": "deleted"}
 

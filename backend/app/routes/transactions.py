@@ -17,73 +17,121 @@ class TransactionModel(BaseModel):
     date: str
     type: str
     employee: Optional[str] = "غير محدد"  # يحمل اسم المستخدم الفعلي المسجل
-    branch: Optional[str] = "الالفرع الرئيسي"  # يحمل اسم الفرع
+    branch: Optional[str] = "الفرع الرئيسي"  # يحمل اسم الفرع
 
-# دالة تابعة داخلية: إعادة ضبط وتصحيح الأرصدة التراكمية المكسورة بعد تعديل أو حذف أي إذن
+
+# =====================================================================
+# 🛠️ محرك المزامنة الذكي المساعد (تنبيه الهواتف بالتغييرات فوراً لتوفير القراءات)
+# =====================================================================
+
+def trigger_sync_update(company_code: str):
+    """
+    دالة داخلية تقوم بتحديث مستند صغير جداً في الفايربيز يحمل وقت آخر حركة بالمنظومة
+    لتعلم الهواتف بوجود (إضافة/تعديل/حذف) فتقوم بتحديث الكاش المحلي الخاص بها فوراً.
+    """
+    try:
+        from datetime import datetime
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        db.collection("sync_metadata").document(company_code).set({
+            "last_update_timestamp": now_str
+        }, merge=True)
+        print(f"🔔 [Sync Engine] تم تحديث نبض الشبكة للشركة {company_code} إلى: {now_str}")
+    except Exception as e:
+        print(f"⚠️ تحذير: فشل تحديث نبض الشبكة المساعد: {str(e)}")
+
+
+@router.get("/sync_check/{company_code}")
+async def check_network_sync(company_code: str):
+    """
+    رابط فحص التزامن السريع: يستعلم عن مستند النبض الصغير جداً لمعرفة هل حدث تغيير بالسيستم،
+    بدلاً من جلب محتويات الأذون بالكامل في كل مرة ليوفر 90% من قراءات الفايربيز.
+    """
+    try:
+        sync_doc = db.collection("sync_metadata").document(company_code).get()
+        if sync_doc.exists:
+            return sync_doc.to_dict()
+        return {"last_update_timestamp": ""}
+    except Exception as e:
+        return {"last_update_timestamp": ""}
+
+
+# =====================================================================
+# 📈 قاطرة الحسابات التابعة (إعادة تمشيط وحساب الأرصدة)
+# =====================================================================
+
 def recalculate_balances_chain(company_code: str, starting_serial: int):
     """
     تقوم هذه الدالة بتمشيط السلسلة الحسابية المتضررة بدءاً من السيريال الحالي صعوداً للأذون التالية،
     لإعادة ضبط أرصدة الخزنة والفيزا بدقة متناهية ودون حدوث أي سوالب مغلوطة بين المستخدمين.
     """
-    # 1. جلب رصيد الإذن الذي يسبق الإذن الحالي مباشرة ليكون نقطة البداية الصحيحة
-    prev_docs = db.collection("transactions").document(company_code)\
-        .collection("daily_records")\
-        .where("serial", "<", starting_serial)\
-        .order_by("serial", direction="DESCENDING")\
-        .limit(1).get()
+    try:
+        # 1. جلب رصيد الإذن الذي يسبق الإذن الحالي مباشرة ليكون نقطة البداية الصحيحة
+        prev_docs = db.collection("transactions").document(company_code)\
+            .collection("daily_records")\
+            .where(filter=FieldFilter("serial", "<", starting_serial))\
+            .order_by("serial", direction="DESCENDING")\
+            .limit(1).get()
+            
+        running_cash = 0.0
+        running_visa = 0.0
         
-    current_cash = 0.0
-    current_visa = 0.0
-    
-    if prev_docs:
-        prev_data = prev_docs[0].to_dict()
-        current_cash = float(prev_data.get("current_cash_balance", 0.0))
-        current_visa = float(prev_data.get("current_visa_balance", 0.0))
+        if prev_docs:
+            prev_data = prev_docs[0].to_dict()
+            running_cash = float(prev_data.get("current_cash_balance", 0.0))
+            running_visa = float(prev_data.get("current_visa_balance", 0.0))
+            
+        # 2. جلب كافة الأذون المتأثرة التي تساوي أو تلي السيريال الحالي لترتيب تصاعدي وإعادة تجميعها
+        affected_docs = db.collection("transactions").document(company_code)\
+            .collection("daily_records")\
+            .where(filter=FieldFilter("serial", ">=", starting_serial))\
+            .order_by("serial", direction="ASCENDING").get()
+            
+        if not affected_docs:
+            return
+            
+        # 3. فتح خط معالجة الحسابات المتسلسلة (Batch Update) لتحديث القيود دفعة واحدة بسرعة
+        batch = db.batch()
         
-    # 2. جلب جميع الأذون الحالية والتالية المتأثرة بالتغيير مرتبة تصاعدياً لتمشيطها
-    affected_docs = db.collection("transactions").document(company_code)\
-        .collection("daily_records")\
-        .where("serial", ">=", starting_serial)\
-        .order_by("serial", direction="ASCENDING").get()
-        
-    if not affected_docs:
-        return
-
-    # 3. جلب التصنيفات كاملة لتحديد نوع الحركة (وارد أم صادر) بشكل دقيق وموفر بالقراءات
-    types_docs = db.collection("coding").document(company_code).collection("types").get()
-    types_map = {d.to_dict().get("name"): d.to_dict().get("type", "صادر") for d in types_docs}
-
-    # 4. بدء عملية إعادة التتابع الحسابي لجميع المستندات المتضررة
-    for doc in affected_docs:
-        data = doc.to_dict()
-        amt = float(data.get("amount", 0.0))
-        cat = data.get("category", "")
-        tx_type = data.get("type", "cash")
-        
-        if cat == "تحويل من النقدي":
-            current_cash -= amt
-            current_visa += amt
-        elif cat == "تحويل من الفيزا":
-            current_cash += amt
-            current_visa -= amt
-        else:
-            cat_direction = types_map.get(cat, "صادر")
-            # حماية احتياطية بالكلمات الدلالية
-            if cat not in types_map:
-                if any(x in cat.lower() for x in ["وارد", "إيراد", "ايراد", "فيزا", "ايداع", "إيداع", "مبيعات"]):
+        for doc in affected_docs:
+            d_data = doc.to_dict()
+            amt = float(d_data.get("amount", 0.0))
+            cat = d_data.get("category", "")
+            tx_type = d_data.get("type", "cash")
+            
+            if cat == "تحويل من النقدي":
+                running_cash -= amt
+                running_visa += amt
+            elif cat == "تحويل من الفيزا":
+                running_cash += amt
+                running_visa -= amt
+            else:
+                type_query = db.collection("coding").document(company_code)\
+                    .collection("types").where("name", "==", cat).limit(1).get()
+                cat_direction = type_query[0].to_dict().get("type", "صادر") if type_query else "صادر"
+                if not type_query and any(x in cat.lower() for x in ["وارد", "إيراد", "ايراد", "فيزا", "ايداع", "إيداع", "مبيعات"]):
                     cat_direction = "وارد"
 
-            if tx_type == "cash":
-                current_cash = (current_cash + amt) if cat_direction == "وارد" else (current_cash - amt)
-            elif tx_type == "visa":
-                current_visa = (current_visa + amt) if cat_direction == "وارد" else (current_visa - amt)
+                if tx_type == "cash":
+                    running_cash = (running_cash + amt) if cat_direction == "وارد" else (running_cash - amt)
+                elif tx_type == "visa":
+                    running_visa = (running_visa + amt) if cat_direction == "وارد" else (running_visa - amt)
+            
+            # حقن الأرصدة الجديدة التراكمية في المستند
+            d_data["current_cash_balance"] = running_cash
+            d_data["current_visa_balance"] = running_visa
+            
+            batch.set(doc.reference, d_data)
+            
+        batch.commit()
+        print(f"✅ [Recalculate] تم إعادة توازن السلسلة الحسابية بنجاح بدءاً من السيريال {starting_serial}")
+    except Exception as e:
+        print(f"❌ خطأ أثناء إعادة حساب السلسلة: {str(e)}")
 
-        # تحديث المستند الحالي بالأرصدة التراكمية الجديدة المنضبطة
-        doc.reference.update({
-            "current_cash_balance": current_cash,
-            "current_visa_balance": current_visa
-        })
 
+# =====================================================================
+# 💾 دوال العمليات المالية الرئيسية (الحفظ، التعديل، الحذف)
+# =====================================================================
 
 # 1. إدخال إذن جديد تماماً (مستقل)
 @router.post("/save")
@@ -129,8 +177,12 @@ async def save_transaction(data: TransactionModel):
         transaction_dict["current_cash_balance"] = prev_cash
         transaction_dict["current_visa_balance"] = prev_visa
 
+        # حفظ المستند في الفايربيز
         db.collection("transactions").document(data.company_code)\
             .collection("daily_records").document(str(data.serial)).set(transaction_dict)
+        
+        # 🔥 [تحديث نبض الشبكة]: إبلاغ الهواتف بوجود حركة جديدة لتحديث الكاش تلقائياً
+        trigger_sync_update(data.company_code)
         
         return {"status": "success", "message": "تم حفظ الإذن الجديد بنجاح"}
     except Exception as e:
@@ -154,6 +206,9 @@ async def update_transaction(data: TransactionModel):
         # استدعاء قاطرة إعادة تمشيط وحساب الأرصدة للسلسلة المتأثرة
         recalculate_balances_chain(data.company_code, data.serial)
         
+        # 🔥 [تحديث نبض الشبكة]: إبلاغ الهواتف بوجود تعديل لتصحيح المعاينة والكاش فوراً
+        trigger_sync_update(data.company_code)
+        
         return {"status": "success", "message": "تم تعديل الإذن وإعادة ضبط الأرصدة بنجاح"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -170,19 +225,26 @@ async def delete_transaction(company_code: str, serial: int):
         # إعادة تمشيط وحساب الأرصدة للأذون التي كانت تلي هذا الإذن المحذوف
         recalculate_balances_chain(company_code, serial)
         
+        # 🔥 [تحديث نبض الشبكة]: إبلاغ الهواتف بحدوث حذف ليختفي الإذن من كاش الهاتف فوراً
+        trigger_sync_update(company_code)
+        
         return {"status": "success", "message": "تم حذف الإذن وإعادة توازن الحسابات بنجاح"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# 2. جلب قائمة الأذون للمعاينة (مطور: يجلب الإضافات والتعديلات الجديدة فقط لتزامن المستخدمين بـ 0 قراءات مكررة)
+
+# =====================================================================
+# 🔍 دوال الاستعلام، التقارير والأرصدة الجاهزة
+# =====================================================================
+
 @router.get("/list/{company_code}")
 async def get_transactions(company_code: str, start_date: str, end_date: str, last_sync_serial: int = 0):
     """
-    جلب سجل الحركات المفلترة بالتاريخ مع معالجة التصفية المتقدمة للسيريال في البايثون
-    لتجنب كراش القيود المركبة وحل خطأ 500 والخطوط الصفراء نهائياً.
+    جلب سجل الحركات المفلترة بالتاريخ بالكامل لمطابقة التعديلات والإضافات
+    وتسجيلها في كاش الموبايل دفعة واحدة فور حدوث أي نبضة تحديث على الشبكة.
     """
     try:
-        # 1. فلترة حيوية بالتاريخ باستخدام FieldFilter المستورد بشكل مباشر ونظيف
+        # فلترة حيوية بالتاريخ باستخدام الفلتر النظيف للفايربيز
         query = db.collection("transactions").document(company_code)\
             .collection("daily_records")\
             .where(filter=FieldFilter("date", ">=", start_date))\
@@ -193,14 +255,9 @@ async def get_transactions(company_code: str, start_date: str, end_date: str, la
         results = []
         for d in docs:
             item_data = d.to_dict()
-            # تأمين وجود الحقول الأساسية لضمان عدم حدوث كراش في فلاتر
             item_data["serial"] = int(item_data.get("serial", 0))
             item_data["amount"] = float(item_data.get("amount", 0.0))
             
-            # الفلترة الذكية للسيريال في الذاكرة لعدم كسر شروط الاستعلام في Firestore
-            if last_sync_serial > 0 and item_data["serial"] <= last_sync_serial:
-                continue 
-                
             results.append(item_data)
             
         # ترتيب الحركات تنازلياً بناءً على السيريال لتعرض بشكل صحيح ومثالي في الجدول
@@ -210,13 +267,14 @@ async def get_transactions(company_code: str, start_date: str, end_date: str, la
     except Exception as e:
         print(f"❌ خطأ قاتل في دالة get_transactions: {str(e)}")
         raise HTTPException(status_code=500, detail=f"حدث خطأ في السيرفر أثناء جلب البيانات: {str(e)}")
-# 4. ملخص الأرصدة المطور ليفحص الفرع المختار
-# 3. جلب الأرصدة اللحظية (توفير كلي: 1 قراءة فقط بدلاً من قراءة كل الملفات)
+
+
 @router.get("/summary/{company_code}")
 async def get_summary(company_code: str, treasury: Optional[str] = None, branch: Optional[str] = "كل الفروع"):
+    """
+    جلب الأرصدة اللحظية بقراءة قيد واحد فقط (1 Read) لآخر حركة بالسيستم لضمان أعلى توفير.
+    """
     try:
-        # نقوم بالاستعلام لطلب آخر إذن تم تسجيله للشركة بناءً على الترتيب التنازلي للسيريال لنجلب الأرصدة الجاهزة منه
-        # هذا الأمر يستهلك (قراءة واحدة فقط 1 Read) بفضل الفهرس الرقمي الفعّال
         docs = db.collection("transactions").document(company_code)\
             .collection("daily_records")\
             .order_by("serial", direction="DESCENDING")\
@@ -225,24 +283,21 @@ async def get_summary(company_code: str, treasury: Optional[str] = None, branch:
         if not docs or len(docs) == 0:
             return {"cash_balance": 0.0, "visa_balance": 0.0}
             
-        # استخراج الأرصدة التراكمية المخزنة بداخل آخر إذن مسجل فوراً
         last_doc_data = docs[0].to_dict()
-        
-        # جلب الأرصدة الجاهزة (current_cash_balance و current_visa_balance)
-        # والتي تقوم دالة الحفظ المحدثة (save_transaction) بضخها وحسابها تلقائياً مع كل حركة
         cash = float(last_doc_data.get("current_cash_balance", 0.0))
         visa = float(last_doc_data.get("current_visa_balance", 0.0))
         
         return {"cash_balance": cash, "visa_balance": visa}
-        
     except Exception as e:
         print(f"Error in get_summary: {str(e)}")
         return {"cash_balance": 0.0, "visa_balance": 0.0}
 
-# 5. جلب آخر سيريال
-# 5. جلب آخر سيريال والأرصدة الجاهزة (قراءة واحدة فقط 1 Read لآخر مستند)
+
 @router.get("/last_serial/{company_code}")
 async def get_last_serial(company_code: str):
+    """
+    جلب آخر سيريال مسجل والأرصدة الجاهزة التابعة له في قراءة واحدة سريعة.
+    """
     try:
         docs = db.collection("transactions").document(company_code)\
             .collection("daily_records")\
@@ -262,23 +317,23 @@ async def get_last_serial(company_code: str):
             "cash_balance": cash_bal,
             "visa_balance": visa_bal
         }
-        
     except Exception as e:
         print(f"Error in get_last_serial: {str(e)}")
         return {"last_serial": 0, "cash_balance": 0.0, "visa_balance": 0.0}
 
-# دالة فحص المطابقة السريعة (تأتي بقائمة السيريالات الحقيقية فقط لضبط المحذوفات بـ صفر قراءة محتوى)
+
 @router.get("/active_serials/{company_code}")
 async def get_active_serials(company_code: str, start_date: str, end_date: str):
+    """
+    دالة فحص السيريالات النشطة المفلترة بالتاريخ لتمكين الهواتف من تطهير المحذوفات تلقائياً بتكلفة صفر قراءة محتوى.
+    """
     try:
-        # جلب مراجع المستندات المفلترة بالتاريخ مباشرة من كشاف الفايربيز (تكلفة صفر قراءة محتوى)
         docs_refs = db.collection("transactions").document(company_code)\
             .collection("daily_records")\
             .where("date", ">=", start_date)\
             .where("date", "<=", end_date)\
             .list_documents()
             
-        # استخراج السيريال (اسم المستند) وتحويله لرقم
         active_serials = []
         for doc in docs_refs:
             if doc.id.isdigit():

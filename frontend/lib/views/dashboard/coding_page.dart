@@ -278,7 +278,7 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
 
       _showSnackBar("تم بنجاح", Colors.green);
       _clearControllers(); 
-      _loadNextCode();
+      _loadNextCode(); // تحديث السيريال التلقائي بعد الحفظ بنجاح
     } catch (e) { 
       _showSnackBar("خطأ: $e", Colors.red); 
     } finally { 
@@ -329,9 +329,24 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
           trailing: IconButton(
             icon: const Icon(Icons.delete, color: Colors.red), 
             onPressed: () async {
-              await _apiService.deleteCode(widget.companyCode, _selectedCategory, items[i]['code']);
-              Navigator.pop(context); 
-              _showItemsModal();
+              try {
+                // 1. حذف العنصر من السيرفر وتصفير كاش الموبايل تلقائياً
+                await _apiService.deleteCode(widget.companyCode, _selectedCategory, items[i]['code'].toString());
+                
+                // 2. إغلاق شاشة المعاينة الحالية
+                Navigator.pop(context); 
+                
+                _showSnackBar("تم الحذف بنجاح", Colors.green);
+                
+                // 3. إعادة حساب الكود التالي لتحديث الحقل في الخلفية
+                _loadNextCode();
+
+                // 4. استدعاء الدالة الأصلية بملفك لفتح المعاينة مجدداً بالبيانات المحدثة
+                _showItemsModal();
+                
+              } catch (e) {
+                _showSnackBar("خطأ أثناء الحذف: $e", Colors.red);
+              }
             }
           ),
           onTap: () { 
@@ -343,14 +358,13 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
               
               // 1. لو واقفين في قسم "التصنيف" (types) نرجع حقل النوع في الـ Dropdown
               if (_selectedCategory == "types") {
-                _selectedType = items[i]['type']; // ده السطر السحري اللي هيرجع النوع مكانه!
+                _selectedType = items[i]['type']; 
               }
               
               // 2. لو واقفين في قسم "الأصناف" (items) نرجع كل حقول الأسعار والأرباح
               if (_selectedCategory == "items") {
                 _barcodeController.text = items[i]['barcode'] ?? '';
                 
-                // بنحول القيم لأرقام ثم نصوص للتأكد إنها مش هتعمل كراش لو جاية null من سيرفر قديم
                 _wholesalePriceController.text = (items[i]['wholesale_price'] ?? '').toString();
                 _sellingPriceController.text = (items[i]['selling_price'] ?? '').toString();
                 _profitMarginController.text = (items[i]['profit_margin'] ?? '0.00').toString();
