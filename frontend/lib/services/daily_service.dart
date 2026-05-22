@@ -200,76 +200,115 @@ class DailyService {
   }
 
   // ================= 3. المحرك الذكي الرئيسي: القراءة المحلية وفحص نبض الشبكة اللحظي =================
-  Future<List<dynamic>> getTransactionsHistory(String companyCode, String startDate, String endDate) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final String historyKey = 'cached_history_${companyCode}_${startDate}_$endDate';
-      final String lastSyncKey = 'last_network_sync_time_$companyCode';
+Future<List<dynamic>> getTransactionsHistory(String companyCode, String startDate, String endDate) async {
+  final prefs = await SharedPreferences.getInstance();
+  final String historyKey = 'cached_history_${companyCode}_${startDate}_$endDate';
+  final String lastSyncKey = 'last_network_sync_time_$companyCode';
 
-      List<dynamic> localList = [];
-      if (prefs.containsKey(historyKey)) {
-        localList = jsonDecode(prefs.getString(historyKey) ?? '[]') as List<dynamic>;
-      }
+  // 1. جلب الكاش الموجود حالياً
+  List<dynamic> localList = [];
+  if (prefs.containsKey(historyKey)) {
+    localList = jsonDecode(prefs.getString(historyKey) ?? '[]') as List<dynamic>;
+  }
 
-      // 🟢 [قراءة ذكية فائقة الأمان]: جلب مستند النبض الصغير جداً من الفايربيز (يستهلك قراءة واحدة فقط)
-      // لمعرفة هل قام مستخدم الكمبيوتر بإضافة/تعديل/حذف أي شيء بالمنظومة
-      final syncResponse = await http.get(Uri.parse('$baseUrl/transactions/sync_check/$companyCode')).timeout(const Duration(seconds: 4));
-      
-      if (syncResponse.statusCode == 200) {
-        final Map<String, dynamic> syncData = jsonDecode(syncResponse.body);
-        String serverLastUpdate = syncData['last_update_timestamp'] ?? '';
-        String localLastSync = prefs.getString(lastSyncKey) ?? '';
+  try {
+    // فحص نبض الشبكة لمعرفة هل حدث أي تغيير
+    final syncResponse = await http.get(Uri.parse('$baseUrl/transactions/sync_check/$companyCode')).timeout(const Duration(seconds: 4));
+    
+    if (syncResponse.statusCode == 200) {
+      final Map<String, dynamic> syncData = jsonDecode(syncResponse.body);
+      String serverLastUpdate = syncData['last_update_timestamp'] ?? '';
+      String localLastSync = prefs.getString(lastSyncKey) ?? '';
 
-        // 🎯 الـ Magic هنا: لو التوقيت متطابق، اعرض كل شيء محلياً فوراً بدون استهلاك قراءات أو إنترنت
-        if (serverLastUpdate == localLastSync && localList.isNotEmpty) {
-          print("🚀 [الكاش نظيف ومتطابق]: عرض البيانات الحالية محلياً 100% مجانا.");
-          return localList;
-        }
+      if (serverLastUpdate != localLastSync) {
+        String timeParam = localList.isEmpty ? "" : localLastSync;
 
-        // 🛑 إذا وجد تغيير (الكمبيوتر عدل أو حذف): اذهب فوراً واجلب التحديثات الجديدة للفترة
-        final response = await http.get(Uri.parse('$baseUrl/transactions/list/$companyCode?start_date=$startDate&end_date=$endDate'));
+        // 3. نطلب من السيرفر التحديثات بناءً على الوقت فائق الدقة
+        final response = await http.get(Uri.parse('$baseUrl/transactions/delta_sync/$companyCode?last_sync_time=$timeParam'));
 
         if (response.statusCode == 200) {
-          final List<dynamic> serverData = jsonDecode(response.body) as List<dynamic>;
-          localList = serverData; // استبدال الكاش القديم بالواقع الجديد المحدث بالكامل
+          final List<dynamic> newUpdates = jsonDecode(response.body) as List<dynamic>;
 
-          // مطابقة وتنظيف الأرقام المحذوفة نهائياً
+          // 4. الدمج الذكي بالتناغم مع التوقيت
+          for (var update in newUpdates) {
+            int index = localList.indexWhere((item) => item['serial'].toString() == update['serial'].toString());
+            if (index != -1) {
+              localList[index] = update; // تم تحديث إذن معدل في مكانه
+            } else {
+              localList.add(update); // تم إضافة إذن جديد
+            }
+          }
+
+          // 🌟 4.5 [ماكينة الحسابات المحلية المحصنة]: إعادة توازن الأرصدة داخل كاش الموبايل
+          // نرتب القائمة تصاعدياً مؤقتاً لتبدأ الحساب التراكمي من أقدم إذن لأحدث إذن
+          localList.sort((a, b) => int.parse(a['serial'].toString()).compareTo(int.parse(b['serial'].toString())));
+          
+          double runningCash = 0.0;
+          double runningVisa = 0.0;
+
+          for (int i = 0; i < localList.length; i++) {
+            double amt = double.parse(localList[i]['amount'].toString());
+            String cat = localList[i]['category'] ?? '';
+            String txType = localList[i]['type'] ?? 'cash';
+
+            // تحديد اتجاه الحركة بناءً على الكلمة (نفس منطق الباك إند تماماً)
+            String direction = "صادر";
+            if (cat == "تحويل من النقدي" || cat == "تحويل من الفيزا") {
+              direction = "تحويل";
+            } else if (RegExp(r'(وارد|إيراد|ايراد|فيزا|ايداع|إيداع|مبيعات)').hasMatch(cat.toLowerCase())) {
+              direction = "وارد";
+            }
+
+            if (cat == "تحويل من النقدي") {
+              runningCash -= amt;
+              runningVisa += amt;
+            } else if (cat == "تحويل من الفيزا") {
+              runningCash += amt;
+              runningVisa -= amt;
+            } else {
+              if (txType == "cash") {
+                runningCash = (direction == "وارد") ? (runningCash + amt) : (runningCash - amt);
+              } else if (txType == "visa") {
+                runningVisa = (direction == "وارد") ? (runningVisa + amt) : (runningVisa - amt);
+              }
+            }
+
+            // حقن الأرصدة المتسلسلة والمصححة داخل عنصر الكاش المحلي فوراً
+            localList[i]['current_cash_balance'] = runningCash;
+            localList[i]['current_visa_balance'] = runningVisa;
+          }
+
+          // 5. التنظيف (حذف ما تم حذفه من السيرفر نهائياً)
           final serialsResponse = await http.get(Uri.parse('$baseUrl/transactions/active_serials/$companyCode?start_date=$startDate&end_date=$endDate'));
           if (serialsResponse.statusCode == 200) {
             final Map<String, dynamic> serialsData = jsonDecode(serialsResponse.body);
-            final List<dynamic> serverActiveSerials = serialsData['active_serials'] ?? [];
-            localList.removeWhere((localItem) => !serverActiveSerials.contains(int.parse(localItem['serial'].toString())));
+            final List<dynamic> active = serialsData['active_serials'] ?? [];
+            localList.removeWhere((item) => !active.contains(int.parse(item['serial'].toString())));
           }
 
-          // إعادة ترتيب وحفظ الكاش الجديد، وتحديث توقيت المزامنة المحلي ليتطابق مع السيرفر
+          // 6. إعادة ترتيب القائمة تنازلياً للعرض المثالي في جدول الهيستوري
           localList.sort((a, b) => int.parse(b['serial'].toString()).compareTo(int.parse(a['serial'].toString())));
           await prefs.setString(historyKey, jsonEncode(localList));
-          await prefs.setString(lastSyncKey, serverLastUpdate); // الموبايل أصبح محدثاً الآن
+          await prefs.setString(lastSyncKey, serverLastUpdate);
 
-          // مسح كاش ملخص الأرصدة القديم ليجبر التطبيق على إعادة جلب الأرصدة المحدثة المنضبطة
+          // 7. مسح كاش ملخص الأرصدة القديم
           final keys = prefs.getKeys();
           for (String key in keys) {
             if (key.startsWith('cached_summary_${companyCode}_')) {
               await prefs.remove(key);
             }
           }
-
-          return localList;
         }
       }
-
-      // في حالة انقطاع الإنترنت أو فشل السيرفر المؤقت، يعود بالكاش لحماية تجربة المستخدم
-      return localList;
-    } catch (e) {
-      print('⚠️ تحذير في نظام المزامنة الذكي: $e');
-      final prefs = await SharedPreferences.getInstance();
-      final String historyKey = 'cached_history_${companyCode}_${startDate}_$endDate';
-      if (prefs.containsKey(historyKey)) {
-        return jsonDecode(prefs.getString(historyKey) ?? '[]') as List<dynamic>;
-      }
-      throw 'فشل جلب سجل الحركات: $e';
     }
+  } catch (e) {
+    print('⚠️ خطأ مزامنة: $e');
   }
+
+  // فرز نهائي تنازلي للتأكد من سلامة المعاينة تحت أي ظرف
+  localList.sort((a, b) => int.parse(b['serial'].toString()).compareTo(int.parse(a['serial'].toString())));
+  return localList;
+}
 
   // 5. حذف حركة مالية نهائياً
   Future<void> deleteTransaction(String companyCode, int serial) async {

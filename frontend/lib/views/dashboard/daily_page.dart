@@ -405,87 +405,96 @@ class _DailyPageState extends State<DailyPage> {
   }
 
   void _handleSave() async {
-    if (_amountController.text.isEmpty || _selectedTreasury == null || _selectedCategory == null) {
-      _showSnackBar("برجاء إكمال البيانات", Colors.orange);
-      return;
+  if (_amountController.text.isEmpty || _selectedTreasury == null || _selectedCategory == null) {
+    _showSnackBar("برجاء إكمال البيانات", Colors.orange);
+    return;
+  }
+
+  setState(() => _isLoading = true);
+
+  try {
+    String savingBranch = widget.selectedBranch == "كل الفروع" ? "الفرع الرئيسي" : widget.selectedBranch;
+    bool isEditMode = widget.editItem != null;
+
+    Map<String, dynamic> updatedBalances = {};
+
+    if (isEditMode) {
+      // تعديل حركة
+      await _dailyService.updateTransaction(
+        companyCode: widget.companyCode,
+        serial: _currentSerial,
+        treasury: _selectedTreasury!,
+        amount: double.parse(_amountController.text),
+        statement: _statementController.text,
+        category: _selectedCategory!,
+        date: _dateController.text,
+        type: (_selectedCategory == "فيزا" || _selectedCategory == "تحويل من النقدي") ? "visa" : "cash",
+        employee: widget.userName,
+        branch: savingBranch,
+      );
+    } else {
+      // حفظ حركة جديدة
+      // لاحظ: الـ saveTransaction في السيرفس عندك تقوم بإعادة الأرصدة المحدثة
+      updatedBalances = await _dailyService.saveTransaction(
+        companyCode: widget.companyCode,
+        serial: _currentSerial,
+        treasury: _selectedTreasury!,
+        amount: double.parse(_amountController.text),
+        statement: _statementController.text,
+        category: _selectedCategory!,
+        date: _dateController.text,
+        type: (_selectedCategory == "فيزا" || _selectedCategory == "تحويل من النقدي") ? "visa" : "cash",
+        employee: widget.userName,
+        branch: savingBranch,
+      );
     }
-    setState(() => _isLoading = true);
-    try {
-      String savingBranch = widget.selectedBranch == "كل الفروع" ? "الفرع الرئيسي" : widget.selectedBranch;
-      bool isEditMode = widget.editItem != null;
 
-      Map<String, dynamic> updatedBalances = {};
-
-      if (isEditMode) {
-        await _dailyService.updateTransaction(
-          companyCode: widget.companyCode,
-          serial: _currentSerial,
-          treasury: _selectedTreasury!,
-          amount: double.parse(_amountController.text),
-          statement: _statementController.text,
-          category: _selectedCategory!,
-          date: _dateController.text,
-          type: (_selectedCategory == "فيزا" || _selectedCategory == "تحويل من النقدي") ? "visa" : "cash",
-          employee: widget.userName, 
-          branch: savingBranch, 
-        );
-      } else {
-        updatedBalances = await _dailyService.saveTransaction(
-          companyCode: widget.companyCode,
-          serial: _currentSerial,
-          treasury: _selectedTreasury!,
-          amount: double.parse(_amountController.text),
-          statement: _statementController.text,
-          category: _selectedCategory!,
-          date: _dateController.text,
-          type: (_selectedCategory == "فيزا" || _selectedCategory == "تحويل من النقدي") ? "visa" : "cash",
-          employee: widget.userName, 
-          branch: savingBranch, 
+    if (isEditMode) {
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => DailyHistoryPage(
+              companyCode: widget.companyCode,
+              selectedBranch: widget.selectedBranch,
+              userName: widget.userName,
+            ),
+          ),
         );
       }
+    } else {
+      _showSnackBar("تم الحفظ بنجاح", Colors.green);
+      
+      // 1. تنظيف الواجهة فوراً
+      _amountController.clear();
+      _statementController.clear();
+      
+      // 2. تحديث السيريال والأرصدة فورياً
+      // بما أننا حفظنا بالسيريال X، السيريال القادم هو X + 1
+      // وجلبنا الأرصدة من رد الدالة saveTransaction (المتغير updatedBalances)
+      int nextSerialFromService = await _dailyService.getLastSerial(widget.companyCode);
 
-      if (isEditMode) {
-        if (mounted) {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (context) => DailyHistoryPage(
-                companyCode: widget.companyCode,
-                selectedBranch: widget.selectedBranch,
-                userName: widget.userName,
-              ),
-            ),
-          );
-        }
-      } else {
-        _showSnackBar("تم الحفظ بنجاح", Colors.green);
-        _amountController.clear();
-        _statementController.clear();
-        
-        // 🟢 الحل المؤمن 100% لمنع الإيرور: استقبال الرد كـ dynamic وفحصه بمرونة
-        final dynamic lastSerialResponse = await _dailyService.getLastSerial(widget.companyCode);
-        
-        int nextSerial = 0;
-        if (lastSerialResponse is Map) {
-          nextSerial = int.parse((lastSerialResponse['last_serial'] ?? 0).toString());
-        }
-
+      if (mounted) {
         setState(() {
-          // تحديث الأرصدة المعروضة بداخل كروت الصفحة فوراً بالقيم الفعلية الجديدة من السيرفر
+          // تحديث الأرصدة من الرد المباشر
           if (updatedBalances.isNotEmpty) {
-            _cashBalance = double.parse(updatedBalances['cash_balance'].toString());
-            _visaBalance = double.parse(updatedBalances['visa_balance'].toString());
+            _cashBalance = double.tryParse(updatedBalances['cash_balance']?.toString() ?? '0') ?? 0.0;
+            _visaBalance = double.tryParse(updatedBalances['visa_balance']?.toString() ?? '0') ?? 0.0;
           }
-          // تعيين السيريال التلقائي التالي للحركة القادمة بسلام
-          _currentSerial = nextSerial + 1; 
+          
+          // تحديث السيريال للحركة التالية لضمان عدم التكرار أو الخطأ
+          _currentSerial = nextSerialFromService + 1;
           _isLoading = false;
         });
       }
-    } catch (e) {
+    }
+  } catch (e) {
+    if (mounted) {
       _showSnackBar("خطأ: $e", Colors.red);
       setState(() => _isLoading = false);
     }
   }
+}
 
   Widget _buildTextField(TextEditingController ctrl, String label, IconData icon, {bool isNumber = false}) {
     return TextField(

@@ -3,6 +3,8 @@ from app.core.firebase_setup import db
 from pydantic import BaseModel
 from typing import Optional
 from google.cloud.firestore_v1.base_query import FieldFilter
+from datetime import datetime
+
 
 router = APIRouter()
 
@@ -24,19 +26,24 @@ class TransactionModel(BaseModel):
 # 🛠️ محرك المزامنة الذكي المساعد (تنبيه الهواتف بالتغييرات فوراً لتوفير القراءات)
 # =====================================================================
 
+# =====================================================================
+# 🛠️ محرك المزامنة الذكي المساعد (تنبيه الهواتف بالتغييرات فوراً لتقليل القراءات)
+# =====================================================================
+
 def trigger_sync_update(company_code: str):
     """
-    دالة داخلية تقوم بتحديث مستند صغير جداً في الفايربيز يحمل وقت آخر حركة بالمنظومة
-    لتعلم الهواتف بوجود (إضافة/تعديل/حذف) فتقوم بتحديث الكاش المحلي الخاص بها فوراً.
+    دالة داخلية تقوم بتحديث مستند صغير جداً في الفايربيز يحمل وقت آخر حركة بالمنظومة.
+    تم التطوير ليدعم أجزاء من الثانية لضمان التقاط التعديلات المتتالية والسريعة.
     """
     try:
         from datetime import datetime
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # 🌟 تم إضافة .%f لجلب أجزاء من الثانية لضمان دقة الترتيب والمزامنة السريعة
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
         
         db.collection("sync_metadata").document(company_code).set({
             "last_update_timestamp": now_str
         }, merge=True)
-        print(f"🔔 [Sync Engine] تم تحديث نبض الشبكة للشركة {company_code} إلى: {now_str}")
+        print(f"🔔 [Sync Engine] تم تحديث نبض الشبكة فائق الدقة للشركة {company_code} إلى: {now_str}")
     except Exception as e:
         print(f"⚠️ تحذير: فشل تحديث نبض الشبكة المساعد: {str(e)}")
 
@@ -53,6 +60,7 @@ async def check_network_sync(company_code: str):
             return sync_doc.to_dict()
         return {"last_update_timestamp": ""}
     except Exception as e:
+        print(f"❌ خطأ في check_network_sync: {str(e)}")
         return {"last_update_timestamp": ""}
 
 
@@ -133,6 +141,41 @@ def recalculate_balances_chain(company_code: str, starting_serial: int):
 # 💾 دوال العمليات المالية الرئيسية (الحفظ، التعديل، الحذف)
 # =====================================================================
 
+@router.get("/delta_sync/{company_code}")
+async def delta_sync(company_code: str, last_sync_time: str = ""):
+    try:
+        # 1. إذا كان الموبايل يطلب أول مرة (التاريخ فارغ)، نجلب كافة البيانات
+        if not last_sync_time or last_sync_time.strip() == "":
+            docs = db.collection("transactions").document(company_code)\
+                .collection("daily_records")\
+                .order_by("serial", direction="ASCENDING")\
+                .stream()
+        else:
+            # 2. جلب المستندات التي تم تحديثها أو إضافتها بعد توقيت آخر مزامنة للموبايل بالثانية
+            docs = db.collection("transactions").document(company_code)\
+                .collection("daily_records")\
+                .where(filter=FieldFilter("updated_at", ">", last_sync_time))\
+                .stream()
+        
+        updates = []
+        for doc in docs:
+            item_data = doc.to_dict()
+            item_data["serial"] = int(item_data.get("serial", 0))
+            item_data["amount"] = float(item_data.get("amount", 0.0))
+            updates.append(item_data)
+            
+        return updates # نعود بالقائمة المحدثة بالكامل بناءً على الوقت ليدمجها الفرونت إند
+    except Exception as e:
+        print(f"❌ خطأ في دالة delta_sync المحدثة بالتوقيت: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+from datetime import datetime
+
+# =====================================================================
+# 💾 دوال العمليات المالية الرئيسية (الحفظ، التعديل، الحذف)
+# =====================================================================
+
 # 1. إدخال إذن جديد تماماً (مستقل)
 @router.post("/save")
 async def save_transaction(data: TransactionModel):
@@ -173,15 +216,19 @@ async def save_transaction(data: TransactionModel):
             elif tx_type == "visa":
                 prev_visa = (prev_visa + amt) if cat_direction == "وارد" else (prev_visa - amt)
 
+        # توليد التوقيت اللحظي للحركة
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
         transaction_dict = data.dict()
         transaction_dict["current_cash_balance"] = prev_cash
         transaction_dict["current_visa_balance"] = prev_visa
+        transaction_dict["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
 
         # حفظ المستند في الفايربيز
         db.collection("transactions").document(data.company_code)\
             .collection("daily_records").document(str(data.serial)).set(transaction_dict)
         
-        # 🔥 [تحديث نبض الشبكة]: إبلاغ الهواتف بوجود حركة جديدة لتحديث الكاش تلقائياً
+        # 🔥 [تحديث نبض الشبكة]: إبلاغ الهواتف بوجود حركة جديدة بالتوقيت الدقيق
         trigger_sync_update(data.company_code)
         
         return {"status": "success", "message": "تم حفظ الإذن الجديد بنجاح"}
@@ -199,14 +246,18 @@ async def update_transaction(data: TransactionModel):
         if not doc_ref.get().exists:
             raise HTTPException(status_code=404, detail="الإذن المراد تعديله غير موجود")
             
+        # توليد التوقيت اللحظي للتعديل
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
         # تحديث بيانات الإذن أولاً بالقيم الجديدة بدون الأرصدة (ستحسب تلقائياً)
         transaction_dict = data.dict()
+        transaction_dict["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
         doc_ref.set(transaction_dict)
         
         # استدعاء قاطرة إعادة تمشيط وحساب الأرصدة للسلسلة المتأثرة
         recalculate_balances_chain(data.company_code, data.serial)
         
-        # 🔥 [تحديث نبض الشبكة]: إبلاغ الهواتف بوجود تعديل لتصحيح المعاينة والكاش فوراً
+        # 🔥 [تحديث نبض الشبكة]: إبلاغ الهواتف بوجود تعديل بالتوقيت الجديد
         trigger_sync_update(data.company_code)
         
         return {"status": "success", "message": "تم تعديل الإذن وإعادة ضبط الأرصدة بنجاح"}
@@ -225,12 +276,14 @@ async def delete_transaction(company_code: str, serial: int):
         # إعادة تمشيط وحساب الأرصدة للأذون التي كانت تلي هذا الإذن المحذوف
         recalculate_balances_chain(company_code, serial)
         
-        # 🔥 [تحديث نبض الشبكة]: إبلاغ الهواتف بحدوث حذف ليختفي الإذن من كاش الهاتف فوراً
+        # 🔥 [تحديث نبض الشبكة]: تحديث النبض عند الحذف لتعلم الهواتف بضرورة التطهير
         trigger_sync_update(company_code)
         
         return {"status": "success", "message": "تم حذف الإذن وإعادة توازن الحسابات بنجاح"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+
 
 
 # =====================================================================
@@ -325,20 +378,26 @@ async def get_last_serial(company_code: str):
 @router.get("/active_serials/{company_code}")
 async def get_active_serials(company_code: str, start_date: str, end_date: str):
     """
-    دالة فحص السيريالات النشطة المفلترة بالتاريخ لتمكين الهواتف من تطهير المحذوفات تلقائياً بتكلفة صفر قراءة محتوى.
+    دالة فحص السيريالات النشطة المفلترة بالتاريخ
     """
     try:
-        docs_refs = db.collection("transactions").document(company_code)\
+        # استخدام stream() بدلاً من list_documents()
+        docs = db.collection("transactions").document(company_code)\
             .collection("daily_records")\
             .where("date", ">=", start_date)\
             .where("date", "<=", end_date)\
-            .list_documents()
+            .stream()
             
         active_serials = []
-        for doc in docs_refs:
+        for doc in docs:
+            # doc.id هنا هو السيريال المخزن كاسم للمستند
             if doc.id.isdigit():
                 active_serials.append(int(doc.id))
                 
         return {"active_serials": active_serials}
+        
     except Exception as e:
+        # طباعة الخطأ في التيرمينال لتتمكن من رؤيته
+        print(f"Error in active_serials: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+    
