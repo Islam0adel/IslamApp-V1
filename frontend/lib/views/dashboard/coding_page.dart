@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../views/widgets/glass_card.dart';
-import '../../services/api_service.dart';
+import '../../services/coding_service.dart'; // 🔥 تم التعديل: استيراد خدمة التكويد الجديدة القائمة على Hive
+import '../../models/coding_model.dart';   // 🔥 تم التعديل: استيراد الموديل الجديد الموحد
 
 class CodingPage extends StatefulWidget {
   final String companyCode;
@@ -11,7 +12,8 @@ class CodingPage extends StatefulWidget {
 }
 
 class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
-  final ApiService _apiService = ApiService();
+  // 🔥 تم التعديل: ربط الصفحة بخدمة التكويد والمزامنة المحلية الجديدة
+  final CodingService _codingService = CodingService();
   bool _isLoading = false;
   bool _isEditMode = false;
 
@@ -23,7 +25,7 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
   final TextEditingController _profitMarginController = TextEditingController(text: "0.00"); // هامش الربح
   final TextEditingController _profitPercentController = TextEditingController(text: "0.00 %"); // نسبة الربح
 
-  // تعديل: الآن الكود قابل للتعديل عادي لو اخترنا الأصناف (items)، ويكون مقفول (ReadOnly) في باقي الأقسام
+  // كود مقفول (ReadOnly) في باقي الأقسام ومفتوح في الأصناف
   bool get _isCodeReadOnly => _selectedCategory != "items";
 
   String _selectedCategory = "items"; 
@@ -41,8 +43,8 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
     double wholesale = double.tryParse(_wholesalePriceController.text) ?? 0.0;
     double selling = double.tryParse(_sellingPriceController.text) ?? 0.0;
     
-    double margin = selling - wholesale; // هامش الربح
-    double percent = wholesale > 0 ? (margin / wholesale) * 100 : 0.0; // نسبة الربح بالنسبة لسعر الجملة
+    double margin = selling - wholesale; 
+    double percent = wholesale > 0 ? (margin / wholesale) * 100 : 0.0; 
 
     if (mounted) {
       setState(() {
@@ -52,14 +54,17 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
     }
   }
 
-  // جلب الكود التالي أوتوماتيكياً
+  // 🔥 تم التعديل: حساب الكود التالي ذكياً بالاعتماد أولاً على ذاكرة Hive المحلية لتوفير القراءات
   void _loadNextCode() async {
-    if (_isEditMode) return; // 👈 السطر ده مهم جداً: لو في وضع التعديل ميتعبش كود جديد فوق الكود المستدعى
+    if (_isEditMode) return; 
     try {
-      final data = await _apiService.getCodingData(widget.companyCode, _selectedCategory);
+      final List<CodingModel> data = await _codingService.getCodingList(
+        companyCode: widget.companyCode, 
+        category: _selectedCategory,
+      );
       int maxCode = 0;
       for (var item in data) {
-        int current = int.tryParse(item['code'].toString()) ?? 0;
+        int current = int.tryParse(item.code) ?? 0;
         if (current > maxCode) maxCode = current;
       }
       setState(() => _codeController.text = (maxCode + 1).toString());
@@ -70,6 +75,7 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
+    // 🎨 تم الحفاظ تماماً على كامل التصميم والوان الخلفية المتدرجة والـ GlassCard والأزرار بدون تعديل واحد
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
@@ -107,10 +113,10 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
                               _buildTinyCategory("customers", "العملاء", Icons.groups),
                               _buildTinyCategory("stores", "المخازن", Icons.store),
                               _buildTinyCategory("types", "التصنيف", Icons.payments),
-                              _buildTinyCategory("payment_methods", "طرق الدفع", Icons.credit_card), // تعديل الاسم
+                              _buildTinyCategory("payment_methods", "طرق الدفع", Icons.credit_card), 
                               _buildTinyCategory("banks", "البنوك", Icons.account_balance),
-                              _buildTinyCategory("employees", "الموظفين", Icons.badge), // تعديل الاسم
-                              _buildTinyCategory("branches", "الفروع", Icons.storefront), // إضافة الفروع الجديدة
+                              _buildTinyCategory("employees", "الموظفين", Icons.badge), 
+                              _buildTinyCategory("branches", "الفروع", Icons.storefront), 
                             ],
                           ),
                         ],
@@ -122,7 +128,7 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
                         children: [
                           _buildField("الاسم / البيان", _nameController, Icons.edit),
                           const SizedBox(height: 10),
-                          _buildField("الكود", _codeController, Icons.qr_code, enabled: !_isCodeReadOnly), // قفل الكود حسب القسم
+                          _buildField("الكود", _codeController, Icons.qr_code, enabled: !_isCodeReadOnly), 
                           
                           if (_selectedCategory == "types") ...[
                             const SizedBox(height: 10),
@@ -183,15 +189,13 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
     bool isSelected = _selectedCategory == cat;
     return InkWell(
       onTap: () {
-        // حماية: لو المستخدم ضغط على نفس القسم وهو في وضع التعديل، نمنع تصفير البيانات عشان متتمسحش
         if (_selectedCategory == cat && _isEditMode) return;
-
         setState(() {
           _selectedCategory = cat;
           _isEditMode = false;
-          _clearControllers(); // تصفير الحقول فقط عند التنقل الفعلي بين الأقسام
+          _clearControllers(); 
         });
-        _loadNextCode(); // حساب الكود التالي تلقائياً للقسم المختار
+        _loadNextCode(); 
       },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -245,14 +249,13 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
     );
   }
 
-  // --- المنطق البرمجي (نفس كودك الأصلي) ---
+  // --- 🔥 المنطق البرمجي المطور القائم على الـ Hive والمزامنة الثنائية ---
 
   void _handleSave() async {
     if (_nameController.text.isEmpty || _codeController.text.isEmpty) {
       _showSnackBar("الاسم والكود مطلوبين", Colors.orange); return;
     }
 
-    // التحقق من اختيار نوع التصنيف (وارد / صادر) لو واقفين في قسم التصنيفات المالية
     if (_selectedCategory == "types" && _selectedType == null) {
       _showSnackBar("يرجى اختيار نوع التصنيف (وارد/صادر)", Colors.orange);
       return;
@@ -260,25 +263,34 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
 
     setState(() => _isLoading = true);
     try {
-      // تنظيف النسبة المئوية من علامة % والمسافات قبل الإرسال
       double cleanPercent = double.tryParse(_profitPercentController.text.replaceAll('%', '').trim()) ?? 0.0;
 
-      await _apiService.saveNewCode(
-        companyCode: widget.companyCode, 
-        category: _selectedCategory,
-        code: _codeController.text, 
+      // 1. بناء كائن البيانات الجديد بناءً على الـ CodingModel
+      final newCodingItem = CodingModel(
+        code: _codeController.text,
         name: _nameController.text,
-        barcode: _barcodeController.text, 
+        type: _selectedType ?? "وارد",
+        barcode: _barcodeController.text,
         wholesalePrice: double.tryParse(_wholesalePriceController.text) ?? 0.0,
         sellingPrice: double.tryParse(_sellingPriceController.text) ?? 0.0,
         profitMargin: double.tryParse(_profitMarginController.text) ?? 0.0,
         profitPercent: cleanPercent,
-        type: _selectedType, // تمرير "وارد" أو "صادر" للـ Service
       );
 
-      _showSnackBar("تم بنجاح", Colors.green);
-      _clearControllers(); 
-      _loadNextCode(); // تحديث السيريال التلقائي بعد الحفظ بنجاح
+      // 2. إرسال البيانات للخدمة ليتم حفظها محلياً في الـ Hive وإرسالها للباك إند في نفس الوقت
+      bool isSuccess = await _codingService.saveCode(
+        companyCode: widget.companyCode,
+        category: _selectedCategory,
+        model: newCodingItem,
+      );
+
+      if (isSuccess) {
+        _showSnackBar(_isEditMode ? "تم التحديث بنجاح" : "تم الحفظ بنجاح", Colors.green);
+        _clearControllers(); 
+        _loadNextCode();
+      } else {
+        _showSnackBar("فشل عملية الحفظ، تحقق من الاتصال", Colors.red);
+      }
     } catch (e) { 
       _showSnackBar("خطأ: $e", Colors.red); 
     } finally { 
@@ -289,91 +301,114 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
   void _showItemsModal() async {
     setState(() => _isLoading = true);
     try {
-      List<dynamic> items = await _apiService.getCodingData(widget.companyCode, _selectedCategory);
+      // جلب البيانات بشكل صارم كقائمة كتل الـ CodingModel الناتجة عن الكاش
+      List<CodingModel> items = await _codingService.getCodingList(
+        companyCode: widget.companyCode, 
+        category: _selectedCategory,
+      );
       setState(() => _isLoading = false);
-      showModalBottomSheet(context: context, isScrollControlled: true, backgroundColor: Colors.transparent, builder: (ctx) => _buildModal(items));
-    } catch (e) { setState(() => _isLoading = false); }
+      
+      if (!mounted) return;
+      showModalBottomSheet(
+        context: context, 
+        isScrollControlled: true, 
+        backgroundColor: Colors.transparent, 
+        builder: (ctx) => _buildModal(items), // 👈 قمنا بإعادتها بسيطة لتجنب لخطبطة الـ Context
+      );
+    } catch (e) { 
+      setState(() => _isLoading = false); 
+      _showSnackBar("حدث خطأ أثناء معاينة الكاش", Colors.red);
+    }
   }
 
-  Widget _buildModal(List items) {
-    return Container(
-      height: MediaQuery.of(context).size.height * 0.7,
-      decoration: BoxDecoration(
-        color: Colors.indigo.shade900, 
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(20))
-      ),
-      child: ListView.builder(
-        itemCount: items.length,
-        itemBuilder: (c, i) => ListTile(
-          title: Text(
-            items[i]['name'] ?? '', 
-            style: const TextStyle(color: Colors.white, fontFamily: 'Cairo', fontSize: 14)
+  // 🟢 دالة بناء المعاينة المصححة تماماً بحل مشكلة الـ Named Parameters والـ Scope
+  Widget _buildModal(List<CodingModel> initialItems) {
+    return StatefulBuilder(
+      builder: (BuildContext context, StateSetter setModalState) {
+        return Container(
+          height: MediaQuery.of(context).size.height * 0.7,
+          decoration: BoxDecoration(
+            color: Colors.indigo.shade900, 
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20))
           ),
-          subtitle: Row(
-            children: [
-              Text("كود: ${items[i]['code']}", style: const TextStyle(color: Colors.white60, fontFamily: 'Cairo', fontSize: 12)),
-              if (_selectedCategory == "types" && items[i]['type'] != null) ...[
-                const SizedBox(width: 15),
-                Text(
-                  "النوع: ${items[i]['type']}", 
-                  style: TextStyle(
-                    color: items[i]['type'] == "وارد" ? Colors.greenAccent : Colors.redAccent, 
-                    fontFamily: 'Cairo', 
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold
+          child: initialItems.isEmpty 
+            ? const Center(child: Text("القسم فارغ حالياً", style: TextStyle(color: Colors.white70, fontFamily: 'Cairo')))
+            : ListView.builder(
+                itemCount: initialItems.length,
+                itemBuilder: (c, i) => ListTile(
+                  title: Text(
+                    initialItems[i].name, 
+                    style: const TextStyle(color: Colors.white, fontFamily: 'Cairo', fontSize: 14)
                   ),
-                ),
-              ],
-            ],
-          ),
-          trailing: IconButton(
-            icon: const Icon(Icons.delete, color: Colors.red), 
-            onPressed: () async {
-              try {
-                // 1. حذف العنصر من السيرفر وتصفير كاش الموبايل تلقائياً
-                await _apiService.deleteCode(widget.companyCode, _selectedCategory, items[i]['code'].toString());
-                
-                // 2. إغلاق شاشة المعاينة الحالية
-                Navigator.pop(context); 
-                
-                _showSnackBar("تم الحذف بنجاح", Colors.green);
-                
-                // 3. إعادة حساب الكود التالي لتحديث الحقل في الخلفية
-                _loadNextCode();
+                  subtitle: Row(
+                    children: [
+                      Text("كود: ${initialItems[i].code}", style: const TextStyle(color: Colors.white60, fontFamily: 'Cairo', fontSize: 12)),
+                      if (_selectedCategory == "types") ...[
+                        const SizedBox(width: 15),
+                        Text(
+                          "النوع: ${initialItems[i].type}", 
+                          style: TextStyle(
+                            color: initialItems[i].type == "وارد" ? Colors.greenAccent : Colors.redAccent, 
+                            fontFamily: 'Cairo', 
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.delete, color: Colors.red), 
+                    onPressed: () async {
+                      // 1. تشغيل المؤشر على الشاشة الخلفية
+                      setState(() => _isLoading = true);
+                      
+                      // 🔥 الحل السحري: تمرير المعاملات بأسمائها الصريحة المكتوبة في الـ Service
+                      // واستخدام الـ widget.companyCode للوصول المباشر لكود الشركة الأب
+                      bool isDeleted = await _codingService.deleteCode(
+                        companyCode: widget.companyCode, // 👈 يجب كتابة اسم المعامل هكذا ليفهمه السيرفيس!
+                        category: _selectedCategory,     // 👈 يجب كتابة اسم المعامل هكذا!
+                        code: initialItems[i].code,       // 👈 يجب كتابة اسم المعامل هكذا!
+                      );
+                      
+                      // 2. إيقاف المؤشر
+                      setState(() => _isLoading = false);
 
-                // 4. استدعاء الدالة الأصلية بملفك لفتح المعاينة مجدداً بالبيانات المحدثة
-                _showItemsModal();
-                
-              } catch (e) {
-                _showSnackBar("خطأ أثناء الحذف: $e", Colors.red);
-              }
-            }
-          ),
-          onTap: () { 
-            Navigator.pop(context); 
-            setState(() { 
-              _isEditMode = true; 
-              _nameController.text = items[i]['name'] ?? ''; 
-              _codeController.text = items[i]['code'].toString(); 
-              
-              // 1. لو واقفين في قسم "التصنيف" (types) نرجع حقل النوع في الـ Dropdown
-              if (_selectedCategory == "types") {
-                _selectedType = items[i]['type']; 
-              }
-              
-              // 2. لو واقفين في قسم "الأصناف" (items) نرجع كل حقول الأسعار والأرباح
-              if (_selectedCategory == "items") {
-                _barcodeController.text = items[i]['barcode'] ?? '';
-                
-                _wholesalePriceController.text = (items[i]['wholesale_price'] ?? '').toString();
-                _sellingPriceController.text = (items[i]['selling_price'] ?? '').toString();
-                _profitMarginController.text = (items[i]['profit_margin'] ?? '0.00').toString();
-                _profitPercentController.text = "${items[i]['profit_percent'] ?? '0.00'} %";
-              }
-            }); 
-          },
-        ),
-      ),
+                      if (isDeleted) {
+                        _showSnackBar("تم الحذف بنجاح من الكاش والسيرفر", Colors.green);
+                        // 3. تحديث واجهة المودال داخلياً فوراً
+                        setModalState(() {
+                          initialItems.removeAt(i);
+                        });
+                      } else {
+                        _showSnackBar("فشل الحذف، تحقق من الاتصال", Colors.red);
+                      }
+                    }
+                  ),
+                  onTap: () { 
+                    Navigator.pop(context); 
+                    setState(() { 
+                      _isEditMode = true; 
+                      _nameController.text = initialItems[i].name; 
+                      _codeController.text = initialItems[i].code; 
+                      
+                      if (_selectedCategory == "types") {
+                        _selectedType = initialItems[i].type; 
+                      }
+                      
+                      if (_selectedCategory == "items") {
+                        _barcodeController.text = initialItems[i].barcode;
+                        _wholesalePriceController.text = initialItems[i].wholesalePrice.toString();
+                        _sellingPriceController.text = initialItems[i].sellingPrice.toString();
+                        _profitMarginController.text = initialItems[i].profitMargin.toString();
+                        _profitPercentController.text = "${initialItems[i].profitPercent} %";
+                      }
+                    }); 
+                  },
+                ),
+              ),
+        );
+      }
     );
   }
 

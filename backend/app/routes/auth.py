@@ -101,6 +101,7 @@ async def verify_user(authorization: str = Header(None)):
             "job_title": data.get("job_title"),
         }
     except Exception as e:
+        print(f"⚠️ خطأ في التحقق من التوكن: {e}") # 👈 أضف هذا السطر
         raise HTTPException(status_code=401, detail="انتهت صلاحية الجلسة، سجل دخولك مرة أخرى")
 
 @router.post("/verify-reset")

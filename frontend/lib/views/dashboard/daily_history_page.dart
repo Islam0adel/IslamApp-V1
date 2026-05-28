@@ -5,21 +5,20 @@ import 'package:file_picker/file_picker.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../services/daily_service.dart';
 import 'daily_page.dart';
-import 'package:universal_html/html.dart' as html; 
+import 'package:universal_html/html.dart' as html;
 import 'package:excel/excel.dart' as excel_lib;
-import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:convert';
+import 'package:hive_flutter/hive_flutter.dart';
 
 class DailyHistoryPage extends StatefulWidget {
   final String companyCode;
-  final String selectedBranch; // 👈 إضافة حقل الفرع النشط هنا
-  final String? userName; 
+  final String? userName;
+  final String? selectedBranch; // 🌟 استقبال الفرع المختار
 
   const DailyHistoryPage({
     super.key,
     required this.companyCode,
-    required this.selectedBranch, // مطلوب
-    this.userName, 
+    this.userName,
+    this.selectedBranch,
   });
 
   @override
@@ -30,64 +29,80 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
   final DailyService _dailyService = DailyService();
   DateTime _fromDate = DateTime.now().subtract(const Duration(days: 7));
   DateTime _toDate = DateTime.now();
-  List<dynamic> _historyData = [];
+
+  // 🌟 هذا هو السطر السحري الناقص الذي كان يسبب الإيرور في الملف كله:
+  // ignore: unused_field
+  List<Map<String, dynamic>> _historyData = [];
+
   bool _isLoading = false;
-  bool _isCategoryGrouped = false; 
+  bool _isCategoryGrouped = false;
 
   @override
   void initState() {
     super.initState();
-    _fetchData();
+    _fetchData(); // لتغذية وجلب البيانات وتحديث الكاش المحلي عند الفتح
   }
 
-  Future<void> _fetchData() async {
+  void _fetchData() async {
     setState(() => _isLoading = true);
     try {
       final data = await _dailyService.getTransactionsHistory(
         widget.companyCode,
         DateFormat('yyyy-MM-dd').format(_fromDate),
         DateFormat('yyyy-MM-dd').format(_toDate),
+        branch: widget.selectedBranch,
       );
 
-      // تصفية العرض بناءً على الفرع المحدد في الشاشة الرئيسية (الفلترة الذكية)
-      List<dynamic> filteredData = [];
-      if (widget.selectedBranch == "كل الفروع") {
-        filteredData = data;
-      } else {
-        filteredData = data.where((element) => (element['branch'] ?? 'الفرع الرئيسي') == widget.selectedBranch).toList();
-      }
-
       setState(() {
-        _historyData = filteredData;
-        
-        // 🟢 ترتيب البيانات تلقائياً من الأحدث للأقدم بناءً على السيريال لضمان دقة الترتيب اللحظي
-        _historyData.sort((a, b) => int.parse(b['serial'].toString()).compareTo(int.parse(a['serial'].toString())));
-        
+        // تحويل آمن ومضمون ومطابق للنوع 100%
+        _historyData = data
+            .map<Map<String, dynamic>>(
+                (item) => Map<String, dynamic>.from(item))
+            .toList();
         _isLoading = false;
       });
     } catch (e) {
       setState(() => _isLoading = false);
-      _showSnackBar("خطأ في التحميل: $e", Colors.red);
     }
   }
 
-  Future<void> _exportToExcel() async {
-    if (_historyData.isEmpty) {
+  // ⚠️ ملحوظة: باقي الدوال الخاصة بك مثل الـ build و _buildDataRow تظل كما هي بالأسفل ولا تحذفها!
+
+  // دالة لفرز وترتيب الحركات المفلترة ديناميكياً
+  List<Map<String, dynamic>> _getSortedData(List<Map<String, dynamic>> list) {
+    List<Map<String, dynamic>> sortedList = List.from(list);
+    if (_isCategoryGrouped) {
+      sortedList.sort((a, b) {
+        int cmp = (a['category'] ?? '').compareTo(b['category'] ?? '');
+        if (cmp != 0) return cmp;
+        return (b['serial'] ?? 0).compareTo(a['serial'] ?? 0);
+      });
+    } else {
+      sortedList.sort((a, b) => (b['serial'] ?? 0).compareTo(a['serial'] ?? 0));
+    }
+    return sortedList;
+  }
+
+  Future<void> _exportToExcel(List<Map<String, dynamic>> currentData) async {
+    if (currentData.isEmpty) {
       _showSnackBar("لا توجد بيانات لتصديرها", Colors.orange);
       return;
     }
 
     try {
-      String formattedDate = "${DateTime.now().day}-${DateTime.now().month}-${DateTime.now().year}";
-      String fileName = "تقرير_اليومية_${widget.selectedBranch}_$formattedDate.xlsx";
-
+      String formattedDate =
+          "${DateTime.now().day}-${DateTime.now().month}-${DateTime.now().year}";
+      String fileName = "تقرير_اليومية_$formattedDate.xlsx";
       var excel = excel_lib.Excel.createExcel();
+
       String defaultSheet = excel.tables.keys.first;
       excel.rename(defaultSheet, 'Daily_Records');
       excel_lib.Sheet sheetObject = excel['Daily_Records'];
 
       for (var table in excel.tables.keys.toList()) {
-        if (table != 'Daily_Records') excel.delete(table);
+        if (table != 'Daily_Records') {
+          excel.delete(table);
+        }
       }
 
       sheetObject.appendRow([
@@ -96,19 +111,14 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
         excel_lib.TextCellValue("البيان"),
         excel_lib.TextCellValue("التصنيف"),
         excel_lib.TextCellValue("التاريخ"),
-        excel_lib.TextCellValue("المسؤول"),
-        excel_lib.TextCellValue("الفرع"),
-        
       ]);
 
-      for (var row in _historyData) {
+      for (var row in currentData) {
         sheetObject.appendRow([
           excel_lib.TextCellValue(row['serial']?.toString() ?? ""),
           excel_lib.TextCellValue(row['amount']?.toString() ?? "0"),
           excel_lib.TextCellValue(row['statement'] ?? ""),
           excel_lib.TextCellValue(row['category'] ?? ""),
-          excel_lib.TextCellValue(row['branch'] ?? "الفرع الرئيسي"),
-          excel_lib.TextCellValue(row['employee'] ?? "غير محدد"),
           excel_lib.TextCellValue(row['date'] ?? ""),
         ]);
       }
@@ -117,9 +127,13 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
       if (fileBytes == null) return;
 
       if (identical(0, 0.0)) {
-        final blob = html.Blob([fileBytes], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        final blob = html.Blob([
+          fileBytes
+        ], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         final url = html.Url.createObjectUrlFromBlob(blob);
-        final anchor = html.AnchorElement(href: url)..setAttribute("download", fileName)..style.display = "none";
+        final anchor = html.AnchorElement(href: url)
+          ..setAttribute("download", fileName)
+          ..style.display = "none";
         html.document.body?.append(anchor);
         anchor.click();
         anchor.remove();
@@ -127,8 +141,12 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
         _showSnackBar("تم تحميل $fileName بنجاح", Colors.green);
       } else {
         String? selectedPath = await FilePicker.platform.saveFile(
-          dialogTitle: 'اختر مكان حفظ ملف الإكسيل', fileName: fileName, type: FileType.custom, allowedExtensions: ['xlsx'],
+          dialogTitle: 'اختر مكان حفظ ملف الإكسيل',
+          fileName: fileName,
+          type: FileType.custom,
+          allowedExtensions: ['xlsx'],
         );
+
         if (selectedPath != null) {
           if (!selectedPath.endsWith('.xlsx')) selectedPath += '.xlsx';
           final file = File(selectedPath);
@@ -143,74 +161,140 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      extendBodyBehindAppBar: true,
-      appBar: AppBar(
-        title: const Text("معاينة الحركات", style: TextStyle(fontFamily: 'Cairo')),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        // 🟢 تعديل الشرط 4: استبدال زر الرجوع ليقوم بفتح صفحة اليومية من الصفر لتحديث أرصدتها
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () {
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(
-                builder: (context) => DailyPage(
-                  companyCode: widget.companyCode,
-                  selectedBranch: widget.selectedBranch,
-                  userName: widget.userName ?? "مدير",
+    double screenWidth = MediaQuery.of(context).size.width;
+    bool isWebOrDesktop = screenWidth > 600;
+    final Box dailyBox = Hive.box('daily_transactions_box');
+
+    // 🌟 السحر هنا: الاستماع إلى الـ Box بأكمله ليكون النظام تفاعلياً للحفظ الفردي والمزامنة اللحظية
+    return ValueListenableBuilder(
+      valueListenable: dailyBox.listenable(),
+      builder: (context, Box box, child) {
+        // 1. استخراج الحركات الفردية المحدثة وتصفيتها بحسب نطاق التاريخ المختار وكود الشركة ديناميكياً
+        List<Map<String, dynamic>> displayList = [];
+        String startStr = DateFormat('yyyy-MM-dd').format(_fromDate);
+        String endStr = DateFormat('yyyy-MM-dd').format(_toDate);
+
+        for (var item in box.values) {
+          if (item is Map && item['company_code'] == widget.companyCode) {
+            
+            // 🌟 فلترة ذكية: تجاهل الحركات التي لا تنتمي للفرع المختار (إلا لو اختار الكل)
+            if (widget.selectedBranch != null && widget.selectedBranch != "كل الفروع" && widget.selectedBranch != "الكل" && widget.selectedBranch != "") {
+              if (item['branch'] != widget.selectedBranch) continue;
+            }
+
+            String txDate = item['date']?.toString() ?? "";
+            if (txDate.compareTo(startStr) >= 0 && txDate.compareTo(endStr) <= 0) {
+              displayList.add(Map<String, dynamic>.from(item));
+            }
+          }
+        }
+
+        // 2. تطبيق الفرز والترتيب المطلق
+        displayList = _getSortedData(displayList);
+
+        return Scaffold(
+          extendBodyBehindAppBar: true,
+          appBar: AppBar(
+        title: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              "سجل الحركات التاريخي",
+              style: TextStyle(fontFamily: 'Cairo', fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            // 🌟 الإضافة الجديدة: توضيح الفرع الحالي المفلتر
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.cyanAccent.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                "فرع: ${widget.selectedBranch == null || widget.selectedBranch == 'الكل' || widget.selectedBranch == '' ? 'كل الفروع' : widget.selectedBranch}",
+                style: const TextStyle(
+                  fontFamily: 'Cairo', 
+                  fontSize: 12, 
+                  color: Colors.cyanAccent,
                 ),
               ),
-            );
-          },
+            ),
+          ],
         ),
-        actions: [
-          IconButton(icon: const Icon(Icons.ios_share, color: Colors.greenAccent), onPressed: _exportToExcel, tooltip: "تصدير إكسيل"),
-          IconButton(
-            icon: Icon(_isCategoryGrouped ? Icons.filter_alt : Icons.filter_alt_off, color: _isCategoryGrouped ? Colors.amber : Colors.white70),
-            onPressed: () {
-              setState(() {
-                _isCategoryGrouped = !_isCategoryGrouped;
-                
-                // 🟢 استبدال الدالة المكسورة بالترتيب اللحظي السليم
-                if (_isCategoryGrouped) {
-                  // ترتيب حسب الحروف الأبجدية للتصنيفات
-                  _historyData.sort((a, b) => (a['category'] ?? '').toString().compareTo((b['category'] ?? '').toString()));
-                } else {
-                  // إرجاع الترتيب التنازلي الطبيعي حسب السيريال (الأحدث للأقدم)
-                  _historyData.sort((a, b) => int.parse(b['serial'].toString()).compareTo(int.parse(a['serial'].toString())));
-                }
-              });
-            },
-          ),
-        ],
+        centerTitle: true,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        toolbarHeight: 70, // متناسق مع ارتفاع صفحة اليومية
       ),
-      body: Container(
-        width: double.infinity, height: double.infinity,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(colors: [Colors.black, Colors.indigo.shade900, Colors.black], begin: Alignment.topLeft, end: Alignment.bottomRight),
-        ),
-        child: SafeArea(
-          child: Column(
+          body: Container(
+            width: double.infinity,
+            height: double.infinity,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Colors.black, Colors.indigo.shade900, Colors.black],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+            ),
+            child: SafeArea(
+              child: Center(
+                child: Container(
+                  constraints: BoxConstraints(
+                    maxWidth: isWebOrDesktop ? 600 : double.infinity,
+                  ),
+                  child: Column(
+                    children: [
+                      _buildDateFilters(),
+                      _buildTableHeader(),
+                      Expanded(
+                        child: _isLoading
+                            ? const Center(
+                                child: CircularProgressIndicator(
+                                    color: Colors.white))
+                            : displayList.isEmpty
+                                ? const Center(
+                                    child: Text("لا توجد بيانات",
+                                        style: TextStyle(
+                                            color: Colors.white38,
+                                            fontFamily: 'Cairo',
+                                            fontSize: 14)))
+                                : ListView.builder(
+                                    padding: const EdgeInsets.only(
+                                        bottom: 20, left: 5, right: 5),
+                                    itemCount: displayList.length,
+                                    itemBuilder: (context, index) =>
+                                        _buildDataRow(displayList[index]),
+                                  ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildDateFilters() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: GlassCard(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              // كارت يوضح للمستخدم الفرع النشط المفلتر به حالياً
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 15),
-                child: Text("معاينة فرع: ${widget.selectedBranch}", style: const TextStyle(color: Colors.cyanAccent, fontSize: 14, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
-              ),
-              _buildDateFilters(),
-              _buildTableHeader(),
-              Expanded(
-                child: _isLoading
-                    ? const Center(child: CircularProgressIndicator(color: Colors.white))
-                    : _historyData.isEmpty
-                        ? const Center(child: Text("لا توجد بيانات لهذا الفرع", style: TextStyle(color: Colors.white38, fontFamily: 'Cairo')))
-                        : ListView.builder(
-                            itemCount: _historyData.length,
-                            itemBuilder: (context, index) => _buildDataRow(_historyData[index]),
-                          ),
-              ),
+              _datePickerBtn("من", _fromDate, (d) {
+                setState(() => _fromDate = d!);
+                _fetchData();
+              }),
+              const Icon(Icons.arrow_forward_ios,
+                  color: Colors.white24, size: 10),
+              _datePickerBtn("إلى", _toDate, (d) {
+                setState(() => _toDate = d!);
+                _fetchData();
+              }),
             ],
           ),
         ),
@@ -218,38 +302,28 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
     );
   }
 
-  Widget _buildDateFilters() {
-    return Padding(
-      padding: const EdgeInsets.all(15),
-      child: GlassCard(
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            _datePickerBtn("من", _fromDate, (d) {
-              setState(() => _fromDate = d!);
-              _fetchData();
-            }),
-            const Icon(Icons.arrow_forward_ios, color: Colors.white24, size: 15),
-            _datePickerBtn("إلى", _toDate, (d) {
-              setState(() => _toDate = d!);
-              _fetchData();
-            }),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _datePickerBtn(String label, DateTime date, Function(DateTime?) onPick) {
+  Widget _datePickerBtn(
+      String label, DateTime date, Function(DateTime?) onPick) {
     return InkWell(
       onTap: () async {
-        DateTime? p = await showDatePicker(context: context, initialDate: date, firstDate: DateTime(2020), lastDate: DateTime(2101));
+        DateTime? p = await showDatePicker(
+          context: context,
+          initialDate: date,
+          firstDate: DateTime(2020),
+          lastDate: DateTime(2101),
+        );
         if (p != null) onPick(p);
       },
       child: Column(
         children: [
-          Text(label, style: const TextStyle(color: Colors.white60, fontSize: 12, fontFamily: 'Cairo')),
-          Text(DateFormat('yyyy-MM-dd').format(date), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          Text(label,
+              style: const TextStyle(
+                  color: Colors.white60, fontSize: 10, fontFamily: 'Cairo')),
+          Text(DateFormat('yyyy-MM-dd').format(date),
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12)),
         ],
       ),
     );
@@ -257,85 +331,188 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
 
   Widget _buildTableHeader() {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 15),
-      margin: const EdgeInsets.symmetric(horizontal: 10),
-      decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(10)),
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      decoration: BoxDecoration(
+          color: Colors.white10, borderRadius: BorderRadius.circular(8)),
       child: Row(
         children: const [
-          Expanded(flex: 2, child: Text("المبلغ", style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontFamily: 'Cairo'))),
-          Expanded(flex: 3, child: Text("البيان والمسؤول", style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontFamily: 'Cairo'))),
-          Expanded(flex: 2, child: Text("التصنيف", style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontFamily: 'Cairo'))),
-          Expanded(flex: 2, child: Text("التاريخ", style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontFamily: 'Cairo'))),
+          Expanded(
+              flex: 2,
+              child: Text("المبلغ",
+                  style: TextStyle(
+                      color: Colors.cyan,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                      fontFamily: 'Cairo'))),
+          Expanded(
+              flex: 3,
+              child: Text("البيان",
+                  style: TextStyle(
+                      color: Colors.cyan,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                      fontFamily: 'Cairo'))),
+          Expanded(
+              flex: 2,
+              child: Text("التصنيف",
+                  style: TextStyle(
+                      color: Colors.cyan,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                      fontFamily: 'Cairo'))),
+          Expanded(
+              flex: 2,
+              child: Text("التاريخ",
+                  style: TextStyle(
+                      color: Colors.cyan,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                      fontFamily: 'Cairo'))),
         ],
       ),
     );
   }
 
-  // 🟢 تعديل سطر البيانات لعرض اسم المستخدم واسم الفرع بذكاء وأناقة تحت البيان
   Widget _buildDataRow(Map<String, dynamic> item) {
-    String emp = item['employee'] ?? "غير محدد";
-    String br = item['branch'] ?? "الفرع الرئيسي";
-
     return InkWell(
       onTap: () => _showOptionsModal(item),
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 15),
-        margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-        decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white10, width: 0.5))),
-        child: Row(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+        margin: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: const BoxDecoration(
+          border: Border(bottom: BorderSide(color: Colors.white10, width: 0.5)),
+        ),
+        // 🌟 قمنا بتغيير الابن الأساسي إلى Column ليستوعب السطر الجديد
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(flex: 2, child: Text("${item['amount']}", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
-            Expanded(
-              flex: 3,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text("${item['statement']}", style: const TextStyle(color: Colors.white, fontSize: 13, fontFamily: 'Cairo'), overflow: TextOverflow.ellipsis),
-                  const SizedBox(height: 2),
-                  // 🚀 كتابة اسم المسجل والفرع بخط صغير منور
-                  Text("بواسطة: $emp ($br)", style: const TextStyle(color: Colors.amberAccent, fontSize: 10, fontFamily: 'Cairo')),
-                ],
-              ),
+            // 1️⃣ السطر الأول: بيانات الحركة القديمة (شغالة تمام وملمسناش فيها أي حاجة)
+            Row(
+              children: [
+                Expanded(
+                    flex: 2,
+                    child: Text("${item['amount'] ?? 0.0}",
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600))),
+                Expanded(
+                    flex: 3,
+                    child: Text("${item['statement'] ?? ''}",
+                        style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 11,
+                            fontFamily: 'Cairo'),
+                        overflow: TextOverflow.ellipsis)),
+                Expanded(
+                    flex: 2,
+                    child: Text("${item['category'] ?? ''}",
+                        style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 11,
+                            fontFamily: 'Cairo'),
+                        overflow: TextOverflow.ellipsis)),
+                Expanded(
+                    flex: 2,
+                    child: Text("${item['date'] ?? ''}",
+                        style: const TextStyle(
+                            color: Colors.white60, fontSize: 10))),
+              ],
             ),
-            Expanded(flex: 2, child: Text("${item['category']}", style: const TextStyle(color: Colors.white70, fontSize: 13, fontFamily: 'Cairo'))),
-            Expanded(flex: 2, child: Text("${item['date']}", style: const TextStyle(color: Colors.white60, fontSize: 11))),
+
+            const SizedBox(height: 6), // مسافة صغيرة جداً بين السطرين
+
+            // 2️⃣ السطر الثاني الجديد: عرض الفرع والموظف بشكل متناسق أسفل البيانات
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                // عرض اسم الفرع مع أيقونة متجر صغيرة
+                Row(
+                  children: [
+                    const Icon(Icons.store_rounded,
+                        color: Colors.cyan, size: 12),
+                    const SizedBox(width: 4),
+                    Text(
+                      "الفرع: ${item['branch'] ?? 'الرئيسي'}",
+                      style: const TextStyle(
+                          color: Colors.white38,
+                          fontSize: 9,
+                          fontFamily: 'Cairo'),
+                    ),
+                  ],
+                ),
+                // عرض اسم الموظف مع أيقونة مستخدم صغيرة
+                Row(
+                  children: [
+                    const Icon(Icons.person_rounded,
+                        color: Colors.amber, size: 12),
+                    const SizedBox(width: 4),
+                    Text(
+                      "الموظف: ${item['employee'] ?? 'غير معروف'}",
+                      style: const TextStyle(
+                          color: Colors.white38,
+                          fontSize: 9,
+                          fontFamily: 'Cairo'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ],
         ),
       ),
     );
   }
 
-  void _editTransaction(Map<String, dynamic> item) {
-    // 🟢 تعديل الشرط 4: غلق صفحة التاريخ وفتح صفحة اليومية ممررين لها بيانات التعديل
-    Navigator.pushReplacement(
+  void _editTransaction(Map<String, dynamic> item) async {
+    final result = await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => DailyPage(
           companyCode: widget.companyCode,
-          selectedBranch: widget.selectedBranch,
-          userName: widget.userName ?? "مدير",
           editItem: item,
+          userName: widget.userName, // 🌟 الإضافة السحرية: تمرير الموظف عشان ميتنسيش
+          selectedBranch: item['branch'] ?? widget.selectedBranch, // 🌟 تمرير فرع الإذن نفسه
         ),
       ),
     );
+
+    if (result == true) {
+      _fetchData();
+    }
   }
 
   void _showOptionsModal(Map<String, dynamic> item) {
     showModalBottomSheet(
-      context: context, backgroundColor: Colors.indigo.shade900,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      context: context,
+      backgroundColor: Colors.indigo.shade900,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(15))),
       builder: (context) => Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           ListTile(
-            leading: const Icon(Icons.edit, color: Colors.orange), title: const Text("تعديل الإذن", style: TextStyle(color: Colors.white, fontFamily: 'Cairo')),
-            onTap: () { Navigator.pop(context); _editTransaction(item); },
+            leading: const Icon(Icons.edit, color: Colors.orange, size: 20),
+            title: const Text("تعديل الإذن",
+                style: TextStyle(
+                    color: Colors.white, fontFamily: 'Cairo', fontSize: 14)),
+            onTap: () {
+              Navigator.pop(context);
+              _editTransaction(item);
+            },
           ),
           ListTile(
-            leading: const Icon(Icons.delete, color: Colors.red), title: const Text("حذف الإذن", style: TextStyle(color: Colors.white, fontFamily: 'Cairo')),
-            onTap: () { Navigator.pop(context); _confirmDelete(item); },
+            leading: const Icon(Icons.delete, color: Colors.red, size: 20),
+            title: const Text("حذف الإذن",
+                style: TextStyle(
+                    color: Colors.white, fontFamily: 'Cairo', fontSize: 14)),
+            onTap: () {
+              Navigator.pop(context);
+              _confirmDelete(item);
+            },
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 10),
         ],
       ),
     );
@@ -345,59 +522,39 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text("تأكيد الحذف", style: TextStyle(fontFamily: 'Cairo')),
-        content: Text("حذف إذن رقم ${item['serial']}؟", style: const TextStyle(fontFamily: 'Cairo')),
+        backgroundColor: Colors.indigo.shade900,
+        title: const Text("تأكيد الحذف",
+            style: TextStyle(
+                color: Colors.white, fontFamily: 'Cairo', fontSize: 15)),
+        content: Text("حذف إذن رقم ${item['serial']}؟",
+            style: const TextStyle(
+                color: Colors.white70, fontFamily: 'Cairo', fontSize: 13)),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context), 
-            child: const Text("إلغاء", style: TextStyle(fontFamily: 'Cairo'))
-          ),
+              onPressed: () => Navigator.pop(context),
+              child: const Text("إلغاء",
+                  style: TextStyle(fontFamily: 'Cairo', fontSize: 13))),
           TextButton(
             onPressed: () async {
-              try {
-                int serialToDelete = int.parse(item['serial'].toString());
-                
-                // 1. إرسال أمر الحذف النهائي وإعادة تمشيط الأرصدة في الباك إند
-                await _dailyService.deleteTransaction(widget.companyCode, serialToDelete);
-                
-                // 2. 🟢 تنظيف الكاش المحلي فوراً لضمان عدم ظهور الإذن مجدداً
-                final prefs = await SharedPreferences.getInstance();
-                final keys = prefs.getKeys();
-                
-                for (String key in keys) {
-                  if (key.startsWith('cached_history_${widget.companyCode}_')) {
-                    final cachedString = prefs.getString(key);
-                    if (cachedString != null && cachedString.isNotEmpty) {
-                      List<dynamic> localList = jsonDecode(cachedString) as List<dynamic>;
-                      
-                      // مسح الإذن المحذوف تماماً من ملف الكاش
-                      localList.removeWhere((localItem) => int.parse(localItem['serial'].toString()) == serialToDelete);
-                      
-                      // حفظ الكاش النظيف مجدداً
-                      await prefs.setString(key, jsonEncode(localList));
-                    }
-                  }
-                }
-
-                // 3. إغلاق النافذة المنبثقة
-                if (mounted) Navigator.pop(context);
-                
-                // 4. تحديث الـ UI والأرصدة في الشاشة لحظياً بناءً على الكاش النظيف الجديد
-                _fetchData();
-
-              } catch (e) {
-                if (mounted) Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text("خطأ أثناء الحذف: $e"), backgroundColor: Colors.red)
-                );
-              }
+              // 🌟 إضافة الفرع في دالة الحذف
+              await _dailyService.deleteTransaction(
+                  widget.companyCode, item['serial'] ?? 0, item['branch'] ?? "الفرع الرئيسي");
+              Navigator.pop(context);
+              _fetchData();
             },
-            child: const Text("حذف", style: TextStyle(color: Colors.red, fontFamily: 'Cairo'))
+            child: const Text("حذف",
+                style: TextStyle(
+                    color: Colors.red, fontFamily: 'Cairo', fontSize: 13)),
           ),
         ],
       ),
     );
   }
 
-  void _showSnackBar(String m, Color c) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m, textAlign: TextAlign.center, style: const TextStyle(fontFamily: 'Cairo')), backgroundColor: c));
+  void _showSnackBar(String m, Color c) =>
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(m,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontFamily: 'Cairo', fontSize: 13)),
+          backgroundColor: c));
 }

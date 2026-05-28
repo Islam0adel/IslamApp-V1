@@ -5,12 +5,10 @@ from typing import Optional
 
 router = APIRouter()
 
-# 1. التكويدات الافتراضية لقسم "التصنيف" (types)
+# 1. التكويدات الافتراضية لقسم "التصنيف" (types) مع الاتجاهات الصحيحة
 DEFAULT_TYPES = [
     {"name": "ايراد", "type": "وارد"},
     {"name": "فيزا", "type": "وارد"},
-    {"name": "تحويل من الفيزا", "type": "وارد"},
-    {"name": "تحويل من النقدي", "type": "صادر"},
     {"name": "استهلاكات بضاعة", "type": "صادر"},
     {"name": "انترنت", "type": "صادر"},
     {"name": "ايجار", "type": "صادر"},
@@ -26,12 +24,14 @@ DEFAULT_TYPES = [
     {"name": "بضاعة", "type": "صادر"}
 ]
 
-# 2. قاموس يحتوي على باقي التكويدات الافتراضية للأقسام الجديدة بالملي
+# 2. التكويدات الافتراضية لباقي الأقسام (تم تنظيف التكرار)
 DEFAULT_CATEGORIES_DATA = {
-    "treasuries": [{"name": "الخزينة الرئيسية"}],            # الخزائن
+    "safes": [{"name": "نقدي"},
+                  {"name": "فيزا"},
+                  {"name": "محفظة الكترونية"}],            # الخزائن
     "customers": [{"name": "عميل نقدي"}],                    # العملاء
     "stores": [{"name": "المخزن الرئيسي"}],                  # المخازن
-    "branches": [{"name": "الفرع الرئيسي"}],                  # الفروع
+    "branches": [{"name": "الفرع الرئيسي"}],                  # الفروع لضمان وجود فرع افتراضي للربط
     "payment_methods": [                                    # طرق الدفع
         {"name": "نقدي"},
         {"name": "فيزا"},
@@ -39,7 +39,7 @@ DEFAULT_CATEGORIES_DATA = {
     ]
 }
 
-# موديل البيانات المطور للأصناف والتصنيفات
+# موديل البيانات المطور للأصناف والتصنيفات الشامل
 class CodingModel(BaseModel):
     company_code: str
     category: str
@@ -53,68 +53,45 @@ class CodingModel(BaseModel):
     profit_percent: Optional[float] = 0.0
 
 
-# دالة داخلية ذكية: ترفع رقم الـ version على السيرفر لإعلام تطبيق الموبايل لأي مستخدم بالتحديث فوراً
-def bump_coding_sync_version(company_code: str, category: str):
+# 🟢 دالة مساعدة لزيادة رقم النسخة تلقائياً عند (الحفظ أو الحذف أو التعديل)
+def bump_version(company_code: str, category: str):
     try:
-        sync_ref = db.collection("coding").document(company_code).collection("sync_tracking").document(category)
-        sync_doc = sync_ref.get()
-        if sync_doc.exists:
-            current_version = int(sync_doc.to_dict().get("version", 0))
-            sync_ref.update({"version": current_version + 1})
-        else:
-            sync_ref.set({"version": 1})
+        doc_ref = db.collection("coding").document(company_code).collection(category).document("version_control")
+        doc = doc_ref.get()
+        current_version = doc.to_dict().get("version", 1) if doc.exists else 1
+        doc_ref.set({"version": current_version + 1}) # تزيد النسخة بمقدار 1 ليعرف الفرونت إند بوجود تغيير
     except Exception as e:
-        print(f"Error bumping coding sync version: {str(e)}")
+        print(f"Error bumping version: {str(e)}")
 
 
-# دالة جلب رقم النسخة الحالية لمطابقتها داخل الموبايل (جديدة لربط التزامن الفوري)
-@router.get("/sync_version/{company_code}/{category}")
-async def get_coding_sync_version(company_code: str, category: str):
-    try:
-        sync_ref = db.collection("coding").document(company_code).collection("sync_tracking").document(category)
-        sync_doc = sync_ref.get()
-        if sync_doc.exists:
-            return {"version": int(sync_doc.to_dict().get("version", 0))}
-        return {"version": 0}
-    except Exception as e:
-        return {"version": 0}
-
-
+# [تعديل دالة 1]: حفظ أو تحديث التكويد مع ترفيع رقم النسخة ذكياً لإعلام الكاش المحلي
 @router.post("/save")
 async def save_code(data: CodingModel):
     try:
-        save_data = {
-            "name": data.name,
-            "code": data.code
-        }
+        # تحويل الموديل بالكامل إلى قاموس (حتى لا نفقد أي ميزة أو خاصية قديمة أو مستقبلية)
+        save_data = data.dict()
+        
+        # إزالة الحقول التي تنتمي للمسار وليس لمستند التكويد نفسه
+        save_data.pop("company_code", None)
+        save_data.pop("category", None)
 
-        if data.category == "types":
-            save_data["type"] = data.type
-
-        if data.category == "items":
-            save_data.update({
-                "barcode": data.barcode,
-                "wholesale_price": data.wholesale_price,
-                "selling_price": data.selling_price,
-                "profit_margin": data.profit_margin,
-                "profit_percent": data.profit_percent
-            })
-
+        # حفظ المستند مباشرة في مساره الصحيح ديناميكياً
         db.collection("coding")\
             .document(data.company_code)\
             .collection(data.category)\
             .document(data.code)\
             .set(save_data)
-
-        # 🔥 ضرب نبضة التحديث اللحظي للقسم المتأثر على الشبكة
-        bump_coding_sync_version(data.company_code, data.category)
-
-        return {"status": "success"}
+        
+        # 🔥 تحديث النسخة لإجبار الكاش عند العميل على التحديث التلقائي
+        bump_version(data.company_code, data.category)
+        
+        return {"status": "success", "message": "تم حفظ التكويد بنجاح"}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# [تعديل دالة 2]: جلب التكويدات ومعالجة ذكية لحفظ الـ types وتصفية ملفات النسخ
 @router.get("/list/{company_code}/{category}")
 async def list_codes(company_code: str, category: str):
     try:
@@ -124,8 +101,11 @@ async def list_codes(company_code: str, category: str):
 
         existing_docs = list(collection_ref.stream())
 
-        # الفحص الذكي: لو القسم لسه فاضي تماماً نقوم بحقن البيانات الافتراضية
-        if len(existing_docs) == 0:
+        # الفحص الذكي: لو القسم فارغ عند أول فتح للبرنامج أو بعد الحذف الكامل، نملأه بالافتراضيات فوراً
+        # ملاحظة: نتحقق من وجود مستندات حقيقية غير مستند تحكم النسخة
+        real_docs = [d for d in existing_docs if d.id != "version_control"]
+
+        if len(real_docs) == 0:
             if category == "types":
                 for index, item in enumerate(DEFAULT_TYPES, start=1):
                     code = str(index)
@@ -134,7 +114,7 @@ async def list_codes(company_code: str, category: str):
                         "type": item["type"],
                         "code": code
                     })
-            # توليد التكويدات الافتراضية لباقي الأقسام (بما فيها الفروع)
+            
             elif category in DEFAULT_CATEGORIES_DATA:
                 for index, item in enumerate(DEFAULT_CATEGORIES_DATA[category], start=1):
                     code = str(index)
@@ -143,16 +123,21 @@ async def list_codes(company_code: str, category: str):
                         "code": code
                     })
 
-        # إعادة القراءة بعد ملء الافتراضيات
-        docs = collection_ref.stream()
+            # إعادة قراءة المستندات بعد ملء البيانات الافتراضية
+            existing_docs = list(collection_ref.stream())
 
+        # تجميع النتائج لترسل للفرونت إند ليحفظها في الـ Hive
         results = []
-        for d in docs:
+        for d in existing_docs:
+            # 🔥 استثناء ذكي: مستند version_control لا يجب إرساله لقائمة التكويد بالواجهة
+            if d.id == "version_control":
+                continue
+                
             item_data = d.to_dict()
             item_data["code"] = d.id
             results.append(item_data)
 
-        # الترتيب الذكي للأرقام والنصوص حتى لا يحدث خطأ في واجهة الـ UI
+        # ترتيب التكويدات بناءً على الكود تصاعدياً
         results.sort(key=lambda x: int(x["code"]) if x["code"].isdigit() else x["code"])
         return results
 
@@ -160,6 +145,7 @@ async def list_codes(company_code: str, category: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# [دالة 3]: حذف التكويد مع ترفيع رقم نسخة التحكم
 @router.delete("/delete/{company_code}/{category}/{code}")
 async def delete_code(company_code: str, category: str, code: str):
     try:
@@ -168,11 +154,26 @@ async def delete_code(company_code: str, category: str, code: str):
             .collection(category)\
             .document(code)\
             .delete()
-
-        # 🔥 ضرب نبضة التحديث اللحظي للقسم المتأثر على الشبكة بعد الحذف
-        bump_coding_sync_version(company_code, category)
-
-        return {"status": "deleted"}
+            
+        # 🔥 تحديث النسخة عند الحذف ليعلم الكاش أن السيرفر نقُص عن الهاتف
+        bump_version(company_code, category)
+        return {"status": "success", "message": "تم حذف التكويد بنجاح"}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# [دالة 4]: جلب رقم النسخة الحالي للقسم من الفايربيز (استدعاء فائق الخفة)
+@router.get("/version/{company_code}/{category}")
+async def get_coding_version(company_code: str, category: str):
+    try:
+        doc_ref = db.collection("coding").document(company_code).collection(category).document("version_control")
+        doc = doc_ref.get()
+        if doc.exists:
+            return {"version": doc.to_dict().get("version", 1)}
+        else:
+            # لو مش موجودة بننشأها أول مرة برقم 1
+            doc_ref.set({"version": 1})
+            return {"version": 1}
+    except Exception as e:
+        return {"version": 1}

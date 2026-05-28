@@ -5,20 +5,22 @@ import 'package:excel/excel.dart' as excel_lib;
 import 'package:file_picker/file_picker.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../services/daily_service.dart';
-import '../../services/api_service.dart';
+import '../../services/coding_service.dart'; 
 import 'daily_history_page.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 
 class DailyPage extends StatefulWidget {
   final String companyCode;
-  final String selectedBranch; 
-  final String userName; 
-  final Map<String, dynamic>? editItem;
+  final String? selectedBranch; 
+  final String? userName; // 🌟 هذا هو السطر الجديد الذي أضفناه لاستقبال اسم الموظف
+  final Map<String, dynamic>? editItem; 
 
+  // 🌟 هنا قمنا بتحديث الـ Constructor ليتعرف على المتغير الجديد
   const DailyPage({
     super.key, 
     required this.companyCode, 
-    required this.selectedBranch,
-    required this.userName, 
+    this.selectedBranch, 
+    this.userName, // 👈 أضفنا هذا السطر هنا
     this.editItem,
   });
 
@@ -28,25 +30,28 @@ class DailyPage extends StatefulWidget {
 
 class _DailyPageState extends State<DailyPage> {
   final DailyService _dailyService = DailyService();
-  final ApiService _apiService = ApiService();
+  final CodingService _codingService = CodingService(); 
 
   final _amountController = TextEditingController();
   final _statementController = TextEditingController();
   final _dateController = TextEditingController();
 
   bool _isLoading = false;
-  double _cashBalance = 0.0;
-  double _visaBalance = 0.0;
+  
+  // خريطة لتخزين الأرصدة التراكمية الفعلية لكل خزينة قادمة من الـ Hive
+  Map<String, double> _treasuryBalances = {};
+  
   int _currentSerial = 1;
   String? _selectedTreasury;
   String? _selectedCategory;
 
-  List<dynamic> _treasuries = [];
-  List<dynamic> _categories = [];
+  List<Map<String, dynamic>> _treasuries = [];
+  List<Map<String, dynamic>> _categories = [];
 
   @override
   void initState() {
     super.initState();
+    // 🌟 السحر هنا: عند الكتابة في خانة المبلغ، يتم إعادة بناء الواجهة لتحديث الأرصدة لحظياً في كل الكروت
     _amountController.addListener(() => setState(() {}));
     _loadInitialData();
 
@@ -58,224 +63,164 @@ class _DailyPageState extends State<DailyPage> {
       _selectedTreasury = widget.editItem!['treasury'];
       _selectedCategory = widget.editItem!['category'];
     } else {
+      _amountController.clear();
+      _statementController.clear();
       _dateController.text = DateFormat('yyyy-MM-dd').format(DateTime.now());
     }
   }
 
-  double get _liveCashBalance {
-    double val = double.tryParse(_amountController.text) ?? 0.0;
-    if (_selectedCategory == "ايراد" || _selectedCategory == "تحويل من الفيزا") {
-      return _cashBalance + val;
-    } else if (_selectedCategory == "تحويل من النقدي") {
-      return _cashBalance - val;
-    } else if (_selectedCategory != null && _selectedCategory != "فيزا") {
-      return _cashBalance - val;
-    }
-    return _cashBalance;
-  }
+  // 🌟 دالة ذكية جديدة تماماً لحساب الرصيد اللحظي لأي خزينة نمررها لها أثناء الكتابة
+  double _getLiveBalanceForTreasury(String treasuryName) {
+  double currentBaseBalance = _treasuryBalances[treasuryName] ?? 0.0;
+  
+  // إذا كانت الخزينة الحالية هي الخزينة المختارة في الـ Dropdown
+  if (_selectedTreasury == treasuryName && _selectedCategory != null) {
+    double enteredAmount = double.tryParse(_amountController.text) ?? 0.0;
 
-  double get _liveVisaBalance {
-    double val = double.tryParse(_amountController.text) ?? 0.0;
-    if (_selectedCategory == "فيزا" || _selectedCategory == "تحويل من النقدي") {
-      return _visaBalance + val;
-    } else if (_selectedCategory == "تحويل من الفيزا") {
-      return _visaBalance - val;
+    // 🌟 السحر هنا: لو احنا في وضع التعديل، لازم نطرح قيمة المبلغ القديم الأصلي للإذن أولاً
+    if (widget.editItem != null && widget.editItem!['treasury'] == treasuryName) {
+      double originalAmount = double.tryParse(widget.editItem!['amount'].toString()) ?? 0.0;
+      
+      // جلب تفاصيل التصنيف الأصلي للإذن القديم لمعرفة هل كان مضاف أم مخصوم لنعكس تأثيره القديم
+      String originalType = widget.editItem!['type'] ?? "وارد";
+      if (originalType == "وارد") {
+        currentBaseBalance -= originalAmount; // نطرحه لأنه كان مضافاً
+      } else if (originalType == "صادر") {
+        currentBaseBalance += originalAmount; // نرده لأنه كان مخصوماً
+      }
     }
-    return _visaBalance;
+
+    // الآن نؤثر بالمبلغ الجديد المكتوب في الـ Controller بناءً على التصنيف الحالي
+    var matchingCategory = _categories.firstWhere(
+      (c) => c['name'] == _selectedCategory,
+      orElse: () => {}
+    );
+    
+    if (matchingCategory.isNotEmpty) {
+      String actionType = matchingCategory['type'] ?? "وارد"; 
+      if (actionType == "وارد") {
+        return currentBaseBalance + enteredAmount;
+      } else if (actionType == "صادر") {
+        return currentBaseBalance - enteredAmount;
+      }
+    }
   }
+  return currentBaseBalance;
+}
 
   void _loadInitialData() async {
-    if (_treasuries.isEmpty) {
-      setState(() => _isLoading = true);
-    }
+    setState(() => _isLoading = true);
     try {
-      final safes = await _apiService.getCodingData(widget.companyCode, "safes");
-      final types = await _apiService.getCodingData(widget.companyCode, "types");
+      // 1️⃣ جلب حركات الفرع الحالي من السيرفر وتخزينها في متغير مؤقت
+      final List<dynamic> transactions = await _dailyService.getTransactionsHistory(
+        widget.companyCode,
+        DateFormat('yyyy-MM-dd').format(DateTime.now().subtract(const Duration(days: 3))),
+        DateFormat('yyyy-MM-dd').format(DateTime.now()),
+        branch: widget.selectedBranch,
+      );
 
-      String? targetTreasury = _selectedTreasury;
-      if (widget.editItem == null && targetTreasury == null && safes.isNotEmpty) {
-        var defaultSafe = safes.firstWhere(
-          (s) => s['id'].toString() == "1" || s['code'].toString() == "1",
-          orElse: () => safes.first
-        );
-        targetTreasury = defaultSafe['name'];
+      // 2️⃣ جلب الأرصدة والملخص
+      final summary = await _dailyService.getDailySummaryLocal(
+        widget.companyCode, 
+        branch: widget.selectedBranch,
+      );
+      
+      // 🌟 السطر السحري: إجبار الـ Hive على التحديث لكي تظهر الأرصدة فوراً في الواجهة
+      Hive.box('daily_transactions_box').put("${widget.companyCode}_balances", summary['balances']);
+      
+      final safes = await _codingService.getCodingList(companyCode: widget.companyCode, category: "safes");
+      final types = await _codingService.getCodingList(companyCode: widget.companyCode, category: "types");
+
+      // 3️⃣ 🌟 حساب السيريال المباشر من قائمة الحركات اللي لسه جايبينها (أضمن طريقة)
+      int nextSerial = 1;
+      if (transactions.isNotEmpty) {
+        // بنشوف أكبر رقم سيريال موجود في الحركات اللي رجعت من السيرفر ونزود عليه 1
+        int maxSerial = transactions.map((e) => (e['serial'] as int? ?? 0)).reduce((a, b) => a > b ? a : b);
+        nextSerial = maxSerial + 1;
       }
 
-      final summary = await _dailyService.getDailySummary(widget.companyCode, targetTreasury, widget.selectedBranch);
+      setState(() {
+        _treasuryBalances = Map<String, double>.from(summary['balances'] ?? {});
+        _treasuries = safes.map((e) => Map<String, dynamic>.from(e.toMap())).toList();
+        _categories = types.map((e) => Map<String, dynamic>.from(e.toMap())).toList();
 
-      int serialVal = _currentSerial;
-      if (widget.editItem == null) {
-        final lastSerial = await _dailyService.getLastSerial(widget.companyCode);
-        serialVal = lastSerial == 0 ? 1 : lastSerial + 1;
-      }
+        // تعيين السيريال المحسوب مباشرة
+        if (widget.editItem == null) {
+          _currentSerial = nextSerial;
+        }
 
-      if (mounted) {
-        setState(() {
-          _treasuries = safes;
-          _categories = types;
-          _selectedTreasury = targetTreasury;
-          _currentSerial = serialVal;
+        // 🌟 التعديل الآمن (Bulletproof) لاختيار الخزنة رقم 1 بدون أخطاء
+        // 🌟 التعديل الآمن (Bulletproof) لاختيار الخزنة رقم 1 بدون أخطاء
+        if (widget.editItem == null && _selectedTreasury == null && _treasuries.isNotEmpty) {
+          var defaultSafe = _treasuries.firstWhere(
+            (s) => s['code'] != null && s['code'].toString() == "1",
+            orElse: () => _treasuries.first
+          );
           
-          double tempCash = (summary['cash_balance'] ?? 0.0).toDouble();
-          double tempVisa = (summary['visa_balance'] ?? 0.0).toDouble();
-
-          // 🟢 السر هنا لحل المشكلة الأولى: لو في وضع التعديل، نلغي أثر الإذن القديم من الرصيد مؤقتاً في الشاشة
-          if (widget.editItem != null) {
-            double oldAmount = double.tryParse(widget.editItem!['amount'].toString()) ?? 0.0;
-            String oldCategory = widget.editItem!['category'] ?? "";
-            String oldType = (oldCategory == "فيزا" || oldCategory == "تحويل من النقدي") ? "visa" : "cash";
-
-            if (oldCategory == "تحويل من النقدي") {
-              tempCash += oldAmount; // نعيد له ما تم خصمه
-              tempVisa -= oldAmount; // نخصم منه ما تم تحويله
-            } else if (oldCategory == "تحويل من الفيزا") {
-              tempCash -= oldAmount;
-              tempVisa += oldAmount;
-            } else {
-              // تحديد اتجاه الحركة بناءً على الكود الفعلي للتصنيفات المسحوبة
-              var foundType = types.firstWhere((t) => t['name'] == oldCategory, orElse: () => null);
-              String direction = foundType != null ? (foundType['type'] ?? "صادر") : "صادر";
-              
-              if (oldType == "cash") {
-                tempCash = (direction == "وارد") ? (tempCash - oldAmount) : (tempCash + oldAmount);
-              } else if (oldType == "visa") {
-                tempVisa = (direction == "وارد") ? (tempVisa - oldAmount) : (tempVisa + oldAmount);
-              }
-            }
+          if (defaultSafe.containsKey('name')) { // 👈 تم إزالة التحذير هنا
+            _selectedTreasury = defaultSafe['name'];
           }
-
-          _cashBalance = tempCash;
-          _visaBalance = tempVisa;
-          _isLoading = false;
-        });
-      }
+        }
+        
+        _isLoading = false;
+      });
+      
     } catch (e) {
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
-  // 🚀 إعادة بناء دالة الاستيراد لتأمين سحب البيانات المحددة وحقن الفرع والمستخدم تلقائياً
-  Future<void> _importFromExcel() async {
-    FilePickerResult? result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['xlsx'],
-      withData: true, 
-    );
-
-    if (result != null) {
-      setState(() => _isLoading = true);
-      try {
-        var bytes = result.files.single.bytes;
-        if (bytes == null && result.files.single.path != null) {
-          bytes = File(result.files.single.path!).readAsBytesSync();
-        }
-
-        if (bytes == null) throw "تعذر قراءة بيانات ملف الإكسيل";
-
-        var excel = excel_lib.Excel.decodeBytes(bytes);
-        String defaultTreasury = _selectedTreasury ?? "الخزينة الرئيسية";
-        String savingBranch = widget.selectedBranch == "كل الفروع" ? "الفرع الرئيسي" : widget.selectedBranch;
-
-        for (var table in excel.tables.keys) {
-          var rows = excel.tables[table]!.rows;
-          if (rows.isEmpty) continue;
-
-          // 1. قراءة الصف الأول ديناميكياً لتحديد أماكن الأعمدة
-          var headerRow = rows[0];
-          int amountIndex = -1;
-          int statementIndex = -1;
-          int categoryIndex = -1;
-          int dateIndex = -1;
-
-          for (int c = 0; c < headerRow.length; c++) {
-            if (headerRow[c] == null || headerRow[c]?.value == null) continue;
-            String headerText = headerRow[c]!.value.toString().trim().toLowerCase();
-
-            if (headerText.contains("المبلغ") || headerText.contains("amount")) {
-              amountIndex = c;
-            } else if (headerText.contains("البيان") || headerText.contains("statement") || headerText.contains("الشرح")) {
-              statementIndex = c;
-            } else if (headerText.contains("التصنيف") || headerText.contains("category") || headerText.contains("النوع")) {
-              categoryIndex = c;
-            } else if (headerText.contains("التاريخ") || headerText.contains("date")) {
-              dateIndex = c;
-            }
-          }
-
-          // التحقق من أن الأعمدة الأساسية تم العثور عليها لمنع الأخطاء
-          if (amountIndex == -1) {
-            throw "لم يتم العثور على عمود (المبلغ) في السطر الأول من شيت الإكسيل!";
-          }
-
-          // 2. نبدأ الآن من الصف الثاني i = 1 لقراءة الحركات بناءً على الكشافات المستخرجة
-          for (int i = 1; i < rows.length; i++) {
-            var row = rows[i];
-            if (row.isEmpty) continue;
-            
-            // التأكد من أن خانة المبلغ ليست فارغة للسطر الحالي
-            if (row.length <= amountIndex || row[amountIndex] == null || row[amountIndex]?.value == null) continue;
-
-            // أ. سحب القيم ديناميكياً بناءً على الكشافات (Indexes) المحددة
-            String amountStr = row[amountIndex]!.value.toString();
-            
-            String statementStr = (statementIndex != -1 && row.length > statementIndex && row[statementIndex] != null) 
-                ? row[statementIndex]!.value.toString() : "";
-                
-            String categoryStr = (categoryIndex != -1 && row.length > categoryIndex && row[categoryIndex] != null) 
-                ? row[categoryIndex]!.value.toString() : "عام";
-            
-            // معالجة التاريخ بديناميكية
-            String rawDate = (dateIndex != -1 && row.length > dateIndex && row[dateIndex] != null) 
-                ? row[dateIndex]!.value.toString() : DateFormat('yyyy-MM-dd').format(DateTime.now());
-            String formattedDate = rawDate.length >= 10 ? rawDate.substring(0, 10) : rawDate;
-
-            // ب. تحديد نوع الحركة دايناميك (visa أو cash) بناءً على اسم التصنيف المستورد ديناميكياً
-            String calculatedType = (categoryStr == "فيزا" || categoryStr == "تحويل من النقدي") ? "visa" : "cash";
-
-            // ج. رفع السطر المصفى إلى الباك إند
-            await _dailyService.saveTransaction(
-              companyCode: widget.companyCode,
-              serial: _currentSerial++,
-              treasury: defaultTreasury,
-              amount: double.tryParse(amountStr) ?? 0.0,
-              statement: statementStr,
-              category: categoryStr,
-              date: formattedDate,
-              type: calculatedType,
-              employee: widget.userName,       
-              branch: savingBranch,            
-            );
-          }
-        }
-        
-        _showSnackBar("تم استيراد الشيت ديناميكياً بنجاح وتجاهل الأعمدة الزائدة", Colors.green);
-        _loadInitialData(); 
-        
-      } catch (e) {
-        _showSnackBar("خطأ أثناء الاستيراد: $e", Colors.red);
-      } finally {
-        setState(() => _isLoading = false);
-      }
+      setState(() => _isLoading = false);
+      print("خطأ في مزامنة البيانات الافتتاحية للفرع: $e");
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    bool isEditMode = widget.editItem != null;
+    
+    // جلب عرض الشاشة الحالي لتحديد نوع الجهاز
+    double screenWidth = MediaQuery.of(context).size.width;
+    bool isWebOrDesktop = screenWidth > 600;
+
+    // 🌟 استدعاء صندوق الـ Hive المفتوح في الماين لكي نراقب التحديثات من خلاله
+    final Box dailyBox = Hive.box('daily_transactions_box');
+
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
         title: Column(
+          mainAxisSize: MainAxisSize.min, // للحفاظ على تماسك العناصر داخل الـ Column
           children: [
-            Text(widget.editItem != null ? "تعديل حركة" : "تسجيل يومية", style: const TextStyle(fontFamily: 'Cairo', fontSize: 16)),
-            Text("إذن رقم: $_currentSerial", style: const TextStyle(fontFamily: 'Cairo', fontSize: 13, color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
+            Text(
+              isEditMode ? "تعديل حركة" : "تسجيل يومية",
+              style: const TextStyle(fontFamily: 'Cairo', fontSize: 15),
+            ),
+            Text(
+              "إذن رقم: $_currentSerial",
+              style: const TextStyle(
+                fontFamily: 'Cairo', 
+                fontSize: 13, 
+                color: Colors.cyanAccent, 
+                fontWeight: FontWeight.bold
+              ),
+            ),
+            // 🌟 الإضافة الجديدة: عرض اسم الفرع الحالي النشط أسفل رقم الإذن
+            Text(
+              "الفرع: ${widget.selectedBranch ?? 'الرئيسي'}",
+              style: const TextStyle(
+                fontFamily: 'Cairo', 
+                fontSize: 11, 
+                color: Colors.white70,
+              ),
+            ),
           ],
         ),
         backgroundColor: Colors.transparent,
         elevation: 0,
         centerTitle: true,
+        // 🌟 قمنا بتكبير الارتفاع إلى 70 ليستوعب الأسطر الثلاثة بشكل مريح ومنظم جداً وبدون تداخل
+        toolbarHeight: 70, 
       ),
       body: Container(
-        height: double.infinity, width: double.infinity,
+        height: double.infinity, 
+        width: double.infinity,
         decoration: BoxDecoration(
           gradient: LinearGradient(
             colors: [Colors.black, Colors.indigo.shade900, Colors.black],
@@ -285,26 +230,55 @@ class _DailyPageState extends State<DailyPage> {
         child: SafeArea(
           child: _isLoading
               ? const Center(child: CircularProgressIndicator(color: Colors.white))
-              : SingleChildScrollView(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    children: [
-                      Text("فرع العمل الحالي: ${widget.selectedBranch}", style: const TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
-                      const SizedBox(height: 10),
-                      Row(
+              : Center(
+                  // 🌟 إذا كان لابتوب، نحدد العرض بـ 650 بكسل كحد أقصى ويتم تركيزه في المنتصف
+                  child: Container(
+                    constraints: BoxConstraints(
+                      maxWidth: isWebOrDesktop ? 650 : double.infinity,
+                    ),
+                    child: SingleChildScrollView(
+                      // تقليص الحواف والمسافات لتصبح الشاشة مدمجة وصغيرة
+                      padding: EdgeInsets.symmetric(
+                        horizontal: isWebOrDesktop ? 25 : 15, 
+                        vertical: 10
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          Expanded(child: _balanceCard("رصيد النقدي", _liveCashBalance, Colors.greenAccent)),
-                          const SizedBox(width: 15),
-                          Expanded(child: _balanceCard("رصيد الفيزا", _liveVisaBalance, Colors.cyanAccent)),
+                          
+                          // 🌟 تم تعديل هذا الجزء لحماية الأرصدة من التصفير المفاجئ
+                          ValueListenableBuilder(
+                            valueListenable: dailyBox.listenable(keys: ["${widget.companyCode}_balances"]),
+                            builder: (context, Box box, child) {
+                              // 1. جلب البيانات الخام من الـ Hive
+                              final rawBalances = box.get("${widget.companyCode}_balances");
+                              
+                              // 2. 🛡️ جدار الحماية: لا نقوم بالتحديث إلا إذا كانت البيانات خريطة (Map) وغير فارغة
+                              if (rawBalances is Map && rawBalances.isNotEmpty) {
+                                Map<String, double> safeBalances = {};
+                                rawBalances.forEach((key, value) {
+                                  // تحويل القيمة دائماً إلى double آمن لمنع الـ Crash
+                                  safeBalances[key.toString()] = double.tryParse(value.toString()) ?? 0.0;
+                                });
+                                
+                                // 3. تحديث الأرصدة في الصفحة فقط لو كانت البيانات حقيقية
+                                _treasuryBalances = safeBalances;
+                              }
+                              
+                              // 4. بناء شبكة الأرصدة بالبيانات الآمنة المستقرة
+                              return _buildDynamicBalancesGrid();
+                            },
+                          ),
+
+                          const SizedBox(height: 12),
+                          _buildInputForm(),
+                          const SizedBox(height: 15),
+                          _buildMainActions(),
+                          const SizedBox(height: 8),
+                          _buildSecondaryActions(),
                         ],
                       ),
-                      const SizedBox(height: 20),
-                      _buildInputForm(),
-                      const SizedBox(height: 25),
-                      _buildMainActions(),
-                      const SizedBox(height: 15),
-                      _buildSecondaryActions(),
-                    ],
+                    ),
                   ),
                 ),
         ),
@@ -312,17 +286,83 @@ class _DailyPageState extends State<DailyPage> {
     );
   }
 
-  Widget _balanceCard(String title, double amount, Color color) {
-    return GlassCard(
-      child: Column(
-        children: [
-          Text(title, style: const TextStyle(color: Colors.white70, fontSize: 13, fontFamily: 'Cairo')),
-          const SizedBox(height: 5),
-          Text(amount.toStringAsFixed(2), style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.bold)),
-        ],
-      ),
-    );
+  // 🌟 دالة البناء الديناميكية الجديدة لكروت الأرصدة (GridView متجاوب يدعم أي عدد خزائن)
+  Widget _buildDynamicBalancesGrid() {
+  if (_treasuries.isEmpty) {
+    return const SizedBox.shrink();
   }
+  
+  double screenWidth = MediaQuery.of(context).size.width;
+  // 3 أعمدة للابتوب والشاشات الواسعة، وعمودين للموبايل
+  int columnsCount = screenWidth > 500 ? 3 : 2;
+
+  return GridView.builder(
+    shrinkWrap: true,
+    physics: const NeverScrollableScrollPhysics(),
+    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+      crossAxisCount: columnsCount,
+      crossAxisSpacing: 10, // مسافات متناسقة ونظيفة
+      mainAxisSpacing: 10,
+      // 🌟 تم ضبط النسبة لتوسيع مساحة الكارت رأسياً وأفقياً لراحة النص والارقام
+      childAspectRatio: screenWidth > 500 ? 2.4 : 1.7, 
+    ),
+    itemCount: _treasuries.length,
+    itemBuilder: (context, index) {
+      String treasuryName = _treasuries[index]['name'] ?? "خزينة غير معرفة";
+      double liveBalance = _getLiveBalanceForTreasury(treasuryName);
+
+      return GlassCard(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: .5, horizontal: 1),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // 🌟 1. اسم الخزينة: يأخذ نصف المساحة الرأسية ويدعم الالتفاف لسطرين بدون قص
+              Expanded(
+                flex: 4,
+                child: Center(
+                  child: Text(
+                    treasuryName, 
+                    style: const TextStyle(
+                      color: Colors.white, // تم تفتيح اللون لمزيد من الوضوح
+                      fontSize: 13, 
+                      fontFamily: 'Cairo', 
+                      fontWeight: FontWeight.bold,
+                      height: 1.2, // تحسين تباعد الأسطر إذا التف النص
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+              
+              const SizedBox(height: 4), // فاصل مريح
+              
+              // 🌟 2. الرصيد المالي: يستخدم FittedBox ليتمدد ويكبر ليملأ عرض الكارت المتاح بالكامل
+              Expanded(
+                flex: 5,
+                child: Center(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown, // يجعل الرقم يكبر لأقصى مساحة متاحة ويصغر ذكياً فقط لو الشاشة ضيقة جداً
+                    child: Text(
+                      liveBalance.toStringAsFixed(2), 
+                      style: const TextStyle(
+                        color: Colors.greenAccent, 
+                        fontSize: 16, // خط أساسي كبير وواضح جداً
+                        fontWeight: FontWeight.bold,
+                        fontFamily: 'Cairo',
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+}
 
   Widget _buildInputForm() {
     return GlassCard(
@@ -333,26 +373,13 @@ class _DailyPageState extends State<DailyPage> {
           Row(
             children: [
               Expanded(
-                child: _buildDropdown("الخزينة", _selectedTreasury, _treasuries, (v) {
-                  // التأكد من أن المستخدم اختار خزينة مختلفة فعلياً عن الحالية لمنع التكرار اللانهائي
-                  if (v != _selectedTreasury) {
-                    setState(() {
-                      _selectedTreasury = v;
-                    });
-                    // استدعاء جلب البيانات والأرصدة فقط عند التغيير الفعلي باليد
-                    _loadInitialData(); 
-                  }
-                }),
+                child: _buildDropdown("الخزينة", _selectedTreasury, _treasuries, 
+                    (val) => setState(() => _selectedTreasury = val)),
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: _buildDropdown("التصنيف", _selectedCategory, _categories, (val) {
-                  if (val != _selectedCategory) {
-                    setState(() {
-                      _selectedCategory = val;
-                    });
-                  }
-                }),
+                child: _buildDropdown("التصنيف", _selectedCategory, _categories, 
+                    (val) => setState(() => _selectedCategory = val)),
               ),
             ],
           ),
@@ -379,24 +406,23 @@ class _DailyPageState extends State<DailyPage> {
               side: BorderSide(color: isEdit ? Colors.orangeAccent : Colors.white24),
             ),
             onPressed: _handleSave,
-            child: Text(isEdit ? "تعديل الإذن" : "حفظ الحركة", 
+            child: Text(isEdit ? "تعديل الإذن الإداري" : "حفظ الحركة باليومية", 
                 style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
           ),
         ),
-        // 🟢 إرجاع زرار "استيراد من إكسيل" الأنيق مكانه في حالة وضع الإدخال الجديد فقط
         if (!isEdit) ...[
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           SizedBox(
             width: double.infinity,
             height: 50,
             child: OutlinedButton.icon(
               style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: Colors.greenAccent, width: 1.2),
+                side: const BorderSide(color: Colors.greenAccent),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
               ),
-              onPressed: _importFromExcel, // استدعاء دالة الاستيراد المطورة
-              icon: const Icon(Icons.upload_file, color: Colors.greenAccent, size: 20),
-              label: const Text("استيراد من إكسيل", style: TextStyle(color: Colors.greenAccent, fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
+              onPressed: _importFromExcel,
+              icon: const Icon(Icons.upload_file, color: Colors.greenAccent),
+              label: const Text("استيراد من إكسيل", style: TextStyle(color: Colors.greenAccent, fontFamily: 'Cairo')),
             ),
           ),
         ]
@@ -405,96 +431,67 @@ class _DailyPageState extends State<DailyPage> {
   }
 
   void _handleSave() async {
-  if (_amountController.text.isEmpty || _selectedTreasury == null || _selectedCategory == null) {
-    _showSnackBar("برجاء إكمال البيانات", Colors.orange);
-    return;
-  }
+    if (_amountController.text.isEmpty || _selectedTreasury == null || _selectedCategory == null) {
+      _showSnackBar("برجاء إكمال البيانات", Colors.orange);
+      return;
+    }
+    setState(() => _isLoading = true);
+    try {
+      var matchingCategory = _categories.firstWhere((c) => c['name'] == _selectedCategory, orElse: () => {});
+      String currentType = matchingCategory.isNotEmpty ? (matchingCategory['type'] ?? "وارد") : "وارد";
 
-  setState(() => _isLoading = true);
+      int serialToSend = widget.editItem != null ? widget.editItem!['serial'] : 0;
+      String targetBranch = widget.editItem != null 
+          ? (widget.editItem!['branch'] ?? "الفرع الرئيسي") 
+          : (widget.selectedBranch ?? "الفرع الرئيسي");
 
-  try {
-    String savingBranch = widget.selectedBranch == "كل الفروع" ? "الفرع الرئيسي" : widget.selectedBranch;
-    bool isEditMode = widget.editItem != null;
-
-    Map<String, dynamic> updatedBalances = {};
-
-    if (isEditMode) {
-      // تعديل حركة
-      await _dailyService.updateTransaction(
+      // 🌟 التعديل هنا: أضفنا تمرير المتغير employee لكي يُحفظ اسم الموظف الفعلي بدلاً من "غير معروف"
+      await _dailyService.saveTransaction(
         companyCode: widget.companyCode,
-        serial: _currentSerial,
+        serial: serialToSend,
         treasury: _selectedTreasury!,
         amount: double.parse(_amountController.text),
         statement: _statementController.text,
         category: _selectedCategory!,
         date: _dateController.text,
-        type: (_selectedCategory == "فيزا" || _selectedCategory == "تحويل من النقدي") ? "visa" : "cash",
-        employee: widget.userName,
-        branch: savingBranch,
+        type: currentType,
+        branch: targetBranch,
+        employee: widget.userName ?? "غير معروف", // 👈 هذا هو السطر الجديد
       );
-    } else {
-      // حفظ حركة جديدة
-      // لاحظ: الـ saveTransaction في السيرفس عندك تقوم بإعادة الأرصدة المحدثة
-      updatedBalances = await _dailyService.saveTransaction(
-        companyCode: widget.companyCode,
-        serial: _currentSerial,
-        treasury: _selectedTreasury!,
-        amount: double.parse(_amountController.text),
-        statement: _statementController.text,
-        category: _selectedCategory!,
-        date: _dateController.text,
-        type: (_selectedCategory == "فيزا" || _selectedCategory == "تحويل من النقدي") ? "visa" : "cash",
-        employee: widget.userName,
-        branch: savingBranch,
-      );
-    }
 
-    if (isEditMode) {
-      if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => DailyHistoryPage(
-              companyCode: widget.companyCode,
-              selectedBranch: widget.selectedBranch,
-              userName: widget.userName,
-            ),
-          ),
-        );
+      if (widget.editItem != null) {
+        Navigator.pop(context, true);
+      } else {
+        _showSnackBar("تم الحفظ بنجاح وتحديث الذاكرة المحلية والشبكية التراكمية", Colors.green);
+        _amountController.clear();
+        _statementController.clear();
+        _loadInitialData();
       }
-    } else {
-      _showSnackBar("تم الحفظ بنجاح", Colors.green);
-      
-      // 1. تنظيف الواجهة فوراً
-      _amountController.clear();
-      _statementController.clear();
-      
-      // 2. تحديث السيريال والأرصدة فورياً
-      // بما أننا حفظنا بالسيريال X، السيريال القادم هو X + 1
-      // وجلبنا الأرصدة من رد الدالة saveTransaction (المتغير updatedBalances)
-      int nextSerialFromService = await _dailyService.getLastSerial(widget.companyCode);
-
-      if (mounted) {
-        setState(() {
-          // تحديث الأرصدة من الرد المباشر
-          if (updatedBalances.isNotEmpty) {
-            _cashBalance = double.tryParse(updatedBalances['cash_balance']?.toString() ?? '0') ?? 0.0;
-            _visaBalance = double.tryParse(updatedBalances['visa_balance']?.toString() ?? '0') ?? 0.0;
-          }
-          
-          // تحديث السيريال للحركة التالية لضمان عدم التكرار أو الخطأ
-          _currentSerial = nextSerialFromService + 1;
-          _isLoading = false;
-        });
-      }
-    }
-  } catch (e) {
-    if (mounted) {
+    } catch (e) {
       _showSnackBar("خطأ: $e", Colors.red);
       setState(() => _isLoading = false);
     }
   }
-}
+
+  Widget _buildDropdown(String label, String? value, List<Map<String, dynamic>> items, Function(String?) onChanged) {
+    return DropdownButtonFormField<String>(
+      value: value,
+      dropdownColor: Colors.indigo.shade900,
+      style: const TextStyle(color: Colors.white, fontSize: 13),
+      decoration: InputDecoration(
+        labelText: label, labelStyle: const TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 12),
+        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.white10)),
+        contentPadding: const EdgeInsets.symmetric(vertical: 15, horizontal: 10),
+      ),
+      items: items.map((item) {
+        return DropdownMenuItem<String>(
+          value: item['name']?.toString(), 
+          child: Text(item['name']?.toString() ?? "")
+        );
+      }).toList(),
+      onChanged: onChanged,
+    );
+  }
 
   Widget _buildTextField(TextEditingController ctrl, String label, IconData icon, {bool isNumber = false}) {
     return TextField(
@@ -511,39 +508,14 @@ class _DailyPageState extends State<DailyPage> {
     );
   }
 
-  Widget _buildDropdown(String label, String? value, List<dynamic> items, Function(String?) onChanged) {
-    // خطوة أمان: التأكد من أن القيمة الممررة موجودة فعلياً داخل القائمة لتجنب أخطاء البناء في فلاتر
-    final bool hasValidValue = items.any((item) => item['name']?.toString() == value?.toString());
-    final String? selectedValue = hasValidValue ? value : null;
-
-    return DropdownButtonFormField<String>(
-      value: selectedValue,
-      dropdownColor: Colors.indigo.shade900,
-      style: const TextStyle(color: Colors.white, fontSize: 13),
-      decoration: InputDecoration(
-        labelText: label, 
-        labelStyle: const TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 12),
-        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.white10)),
-        contentPadding: const EdgeInsets.symmetric(vertical: 15, horizontal: 10),
-      ),
-      items: items.map((item) => DropdownMenuItem<String>(
-        value: item['name']?.toString(), 
-        child: Text(item['name'] ?? "")
-      )).toList(),
-      // حماية فائقة لمنع استدعاء الباك إند والسيرفر إلا في حالة التغيير الفعلي باليد
-      onChanged: (newValue) {
-        if (newValue != value) {
-          onChanged(newValue);
-        }
-      },
-    );
-  }
-
   Widget _buildDatePicker() {
     return TextField(
-      controller: _dateController, readOnly: true, style: const TextStyle(color: Colors.white),
+      controller: _dateController,
+      readOnly: true,
+      style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(
-        prefixIcon: const Icon(Icons.calendar_today, color: Colors.white70), labelText: "التاريخ", 
+        prefixIcon: const Icon(Icons.calendar_today, color: Colors.white70),
+        labelText: "التاريخ", labelStyle: const TextStyle(color: Colors.white70, fontFamily: 'Cairo'),
         enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.white10)),
       ),
       onTap: _pickDate,
@@ -551,21 +523,78 @@ class _DailyPageState extends State<DailyPage> {
   }
 
   Widget _buildSecondaryActions() {
-    return TextButton.icon(
-      // 🟢 تعديل الشرط 4: استخدام pushReplacement لغلق صفحة اليومية وفتح صفحة التاريخ
-      onPressed: () => Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => DailyHistoryPage(
-        companyCode: widget.companyCode,
-        selectedBranch: widget.selectedBranch, 
-        userName: widget.userName,
-      ))),
-      icon: const Icon(Icons.history, color: Colors.cyanAccent),
-      label: const Text("معاينة الحركات", style: TextStyle(color: Colors.cyanAccent, fontFamily: 'Cairo')),
-    );
-  }
+  return TextButton.icon(
+    onPressed: () {
+      Navigator.push(
+        context, 
+        MaterialPageRoute(
+          builder: (context) => DailyHistoryPage(
+            companyCode: widget.companyCode,
+            userName: widget.userName,           // 🌟 مررنا اسم الموظف هنا
+            selectedBranch: widget.selectedBranch, // 🌟 مررنا الفرع المختار هنا
+          ),
+        ),
+      ).then((value) {
+        // بمجرد ما المستخدم يقفل صفحة الهيستوري ويرجع لليومية، السطر ده هيشتغل فوراً
+        _loadInitialData(); 
+      });
+    },
+    icon: const Icon(Icons.history, color: Colors.cyanAccent),
+    label: const Text("معاينة الحركات", style: TextStyle(color: Colors.cyanAccent, fontFamily: 'Cairo')),
+  );
+}
 
   Future<void> _pickDate() async {
     DateTime? p = await showDatePicker(context: context, initialDate: DateTime.now(), firstDate: DateTime(2020), lastDate: DateTime(2101));
     if (p != null) setState(() => _dateController.text = DateFormat('yyyy-MM-dd').format(p));
+  }
+
+  void _importFromExcel() async {
+    FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['xlsx'], withData: true);
+    if (result != null) {
+      setState(() => _isLoading = true);
+      try {
+        var bytes = result.files.single.bytes;
+        if (bytes == null && result.files.single.path != null) bytes = File(result.files.single.path!).readAsBytesSync();
+        if (bytes == null) throw "تعذر قراءة بيانات الملف";
+
+        var excel = excel_lib.Excel.decodeBytes(bytes);
+        String defaultTreasury = _selectedTreasury ?? "الخزينة الرئيسية";
+
+        for (var table in excel.tables.keys) {
+          var rows = excel.tables[table]!.rows;
+          for (int i = 1; i < rows.length; i++) {
+            var row = rows[i];
+            if (row.isEmpty || row[0] == null || row[0]?.value == null) continue;
+
+            String rawDate = row.length > 3 ? row[3]!.value.toString() : DateFormat('yyyy-MM-dd').format(DateTime.now());
+            String formattedDate = rawDate.length >= 10 ? rawDate.substring(0, 10) : rawDate;
+            String categoryStr = (row.length > 2 && row[2] != null) ? row[2]!.value.toString() : "عام";
+            
+            var match = _categories.firstWhere((c) => c['name'] == categoryStr, orElse: () => {});
+            String calculatedType = match.isNotEmpty ? (match['type'] ?? "وارد") : "وارد";
+
+            await _dailyService.saveTransaction(
+              companyCode: widget.companyCode,
+              serial: 0, 
+              treasury: defaultTreasury,
+              amount: double.tryParse(row[0]!.value.toString()) ?? 0.0,
+              statement: (row.length > 1 && row[1] != null) ? row[1]!.value.toString() : "",
+              category: categoryStr,
+              date: formattedDate,
+              type: calculatedType,
+              branch: widget.selectedBranch ?? "الفرع الرئيسي",
+            );
+          }
+        }
+        _showSnackBar("تم الاستيراد المباشر والمزامنة بنجاح محلياً وسحابياً", Colors.green);
+        _loadInitialData(); 
+      } catch (e) {
+        _showSnackBar("خطأ في الاستيراد: $e", Colors.red);
+      } finally {
+        setState(() => _isLoading = false);
+      }
+    }
   }
 
   void _showSnackBar(String m, Color c) => ScaffoldMessenger.of(context).showSnackBar(
