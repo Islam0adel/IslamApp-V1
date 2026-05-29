@@ -17,23 +17,24 @@ StreamSubscription? globalSyncSubscription;
 final GlobalSyncService _syncService = GlobalSyncService(); // 🌟 الآن سيتعرف عليها بدون أي خطأ
 
 // 🌟 دالة تشغيل الرادار اللحظي المحدثة بالمنظومة الموضعية الذكية
+// 🌟 دالة تشغيل الرادار اللحظي المحدثة بالمنظومة الموضعية الذكية
 void initializeGlobalListener(String companyCode) {
   globalSyncSubscription?.cancel(); 
   
   globalSyncSubscription = _syncService.startGlobalListener(companyCode).listen((snapshot) {
     for (var change in snapshot.docChanges) {
-      final Map<String, dynamic> updateData = change.doc.data() as Map<String, dynamic>? ?? {};
       
-      // جلب السيريال بأمان (سواء من الحقل أو من اسم المستند نفسه كحائط صد)
-      int serial = int.tryParse(updateData['serial']?.toString() ?? change.doc.id) ?? 0;
+      // 🌟 المعرف الفريد القادم من الفايربيز (مثال: الفرع_الرئيسي_1)
+      final String docId = change.doc.id;
 
       if (change.type == DocumentChangeType.added || change.type == DocumentChangeType.modified) {
-        // 🔄 أ) في حالة إضافة إذن جديد أو تعديل إذن حالي -> تحديث موضعي بالـ Hive وإعادة حساب الأرصدة
-        _syncService.processIncomingUpdate(companyCode, updateData);
+        final Map<String, dynamic> updateData = change.doc.data() as Map<String, dynamic>? ?? {};
+        // 🔄 إضافة إذن جديد أو تعديل (نمرر docId الآن)
+        _syncService.processIncomingUpdate(companyCode, docId, updateData);
       } 
       else if (change.type == DocumentChangeType.removed) {
-        // 🗑️ ب) في حالة حذف إذن -> حذفه هو فقط من الـ Hive محلياً وإعادة ضبط الأرصدة المتأثرة
-        _syncService.processIncomingDelete(companyCode, serial);
+        // 🗑️ حذف إذن (نمرر docId لكي يحذف الإذن الصحيح للفرع الصحيح)
+        _syncService.processIncomingDelete(companyCode, docId);
       }
     }
   });

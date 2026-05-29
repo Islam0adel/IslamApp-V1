@@ -8,6 +8,7 @@ import 'coding_page.dart';
 import 'daily_page.dart';
 import 'settings_page.dart';
 import '../../services/api_service.dart';
+import '../../main.dart'; // 👈 تأكد من إضافة هذا الاستيراد في أعلى الملف للوصول للرادار
 
 class HomePage extends StatefulWidget {
   final String userName;
@@ -59,6 +60,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
     // جلب الفروع وعمل الفحص الذكي أول ما يفتح السستم
     _loadBranchesAndCheck();
+
+    // 🌟🌟 الإضافة السحرية: إجبار الرادار على العمل بمجرد فتح الشاشة الرئيسية لأي مستخدم
+    initializeGlobalListener(widget.companyCode);
   }
 
   // دالة جلب الفروع والفحص الذكي
