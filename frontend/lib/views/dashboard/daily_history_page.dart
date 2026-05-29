@@ -75,7 +75,7 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
       sortedList.sort((a, b) {
         int cmp = (a['category'] ?? '').compareTo(b['category'] ?? '');
         if (cmp != 0) return cmp;
-        return (b['serial'] ?? 0).compareTo(a['serial'] ?? 0);
+        return (a['serial'] ?? 0).compareTo(b['serial'] ?? 0);
       });
     } else {
       sortedList.sort((a, b) => (b['serial'] ?? 0).compareTo(a['serial'] ?? 0));
@@ -199,7 +199,7 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             const Text(
-              "سجل الحركات التاريخي",
+              "سجل الحركات ",
               style: TextStyle(fontFamily: 'Cairo', fontSize: 16, fontWeight: FontWeight.bold),
             ),
             // 🌟 الإضافة الجديدة: توضيح الفرع الحالي المفلتر

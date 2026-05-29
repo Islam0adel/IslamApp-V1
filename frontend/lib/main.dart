@@ -16,24 +16,22 @@ import 'services/global_sync_service.dart'; // 🌟 استيراد ملف الخ
 StreamSubscription? globalSyncSubscription;
 final GlobalSyncService _syncService = GlobalSyncService(); // 🌟 الآن سيتعرف عليها بدون أي خطأ
 
-// 🌟 دالة تشغيل الرادار اللحظي المحدثة بالمنظومة الموضعية الذكية
-// 🌟 دالة تشغيل الرادار اللحظي المحدثة بالمنظومة الموضعية الذكية
-void initializeGlobalListener(String companyCode) {
+// 🌟 دالة تشغيل الرادار اللحظي المحدثة بالمنظومة الموضعية الذكية وتوفير القراءات
+void initializeGlobalListener(String companyCode) async { // 👈 تم إعادة async هنا لأننا سننتظر الـ Future
   globalSyncSubscription?.cancel(); 
   
-  globalSyncSubscription = _syncService.startGlobalListener(companyCode).listen((snapshot) {
+  // 👈 هنا تم إضافة await لأن الدالة تعيد Future<Stream> وبذلك نستخرج الـ Stream الفعلي
+  Stream<QuerySnapshot> stream = await _syncService.startGlobalListener(companyCode);
+  
+  globalSyncSubscription = stream.listen((snapshot) {
     for (var change in snapshot.docChanges) {
-      
-      // 🌟 المعرف الفريد القادم من الفايربيز (مثال: الفرع_الرئيسي_1)
       final String docId = change.doc.id;
+      final Map<String, dynamic> updateData = change.doc.data() as Map<String, dynamic>? ?? {};
 
+      // سيتم توجيه الكل لـ processIncomingUpdate وهي بداخلها ستفرز الإضافة من الحذف (بناءً على is_deleted)
       if (change.type == DocumentChangeType.added || change.type == DocumentChangeType.modified) {
-        final Map<String, dynamic> updateData = change.doc.data() as Map<String, dynamic>? ?? {};
-        // 🔄 إضافة إذن جديد أو تعديل (نمرر docId الآن)
         _syncService.processIncomingUpdate(companyCode, docId, updateData);
-      } 
-      else if (change.type == DocumentChangeType.removed) {
-        // 🗑️ حذف إذن (نمرر docId لكي يحذف الإذن الصحيح للفرع الصحيح)
+      } else if (change.type == DocumentChangeType.removed) {
         _syncService.processIncomingDelete(companyCode, docId);
       }
     }

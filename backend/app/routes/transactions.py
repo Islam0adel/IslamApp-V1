@@ -21,9 +21,9 @@ class TransactionModel(BaseModel):
     employee: Optional[str] = "غير محدد"  
     branch: Optional[str] = "الفرع الرئيسي"  
 
-# 1. حفظ أو تحديث إذن (Save / Update) - مع المزامنة الفورية في الرادار اللحظي
-# 1. حفظ أو تحديث إذن (Save / Update) - مع المزامنة الفورية في الرادار اللحظي وعزل الفروع
-# 1. حفظ أو تحديث إذن (Save / Update) - مع عزل الفروع ومنع التداخل
+# ==========================================
+# 1. حفظ أو تحديث إذن (Save / Update) - مع المزامنة الفورية في الرادار اللحظي والوقت الدقيق
+# ==========================================
 @router.post("/save")
 async def save_transaction(data: TransactionModel):
     try:
@@ -31,9 +31,7 @@ async def save_transaction(data: TransactionModel):
         
         @firestore.transactional
         def create_and_save(tx):
-            # المسار الرئيسي للأرشيف والتاريخ
             records_ref = db.collection("transactions").document(data.company_code).collection("daily_records")
-            # مسار الرادار اللحظي للفلوتر
             live_ref = db.collection("companies").document(data.company_code).collection("live_updates")
             
             is_update = data.serial > 0
@@ -41,7 +39,7 @@ async def save_transaction(data: TransactionModel):
             if is_update:
                 final_serial = data.serial
             else:
-                # 🌟 التعديل الأول: البحث عن آخر سيريال خاص بهذا الفرع بالتحديد لعزل الأرقام
+                # جلب آخر سيريال مسجل لهذا الفرع تحديداً
                 query = records_ref.where("branch", "==", data.branch).order_by("serial", direction=firestore.Query.DESCENDING).limit(1)
                 docs = list(query.stream(transaction=tx))
                 
@@ -52,15 +50,19 @@ async def save_transaction(data: TransactionModel):
             transaction_data = data.dict()
             transaction_data["serial"] = final_serial
             
-            # 🌟 التعديل الثاني: دمج اسم الفرع مع السيريال في اسم المستند لمنع تداخل أرقام الفروع المختلفة
+            # 🔥 وقت السيرفر بدقة الملي ثانية للمزامنة اللحظية ومنع التضارب
+            transaction_data["updated_at"] = firestore.SERVER_TIMESTAMP 
+            transaction_data["is_deleted"] = False  # علامة لنفي الحذف عند الحفظ أو التعديل
+            
+            # عزل الفروع في التسمية لمنع تداخل السيريال بين فرع وآخر
             safe_branch_name = data.branch.replace(" ", "_").replace("/", "-")
             unique_doc_id = f"{safe_branch_name}_{final_serial}"
             
-            # أ) الحفظ في الأرشيف الرئيسي بالمعرف الجديد الفريد
+            # أ) الحفظ في الأرشيف الدائم
             doc_ref = records_ref.document(unique_doc_id)
             tx.set(doc_ref, transaction_data)
             
-            # ب) 🌟 المزامنة اللحظية: حفظ نسخة في الرادار اللحظي بالمعرف الجديد الفريد
+            # ب) البث الفوري عبر الرادار اللحظي لهواتف الموظفين
             live_doc_ref = live_ref.document(unique_doc_id)
             tx.set(live_doc_ref, transaction_data)
             
@@ -70,8 +72,37 @@ async def save_transaction(data: TransactionModel):
         
         return {
             "status": "success", 
-            "message": "تم الحفظ بنجاح وتحديث قاعدة البيانات والمزامنة اللحظية",
+            "message": "تم الحفظ بنجاح وتحديث قاعدة البيانات والبث عبر الرادار اللحظي",
             "serial": assigned_serial
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==========================================
+# 4. حذف إذن من الأرشيف وبث إشارة الحذف للرادار اللحظي
+# ==========================================
+@router.delete("/delete/{company_code}/{branch}/{serial}")
+async def delete_transaction(company_code: str, branch: str, serial: int):
+    try:
+        safe_branch_name = branch.replace(" ", "_").replace("/", "-")
+        unique_doc_id = f"{safe_branch_name}_{serial}"
+
+        # أ) الحذف الفعلي والنهائي من أرشيف المعاملات الدائم
+        db.collection("transactions").document(company_code)\
+            .collection("daily_records").document(unique_doc_id).delete()
+            
+        # ب) 🔥 تحديث وهمي في الرادار (Soft Delete) لكي يلتقط الموبايل إشارة الحذف فوراً ويمسحه محلياً
+        db.collection("companies").document(company_code)\
+            .collection("live_updates").document(unique_doc_id).set({
+                "is_deleted": True,
+                "updated_at": firestore.SERVER_TIMESTAMP  # تحديث الوقت لضمان ترتيب الحدث
+            }, merge=True)
+            
+        return {
+            "status": "success", 
+            "message": "تم حذف الإذن من الأرشيف وبث إشارة المسح للرادار بنجاح", 
+            "deleted_id": unique_doc_id
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -126,26 +157,7 @@ async def get_transactions_from_serial(company_code: str, from_serial: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# 4. حذف إذن من الأرشيف ومن الرادار اللحظي
-# 4. حذف إذن من الأرشيف ومن الرادار اللحظي
-@router.delete("/delete/{company_code}/{branch}/{serial}")
-async def delete_transaction(company_code: str, branch: str, serial: int):
-    try:
-        # 🌟 بناء المعرف الفريد بنفس طريقة الحفظ
-        safe_branch_name = branch.replace(" ", "_").replace("/", "-")
-        unique_doc_id = f"{safe_branch_name}_{serial}"
 
-        # أ) الحذف من الأرشيف الرئيسي
-        db.collection("transactions").document(company_code)\
-            .collection("daily_records").document(unique_doc_id).delete()
-            
-        # ب) الحذف من مسار الرادار اللحظي
-        db.collection("companies").document(company_code)\
-            .collection("live_updates").document(unique_doc_id).delete()
-            
-        return {"status": "success", "message": "تم حذف الإذن بنجاح", "deleted_id": unique_doc_id}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 # 5. ملخص الأرصدة الخفيف والمتوافق مع حسابات الـ Hive المحلية
 @router.get("/summary/{company_code}")

@@ -406,7 +406,7 @@ class _DailyPageState extends State<DailyPage> {
               side: BorderSide(color: isEdit ? Colors.orangeAccent : Colors.white24),
             ),
             onPressed: _handleSave,
-            child: Text(isEdit ? "تعديل الإذن الإداري" : "حفظ الحركة باليومية", 
+            child: Text(isEdit ? "تعديل الإذن " : "حفظ  ", 
                 style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
           ),
         ),
