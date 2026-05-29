@@ -71,14 +71,31 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
   // دالة لفرز وترتيب الحركات المفلترة ديناميكياً
   List<Map<String, dynamic>> _getSortedData(List<Map<String, dynamic>> list) {
     List<Map<String, dynamic>> sortedList = List.from(list);
+    
     if (_isCategoryGrouped) {
       sortedList.sort((a, b) {
         int cmp = (a['category'] ?? '').compareTo(b['category'] ?? '');
         if (cmp != 0) return cmp;
+        
+        // الترتيب بالتاريخ من الأقدم للأحدث في نفس التصنيف
+        String dateA = a['date'] ?? '';
+        String dateB = b['date'] ?? '';
+        int dateCmp = dateA.compareTo(dateB);
+        if (dateCmp != 0) return dateCmp;
+        
         return (a['serial'] ?? 0).compareTo(b['serial'] ?? 0);
       });
     } else {
-      sortedList.sort((a, b) => (b['serial'] ?? 0).compareTo(a['serial'] ?? 0));
+      // 🌟 الترتيب الأساسي: بالتاريخ المكتوب (من الأقدم للأحدث)
+      sortedList.sort((a, b) {
+        String dateA = a['date'] ?? '';
+        String dateB = b['date'] ?? '';
+        int dateCmp = dateA.compareTo(dateB);
+        
+        // لو التاريخين متطابقين، نرتبهم برقم الإذن كخيار احتياطي
+        if (dateCmp != 0) return dateCmp;
+        return (a['serial'] ?? 0).compareTo(b['serial'] ?? 0);
+      });
     }
     return sortedList;
   }
@@ -105,12 +122,15 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
         }
       }
 
+      // 🌟 إضافة كل الأعمدة الجديدة لملف الإكسيل
       sheetObject.appendRow([
         excel_lib.TextCellValue("رقم الإذن"),
         excel_lib.TextCellValue("المبلغ"),
         excel_lib.TextCellValue("البيان"),
         excel_lib.TextCellValue("التصنيف"),
         excel_lib.TextCellValue("التاريخ"),
+        excel_lib.TextCellValue("الفرع"),  // 👈 إضافة جديدة
+        excel_lib.TextCellValue("الموظف"), // 👈 إضافة جديدة
       ]);
 
       for (var row in currentData) {
@@ -120,6 +140,8 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
           excel_lib.TextCellValue(row['statement'] ?? ""),
           excel_lib.TextCellValue(row['category'] ?? ""),
           excel_lib.TextCellValue(row['date'] ?? ""),
+          excel_lib.TextCellValue(row['branch'] ?? "الرئيسي"),   // 👈 إضافة جديدة
+          excel_lib.TextCellValue(row['employee'] ?? "غير معروف"), // 👈 إضافة جديدة
         ]);
       }
 
@@ -165,114 +187,180 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
     bool isWebOrDesktop = screenWidth > 600;
     final Box dailyBox = Hive.box('daily_transactions_box');
 
-    // 🌟 السحر هنا: الاستماع إلى الـ Box بأكمله ليكون النظام تفاعلياً للحفظ الفردي والمزامنة اللحظية
-    return ValueListenableBuilder(
-      valueListenable: dailyBox.listenable(),
-      builder: (context, Box box, child) {
-        // 1. استخراج الحركات الفردية المحدثة وتصفيتها بحسب نطاق التاريخ المختار وكود الشركة ديناميكياً
-        List<Map<String, dynamic>> displayList = [];
-        String startStr = DateFormat('yyyy-MM-dd').format(_fromDate);
-        String endStr = DateFormat('yyyy-MM-dd').format(_toDate);
+    // 🌟 السحر هنا: التحكم في إيماءة وزر الرجوع الخاص بنظام الهاتف بالكامل
+    return PopScope(
+      canPop: false, // تعطيل الخروج التلقائي لمنع إغلاق التطبيق فجأة
+      onPopInvoked: (didPop) async {
+        if (didPop) return; // إذا تم الخروج بالفعل لا تفعل شيء
+        
+        if (context.mounted) {
+          Navigator.pop(context); // 🌟 تنفيذ نفس أمر الرجوع المعتمد داخل البرنامج
+        }
+      },
+      child: ValueListenableBuilder(
+        valueListenable: dailyBox.listenable(),
+        builder: (context, Box box, child) {
+          // 1. استخراج الحركات الفردية المحدثة وتصفيتها بحسب نطاق التاريخ المختار وكود الشركة ديناميكياً
+          List<Map<String, dynamic>> displayList = [];
+          String startStr = DateFormat('yyyy-MM-dd').format(_fromDate);
+          String endStr = DateFormat('yyyy-MM-dd').format(_toDate);
 
-        for (var item in box.values) {
-          if (item is Map && item['company_code'] == widget.companyCode) {
-            
-            // 🌟 فلترة ذكية: تجاهل الحركات التي لا تنتمي للفرع المختار (إلا لو اختار الكل)
-            if (widget.selectedBranch != null && widget.selectedBranch != "كل الفروع" && widget.selectedBranch != "الكل" && widget.selectedBranch != "") {
-              if (item['branch'] != widget.selectedBranch) continue;
-            }
+          for (var item in box.values) {
+            if (item is Map && item['company_code'] == widget.companyCode) {
+              
+              // 🌟 فلترة ذكية: تجاهل الحركات التي لا تنتمي للفرع المختار (إلا لو اختار الكل)
+              if (widget.selectedBranch != null && widget.selectedBranch != "كل الفروع" && widget.selectedBranch != "الكل" && widget.selectedBranch != "") {
+                if (item['branch'] != widget.selectedBranch) continue;
+              }
 
-            String txDate = item['date']?.toString() ?? "";
-            if (txDate.compareTo(startStr) >= 0 && txDate.compareTo(endStr) <= 0) {
-              displayList.add(Map<String, dynamic>.from(item));
+              String txDate = item['date']?.toString() ?? "";
+              if (txDate.compareTo(startStr) >= 0 && txDate.compareTo(endStr) <= 0) {
+                displayList.add(Map<String, dynamic>.from(item));
+              }
             }
           }
-        }
 
-        // 2. تطبيق الفرز والترتيب المطلق
-        displayList = _getSortedData(displayList);
+          // 2. تطبيق الفرز والترتيب المطلق
+          displayList = _getSortedData(displayList);
 
-        return Scaffold(
-          extendBodyBehindAppBar: true,
-          appBar: AppBar(
-        title: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              "سجل الحركات ",
-              style: TextStyle(fontFamily: 'Cairo', fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            // 🌟 الإضافة الجديدة: توضيح الفرع الحالي المفلتر
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(
-                color: Colors.cyanAccent.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Text(
-                "فرع: ${widget.selectedBranch == null || widget.selectedBranch == 'الكل' || widget.selectedBranch == '' ? 'كل الفروع' : widget.selectedBranch}",
-                style: const TextStyle(
-                  fontFamily: 'Cairo', 
-                  fontSize: 12, 
-                  color: Colors.cyanAccent,
-                ),
-              ),
-            ),
-          ],
-        ),
-        centerTitle: true,
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        toolbarHeight: 70, // متناسق مع ارتفاع صفحة اليومية
-      ),
-          body: Container(
-            width: double.infinity,
-            height: double.infinity,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Colors.black, Colors.indigo.shade900, Colors.black],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-            ),
-            child: SafeArea(
-              child: Center(
-                child: Container(
-                  constraints: BoxConstraints(
-                    maxWidth: isWebOrDesktop ? 600 : double.infinity,
+          return Scaffold(
+            extendBodyBehindAppBar: true,
+            appBar: AppBar(
+              title: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    "سجل الحركات",
+                    style: TextStyle(fontFamily: 'Cairo', fontSize: 16, fontWeight: FontWeight.bold),
                   ),
-                  child: Column(
-                    children: [
-                      _buildDateFilters(),
-                      _buildTableHeader(),
-                      Expanded(
-                        child: _isLoading
-                            ? const Center(
-                                child: CircularProgressIndicator(
-                                    color: Colors.white))
-                            : displayList.isEmpty
-                                ? const Center(
-                                    child: Text("لا توجد بيانات",
-                                        style: TextStyle(
-                                            color: Colors.white38,
-                                            fontFamily: 'Cairo',
-                                            fontSize: 14)))
-                                : ListView.builder(
-                                    padding: const EdgeInsets.only(
-                                        bottom: 20, left: 5, right: 5),
-                                    itemCount: displayList.length,
-                                    itemBuilder: (context, index) =>
-                                        _buildDataRow(displayList[index]),
-                                  ),
+                  // 🌟 توضيح الفرع الحالي المفلتر
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.cyanAccent.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      "فرع: ${widget.selectedBranch == null || widget.selectedBranch == 'الكل' || widget.selectedBranch == '' ? 'كل الفروع' : widget.selectedBranch}",
+                      style: const TextStyle(
+                        fontFamily: 'Cairo', 
+                        fontSize: 12, 
+                        color: Colors.cyanAccent,
                       ),
-                    ],
+                    ),
+                  ),
+                ],
+              ),
+              centerTitle: true,
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              toolbarHeight: 70, // متناسق مع ارتفاع صفحة اليومية
+
+              // 🌟 أزرار التحكم في أعلى اليسار
+              actions: [
+                // 1️⃣ زر التجميع والفلترة حسب التصنيف
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8.0),
+                  child: Tooltip(
+                    message: _isCategoryGrouped ? "إلغاء تجميع التصنيفات" : "تجميع حسب التصنيف",
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.12), // خلفية زجاجية خفيفة
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: _isCategoryGrouped ? Colors.orangeAccent.withOpacity(0.5) : Colors.cyanAccent.withOpacity(0.3),
+                        ),
+                      ),
+                      child: IconButton(
+                        icon: Icon(
+                          _isCategoryGrouped ? Icons.filter_alt : Icons.filter_alt_outlined,
+                          color: _isCategoryGrouped ? Colors.orangeAccent : Colors.cyanAccent,
+                          size: 22,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _isCategoryGrouped = !_isCategoryGrouped;
+                          });
+                        },
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+
+                // 2️⃣ زر التصدير إلى إكسيل (يصدر الفترة الحالية المعروضة فقط المفلترة من وإلى)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8.0),
+                  child: Tooltip(
+                    message: "تصدير البيانات المعروضة لإكسيل",
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.12), // خلفية زجاجية خفيفة
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.greenAccent.withOpacity(0.4)),
+                      ),
+                      child: IconButton(
+                        icon: const Icon(Icons.file_download, color: Colors.greenAccent, size: 22),
+                        onPressed: () {
+                          // نقوم بتمرير الـ displayList التي تحتوي على بيانات البحث الحالي فقط
+                          _exportToExcel(displayList);
+                        },
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12), // مسافة جمالية عن حافة الشاشة اليسرى
+              ],
+            ),
+            body: Container(
+              width: double.infinity,
+              height: double.infinity,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Colors.black, Colors.indigo.shade900, Colors.black],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: SafeArea(
+                child: Center(
+                  child: Container(
+                    constraints: BoxConstraints(
+                      maxWidth: isWebOrDesktop ? 600 : double.infinity,
+                    ),
+                    child: Column(
+                      children: [
+                        _buildDateFilters(),
+                        _buildTableHeader(),
+                        Expanded(
+                          child: _isLoading
+                              ? const Center(
+                                  child: CircularProgressIndicator(
+                                      color: Colors.white))
+                              : displayList.isEmpty
+                                  ? const Center(
+                                      child: Text("لا توجد بيانات",
+                                          style: TextStyle(
+                                              color: Colors.white38,
+                                              fontFamily: 'Cairo',
+                                              fontSize: 14)))
+                                  : ListView.builder(
+                                      padding: const EdgeInsets.only(
+                                          bottom: 20, left: 5, right: 5),
+                                      itemCount: displayList.length,
+                                      itemBuilder: (context, index) =>
+                                          _buildDataRow(displayList[index]),
+                                    ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 

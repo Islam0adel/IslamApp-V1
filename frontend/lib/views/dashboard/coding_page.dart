@@ -76,110 +76,121 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     // 🎨 تم الحفاظ تماماً على كامل التصميم والوان الخلفية المتدرجة والـ GlassCard والأزرار بدون تعديل واحد
-    return Scaffold(
-      extendBodyBehindAppBar: true,
-      appBar: AppBar(
-        title: const Text("شاشة التكويد", style: TextStyle(fontFamily: 'Cairo', color: Colors.white)),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-      ),
-      body: Container(
-        width: double.infinity,
-        height: double.infinity,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Colors.black, Colors.indigo.shade900, Colors.black],
-            begin: Alignment.topLeft, end: Alignment.bottomRight,
-          ),
+    // 🌟 السحر هنا: تغليف الصفحة بـ PopScope لتوحيد سلوك زر وإيماءة الرجوع الخاصة بالهاتف
+    return PopScope(
+      canPop: false, // تعطيل الخروج التلقائي العشوائي للنظام
+      onPopInvoked: (didPop) async {
+        if (didPop) return; // إذا تم الرجوع بالفعل لا تفعل شيء
+        
+        if (context.mounted) {
+          Navigator.pop(context); // 🌟 تنفيذ نفس أمر الرجوع المعتمد داخل البرنامج
+        }
+      },
+      child: Scaffold(
+        extendBodyBehindAppBar: true,
+        appBar: AppBar(
+          title: const Text("شاشة التكويد", style: TextStyle(fontFamily: 'Cairo', color: Colors.white)),
+          backgroundColor: Colors.transparent,
+          elevation: 0,
         ),
-        child: SafeArea(
-          child: _isLoading 
-            ? const Center(child: CircularProgressIndicator(color: Colors.white))
-            : SingleChildScrollView(
-                padding: const EdgeInsets.all(15),
-                child: Column(
-                  children: [
-                    GlassCard(
-                      child: Column(
-                        children: [
-                          const Align(alignment: Alignment.centerRight, child: Text("اختر القسم", style: TextStyle(color: Colors.amber, fontSize: 14, fontFamily: 'Cairo'))),
-                          const SizedBox(height: 15),
-                          Wrap(
-                            spacing: 8, runSpacing: 8, alignment: WrapAlignment.center,
-                            children: [
-                              _buildTinyCategory("safes", "الخزائن", Icons.account_balance_wallet),
-                              _buildTinyCategory("items", "الأصناف", Icons.inventory_2),
-                              _buildTinyCategory("suppliers", "الموردين", Icons.local_shipping),
-                              _buildTinyCategory("customers", "العملاء", Icons.groups),
-                              _buildTinyCategory("stores", "المخازن", Icons.store),
-                              _buildTinyCategory("types", "التصنيف", Icons.payments),
-                              _buildTinyCategory("payment_methods", "طرق الدفع", Icons.credit_card), 
-                              _buildTinyCategory("banks", "البنوك", Icons.account_balance),
-                              _buildTinyCategory("employees", "الموظفين", Icons.badge), 
-                              _buildTinyCategory("branches", "الفروع", Icons.storefront), 
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    GlassCard(
-                      child: Column(
-                        children: [
-                          _buildField("الاسم / البيان", _nameController, Icons.edit),
-                          const SizedBox(height: 10),
-                          _buildField("الكود", _codeController, Icons.qr_code, enabled: !_isCodeReadOnly), 
-                          
-                          if (_selectedCategory == "types") ...[
-                            const SizedBox(height: 10),
-                            DropdownButtonFormField<String>(
-                              value: _selectedType,
-                              dropdownColor: Colors.indigo.shade900,
-                              style: const TextStyle(color: Colors.white, fontSize: 14, fontFamily: 'Cairo'),
-                              decoration: InputDecoration(
-                                labelText: "نوع التصنيف (وارد / صادر)",
-                                labelStyle: const TextStyle(color: Colors.white70, fontSize: 12, fontFamily: 'Cairo'),
-                                prefixIcon: const Icon(Icons.swap_horiz, color: Colors.amber, size: 18),
-                                filled: true, fillColor: Colors.white.withOpacity(0.03),
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
-                                contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-                              ),
-                              items: const [
-                                DropdownMenuItem(value: "وارد", child: Text("وارد", style: TextStyle(fontFamily: 'Cairo'))),
-                                DropdownMenuItem(value: "صادر", child: Text("صادر", style: TextStyle(fontFamily: 'Cairo'))),
+        body: Container(
+          width: double.infinity,
+          height: double.infinity,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Colors.black, Colors.indigo.shade900, Colors.black],
+              begin: Alignment.topLeft, end: Alignment.bottomRight,
+            ),
+          ),
+          child: SafeArea(
+            child: _isLoading 
+              ? const Center(child: CircularProgressIndicator(color: Colors.white))
+              : SingleChildScrollView(
+                  padding: const EdgeInsets.all(15),
+                  child: Column(
+                    children: [
+                      GlassCard(
+                        child: Column(
+                          children: [
+                            const Align(alignment: Alignment.centerRight, child: Text("اختر القسم", style: TextStyle(color: Colors.amber, fontSize: 14, fontFamily: 'Cairo'))),
+                            const SizedBox(height: 15),
+                            Wrap(
+                              spacing: 8, runSpacing: 8, alignment: WrapAlignment.center,
+                              children: [
+                                _buildTinyCategory("safes", "الخزائن", Icons.account_balance_wallet),
+                                _buildTinyCategory("items", "الأصناف", Icons.inventory_2),
+                                _buildTinyCategory("suppliers", "الموردين", Icons.local_shipping),
+                                _buildTinyCategory("customers", "العملاء", Icons.groups),
+                                _buildTinyCategory("stores", "المخازن", Icons.store),
+                                _buildTinyCategory("types", "التصنيف", Icons.payments),
+                                _buildTinyCategory("payment_methods", "طرق الدفع", Icons.credit_card), 
+                                _buildTinyCategory("banks", "البنوك", Icons.account_balance),
+                                _buildTinyCategory("employees", "الموظفين", Icons.badge), 
+                                _buildTinyCategory("branches", "الفروع", Icons.storefront), 
                               ],
-                              onChanged: (val) {
-                                setState(() {
-                                  _selectedType = val;
-                                });
-                              },
                             ),
                           ],
-
-                          if (_selectedCategory == "items") ...[
-                            const SizedBox(height: 10),
-                            _buildField("الباركود", _barcodeController, Icons.barcode_reader),
-                            const SizedBox(height: 10),
-                            Row(children: [
-                              Expanded(child: _buildField("سعر الجملة", _wholesalePriceController, Icons.money)),
-                              const SizedBox(width: 10),
-                              Expanded(child: _buildField("سعر البيع", _sellingPriceController, Icons.sell)),
-                            ]),
-                            const SizedBox(height: 10),
-                            Row(children: [
-                              Expanded(child: _buildField("هامش الربح", _profitMarginController, Icons.calculate, enabled: false)),
-                              const SizedBox(width: 10),
-                              Expanded(child: _buildField("نسبة الربح", _profitPercentController, Icons.percent, enabled: false)),
-                            ]),
-                          ],
-                          const SizedBox(height: 20),
-                          _buildActionButtons(),
-                        ],
+                        ),
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 20),
+                      GlassCard(
+                        child: Column(
+                          children: [
+                            _buildField("الاسم / البيان", _nameController, Icons.edit),
+                            const SizedBox(height: 10),
+                            _buildField("الكود", _codeController, Icons.qr_code, enabled: !_isCodeReadOnly), 
+                            
+                            if (_selectedCategory == "types") ...[
+                              const SizedBox(height: 10),
+                              DropdownButtonFormField<String>(
+                                value: _selectedType,
+                                dropdownColor: Colors.indigo.shade900,
+                                style: const TextStyle(color: Colors.white, fontSize: 14, fontFamily: 'Cairo'),
+                                decoration: InputDecoration(
+                                  labelText: "نوع التصنيف (وارد / صادر)",
+                                  labelStyle: const TextStyle(color: Colors.white70, fontSize: 12, fontFamily: 'Cairo'),
+                                  prefixIcon: const Icon(Icons.swap_horiz, color: Colors.amber, size: 18),
+                                  filled: true, fillColor: Colors.white.withOpacity(0.03),
+                                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                                  contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                                ),
+                                items: const [
+                                  DropdownMenuItem(value: "وارد", child: Text("وارد", style: TextStyle(fontFamily: 'Cairo'))),
+                                  DropdownMenuItem(value: "صادر", child: Text("صادر", style: TextStyle(fontFamily: 'Cairo'))),
+                                ],
+                                onChanged: (val) {
+                                  setState(() {
+                                    _selectedType = val;
+                                  });
+                                },
+                              ),
+                            ],
+
+                            if (_selectedCategory == "items") ...[
+                              const SizedBox(height: 10),
+                              _buildField("الباركود", _barcodeController, Icons.barcode_reader),
+                              const SizedBox(height: 10),
+                              Row(children: [
+                                Expanded(child: _buildField("سعر الجملة", _wholesalePriceController, Icons.money)),
+                                const SizedBox(width: 10),
+                                Expanded(child: _buildField("سعر البيع", _sellingPriceController, Icons.sell)),
+                              ]),
+                              const SizedBox(height: 10),
+                              Row(children: [
+                                Expanded(child: _buildField("هامش الربح", _profitMarginController, Icons.calculate, enabled: false)),
+                                const SizedBox(width: 10),
+                                Expanded(child: _buildField("نسبة الربح", _profitPercentController, Icons.percent, enabled: false)),
+                              ]),
+                            ],
+                            const SizedBox(height: 20),
+                            _buildActionButtons(),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
+          ),
         ),
       ),
     );

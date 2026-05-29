@@ -182,105 +182,138 @@ class _DailyPageState extends State<DailyPage> {
     // 🌟 استدعاء صندوق الـ Hive المفتوح في الماين لكي نراقب التحديثات من خلاله
     final Box dailyBox = Hive.box('daily_transactions_box');
 
-    return Scaffold(
-      extendBodyBehindAppBar: true,
-      appBar: AppBar(
-        title: Column(
-          mainAxisSize: MainAxisSize.min, // للحفاظ على تماسك العناصر داخل الـ Column
-          children: [
-            Text(
-              isEditMode ? "تعديل حركة" : "تسجيل يومية",
-              style: const TextStyle(fontFamily: 'Cairo', fontSize: 15),
-            ),
-            Text(
-              "إذن رقم: $_currentSerial",
-              style: const TextStyle(
-                fontFamily: 'Cairo', 
-                fontSize: 13, 
-                color: Colors.cyanAccent, 
-                fontWeight: FontWeight.bold
+    // 🌟 السحر هنا: تغليف الصفحة بـ PopScope للتحكم في زر وإيماءة الرجوع الخاصة بالهاتف
+    return PopScope(
+      canPop: false, // تعطيل الخروج التلقائي المفاجئ
+      onPopInvoked: (didPop) async {
+        if (didPop) return; // إذا تم الرجوع بالفعل لا تفعل شيء
+        
+        if (context.mounted) {
+          Navigator.pop(context); // 🌟 تنفيذ نفس أمر الرجوع المعتمد داخل البرنامج
+        }
+      },
+      child: Scaffold(
+        extendBodyBehindAppBar: true,
+        appBar: AppBar(
+          title: Column(
+            mainAxisSize: MainAxisSize.min, // للحفاظ على تماسك العناصر داخل الـ Column
+            children: [
+              Text(
+                isEditMode ? "تعديل حركة" : "تسجيل يومية",
+                style: const TextStyle(fontFamily: 'Cairo', fontSize: 15),
               ),
-            ),
-            // 🌟 الإضافة الجديدة: عرض اسم الفرع الحالي النشط أسفل رقم الإذن
-            Text(
-              "الفرع: ${widget.selectedBranch ?? 'الرئيسي'}",
-              style: const TextStyle(
-                fontFamily: 'Cairo', 
-                fontSize: 11, 
-                color: Colors.white70,
+              Text(
+                "إذن رقم: $_currentSerial",
+                style: const TextStyle(
+                  fontFamily: 'Cairo', 
+                  fontSize: 13, 
+                  color: Colors.cyanAccent, 
+                  fontWeight: FontWeight.bold
+                ),
               ),
-            ),
-          ],
-        ),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        centerTitle: true,
-        // 🌟 قمنا بتكبير الارتفاع إلى 70 ليستوعب الأسطر الثلاثة بشكل مريح ومنظم جداً وبدون تداخل
-        toolbarHeight: 70, 
-      ),
-      body: Container(
-        height: double.infinity, 
-        width: double.infinity,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Colors.black, Colors.indigo.shade900, Colors.black],
-            begin: Alignment.topLeft, end: Alignment.bottomRight,
+              // 🌟 عرض اسم الفرع الحالي النشط أسفل رقم الإذن
+              Text(
+                "الفرع: ${widget.selectedBranch ?? 'الرئيسي'}",
+                style: const TextStyle(
+                  fontFamily: 'Cairo', 
+                  fontSize: 11, 
+                  color: Colors.white70,
+                ),
+              ),
+            ],
           ),
-        ),
-        child: SafeArea(
-          child: _isLoading
-              ? const Center(child: CircularProgressIndicator(color: Colors.white))
-              : Center(
-                  // 🌟 إذا كان لابتوب، نحدد العرض بـ 650 بكسل كحد أقصى ويتم تركيزه في المنتصف
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          centerTitle: true,
+          // 🌟 قمنا بتكبير الارتفاع إلى 70 ليستوعب الأسطر الثلاثة بشكل مريح ومنظم جداً وبدون تداخل
+          toolbarHeight: 70, 
+          
+          // 🌟 إضافة زر الاستيراد هنا في أعلى اليسار بشكل احترافي ومتناسق
+          actions: [
+            if (!isEditMode) // يظهر فقط في حالة تسجيل حركة جديدة وليس التعديل
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+                child: Tooltip(
+                  message: "استيراد من إكسيل",
                   child: Container(
-                    constraints: BoxConstraints(
-                      maxWidth: isWebOrDesktop ? 650 : double.infinity,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.15), // خلفية زجاجية خفيفة
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.greenAccent.withOpacity(0.4)), // حواف خضراء متناسقة
                     ),
-                    child: SingleChildScrollView(
-                      // تقليص الحواف والمسافات لتصبح الشاشة مدمجة وصغيرة
-                      padding: EdgeInsets.symmetric(
-                        horizontal: isWebOrDesktop ? 25 : 15, 
-                        vertical: 10
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          
-                          // 🌟 تم تعديل هذا الجزء لحماية الأرصدة من التصفير المفاجئ
-                          ValueListenableBuilder(
-                            valueListenable: dailyBox.listenable(keys: ["${widget.companyCode}_balances"]),
-                            builder: (context, Box box, child) {
-                              // 1. جلب البيانات الخام من الـ Hive
-                              final rawBalances = box.get("${widget.companyCode}_balances");
-                              
-                              // 2. 🛡️ جدار الحماية: لا نقوم بالتحديث إلا إذا كانت البيانات خريطة (Map) وغير فارغة
-                              if (rawBalances is Map && rawBalances.isNotEmpty) {
-                                Map<String, double> safeBalances = {};
-                                rawBalances.forEach((key, value) {
-                                  // تحويل القيمة دائماً إلى double آمن لمنع الـ Crash
-                                  safeBalances[key.toString()] = double.tryParse(value.toString()) ?? 0.0;
-                                });
-                                
-                                // 3. تحديث الأرصدة في الصفحة فقط لو كانت البيانات حقيقية
-                                _treasuryBalances = safeBalances;
-                              }
-                              
-                              // 4. بناء شبكة الأرصدة بالبيانات الآمنة المستقرة
-                              return _buildDynamicBalancesGrid();
-                            },
-                          ),
-
-                          const SizedBox(height: 12),
-                          _buildInputForm(),
-                          const SizedBox(height: 15),
-                          _buildMainActions(),
-                          const SizedBox(height: 8),
-                          _buildSecondaryActions(),
-                        ],
-                      ),
+                    child: IconButton(
+                      icon: const Icon(Icons.upload_file, color: Colors.greenAccent, size: 22),
+                      onPressed: _importFromExcel,
                     ),
                   ),
                 ),
+              ),
+          ],
+        ),
+        body: Container(
+          height: double.infinity, 
+          width: double.infinity,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Colors.black, Colors.indigo.shade900, Colors.black],
+              begin: Alignment.topLeft, end: Alignment.bottomRight,
+            ),
+          ),
+          child: SafeArea(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator(color: Colors.white))
+                : Center(
+                    // 🌟 إذا كان لابتوب، نحدد العرض بـ 650 بكسل كحد أقصى ويتم تركيزه في المنتصف
+                    child: Container(
+                      constraints: BoxConstraints(
+                        maxWidth: isWebOrDesktop ? 650 : double.infinity,
+                      ),
+                      child: SingleChildScrollView(
+                        // تقليص الحواف والمسافات لتصبح الشاشة مدمجة وصغيرة
+                        padding: EdgeInsets.symmetric(
+                          horizontal: isWebOrDesktop ? 25 : 15, 
+                          vertical: 10
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            
+                            // 🌟 تم تعديل هذا الجزء لحماية الأرصدة من التصفير المفاجئ
+                            ValueListenableBuilder(
+                              valueListenable: dailyBox.listenable(keys: ["${widget.companyCode}_balances"]),
+                              builder: (context, Box box, child) {
+                                // 1. جلب البيانات الخام من الـ Hive
+                                final rawBalances = box.get("${widget.companyCode}_balances");
+                                
+                                // 2. 🛡️ جدار الحماية: لا نقوم بالتحديث إلا إذا كانت البيانات خريطة (Map) وغير فارغة
+                                if (rawBalances is Map && rawBalances.isNotEmpty) {
+                                  Map<String, double> safeBalances = {};
+                                  rawBalances.forEach((key, value) {
+                                    // تحويل القيمة دائماً إلى double آمن لمنع الـ Crash
+                                    safeBalances[key.toString()] = double.tryParse(value.toString()) ?? 0.0;
+                                  });
+                                  
+                                  // 3. تحديث الأرصدة في الصفحة فقط لو كانت البيانات حقيقية
+                                  _treasuryBalances = safeBalances;
+                                }
+                                
+                                // 4. بناء شبكة الأرصدة بالبيانات الآمنة المستقرة
+                                return _buildDynamicBalancesGrid();
+                              },
+                            ),
+
+                            const SizedBox(height: 12),
+                            _buildInputForm(),
+                            const SizedBox(height: 15),
+                            _buildMainActions(),
+                            const SizedBox(height: 8),
+                            _buildSecondaryActions(),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+          ),
         ),
       ),
     );
@@ -379,7 +412,33 @@ class _DailyPageState extends State<DailyPage> {
               const SizedBox(width: 10),
               Expanded(
                 child: _buildDropdown("التصنيف", _selectedCategory, _categories, 
-                    (val) => setState(() => _selectedCategory = val)),
+                    (val) {
+                      setState(() {
+                        _selectedCategory = val;
+                        
+                        if (val == "فيزا") {
+                          // 1️⃣ إذا تم اختيار "فيزا"، نغير الخزينة إلى فيزا (كود 2) تلقائياً
+                          var visaTreasury = _treasuries.firstWhere(
+                            (t) => t['code']?.toString() == "2",
+                            orElse: () => {}
+                          );
+                          
+                          if (visaTreasury.isNotEmpty && visaTreasury.containsKey('name')) {
+                            _selectedTreasury = visaTreasury['name'];
+                          }
+                        } else {
+                          // 2️⃣ 🌟 التعديل الجديد: إذا تم اختيار أي تصنيف آخر، تعود الخزينة نقدي (كود 1) تلقائياً
+                          var cashTreasury = _treasuries.firstWhere(
+                            (t) => t['code']?.toString() == "1",
+                            orElse: () => {}
+                          );
+                          
+                          if (cashTreasury.isNotEmpty && cashTreasury.containsKey('name')) {
+                            _selectedTreasury = cashTreasury['name'];
+                          }
+                        }
+                      });
+                    }),
               ),
             ],
           ),
@@ -394,39 +453,21 @@ class _DailyPageState extends State<DailyPage> {
 
   Widget _buildMainActions() {
     bool isEdit = widget.editItem != null;
-    return Column(
-      children: [
-        SizedBox(
-          width: double.infinity,
-          height: 55,
-          child: ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: isEdit ? Colors.orange.withOpacity(0.3) : Colors.white.withOpacity(0.2),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-              side: BorderSide(color: isEdit ? Colors.orangeAccent : Colors.white24),
-            ),
-            onPressed: _handleSave,
-            child: Text(isEdit ? "تعديل الإذن " : "حفظ  ", 
-                style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
-          ),
+    return SizedBox(
+      width: double.infinity,
+      height: 55,
+      child: ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: isEdit ? Colors.orange.withOpacity(0.3) : Colors.white.withOpacity(0.2),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          side: BorderSide(color: isEdit ? Colors.orangeAccent : Colors.white24),
         ),
-        if (!isEdit) ...[
-          const SizedBox(height: 10),
-          SizedBox(
-            width: double.infinity,
-            height: 50,
-            child: OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: Colors.greenAccent),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-              ),
-              onPressed: _importFromExcel,
-              icon: const Icon(Icons.upload_file, color: Colors.greenAccent),
-              label: const Text("استيراد من إكسيل", style: TextStyle(color: Colors.greenAccent, fontFamily: 'Cairo')),
-            ),
-          ),
-        ]
-      ],
+        onPressed: _handleSave,
+        child: Text(
+          isEdit ? "تعديل الإذن" : "حفظ", 
+          style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, fontFamily: 'Cairo'),
+        ),
+      ),
     );
   }
 
@@ -540,7 +581,7 @@ class _DailyPageState extends State<DailyPage> {
       });
     },
     icon: const Icon(Icons.history, color: Colors.cyanAccent),
-    label: const Text("معاينة الحركات", style: TextStyle(color: Colors.cyanAccent, fontFamily: 'Cairo')),
+    label: const Text("المعاينة", style: TextStyle(color: Colors.cyanAccent, fontFamily: 'Cairo')),
   );
 }
 
@@ -550,40 +591,127 @@ class _DailyPageState extends State<DailyPage> {
   }
 
   void _importFromExcel() async {
-    FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['xlsx'], withData: true);
+    // 1️⃣ إظهار رسالة منبثقة تنبيهية للتأكد من هيكلة ملف الإكسيل قبل الاختيار
+    bool? proceed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text(
+          "تنبيه قبل الاستيراد", 
+          style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold),
+          textAlign: TextAlign.right, // 🌟 تم التعديل هنا لتفادي التعارض
+        ),
+        content: const Text(
+          "يرجى التأكد من احتواء ملف الإكسيل على الأعمدة التالية بالترتيب ومن الصف الثاني:\n"
+          " ( المبلغ  -  البيان  -  التصنيف  -  التاريخ )\n\n"
+          "⚠️ سيتم تجاهل أي أسطر فارغة، وسيتم ربط الفرع والموظف الحالي تلقائياً من النظام.",
+          style: TextStyle(fontFamily: 'Cairo', fontSize: 14),
+          textAlign: TextAlign.right, // 🌟 وتم التعديل هنا أيضاً
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text("إلغاء", style: TextStyle(fontFamily: 'Cairo', color: Colors.red)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo.shade900),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text("موافق واختيار الملف", style: TextStyle(fontFamily: 'Cairo', color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (proceed != true) return;
+
+    // 2️⃣ فتح مستعرض الملفات لاختيار ملف الـ Excel
+    FilePickerResult? result = await FilePicker.platform.pickFiles(
+      type: FileType.custom, 
+      allowedExtensions: ['xlsx'], 
+      withData: true
+    );
+
     if (result != null) {
       setState(() => _isLoading = true);
       try {
         var bytes = result.files.single.bytes;
-        if (bytes == null && result.files.single.path != null) bytes = File(result.files.single.path!).readAsBytesSync();
+        if (bytes == null && result.files.single.path != null) {
+          bytes = File(result.files.single.path!).readAsBytesSync();
+        }
         if (bytes == null) throw "تعذر قراءة بيانات الملف";
 
         var excel = excel_lib.Excel.decodeBytes(bytes);
-        String defaultTreasury = _selectedTreasury ?? "الخزينة الرئيسية";
+
+        // جلب المسميات الفعلية للخزائن من القائمة بناءً على الأكواد المحددة لنضمن مرونة المسميات
+        String cashTreasuryName = "الخزينة الرئيسية"; 
+        String visaTreasuryName = "فيزا"; 
+
+        var cashTreasuryObj = _treasuries.firstWhere(
+          (t) => t['code']?.toString() == "1",
+          orElse: () => {}
+        );
+        if (cashTreasuryObj.isNotEmpty && cashTreasuryObj.containsKey('name')) {
+          cashTreasuryName = cashTreasuryObj['name'];
+        }
+
+        var visaTreasuryObj = _treasuries.firstWhere(
+          (t) => t['code']?.toString() == "2",
+          orElse: () => {}
+        );
+        if (visaTreasuryObj.isNotEmpty && visaTreasuryObj.containsKey('name')) {
+          visaTreasuryName = visaTreasuryObj['name'];
+        }
 
         for (var table in excel.tables.keys) {
           var rows = excel.tables[table]!.rows;
+          // نبدأ من i = 1 لتخطي صف العناوين الرئيسي والبدء بالبيانات الفعلية
           for (int i = 1; i < rows.length; i++) {
             var row = rows[i];
+            
+            // جدار حماية: إذا كان السطر فارغاً أو خانة المبلغ فارغة يتم تخطي السطر فوراً
             if (row.isEmpty || row[0] == null || row[0]?.value == null) continue;
 
-            String rawDate = row.length > 3 ? row[3]!.value.toString() : DateFormat('yyyy-MM-dd').format(DateTime.now());
+            // 1. قراءة المبلغ والتأكد من أنه رقم صالح وغير صفري
+            double amount = double.tryParse(row[0]!.value.toString()) ?? 0.0;
+            if (amount == 0.0) continue; 
+
+            // 2. قراءة البيان (إذا كان فارغاً نضع نصاً فارغاً)
+            String statement = (row.length > 1 && row[1] != null && row[1]?.value != null) 
+                ? row[1]!.value.toString() 
+                : "";
+
+            // 3. قراءة التصنيف
+            String categoryStr = (row.length > 2 && row[2] != null && row[2]?.value != null) 
+                ? row[2]!.value.toString() 
+                : "عام";
+
+            // 4. قراءة التاريخ وتنسيقه
+            String rawDate = (row.length > 3 && row[3] != null && row[3]?.value != null) 
+                ? row[3]!.value.toString() 
+                : DateFormat('yyyy-MM-dd').format(DateTime.now());
             String formattedDate = rawDate.length >= 10 ? rawDate.substring(0, 10) : rawDate;
-            String categoryStr = (row.length > 2 && row[2] != null) ? row[2]!.value.toString() : "عام";
             
+            // تحديد نوع الحركة (وارد / صادر) بناءً على جدول التصنيفات الفعلي بالبرنامج
             var match = _categories.firstWhere((c) => c['name'] == categoryStr, orElse: () => {});
             String calculatedType = match.isNotEmpty ? (match['type'] ?? "وارد") : "وارد";
 
+            // 🌟 السحر هنا: تحديد الخزينة ذكياً بناءً على اسم التصنيف
+            String targetTreasury = cashTreasuryName; // الافتراضي نقدي (كود 1)
+            if (categoryStr == "فيزا") {
+              targetTreasury = visaTreasuryName; // فيزا (كود 2)
+            }
+
+            // حفظ الحركة كإذن منفصل ومكتمل البيانات التابعة للنظام
             await _dailyService.saveTransaction(
               companyCode: widget.companyCode,
               serial: 0, 
-              treasury: defaultTreasury,
-              amount: double.tryParse(row[0]!.value.toString()) ?? 0.0,
-              statement: (row.length > 1 && row[1] != null) ? row[1]!.value.toString() : "",
+              treasury: targetTreasury,
+              amount: amount,
+              statement: statement,
               category: categoryStr,
               date: formattedDate,
               type: calculatedType,
-              branch: widget.selectedBranch ?? "الفرع الرئيسي",
+              branch: widget.selectedBranch ?? "الفرع الرئيسي", // يُسحب من الـ Widget
+              employee: widget.userName ?? "غير معروف", // يُسحب من الـ Widget لتوثيق اسم الموظف المستورد
             );
           }
         }
