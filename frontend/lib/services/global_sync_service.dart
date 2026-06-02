@@ -7,7 +7,7 @@ class GlobalSyncService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final Box _dailyBox = Hive.box('daily_transactions_box'); 
 
-  // 1. فتح مجرى الاستماع المركزي (المعدل ذكياً)
+  // 1. فتح مجرى الاستماع المركزي
   Future<Stream<QuerySnapshot>> startGlobalListener(String companyCode) async {
     final prefs = await SharedPreferences.getInstance();
     
@@ -16,44 +16,30 @@ class GlobalSyncService {
     
     print("📡 بدء رادار المزامنة اللحظية لشركة: $companyCode");
     
+    // 🌟 توجيه الرادار لمسار الأرشيف الأساسي مباشرة لتوفير الكتابة في الباك إند
     Query query = _firestore
-        .collection('companies')
+        .collection('transactions')
         .doc(companyCode)
-        .collection('live_updates');
+        .collection('daily_records');
 
-    // 🔥 لو التطبيق اتفتح قبل كدة، فلتر البيانات بناءً على الوقت فقط!
     if (lastSyncMillis != null) {
       Timestamp lastSyncTimestamp = Timestamp.fromMillisecondsSinceEpoch(lastSyncMillis);
       query = query.where('updated_at', isGreaterThan: lastSyncTimestamp);
       print("⏱️ استرجاع التحديثات فقط ما بعد: ${lastSyncTimestamp.toDate()}");
     } else {
-      print("📥 أول تشغيل: سيتم تحميل كافة بيانات الرادار وتخزينها.");
+      print("📥 أول تشغيل: سيتم تحميل بيانات الرادار.");
     }
+
+    // 🌟 الحل الجذري: حفظ الوقت الحالي حتى لا يقرأ الداتا القديمة في الفتحة القادمة للتطبيق
+    await prefs.setInt('last_sync_$companyCode', DateTime.now().millisecondsSinceEpoch);
 
     return query.snapshots();
   }
 
-  // 2. معالجة الإضافة والتعديل والحذف الوهمي
-  // 2. معالجة الإضافة والتعديل والحذف الموضعي بدقة متناهية
+  // 2. معالجة الإضافة والتعديل
   Future<void> processIncomingUpdate(String companyCode, String docId, Map<String, dynamic> updateData) async {
     if (updateData.isEmpty) return;
 
-    // 🔥 1. الفحص السحري: إذا لقط الرادار أن الحقل "is_deleted" قيمته true
-    // فهذا يعني أن الباك إند أرسل إشارة حذف وهمي (Soft Delete) من الرادار
-    if (updateData['is_deleted'] == true) {
-      print("🗑️ الرادار: تم التقاط إشارة حذف للإذن [$docId]. جاري مسحه من قاعدة بيانات الموبايل...");
-      
-      // مسح الحركة فوراً من صندوق الـ Hive المحلي لكي تختفي من الواجهة
-      await _dailyBox.delete(docId);
-      
-      // إعادة حساب وتحديث الأرصدة الكلية فوراً لتسمع في كل الشاشات لحظياً
-      await DailyService().getDailySummaryLocal(companyCode);
-      
-      print("✅ الرادار: تم مسح الإذن [$docId] محلياً بنجاح.");
-      return; // إنهاء الدالة هنا لأن الإذن تم حذفه ولا نريد إعادة حفظه بالأسفل
-    }
-
-    // 2. تنظيف وتجهيز البيانات (في حالة الإضافة أو التعديل الطبيعي)
     Map<String, dynamic> tx = {
       'serial': int.tryParse(updateData['serial']?.toString() ?? '0') ?? 0,
       'amount': double.tryParse(updateData['amount']?.toString() ?? '0') ?? 0.0,
@@ -67,16 +53,16 @@ class GlobalSyncService {
       'company_code': updateData['company_code']?.toString() ?? companyCode,
     };
 
-    // 🌟 3. الحفظ المباشر والوحيد في الـ Hive باستخدام docId لضمان عدم التكرار
+    // الحفظ المباشر في Hive
     await _dailyBox.put(docId, tx);
 
-    // 🌟 4. تحديث الأرصدة الكلية فوراً لتسمع في كل الشاشات لحظياً
+    // تحديث الأرصدة الكلية فوراً لتسمع في كل الشاشات لحظياً
     await DailyService().getDailySummaryLocal(companyCode);
     
     print("🔄 الرادار: تم دمج/تحديث الإذن [$docId] بنجاح في الـ Hive.");
   }
 
-  // 3. دالة الحذف الموضعي
+  // 3. دالة الحذف الموضعي (سيتم استدعاؤها تلقائياً عند الحذف من الباك إند)
   Future<void> processIncomingDelete(String companyCode, String docId) async {
     if (_dailyBox.containsKey(docId)) {
       await _dailyBox.delete(docId);

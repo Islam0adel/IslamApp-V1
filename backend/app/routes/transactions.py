@@ -1,10 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from app.core.firebase_setup import db
 from pydantic import BaseModel
 from typing import Optional
 from google.cloud import firestore
-from typing import Optional
-from fastapi import Query # ⚠️ تأكد من وجود هذا الاستيراد في أعلى الملف مع باقي استيرادات FastAPI
 
 router = APIRouter()
 
@@ -21,99 +19,94 @@ class TransactionModel(BaseModel):
     employee: Optional[str] = "غير محدد"  
     branch: Optional[str] = "الفرع الرئيسي"  
 
+
+# 🔥 [دالة المعاملة الذرية المؤمّنة لمنع تكرار السيريال نهائياً]
+@firestore.transactional
+def run_save_transaction(transaction, records_ref, data: TransactionModel, is_update: bool):
+    if is_update:
+        final_serial = data.serial
+    else:
+        # جلب آخر سيريال مسجل "لهذا الفرع تحديداً" بشكل مؤمن داخل المعاملة الحالية
+        query = records_ref.where("branch", "==", data.branch).order_by("serial", direction=firestore.Query.DESCENDING).limit(1)
+        docs = list(query.stream(transaction=transaction))
+        
+        final_serial = 1
+        if docs:
+            final_serial = int(docs[0].to_dict().get("serial", 0)) + 1
+            
+    # تحويل بيانات الموديل إلى قاموس
+    transaction_data = data.dict()
+    transaction_data["serial"] = final_serial
+    transaction_data["updated_at"] = firestore.SERVER_TIMESTAMP 
+    
+    # إنشاء المعرف الفريد الثابت للمستند بناءً على اسم الفرع والسيريال
+    safe_branch_name = data.branch.replace(" ", "_").replace("/", "-")
+    unique_doc_id = f"{safe_branch_name}_{final_serial}"
+    
+    # الحفظ الآمن داخل الـ Transaction
+    doc_ref = records_ref.document(unique_doc_id)
+    transaction.set(doc_ref, transaction_data)
+    
+    return final_serial
+
+
 # ==========================================
-# 1. حفظ أو تحديث إذن (Save / Update) - مع المزامنة الفورية في الرادار اللحظي والوقت الدقيق
+# 1. حفظ أو تحديث إذن - تم تأمينه بالكامل عبر الـ Transaction
 # ==========================================
 @router.post("/save")
 async def save_transaction(data: TransactionModel):
     try:
-        transaction = db.transaction()
+        records_ref = db.collection("transactions").document(data.company_code).collection("daily_records")
         
-        @firestore.transactional
-        def create_and_save(tx):
-            records_ref = db.collection("transactions").document(data.company_code).collection("daily_records")
-            live_ref = db.collection("companies").document(data.company_code).collection("live_updates")
-            
-            is_update = data.serial > 0
-            
-            if is_update:
-                final_serial = data.serial
-            else:
-                # جلب آخر سيريال مسجل لهذا الفرع تحديداً
-                query = records_ref.where("branch", "==", data.branch).order_by("serial", direction=firestore.Query.DESCENDING).limit(1)
-                docs = list(query.stream(transaction=tx))
-                
-                final_serial = 1
-                if docs:
-                    final_serial = int(docs[0].to_dict().get("serial", 0)) + 1
-            
-            transaction_data = data.dict()
-            transaction_data["serial"] = final_serial
-            
-            # 🔥 وقت السيرفر بدقة الملي ثانية للمزامنة اللحظية ومنع التضارب
-            transaction_data["updated_at"] = firestore.SERVER_TIMESTAMP 
-            transaction_data["is_deleted"] = False  # علامة لنفي الحذف عند الحفظ أو التعديل
-            
-            # عزل الفروع في التسمية لمنع تداخل السيريال بين فرع وآخر
-            safe_branch_name = data.branch.replace(" ", "_").replace("/", "-")
-            unique_doc_id = f"{safe_branch_name}_{final_serial}"
-            
-            # أ) الحفظ في الأرشيف الدائم
-            doc_ref = records_ref.document(unique_doc_id)
-            tx.set(doc_ref, transaction_data)
-            
-            # ب) البث الفوري عبر الرادار اللحظي لهواتف الموظفين
-            live_doc_ref = live_ref.document(unique_doc_id)
-            tx.set(live_doc_ref, transaction_data)
-            
-            return final_serial
-
-        assigned_serial = create_and_save(transaction)
+        # تحديد نوع العملية: تعديل أم إضافة جديدة
+        is_update = data.serial > 0
+        
+        # إنشاء المعاملة واستدعاء الدالة المؤمّنة لضمان طابور منظم ومنع الـ Race Condition
+        transaction = db.transaction()
+        final_serial = run_save_transaction(transaction, records_ref, data, is_update)
         
         return {
             "status": "success", 
-            "message": "تم الحفظ بنجاح وتحديث قاعدة البيانات والبث عبر الرادار اللحظي",
-            "serial": assigned_serial
+            "message": "تم تعديل الإذن وتحديث قاعدة البيانات بنجاح" if is_update else "تم حفظ الإذن الجديد بنجاح",
+            "serial": final_serial,
+            "action": "update" if is_update else "insert"
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 # ==========================================
-# 4. حذف إذن من الأرشيف وبث إشارة الحذف للرادار اللحظي
+# 4. حذف إذن من الأرشيف (الرادار سيلتقط الحذف تلقائياً)
 # ==========================================
 @router.delete("/delete/{company_code}/{branch}/{serial}")
 async def delete_transaction(company_code: str, branch: str, serial: int):
     try:
+        # تحويل اسم الفرع إلى الصيغة الآمنة لمطابقة المعرف الفريد في الفايربيز
         safe_branch_name = branch.replace(" ", "_").replace("/", "-")
         unique_doc_id = f"{safe_branch_name}_{serial}"
 
-        # أ) الحذف الفعلي والنهائي من أرشيف المعاملات الدائم
+        # الحذف الفعلي للمستند (الفلاتر سيلتقط إشارة DocumentChangeType.removed فوراً)
         db.collection("transactions").document(company_code)\
             .collection("daily_records").document(unique_doc_id).delete()
             
-        # ب) 🔥 تحديث وهمي في الرادار (Soft Delete) لكي يلتقط الموبايل إشارة الحذف فوراً ويمسحه محلياً
-        db.collection("companies").document(company_code)\
-            .collection("live_updates").document(unique_doc_id).set({
-                "is_deleted": True,
-                "updated_at": firestore.SERVER_TIMESTAMP  # تحديث الوقت لضمان ترتيب الحدث
-            }, merge=True)
-            
         return {
             "status": "success", 
-            "message": "تم حذف الإذن من الأرشيف وبث إشارة المسح للرادار بنجاح", 
+            "message": "تم حذف الإذن بنجاح من الخادم الرئيسي", 
             "deleted_id": unique_doc_id
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ==========================================
 # 2. جلب قائمة الأذون للمعاينة المفلترة بالتاريخ والفرع ذكياً
+# ==========================================
 @router.get("/list/{company_code}")
 async def get_transactions(
     company_code: str, 
     start_date: str, 
     end_date: str, 
-    branch: Optional[str] = Query(None) # 🌟 استقبال الفرع القادم من الفلاتر بشكل اختياري
+    branch: Optional[str] = Query(None) 
 ):
     try:
         # 1️⃣ بناء الاستعلام الأساسي المفلتر بنطاق التاريخ
@@ -122,7 +115,7 @@ async def get_transactions(
             .where("date", ">=", start_date)\
             .where("date", "<=", end_date)
         
-        # 2️⃣ شرط الفلترة الذكي: لو الفلاتر ممرر فرع معين (وليس "الكل" أو فارغ)، قم بفلترة الفايربيز فوراً
+        # 2️⃣ شرط الفلترة الذكي: لو الفلاتر ممرر فرع معين قم بفلترة الفايربيز فوراً
         if branch and branch != "الكل" and branch != "كل الفروع":
             query = query.where("branch", "==", branch)
             
@@ -134,13 +127,16 @@ async def get_transactions(
             item = d.to_dict()
             results.append(item)
             
-        # 🌟 التعديل الاحترافي: الترتيب بناءً على التاريخ (أحدث تاريخ أولاً) ثم بناءً على السيريال لمنع تداخل أرقام الفروع عند عرض "كل الفروع"
+        # الترتيب بناءً على التاريخ (أحدث تاريخ أولاً) ثم بناءً على السيريال
         return sorted(results, key=lambda x: (x.get('date', ''), x.get('serial', 0)), reverse=True)
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ==========================================
 # 3. جلب التحديثات بدءاً من رقم إذن معين لتحديث الـ Hive لباقي المستخدمين
+# ==========================================
 @router.get("/updates/{company_code}/{from_serial}")
 async def get_transactions_from_serial(company_code: str, from_serial: int):
     try:
@@ -158,8 +154,9 @@ async def get_transactions_from_serial(company_code: str, from_serial: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-
+# ==========================================
 # 5. ملخص الأرصدة الخفيف والمتوافق مع حسابات الـ Hive المحلية
+# ==========================================
 @router.get("/summary/{company_code}")
 async def get_summary(company_code: str):
     try:
@@ -170,14 +167,20 @@ async def get_summary(company_code: str):
     except Exception as e:
         return {"status": "error", "active_treasuries": [], "detail": str(e)}
 
-# 6. جلب آخر سيريال (تم تصحيح اتجاه الترتيب هنا)
+
+# ==========================================
+# 6. جلب آخر سيريال (تم تطويرها ذكياً لدعم الفروع ومنع التداخل المنطقي)
+# ==========================================
 @router.get("/last_serial/{company_code}")
-async def get_last_serial(company_code: str):
+async def get_last_serial(company_code: str, branch: Optional[str] = Query(None)):
     try:
-        docs = db.collection("transactions").document(company_code)\
-            .collection("daily_records")\
-            .order_by("serial", direction=firestore.Query.DESCENDING)\
-            .limit(1).get()
+        query = db.collection("transactions").document(company_code).collection("daily_records")
+        
+        # إذا تم تمرير الفرع من التطبيق، يتم جلب آخر سيريال خاص بهذا الفرع فقط
+        if branch and branch != "الكل" and branch != "كل الفروع":
+            query = query.where("branch", "==", branch)
+            
+        docs = query.order_by("serial", direction=firestore.Query.DESCENDING).limit(1).get()
         
         if not docs:
             return {"last_serial": 0}

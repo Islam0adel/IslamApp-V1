@@ -51,18 +51,29 @@ class _DailyPageState extends State<DailyPage> {
   @override
   void initState() {
     super.initState();
-    // 🌟 السحر هنا: عند الكتابة في خانة المبلغ، يتم إعادة بناء الواجهة لتحديث الأرصدة لحظياً في كل الكروت
+    
+    // 🌟 السحر هنا: عند الكتابة في خانة المبلغ، يتم إعادة بناء الواجهة لتحديث الأرصدة لحظياً في كل الكروت (تم الحفاظ عليها بالكامل)
     _amountController.addListener(() => setState(() {}));
     _loadInitialData();
 
     if (widget.editItem != null) {
-      _amountController.text = widget.editItem!['amount'].toString();
+      _amountController.text = widget.editItem!['amount']?.toString() ?? '';
       _statementController.text = widget.editItem!['statement'] ?? "";
-      _dateController.text = widget.editItem!['date'] ?? DateFormat('yyyy-MM-dd').format(DateTime.now());
+      
+      // 🎯 تأمين التاريخ: استخراج أول 10 حروف فقط (yyyy-MM-dd) لتفادي أي أخطاء في الـ DatePicker بسبب الطوابع الزمنية الكاملة
+      if (widget.editItem!['date'] != null) {
+        String rawDate = widget.editItem!['date'].toString();
+        _dateController.text = rawDate.length >= 10 ? rawDate.substring(0, 10) : rawDate;
+      } else {
+        _dateController.text = DateFormat('yyyy-MM-dd').format(DateTime.now());
+      }
+
+      // 🌟 تم الحفاظ على المتغير الخاص بك لتحديد السيريال الحالي للحركة أثناء التعديل
       _currentSerial = widget.editItem!['serial'] ?? 1;
       _selectedTreasury = widget.editItem!['treasury'];
       _selectedCategory = widget.editItem!['category'];
     } else {
+      // في حالة الإضافة الجديدة: تنظيف الحقول وتعيين تاريخ اليوم
       _amountController.clear();
       _statementController.clear();
       _dateController.text = DateFormat('yyyy-MM-dd').format(DateTime.now());
@@ -111,55 +122,56 @@ class _DailyPageState extends State<DailyPage> {
   void _loadInitialData() async {
     setState(() => _isLoading = true);
     try {
-      // 1️⃣ جلب حركات الفرع الحالي من السيرفر وتخزينها في متغير مؤقت
-      final List<dynamic> transactions = await _dailyService.getTransactionsHistory(
-        widget.companyCode,
-        DateFormat('yyyy-MM-dd').format(DateTime.now().subtract(const Duration(days: 3))),
-        DateFormat('yyyy-MM-dd').format(DateTime.now()),
-        branch: widget.selectedBranch,
-      );
+      // 1. جلب السيريال من الـ Hive (سريع جداً)
+      final Box dailyBox = Hive.box('daily_transactions_box');
+      int maxSerial = 0;
+      for (var item in dailyBox.values) {
+        if (item is Map && item['company_code'] == widget.companyCode) {
+          if (widget.selectedBranch == null || widget.selectedBranch == "كل الفروع" || item['branch'] == widget.selectedBranch) {
+            int currentSerial = int.tryParse(item['serial']?.toString() ?? '0') ?? 0;
+            if (currentSerial > maxSerial) maxSerial = currentSerial;
+          }
+        }
+      }
+      int nextSerial = maxSerial + 1;
 
-      // 2️⃣ جلب الأرصدة والملخص
-      final summary = await _dailyService.getDailySummaryLocal(
-        widget.companyCode, 
-        branch: widget.selectedBranch,
-      );
-      
-      // 🌟 السطر السحري: إجبار الـ Hive على التحديث لكي تظهر الأرصدة فوراً في الواجهة
+      // 2. جلب الأرصدة من الـ Hive
+      final summary = await _dailyService.getDailySummaryLocal(widget.companyCode, branch: widget.selectedBranch);
       Hive.box('daily_transactions_box').put("${widget.companyCode}_balances", summary['balances']);
       
-      final safes = await _codingService.getCodingList(companyCode: widget.companyCode, category: "safes");
-      final types = await _codingService.getCodingList(companyCode: widget.companyCode, category: "types");
+      // 🌟 3. الحل الذكي للتكويدات (الخزائن والتصنيفات)
+      final Box codingBox = Hive.box('coding_box');
+      List<Map<String, dynamic>> safesList = [];
+      List<Map<String, dynamic>> typesList = [];
 
-      // 3️⃣ 🌟 حساب السيريال المباشر من قائمة الحركات اللي لسه جايبينها (أضمن طريقة)
-      int nextSerial = 1;
-      if (transactions.isNotEmpty) {
-        // بنشوف أكبر رقم سيريال موجود في الحركات اللي رجعت من السيرفر ونزود عليه 1
-        int maxSerial = transactions.map((e) => (e['serial'] as int? ?? 0)).reduce((a, b) => a > b ? a : b);
-        nextSerial = maxSerial + 1;
+      // الفحص: هل الـ Hive فارغ من التكويدات؟ (حالة أول تشغيل)
+      if (!codingBox.containsKey("${widget.companyCode}_safes") || !codingBox.containsKey("${widget.companyCode}_types")) {
+        print("📥 أول تشغيل لليومية: جاري تحميل التكويدات من السيرفر...");
+        // جلب البيانات من السيرفر (ستقوم الـ Service بحفظها تلقائياً في الـ Hive للمرات القادمة)
+        final safes = await _codingService.getCodingList(companyCode: widget.companyCode, category: "safes");
+        final types = await _codingService.getCodingList(companyCode: widget.companyCode, category: "types");
+        
+        safesList = safes.map((e) => Map<String, dynamic>.from(e.toMap())).toList();
+        typesList = types.map((e) => Map<String, dynamic>.from(e.toMap())).toList();
+      } else {
+        // 🔥 حالة الاستخدام العادية: الـ Hive ممتلئ، قراءة فورية بدون إنترنت
+        var localSafes = codingBox.get("${widget.companyCode}_safes");
+        safesList = (localSafes as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+
+        var localTypes = codingBox.get("${widget.companyCode}_types");
+        typesList = (localTypes as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
       }
 
       setState(() {
         _treasuryBalances = Map<String, double>.from(summary['balances'] ?? {});
-        _treasuries = safes.map((e) => Map<String, dynamic>.from(e.toMap())).toList();
-        _categories = types.map((e) => Map<String, dynamic>.from(e.toMap())).toList();
+        _treasuries = safesList;
+        _categories = typesList;
 
-        // تعيين السيريال المحسوب مباشرة
-        if (widget.editItem == null) {
-          _currentSerial = nextSerial;
-        }
+        if (widget.editItem == null) _currentSerial = nextSerial;
 
-        // 🌟 التعديل الآمن (Bulletproof) لاختيار الخزنة رقم 1 بدون أخطاء
-        // 🌟 التعديل الآمن (Bulletproof) لاختيار الخزنة رقم 1 بدون أخطاء
         if (widget.editItem == null && _selectedTreasury == null && _treasuries.isNotEmpty) {
-          var defaultSafe = _treasuries.firstWhere(
-            (s) => s['code'] != null && s['code'].toString() == "1",
-            orElse: () => _treasuries.first
-          );
-          
-          if (defaultSafe.containsKey('name')) { // 👈 تم إزالة التحذير هنا
-            _selectedTreasury = defaultSafe['name'];
-          }
+          var defaultSafe = _treasuries.firstWhere((s) => s['code']?.toString() == "1", orElse: () => _treasuries.first);
+          if (defaultSafe.containsKey('name')) _selectedTreasury = defaultSafe['name'];
         }
         
         _isLoading = false;
@@ -167,7 +179,7 @@ class _DailyPageState extends State<DailyPage> {
       
     } catch (e) {
       setState(() => _isLoading = false);
-      print("خطأ في مزامنة البيانات الافتتاحية للفرع: $e");
+      print("خطأ في جلب البيانات الافتتاحية: $e");
     }
   }
 
@@ -472,45 +484,65 @@ class _DailyPageState extends State<DailyPage> {
   }
 
   void _handleSave() async {
+    // 1. التحقق المبدئي من الحقول الأساسية لضمان عدم إرسال بيانات فارغة
     if (_amountController.text.isEmpty || _selectedTreasury == null || _selectedCategory == null) {
       _showSnackBar("برجاء إكمال البيانات", Colors.orange);
       return;
     }
+
+    // 🌟 حماية المدخلات: تحويل آمن للمبلغ لمنع الـ FormatException في حالة الأخطاء الإملائية
+    final double? parsedAmount = double.tryParse(_amountController.text.trim());
+    if (parsedAmount == null || parsedAmount <= 0) {
+      _showSnackBar("برجاء إدخال مبلغ صحيح أكبر من الصفر", Colors.orange);
+      return;
+    }
+
     setState(() => _isLoading = true);
+
     try {
       var matchingCategory = _categories.firstWhere((c) => c['name'] == _selectedCategory, orElse: () => {});
       String currentType = matchingCategory.isNotEmpty ? (matchingCategory['type'] ?? "وارد") : "وارد";
 
+      // 🎯 آلية السيريال الذكية لمنع التداخل: 0 للإضافة الجديدة (ليقوم الفايربيز بتوليده سحابياً)، والسيريال الأصلي للتعديل
       int serialToSend = widget.editItem != null ? widget.editItem!['serial'] : 0;
+      
       String targetBranch = widget.editItem != null 
           ? (widget.editItem!['branch'] ?? "الفرع الرئيسي") 
           : (widget.selectedBranch ?? "الفرع الرئيسي");
 
-      // 🌟 التعديل هنا: أضفنا تمرير المتغير employee لكي يُحفظ اسم الموظف الفعلي بدلاً من "غير معروف"
+      // استدعاء خدمة الحفظ والمزامنة الموحدة
       await _dailyService.saveTransaction(
         companyCode: widget.companyCode,
         serial: serialToSend,
         treasury: _selectedTreasury!,
-        amount: double.parse(_amountController.text),
+        amount: parsedAmount, // تمرير الرقم الآمن المحمي من الانهيار
         statement: _statementController.text,
         category: _selectedCategory!,
         date: _dateController.text,
         type: currentType,
         branch: targetBranch,
-        employee: widget.userName ?? "غير معروف", // 👈 هذا هو السطر الجديد
+        employee: widget.userName ?? "غير معروف",
       );
 
-      if (widget.editItem != null) {
-        Navigator.pop(context, true);
-      } else {
-        _showSnackBar("تم الحفظ بنجاح وتحديث الذاكرة المحلية والشبكية التراكمية", Colors.green);
-        _amountController.clear();
-        _statementController.clear();
-        _loadInitialData();
+      if (mounted) {
+        if (widget.editItem != null) {
+          Navigator.pop(context, true);
+        } else {
+          _showSnackBar("تم الحفظ بنجاح وتحديث الذاكرة المحلية والشبكية التراكمية", Colors.green);
+          _amountController.clear();
+          _statementController.clear();
+          _loadInitialData(); // إعادة جلب الأرصدة التراكمية المحدثة فوراً
+        }
       }
     } catch (e) {
-      _showSnackBar("خطأ: $e", Colors.red);
-      setState(() => _isLoading = false);
+      if (mounted) {
+        _showSnackBar("خطأ: $e", Colors.red);
+      }
+    } finally {
+      // 🌟 تأمين الواجهة: إيقاف مؤشر التحميل دائماً سواءً نجحت العملية أو فشلت لإتاحة المحاولة مجدداً
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -598,14 +630,14 @@ class _DailyPageState extends State<DailyPage> {
         title: const Text(
           "تنبيه قبل الاستيراد", 
           style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold),
-          textAlign: TextAlign.right, // 🌟 تم التعديل هنا لتفادي التعارض
+          textAlign: TextAlign.right,
         ),
         content: const Text(
-          "يرجى التأكد من احتواء ملف الإكسيل على الأعمدة التالية بالترتيب ومن الصف الثاني:\n"
-          " ( المبلغ  -  البيان  -  التصنيف  -  التاريخ )\n\n"
-          "⚠️ سيتم تجاهل أي أسطر فارغة، وسيتم ربط الفرع والموظف الحالي تلقائياً من النظام.",
+          "يرجى التأكد من احتواء ملف الإكسيل على الأعمدة التالية في الصف الأول بأي ترتيب:\n"
+          " 🌟 ( المبلغ  -  البيان  -  التصنيف  -  التاريخ )\n\n"
+          "💡 النظام ذكي بما يكفي لتجاهل أي أعمدة إضافية أخرى بالملف والتعرف التلقائي على الحقول المطلوبة.",
           style: TextStyle(fontFamily: 'Cairo', fontSize: 14),
-          textAlign: TextAlign.right, // 🌟 وتم التعديل هنا أيضاً
+          textAlign: TextAlign.right,
         ),
         actions: [
           TextButton(
@@ -663,38 +695,60 @@ class _DailyPageState extends State<DailyPage> {
 
         for (var table in excel.tables.keys) {
           var rows = excel.tables[table]!.rows;
+          if (rows.isEmpty) continue;
+
+          // 🌟 [الترقية السحرية]: البحث عن فهارس الأعمدة ديناميكياً من الصف الأول
+          int amountIdx = -1;
+          int statementIdx = -1;
+          int categoryIdx = -1;
+          int dateIdx = -1;
+
+          var headerRow = rows[0];
+          for (int col = 0; col < headerRow.length; col++) {
+            String headerVal = headerRow[col]?.value?.toString().trim() ?? "";
+            if (headerVal == "المبلغ") amountIdx = col;
+            if (headerVal == "البيان") statementIdx = col;
+            if (headerVal == "التصنيف") categoryIdx = col;
+            if (headerVal == "التاريخ") dateIdx = col;
+          }
+
+          // إذا لم يتم العثور على الأعمدة الأساسية نطلق تنبيهاً للمستخدم
+          if (amountIdx == -1 || statementIdx == -1 || categoryIdx == -1 || dateIdx == -1) {
+            throw "الملف لا يحتوي على الأعمدة الأساسية المطلوبة: (المبلغ، البيان، التصنيف، التاريخ). يرجى مراجعة عناوين الأعمدة بالصف الأول.";
+          }
+
           // نبدأ من i = 1 لتخطي صف العناوين الرئيسي والبدء بالبيانات الفعلية
           for (int i = 1; i < rows.length; i++) {
             var row = rows[i];
             
-            // جدار حماية: إذا كان السطر فارغاً أو خانة المبلغ فارغة يتم تخطي السطر فوراً
-            if (row.isEmpty || row[0] == null || row[0]?.value == null) continue;
+            // جدار حماية: إذا كان السطر فارغاً أو خانة المبلغ خارج النطاق أو فارغة يتم تخطي السطر فوراً
+            if (row.isEmpty || amountIdx >= row.length || row[amountIdx] == null || row[amountIdx]?.value == null) continue;
 
-            // 1. قراءة المبلغ والتأكد من أنه رقم صالح وغير صفري
-            double amount = double.tryParse(row[0]!.value.toString()) ?? 0.0;
+            // 1. قراءة المبلغ والتأكد من أنه رقم صالح وغير صفري بناءً على الفهرس الديناميكي
+            double amount = double.tryParse(row[amountIdx]!.value.toString().trim()) ?? 0.0;
             if (amount == 0.0) continue; 
 
-            // 2. قراءة البيان (إذا كان فارغاً نضع نصاً فارغاً)
-            String statement = (row.length > 1 && row[1] != null && row[1]?.value != null) 
-                ? row[1]!.value.toString() 
+            // 2. قراءة البيان بأمان
+            String statement = (statementIdx < row.length && row[statementIdx] != null && row[statementIdx]?.value != null) 
+                ? row[statementIdx]!.value.toString().trim() 
                 : "";
 
-            // 3. قراءة التصنيف
-            String categoryStr = (row.length > 2 && row[2] != null && row[2]?.value != null) 
-                ? row[2]!.value.toString() 
+            // 3. قراءة التصنيف بأمان
+            String categoryStr = (categoryIdx < row.length && row[categoryIdx] != null && row[categoryIdx]?.value != null) 
+                ? row[categoryIdx]!.value.toString().trim() 
                 : "عام";
 
-            // 4. قراءة التاريخ وتنسيقه
-            String rawDate = (row.length > 3 && row[3] != null && row[3]?.value != null) 
-                ? row[3]!.value.toString() 
+            // 4. قراءة التاريخ وتنسيقه بأمان
+            String rawDate = (dateIdx < row.length && row[dateIdx] != null && row[dateIdx]?.value != null) 
+                ? row[dateIdx]!.value.toString().trim() 
                 : DateFormat('yyyy-MM-dd').format(DateTime.now());
             String formattedDate = rawDate.length >= 10 ? rawDate.substring(0, 10) : rawDate;
             
             // تحديد نوع الحركة (وارد / صادر) بناءً على جدول التصنيفات الفعلي بالبرنامج
-            var match = _categories.firstWhere((c) => c['name'] == categoryStr, orElse: () => {});
+            var match = _categories.firstWhere((c) => c['name']?.toString().trim() == categoryStr, orElse: () => {});
             String calculatedType = match.isNotEmpty ? (match['type'] ?? "وارد") : "وارد";
 
-            // 🌟 السحر هنا: تحديد الخزينة ذكياً بناءً على اسم التصنيف
+            // تحديد الخزينة ذكياً بناءً على اسم التصنيف
             String targetTreasury = cashTreasuryName; // الافتراضي نقدي (كود 1)
             if (categoryStr == "فيزا") {
               targetTreasury = visaTreasuryName; // فيزا (كود 2)
@@ -710,8 +764,8 @@ class _DailyPageState extends State<DailyPage> {
               category: categoryStr,
               date: formattedDate,
               type: calculatedType,
-              branch: widget.selectedBranch ?? "الفرع الرئيسي", // يُسحب من الـ Widget
-              employee: widget.userName ?? "غير معروف", // يُسحب من الـ Widget لتوثيق اسم الموظف المستورد
+              branch: widget.selectedBranch ?? "الفرع الرئيسي", 
+              employee: widget.userName ?? "غير معروف", 
             );
           }
         }

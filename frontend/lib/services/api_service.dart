@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:firebase_auth/firebase_auth.dart';
 import '../core/constants.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 
 class ApiService {
   final String baseUrl = ApiConstants.baseUrl;
@@ -77,12 +78,31 @@ class ApiService {
   }
 
   // جلب قائمة الفروع دايناميك بدون تأخير بناءً على الـ baseUrl المركزي
+  // جلب قائمة الفروع (من Hive أولاً لتوفير الإنترنت والقراءات)
   Future<List<String>> getBranchesList(String companyCode) async {
     try {
+      final Box codingBox = Hive.box('coding_box');
+      final String localKey = "${companyCode}_branches";
+
+      // 🌟 البحث في الذاكرة المحلية أولاً
+      if (codingBox.containsKey(localKey)) {
+        final dynamic rawData = codingBox.get(localKey);
+        if (rawData is List) {
+          List<String> fetchedBranches = ["كل الفروع"];
+          for (var item in rawData) {
+            if (item is Map && item['name'] != null) {
+              fetchedBranches.add(item['name'].toString());
+            }
+          }
+          return fetchedBranches; // إرجاع فوري بدون تحميل
+        }
+      }
+
+      // لو الـ Hive فاضي (أول تشغيل مثلاً)، يجيب من السيرفر
       final response = await http.get(
         Uri.parse('$baseUrl/coding/list/$companyCode/branches'),
         headers: {'Content-Type': 'application/json'},
-      ).timeout(const Duration(seconds: 3)); // لو السيرفر واقع ميعلقش البرنامج أكتر من 3 ثواني
+      ).timeout(const Duration(seconds: 3));
 
       if (response.statusCode == 200) {
         List<dynamic> data = jsonDecode(response.body);
@@ -96,7 +116,7 @@ class ApiService {
       }
       return ["كل الفروع"];
     } catch (e) {
-      return ["كل الفروع"]; // في حالة حدوث أي خطأ أو طوارئ يرجع الخيار الافتراضي فوراً
+      return ["كل الفروع"]; 
     }
   }
 

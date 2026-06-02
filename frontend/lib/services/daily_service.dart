@@ -225,6 +225,9 @@ class DailyService {
     }
   }
 
+
+
+  // عند الحذف
   Future<void> deleteTransaction(String companyCode, int serial, String branch) async {
     try {
       String encodedBranch = Uri.encodeComponent(branch);
@@ -233,9 +236,16 @@ class DailyService {
       );
 
       if (response.statusCode == 200) {
+        // التعديل المحلي المباشر فوراً لضمان السرعة للمستخدم الحالي
         String safeBranch = branch.replaceAll(" ", "_").replaceAll("/", "-");
-        await _transactionBox.delete("${safeBranch}_$serial");
-        await syncCacheFromServer(companyCode, serial);
+        String docId = "${safeBranch}_$serial";
+        
+        await _transactionBox.delete(docId); // حذف محلي فوراً
+        
+        // 🔥 تم حذف سطر syncCacheFromServer(companyCode, serial) لمنع القراءة الزائدة من السيرفر!
+        
+        // تحديث الأرصدة المحلية فوراً لتسمع في الواجهات بناءً على البيانات الجديدة في الـ Hive
+        await getDailySummaryLocal(companyCode); 
       } else {
         throw 'فشل حذف الحركة من السيرفر';
       }

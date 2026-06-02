@@ -554,7 +554,7 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
   }
 
   void _editTransaction(Map<String, dynamic> item) async {
-    final result = await Navigator.push(
+    await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => DailyPage(
@@ -566,9 +566,8 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
       ),
     );
 
-    if (result == true) {
-      _fetchData();
-    }
+    // 🔄 تحديث فوري ومضمون بمجرد العودة للشاشة في كل الحالات (سواء رجع بسهم الهاتف أو بالضغط على حفظ)
+    _fetchData();
   }
 
   void _showOptionsModal(Map<String, dynamic> item) {
@@ -619,20 +618,26 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
                 color: Colors.white70, fontFamily: 'Cairo', fontSize: 13)),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text("إلغاء",
-                  style: TextStyle(fontFamily: 'Cairo', fontSize: 13))),
-          TextButton(
             onPressed: () async {
-              // 🌟 إضافة الفرع في دالة الحذف
-              await _dailyService.deleteTransaction(
-                  widget.companyCode, item['serial'] ?? 0, item['branch'] ?? "الفرع الرئيسي");
-              Navigator.pop(context);
-              _fetchData();
+              try {
+                // 1. استدعاء دالة الحذف من السيرفر والـ Hive محلياً
+                await _dailyService.deleteTransaction(
+                    widget.companyCode, item['serial'] ?? 0, item['branch'] ?? "الفرع الرئيسي");
+                
+                if (mounted) {
+                  Navigator.pop(context); // إغلاق صندوق التأكيد بعد نجاح العملية
+                  _showSnackBar("تم حذف الإذن بنجاح وتحديث الأرصدة محلياً", Colors.green);
+                  _fetchData(); // إعادة تحديث القائمة المفتوحة أمام المستخدم فوراً
+                }
+              } catch (e) {
+                if (mounted) {
+                  Navigator.pop(context); // إغلاق الصندوق حتى لا يعلق التطبيق
+                  _showSnackBar(e.toString(), Colors.red); // عرض نص الخطأ القادم من السيرفر أو الخدمة
+                }
+              }
             },
             child: const Text("حذف",
-                style: TextStyle(
-                    color: Colors.red, fontFamily: 'Cairo', fontSize: 13)),
+                style: TextStyle(color: Colors.red, fontFamily: 'Cairo', fontSize: 13)),
           ),
         ],
       ),
