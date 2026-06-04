@@ -43,6 +43,10 @@ dependencies:
   hive: ^2.2.3              # المكتبة الأساسية للـ Hive
   hive_flutter: ^1.1.0
 
+  share_plus: ^7.2.1     # لفتح قائمة المشاركة الأصلية للهاتف (واتساب، إلخ)
+  pdf: ^3.10.8       # لإنشاء وتنسيق صفحات الـ PDF برمجياً
+  printing: ^5.11.1  # بتساعد في تحويل وتصدير الـ PDF ومشاركته مع النظام
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

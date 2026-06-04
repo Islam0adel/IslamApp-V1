@@ -122,14 +122,20 @@ class DailyService {
             'branch': branch,
           };
 
-          // استبدل هذا السطر: await _transactionBox.put(assignedSerial, transactionData);
-          // بهذا الكود:
+          // ... الكود اللي فوق زي ما هو ...
+          
           String safeBranch = branch.replaceAll(" ", "_").replaceAll("/", "-");
           String uniqueId = "${safeBranch}_$assignedSerial";
+          
+          // تحديث الإذن محلياً في الـ Hive
           await _transactionBox.put(uniqueId, transactionData);
 
-          // تشغيل المزامنة التلقائية التراكمية
-          await syncCacheFromServer(companyCode, assignedSerial);
+          // 🌟 التعديل السحري هنا:
+          // هنمنع الدالة دي تشتغل لو بنعدل إذن قديم عشان متسحبش كل الأذون اللي بعده من الفايربيز
+          if (serial == 0) {
+            // تشغيل المزامنة التلقائية التراكمية في حالة الإضافة الجديدة فقط
+            await syncCacheFromServer(companyCode, assignedSerial);
+          }
 
           return {"success": true, "serial": assignedSerial};
         }

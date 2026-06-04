@@ -68,3 +68,7 @@ uvicorn app.main:app --reload
 تشغيل علي اي متصفح
 flutter run -d web-server
 
+ـــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــ
+مسح ملفات التخزين من علي الكمبيوتر (خاص بالتطوير vscode)
+من التيرمينال اكتب : 
+rmdir /s /q "%userprofile%\.edge_web_profile"

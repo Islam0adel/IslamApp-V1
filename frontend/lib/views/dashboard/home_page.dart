@@ -381,7 +381,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             MaterialPageRoute(
               builder: (c) => ReportsPage(
                 companyCode: widget.companyCode,
-                // selectedBranch: _selectedBranch,
+                selectedBranch: _selectedBranch,
                 
               ),
             ),

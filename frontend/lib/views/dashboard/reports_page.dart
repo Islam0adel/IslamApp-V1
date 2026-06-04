@@ -1,34 +1,48 @@
+import 'dart:ui' as ui; 
+import 'package:flutter/foundation.dart' show kIsWeb; // 🌟 للتحقق إذا كان البرنامج يعمل على الويب
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:excel/excel.dart' as excel_lib;
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:universal_html/html.dart' as html; // 🌟 المكتبة لتحميل الملفات على المتصفحات
 import '../../views/widgets/glass_card.dart';
 
 class ReportsPage extends StatefulWidget {
   final String companyCode;
+  final String? selectedBranch; 
   
-  const ReportsPage({super.key, required this.companyCode});
+  const ReportsPage({super.key, required this.companyCode, this.selectedBranch});
 
   @override
   State<ReportsPage> createState() => _ReportsPageState();
 }
 
 class _ReportsPageState extends State<ReportsPage> {
-  // متغيرات التواريخ
+  final GlobalKey _reportCaptureKey = GlobalKey();
+
   DateTime _fromDate = DateTime(DateTime.now().year, DateTime.now().month, 1);
   DateTime _toDate = DateTime.now();
-  
-  // نوع التقرير: 1 = مبيعات، 2 = إيراد ومصاريف
   int _selectedReportType = 1;
 
-  // جلب البيانات من Hive
   List<Map<dynamic, dynamic>> _getFilteredTransactions() {
     final box = Hive.box('daily_transactions_box');
     return box.values.where((tx) {
       if (tx['company_code'] != widget.companyCode) return false;
       
+      if (widget.selectedBranch != null && 
+          widget.selectedBranch != "كل الفروع" && 
+          widget.selectedBranch != "الكل" && 
+          widget.selectedBranch != "") {
+        if (tx['branch'] != widget.selectedBranch) return false;
+      }
+      
       try {
         DateTime txDate = DateTime.parse(tx['date'].toString().substring(0, 10));
-        // تجاهل الوقت في المقارنة
         DateTime from = DateTime(_fromDate.year, _fromDate.month, _fromDate.day);
         DateTime to = DateTime(_toDate.year, _toDate.month, _toDate.day);
         
@@ -40,7 +54,232 @@ class _ReportsPageState extends State<ReportsPage> {
     }).map((e) => e as Map<dynamic, dynamic>).toList();
   }
 
-  // اختيار التاريخ
+  // ===================== 1. تصدير ومشاركة EXCEL (يدعم الويب والموبايل) =====================
+  Future<void> _shareAsExcel() async {
+    final transactions = _getFilteredTransactions();
+    if (transactions.isEmpty) return _showEmptySheetRow();
+
+    try {
+      var excel = excel_lib.Excel.createExcel();
+      String defaultSheet = excel.tables.keys.first;
+      excel.rename(defaultSheet, 'التقرير المفلتر');
+      excel_lib.Sheet sheetObject = excel['التقرير المفلتر'];
+
+      String branchName = widget.selectedBranch ?? 'كل الفروع';
+      String dateStr = "من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}";
+
+      sheetObject.appendRow([excel_lib.TextCellValue(_selectedReportType == 1 ? "تقرير المبيعات المفلتر" : "تقرير فترة إيراد ومصاريف")]);
+      sheetObject.appendRow([excel_lib.TextCellValue("الفرع: $branchName")]);
+      sheetObject.appendRow([excel_lib.TextCellValue("الفترة: $dateStr")]);
+      sheetObject.appendRow([]);
+
+      var fileBytes = excel.encode();
+      if (fileBytes == null) return;
+
+      String fileName = "تقرير_${DateTime.now().millisecondsSinceEpoch}.xlsx";
+
+      if (kIsWeb) {
+        // 🌐 تحضير التنزيل الفوري للمتصفحات (سفاري، كروم، إيدج)
+        final blob = html.Blob([fileBytes], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        final url = html.Url.createObjectUrlFromBlob(blob);
+        html.AnchorElement(href: url)
+          ..setAttribute("download", fileName)
+          ..click();
+        html.Url.revokeObjectUrl(url);
+      } else {
+        // 📱 فتح شاشة المشاركة الأصلية للهواتف الذكية
+        final xFile = XFile.fromData(
+          Uint8List.fromList(fileBytes),
+          mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          name: fileName,
+        );
+        await Share.shareXFiles([xFile], text: "مرفق لكم تقرير إكسيل");
+      }
+    } catch (e) {
+      _showErrorSnackBar(e.toString());
+    }
+  }
+
+  // ===================== 2. تصدير ومشاركة PDF ملون (يدعم الويب والموبايل) =====================
+  Future<void> _shareAsPdf() async {
+    final transactions = _getFilteredTransactions();
+    if (transactions.isEmpty) return _showEmptySheetRow();
+
+    try {
+      final pdf = pw.Document();
+      var arabicFont = pw.Font.ttf(await rootBundle.load("assets/fonts/Cairo-Regular.ttf"));
+
+      String branchName = widget.selectedBranch ?? 'كل الفروع';
+      String dateStr = "من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}";
+      final primaryColor = PdfColor.fromHex('#050F4C');
+      final accentColor = PdfColor.fromHex('#3062F8');
+
+      pdf.addPage(
+        pw.MultiPage(
+          theme: pw.ThemeData.withFont(base: arabicFont),
+          textDirection: pw.TextDirection.rtl,
+          build: (pw.Context context) {
+            return [
+              pw.Container(
+                width: double.infinity,
+                padding: const pw.EdgeInsets.all(15),
+                decoration: pw.BoxDecoration(
+                  color: primaryColor,
+                  borderRadius: pw.BorderRadius.circular(10),
+                ),
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Text(
+                      _selectedReportType == 1 ? "تقرير المبيعات التفصيلي" : "تقرير الأداء المالي (الفترة)",
+                      style: pw.TextStyle(font: arabicFont, fontSize: 20, color: PdfColors.amber, fontWeight: pw.FontWeight.bold),
+                    ),
+                    pw.SizedBox(height: 5),
+                    pw.Text("الفرع الحالي: $branchName", style: pw.TextStyle(font: arabicFont, fontSize: 13, color: PdfColors.white)),
+                    pw.Text("الفترة الزمنية: $dateStr", style: pw.TextStyle(font: arabicFont, fontSize: 11, color: const PdfColor(1, 1, 1, 0.8))),
+                  ],
+                ),
+              ),
+              pw.SizedBox(height: 20),
+              _selectedReportType == 1 
+                ? _buildPdfSalesReportStructure(transactions, arabicFont, primaryColor)
+                : _buildPdfFinanceReportStructure(transactions, arabicFont, primaryColor, accentColor),
+            ];
+          },
+        ),
+      );
+
+      final pdfBytes = await pdf.save();
+      String fileName = "تقرير_${DateTime.now().millisecondsSinceEpoch}.pdf";
+
+      if (kIsWeb) {
+        // 🌐 تنزيل ملف الـ PDF مباشرة على الكمبيوتر/المتصفح
+        final blob = html.Blob([pdfBytes], 'application/pdf');
+        final url = html.Url.createObjectUrlFromBlob(blob);
+        html.AnchorElement(href: url)
+          ..setAttribute("download", fileName)
+          ..click();
+        html.Url.revokeObjectUrl(url);
+      } else {
+        // 📱 مشاركة الـ PDF لهواتف المحمول مباشرة
+        final xFile = XFile.fromData(pdfBytes, mimeType: 'application/pdf', name: fileName);
+        await Share.shareXFiles([xFile], text: "مرفق لكم تقرير PDF ملون");
+      }
+    } catch (e) {
+      _showErrorSnackBar("تأكد من إعداد ملف الخط بشكل صحيح: $e");
+    }
+  }
+
+  // ===================== 3. تصدير ومشاركة صورة كاملة للتقرير JPG (يدعم الويب والموبايل) =====================
+  Future<void> _shareAsImage() async {
+    try {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(child: CircularProgressIndicator(color: Colors.cyanAccent)),
+      );
+
+      RenderRepaintBoundary boundary = _reportCaptureKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
+      ui.Image image = await boundary.toImage(pixelRatio: 3.0);
+      ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      
+      if (mounted) Navigator.pop(context); 
+
+      if (byteData == null) return;
+      Uint8List pngBytes = byteData.buffer.asUint8List();
+      String fileName = "تقرير_مصور_${DateTime.now().millisecondsSinceEpoch}.png";
+
+      if (kIsWeb) {
+        // 🌐 تنزيل الصورة الكاملة الممتدة للتقرير على المتصفح فورا
+        final blob = html.Blob([pngBytes], 'image/png');
+        final url = html.Url.createObjectUrlFromBlob(blob);
+        html.AnchorElement(href: url)
+          ..setAttribute("download", fileName)
+          ..click();
+        html.Url.revokeObjectUrl(url);
+      } else {
+        // 📱 مشاركة الصورة لتطبيقات الموبايل
+        final xFile = XFile.fromData(pngBytes, mimeType: 'image/png', name: fileName);
+        await Share.shareXFiles([xFile], text: "مرفق لقطة صورة للتقرير");
+      }
+    } catch (e) {
+      if (mounted) Navigator.pop(context);
+      _showErrorSnackBar("فشل التقاط الصورة: $e");
+    }
+  }
+
+  // ===================== واجهة قائمة الخيارات السفلية وبقية الدوال =====================
+  void _showShareBottomSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color.fromARGB(255, 11, 20, 78),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  kIsWeb ? "تحميل التقرير الحالي على جهازك" : "مشاركة التقرير عبر تطبيقات الهاتف",
+                  style: const TextStyle(fontFamily: 'Cairo', color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 20),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _buildShareOptionItem(
+                      icon: Icons.table_chart, 
+                      color: Colors.greenAccent, 
+                      label: "ملف Excel", 
+                      onTap: () { Navigator.pop(context); _shareAsExcel(); }
+                    ),
+                    _buildShareOptionItem(
+                      icon: Icons.picture_as_pdf, 
+                      color: Colors.redAccent, 
+                      label: "تقرير PDF ملون", 
+                      onTap: () { Navigator.pop(context); _shareAsPdf(); }
+                    ),
+                    _buildShareOptionItem(
+                      icon: Icons.image, 
+                      color: Colors.cyanAccent, 
+                      label: "حفظ كـ صورة", 
+                      onTap: () { Navigator.pop(context); _shareAsImage(); }
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildShareOptionItem({required IconData icon, required Color color, required String label, required VoidCallback onTap}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(15),
+      child: Container(
+        width: 100,
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(color: color.withOpacity(0.3)),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, color: color, size: 32),
+            const SizedBox(height: 8),
+            Text(label, style: const TextStyle(color: Colors.white, fontSize: 12, fontFamily: 'Cairo', fontWeight: FontWeight.w500)),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _selectDate(BuildContext context, bool isFrom) async {
     final DateTime? picked = await showDatePicker(
       context: context,
@@ -50,8 +289,8 @@ class _ReportsPageState extends State<ReportsPage> {
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
-            colorScheme: ColorScheme.dark(
-              primary: Theme.of(context).primaryColor,
+            colorScheme: const ColorScheme.dark(
+              primary: Colors.blueAccent,
               onPrimary: Colors.white,
               surface: Color.fromARGB(255, 30, 30, 30),
               onSurface: Colors.white,
@@ -78,16 +317,48 @@ class _ReportsPageState extends State<ReportsPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: Color.fromARGB(149, 5, 15, 76),
+        backgroundColor: const Color.fromARGB(149, 5, 15, 76),
         elevation: 0,
-        title: const Text("التقارير", style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 8.0),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.cyanAccent.withOpacity(0.4)),
+              ),
+              child: IconButton(
+                icon: const Icon(Icons.share, color: Colors.cyanAccent, size: 22),
+                onPressed: _showShareBottomSheet,
+              ),
+            ),
+          ),
+        ],
+        title: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text("التقارير", style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold, fontSize: 16)),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.cyanAccent.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                "فرع: ${widget.selectedBranch == null || widget.selectedBranch == 'الكل' || widget.selectedBranch == 'كل الفروع' || widget.selectedBranch == '' ? 'كل الفروع' : widget.selectedBranch}",
+                style: const TextStyle(fontFamily: 'Cairo', fontSize: 12, color: Colors.cyanAccent),
+              ),
+            ),
+          ],
+        ),
         centerTitle: true,
       ),
       extendBodyBehindAppBar: true,
       body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [Theme.of(context).scaffoldBackgroundColor, Color.fromARGB(238, 48, 98, 248)],
+            colors: [Theme.of(context).scaffoldBackgroundColor, const Color.fromARGB(238, 48, 98, 248)],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
           ),
@@ -97,20 +368,18 @@ class _ReportsPageState extends State<ReportsPage> {
             padding: const EdgeInsets.all(16.0),
             child: Column(
               children: [
-                // 1. فلتر التواريخ
                 _buildDateFilters(),
                 const SizedBox(height: 15),
-                
-                // 2. أزرار اختيار نوع التقرير
                 _buildReportTypeSelector(),
                 const SizedBox(height: 20),
-                
-                // 3. عرض التقرير
                 Expanded(
-                  child: GlassCard(
-                    child: _selectedReportType == 1 
-                        ? _buildSalesReport() 
-                        : _buildIncomeExpenseReport(),
+                  child: RepaintBoundary(
+                    key: _reportCaptureKey,
+                    child: GlassCard(
+                      child: _selectedReportType == 1 
+                          ? _buildSalesReport() 
+                          : _buildIncomeExpenseReport(),
+                    ),
                   ),
                 ),
               ],
@@ -121,7 +390,86 @@ class _ReportsPageState extends State<ReportsPage> {
     );
   }
 
-  // ===================== عناصر واجهة المستخدم =====================
+  pw.Widget _buildPdfSalesReportStructure(List<Map<dynamic, dynamic>> transactions, pw.Font font, PdfColor primaryColor) {
+    Map<String, Map<String, double>> dailyData = {};
+    Set<String> allCategories = {};
+    for (var tx in transactions) {
+      if (tx['type'] == 'وارد') {
+        String date = tx['date'].toString().substring(0, 10);
+        String category = tx['category'] ?? 'عام';
+        double amount = double.tryParse(tx['amount'].toString()) ?? 0.0;
+        allCategories.add(category);
+        dailyData.putIfAbsent(date, () => {'total': 0.0});
+        dailyData[date]![category] = (dailyData[date]![category] ?? 0.0) + amount;
+        dailyData[date]!['total'] = dailyData[date]!['total']! + amount;
+      }
+    }
+    List<String> sortedDates = dailyData.keys.toList()..sort();
+    List<String> columns = allCategories.toList()..sort();
+
+    return pw.Table(
+      border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
+      children: [
+        pw.TableRow(
+          decoration: pw.BoxDecoration(color: primaryColor),
+          children: [
+            pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text("التاريخ", style: pw.TextStyle(font: font, color: PdfColors.white, fontWeight: pw.FontWeight.bold))),
+            ...columns.map((c) => pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text(c, style: pw.TextStyle(font: font, color: PdfColors.white)))),
+            pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text("الإجمالي", style: pw.TextStyle(font: font, color: PdfColors.amber, fontWeight: pw.FontWeight.bold))),
+          ]
+        ),
+        ...sortedDates.map((date) => pw.TableRow(
+          children: [
+            pw.Padding(padding: const pw.EdgeInsets.all(5), child: pw.Text(date)),
+            ...columns.map((c) => pw.Padding(padding: const pw.EdgeInsets.all(5), child: pw.Text((dailyData[date]![c] ?? 0).toStringAsFixed(2)))),
+            pw.Padding(padding: const pw.EdgeInsets.all(5), child: pw.Text(dailyData[date]!['total']!.toStringAsFixed(2), style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
+          ]
+        ))
+      ]
+    );
+  }
+
+  pw.Widget _buildPdfFinanceReportStructure(List<Map<dynamic, dynamic>> transactions, pw.Font font, PdfColor primaryColor, PdfColor accentColor) {
+    double totalIncome = 0; double totalExpenses = 0; double totalGoods = 0;
+    for (var tx in transactions) {
+      double amount = double.tryParse(tx['amount'].toString()) ?? 0.0;
+      if (tx['type'] == 'وارد') { totalIncome += amount; } 
+      else if (tx['type'] == 'صادر') {
+        totalExpenses += amount;
+        if (tx['category'] == 'بضاعة') totalGoods += amount;
+      }
+    }
+    return pw.Container(
+      padding: const pw.EdgeInsets.all(12),
+      decoration: pw.BoxDecoration(color: PdfColors.grey100, borderRadius: pw.BorderRadius.circular(8)),
+      child: pw.Column(
+        children: [
+          _pdfSummaryRow("إجمالي الإيرادات الكلية:", totalIncome, PdfColors.green, font),
+          pw.Divider(color: PdfColors.grey300),
+          _pdfSummaryRow("إجمالي المصروفات التشغيلية:", totalExpenses - totalGoods, PdfColors.orange, font),
+          _pdfSummaryRow("إجمالي قيمة البضاعة المشتراة:", totalGoods, PdfColors.orange, font),
+          pw.Divider(color: PdfColors.grey400),
+          _pdfSummaryRow("صافي الرصيد المتبقي النهائي:", totalIncome - totalExpenses, (totalIncome - totalExpenses) >= 0 ? PdfColors.blue : PdfColors.red, font, isBold: true),
+        ]
+      )
+    );
+  }
+
+  pw.Widget _pdfSummaryRow(String label, double val, PdfColor col, pw.Font font, {bool isBold = false}) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.symmetric(vertical: 4),
+      child: pw.Row(
+        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+        children: [
+          pw.Text(label, style: pw.TextStyle(font: font, fontSize: isBold ? 14 : 12, fontWeight: isBold ? pw.FontWeight.bold : pw.FontWeight.normal)),
+          pw.Text(val.toStringAsFixed(2), style: pw.TextStyle(font: font, fontSize: isBold ? 15 : 13, color: col, fontWeight: pw.FontWeight.bold)),
+        ]
+      )
+    );
+  }
+
+  void _showEmptySheetRow() => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("لا توجد بيانات للفترة المحددة لتصديرها")));
+  void _showErrorSnackBar(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m, textAlign: TextAlign.center), backgroundColor: Colors.red));
 
   Widget _buildDateFilters() {
     return Row(
@@ -185,14 +533,10 @@ class _ReportsPageState extends State<ReportsPage> {
     );
   }
 
-  // ===================== تقرير المبيعات =====================
   Widget _buildSalesReport() {
     final transactions = _getFilteredTransactions();
-    
-    // تجميع البيانات: { '2023-05-01': { 'نقدي': 100, 'فيزا': 50, 'total': 150 } }
     Map<String, Map<String, double>> dailyData = {};
-    Set<String> allCategories = {}; // لمعرفة الأعمدة المطلوبة
-    
+    Set<String> allCategories = {};
     double grandTotal = 0;
     Map<String, double> categoryTotals = {};
 
@@ -201,13 +545,10 @@ class _ReportsPageState extends State<ReportsPage> {
         String date = tx['date'].toString().substring(0, 10);
         String category = tx['category'] ?? 'عام';
         double amount = double.tryParse(tx['amount'].toString()) ?? 0.0;
-
         allCategories.add(category);
-        
         dailyData.putIfAbsent(date, () => {'total': 0.0});
         dailyData[date]![category] = (dailyData[date]![category] ?? 0.0) + amount;
         dailyData[date]!['total'] = dailyData[date]!['total']! + amount;
-
         categoryTotals[category] = (categoryTotals[category] ?? 0.0) + amount;
         grandTotal += amount;
       }
@@ -249,7 +590,6 @@ class _ReportsPageState extends State<ReportsPage> {
           ),
         ),
         const Divider(color: Colors.white24),
-        // ملخص الشهر
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(10)),
@@ -271,20 +611,13 @@ class _ReportsPageState extends State<ReportsPage> {
     );
   }
 
-  // ===================== تقرير إيراد ومصاريف =====================
   Widget _buildIncomeExpenseReport() {
     final transactions = _getFilteredTransactions();
-    
-    double totalIncome = 0;
-    Map<String, double> safeIncomes = {}; // تجميع حسب الخزينة (الفيزا، الكاش، الخ)
-    
-    double totalExpenses = 0;
-    double totalGoods = 0; // البضاعة
-    Map<String, double> expenseCategories = {};
+    double totalIncome = 0; Map<String, double> safeIncomes = {};
+    double totalExpenses = 0; double totalGoods = 0; Map<String, double> expenseCategories = {};
 
     for (var tx in transactions) {
       double amount = double.tryParse(tx['amount'].toString()) ?? 0.0;
-      
       if (tx['type'] == 'وارد') {
         totalIncome += amount;
         String treasury = tx['treasury'] ?? 'غير محدد';
@@ -293,30 +626,21 @@ class _ReportsPageState extends State<ReportsPage> {
         String category = tx['category'] ?? 'عام';
         totalExpenses += amount;
         expenseCategories[category] = (expenseCategories[category] ?? 0.0) + amount;
-        if (category == 'بضاعة') {
-          totalGoods += amount;
-        }
+        if (category == 'بضاعة') totalGoods += amount;
       }
     }
 
-    // الحسبة المحاسبية المحدثة
-    double netExpenses = totalExpenses - totalGoods; // مصاريف بدون بضاعة
-    double totalExpensesWithGoods = totalExpenses;   // المصاريف الشاملة (بما فيها البضاعة)
-    double finalBalance = totalIncome - totalExpensesWithGoods; // الرصيد المتبقي = الإيراد - المصاريف الشاملة
+    double netExpenses = totalExpenses - totalGoods;
+    double finalBalance = totalIncome - totalExpenses;
 
     return SingleChildScrollView(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // 1. قسم الإيرادات (الخزائن)
           _buildSummarySection("اجمالي الايراد", safeIncomes, totalIncome, Colors.green),
           const SizedBox(height: 15),
-          
-          // 2. قسم المصروفات
           _buildSummarySection("المصروفات", expenseCategories, totalExpenses, Colors.redAccent),
           const SizedBox(height: 15),
-          
-          // 3. الخلاصة المعدلة بالتصميم الجديد
           Container(
             padding: const EdgeInsets.all(15),
             decoration: BoxDecoration(
@@ -326,23 +650,11 @@ class _ReportsPageState extends State<ReportsPage> {
             ),
             child: Column(
               children: [
-                // أ. بيان للاطلاع فقط (المصاريف التشغيلية العادية)
                 _summaryRow("إجمالي المصروفات (بدون البضاعة):", netExpenses, Colors.orangeAccent),
-                
                 const Divider(color: Colors.white24),
-                
-                // ب. البيان الجديد: إجمالي المصاريف بالبضاعة وتدخل في الحسبة
-                _summaryRow("إجمالي المصروفات:", totalExpensesWithGoods, Colors.redAccent.shade100),
-                
+                _summaryRow("إجمالي المصروفات:", totalExpenses, Colors.redAccent.shade100),
                 const Divider(color: Colors.white24),
-                
-                // ج. الرصيد المتبقي النهائي الصحيح
-                _summaryRow(
-                  "الرصيد المتبقي:", 
-                  finalBalance, 
-                  finalBalance >= 0 ? Colors.greenAccent : Colors.redAccent, 
-                  isBold: true,
-                ),
+                _summaryRow("الرصيد المتبقي:", finalBalance, finalBalance >= 0 ? Colors.greenAccent : Colors.redAccent, isBold: true),
               ],
             ),
           )
