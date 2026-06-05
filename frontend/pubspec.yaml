@@ -46,6 +46,7 @@ dependencies:
   share_plus: ^7.2.1     # لفتح قائمة المشاركة الأصلية للهاتف (واتساب، إلخ)
   pdf: ^3.10.8       # لإنشاء وتنسيق صفحات الـ PDF برمجياً
   printing: ^5.11.1  # بتساعد في تحويل وتصدير الـ PDF ومشاركته مع النظام
+  # screenshot: ^1.3.0
 
 dev_dependencies:
   flutter_test:
@@ -68,14 +69,16 @@ flutter:
   assets:
     - assets/images/
     - assets/images/app_icon.png
+    - assets/fonts/
+    - assets/fonts/Cairo-Regular.ttf
 
-  # # تعريف خط Cairo
-  # fonts:
-  #   - family: Cairo
-  #     fonts:
-  #       - asset: assets/fonts/Cairo-Regular.ttf
-  #       - asset: assets/fonts/Cairo-Bold.ttf
-  #         weight: 700
+  # تعريف خط Cairo
+  fonts:
+    - family: Cairo
+      fonts:
+        - asset: assets/fonts/Cairo-Regular.ttf
+        - asset: assets/fonts/Cairo-Bold.ttf
+          weight: 700
 
 # إعدادات أيقونة البرنامج
 flutter_launcher_icons:
