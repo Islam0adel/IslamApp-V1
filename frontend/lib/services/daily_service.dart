@@ -10,7 +10,7 @@ class DailyService {
   final Box _transactionBox = Hive.box('daily_transactions_box');
 
   // 1. جلب الأرصدة التراكمية من الخزائن المتكودة محلياً في الـ Hive
-  Future<Map<String, dynamic>> getDailySummaryLocal(String companyCode, {String? branch}) async {
+  Future<Map<String, dynamic>> getDailySummaryLocal(String companyCode, {String? branchCode}) async {
     try {
       final Box codingBox = Hive.box('coding_box');
       final String localKey = "${companyCode}_safes";
@@ -42,7 +42,8 @@ class DailyService {
       for (var tx in allTx) {
         if (tx['company_code'] == companyCode) {
           
-          if (branch != null && branch != "كل الفروع" && tx['branch'] != branch) {
+          // 👈 تم التعديل: الفلترة باستخدام branch_code وتجاهل كلمات التحديد العام
+          if (branchCode != null && !['الكل', 'كل الفروع', 'all', ''].contains(branchCode) && tx['branch_code'] != branchCode) {
             continue; 
           }
 
@@ -84,7 +85,7 @@ class DailyService {
     required String date,
     required String type,
     String? employee,
-    required String branch,
+    required String branchCode, // 👈 تم التعديل هنا
   }) async {
     try {
       final response = await http.post(
@@ -100,7 +101,7 @@ class DailyService {
           'date': date,
           'type': type,
           'employee': employee ?? "غير محدد",
-          'branch': branch,
+          'branch_code': branchCode, // 👈 تم التعديل هنا
         }),
       );
 
@@ -119,19 +120,16 @@ class DailyService {
             'date': date,
             'type': type,
             'employee': employee ?? "غير محدد",
-            'branch': branch,
+            'branch_code': branchCode, // 👈 تم التعديل هنا
           };
-
-          // ... الكود اللي فوق زي ما هو ...
           
-          String safeBranch = branch.replaceAll(" ", "_").replaceAll("/", "-");
-          String uniqueId = "${safeBranch}_$assignedSerial";
-          
+          // 👈 تم التعديل: توحيد الآي دي ليتطابق مع ما تم إنشاؤه في الباك إند
+          String uniqueId = "branch_${branchCode}_$assignedSerial";
+          print("🚀 Sending to server: company_code=$companyCode, branch_code=$branchCode");
           // تحديث الإذن محلياً في الـ Hive
           await _transactionBox.put(uniqueId, transactionData);
 
-          // 🌟 التعديل السحري هنا:
-          // هنمنع الدالة دي تشتغل لو بنعدل إذن قديم عشان متسحبش كل الأذون اللي بعده من الفايربيز
+          // 🌟 هنمنع الدالة دي تشتغل لو بنعدل إذن قديم عشان متسحبش كل الأذون اللي بعده من الفايربيز
           if (serial == 0) {
             // تشغيل المزامنة التلقائية التراكمية في حالة الإضافة الجديدة فقط
             await syncCacheFromServer(companyCode, assignedSerial);
@@ -157,10 +155,9 @@ class DailyService {
         List<dynamic> updates = jsonDecode(response.body);
         for (var item in updates) {
           if (item is Map && item.containsKey('serial')) {
-            // استبدل سطر الحفظ بهذا:
-            String b = item['branch'] ?? "الفرع الرئيسي";
-            String safeBranch = b.replaceAll(" ", "_").replaceAll("/", "-");
-            await _transactionBox.put("${safeBranch}_${item['serial']}", Map<String, dynamic>.from(item));
+            // 👈 تم التعديل: إنشاء الآي دي بناءً على كود الفرع القادم من السيرفر
+            String bCode = item['branch_code']?.toString() ?? "1";
+            await _transactionBox.put("branch_${bCode}_${item['serial']}", Map<String, dynamic>.from(item));
           }
         }
       }
@@ -169,10 +166,8 @@ class DailyService {
     }
   }
 
-  // 4. جلب سجل الأذون التاريخي (ذكياً من Hive أولاً ثم فلترة بالتاريخ)
-  // 4. جلب سجل الأذون التاريخي (ذكياً من Hive أولاً ثم فلترة بالتاريخ)
   // 4. جلب سجل الأذون التاريخي (ذكياً من Hive أولاً ثم فلترة بالتاريخ والفرع)
-  Future<List<dynamic>> getTransactionsHistory(String companyCode, String startDate, String endDate, {String? branch}) async {
+  Future<List<dynamic>> getTransactionsHistory(String companyCode, String startDate, String endDate, {String? branchCode}) async {
     try {
       List<dynamic> resultData = [];
 
@@ -197,10 +192,9 @@ class DailyService {
         if (response.statusCode == 200) {
           List<dynamic> serverData = jsonDecode(response.body);
           for (var item in serverData) {
-            // استبدل سطر الحفظ (داخل الـ for loop الخاص بـ serverData) بهذا:
-            String b = item['branch'] ?? "الفرع الرئيسي";
-            String safeBranch = b.replaceAll(" ", "_").replaceAll("/", "-");
-            await _transactionBox.put("${safeBranch}_${item['serial']}", item);
+            // 👈 تم التعديل: إنشاء الآي دي بناءً على كود الفرع 
+            String bCode = item['branch_code']?.toString() ?? "1";
+            await _transactionBox.put("branch_${bCode}_${item['serial']}", item);
           }
           resultData = serverData;
         } else {
@@ -208,9 +202,9 @@ class DailyService {
         }
       }
 
-      // 🌟 السحر هنا: فلترة الهيستوري بناءً على الفرع المختار قبل إرجاع القائمة
-      if (branch != null && branch != "كل الفروع") {
-        resultData = resultData.where((tx) => tx['branch'] == branch).toList();
+      // 🌟 السحر هنا: فلترة الهيستوري بناءً على كود الفرع
+      if (branchCode != null && !['الكل', 'كل الفروع', 'all', ''].contains(branchCode)) {
+        resultData = resultData.where((tx) => tx['branch_code'] == branchCode).toList();
       }
 
       return resultData;
@@ -224,31 +218,26 @@ class DailyService {
               tx['date'].toString().compareTo(endDate) <= 0)
           .toList();
 
-      if (branch != null && branch != "كل الفروع") {
-        fallbackData = fallbackData.where((tx) => tx['branch'] == branch).toList();
+      if (branchCode != null && !['الكل', 'كل الفروع', 'all', ''].contains(branchCode)) {
+        fallbackData = fallbackData.where((tx) => tx['branch_code'] == branchCode).toList();
       }
       return fallbackData;
     }
   }
 
-
-
-  // عند الحذف
-  Future<void> deleteTransaction(String companyCode, int serial, String branch) async {
+  // 5. عند الحذف
+  Future<void> deleteTransaction(String companyCode, int serial, String branchCode) async { // 👈 تم التعديل هنا
     try {
-      String encodedBranch = Uri.encodeComponent(branch);
+      // 👈 تم التعديل: الرابط بيستقبل الكود بدل الاسم
       final response = await http.delete(
-        Uri.parse('$baseUrl/transactions/delete/$companyCode/$encodedBranch/$serial'),
+        Uri.parse('$baseUrl/transactions/delete/$companyCode/$branchCode/$serial'),
       );
 
       if (response.statusCode == 200) {
-        // التعديل المحلي المباشر فوراً لضمان السرعة للمستخدم الحالي
-        String safeBranch = branch.replaceAll(" ", "_").replaceAll("/", "-");
-        String docId = "${safeBranch}_$serial";
+        // 👈 تم التعديل: التعديل المحلي المباشر بناءً على المعرف المطابق للباك إند
+        String docId = "branch_${branchCode}_$serial";
         
         await _transactionBox.delete(docId); // حذف محلي فوراً
-        
-        // 🔥 تم حذف سطر syncCacheFromServer(companyCode, serial) لمنع القراءة الزائدة من السيرفر!
         
         // تحديث الأرصدة المحلية فوراً لتسمع في الواجهات بناءً على البيانات الجديدة في الـ Hive
         await getDailySummaryLocal(companyCode); 

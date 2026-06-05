@@ -6,7 +6,7 @@ from google.cloud import firestore
 
 router = APIRouter()
 
-# الموديل الموحد للبيانات المطور ليدعم الفروع والمستخدمين
+# 🌟 الموديل الموحد للبيانات المطور ليدعم أكواد الفروع بدلاً من أسمائها
 class TransactionModel(BaseModel):
     company_code: str
     serial: int  
@@ -17,7 +17,7 @@ class TransactionModel(BaseModel):
     date: str
     type: str
     employee: Optional[str] = "غير محدد"  
-    branch: Optional[str] = "الفرع الرئيسي"  
+    branch_code: Optional[str] = "1"  # 👈 تم التعديل: استخدام كود الفرع الافتراضي بدلاً من الاسم
 
 
 # 🔥 [دالة المعاملة الذرية المؤمّنة لمنع تكرار السيريال نهائياً]
@@ -26,8 +26,8 @@ def run_save_transaction(transaction, records_ref, data: TransactionModel, is_up
     if is_update:
         final_serial = data.serial
     else:
-        # جلب آخر سيريال مسجل "لهذا الفرع تحديداً" بشكل مؤمن داخل المعاملة الحالية
-        query = records_ref.where("branch", "==", data.branch).order_by("serial", direction=firestore.Query.DESCENDING).limit(1)
+        # 👈 تم التعديل: جلب آخر سيريال مسجل "لهذا الكود تحديداً" 
+        query = records_ref.where("branch_code", "==", data.branch_code).order_by("serial", direction=firestore.Query.DESCENDING).limit(1)
         docs = list(query.stream(transaction=transaction))
         
         final_serial = 1
@@ -39,9 +39,8 @@ def run_save_transaction(transaction, records_ref, data: TransactionModel, is_up
     transaction_data["serial"] = final_serial
     transaction_data["updated_at"] = firestore.SERVER_TIMESTAMP 
     
-    # إنشاء المعرف الفريد الثابت للمستند بناءً على اسم الفرع والسيريال
-    safe_branch_name = data.branch.replace(" ", "_").replace("/", "-")
-    unique_doc_id = f"{safe_branch_name}_{final_serial}"
+    # 👈 تم التعديل: إنشاء المعرف الفريد الآمن جداً بناءً على كود الفرع بدلاً من اسمه
+    unique_doc_id = f"branch_{data.branch_code}_{final_serial}"
     
     # الحفظ الآمن داخل الـ Transaction
     doc_ref = records_ref.document(unique_doc_id)
@@ -78,12 +77,12 @@ async def save_transaction(data: TransactionModel):
 # ==========================================
 # 4. حذف إذن من الأرشيف (الرادار سيلتقط الحذف تلقائياً)
 # ==========================================
-@router.delete("/delete/{company_code}/{branch}/{serial}")
-async def delete_transaction(company_code: str, branch: str, serial: int):
+# 👈 تم التعديل: المسار الآن يستقبل branch_code
+@router.delete("/delete/{company_code}/{branch_code}/{serial}")
+async def delete_transaction(company_code: str, branch_code: str, serial: int):
     try:
-        # تحويل اسم الفرع إلى الصيغة الآمنة لمطابقة المعرف الفريد في الفايربيز
-        safe_branch_name = branch.replace(" ", "_").replace("/", "-")
-        unique_doc_id = f"{safe_branch_name}_{serial}"
+        # 👈 تم التعديل: مطابقة المعرف الفريد الجديد في الفايربيز
+        unique_doc_id = f"branch_{branch_code}_{serial}"
 
         # الحذف الفعلي للمستند (الفلاتر سيلتقط إشارة DocumentChangeType.removed فوراً)
         db.collection("transactions").document(company_code)\
@@ -99,14 +98,14 @@ async def delete_transaction(company_code: str, branch: str, serial: int):
 
 
 # ==========================================
-# 2. جلب قائمة الأذون للمعاينة المفلترة بالتاريخ والفرع ذكياً
+# 2. جلب قائمة الأذون للمعاينة المفلترة بالتاريخ وكود الفرع ذكياً
 # ==========================================
 @router.get("/list/{company_code}")
 async def get_transactions(
     company_code: str, 
     start_date: str, 
     end_date: str, 
-    branch: Optional[str] = Query(None) 
+    branch_code: Optional[str] = Query(None) # 👈 تم التعديل هنا
 ):
     try:
         # 1️⃣ بناء الاستعلام الأساسي المفلتر بنطاق التاريخ
@@ -115,9 +114,10 @@ async def get_transactions(
             .where("date", ">=", start_date)\
             .where("date", "<=", end_date)
         
-        # 2️⃣ شرط الفلترة الذكي: لو الفلاتر ممرر فرع معين قم بفلترة الفايربيز فوراً
-        if branch and branch != "الكل" and branch != "كل الفروع":
-            query = query.where("branch", "==", branch)
+        # 2️⃣ شرط الفلترة الذكي: بناءً على كود الفرع
+        # وضعنا استثناء للكلمات العامة التي قد يرسلها الفلاتر عند اختيار "الكل"
+        if branch_code and branch_code not in ["الكل", "كل الفروع", "all", ""]:
+            query = query.where("branch_code", "==", branch_code)
             
         # تنفيذ الاستعلام وجلب المستندات
         docs = query.stream()
@@ -169,16 +169,16 @@ async def get_summary(company_code: str):
 
 
 # ==========================================
-# 6. جلب آخر سيريال (تم تطويرها ذكياً لدعم الفروع ومنع التداخل المنطقي)
+# 6. جلب آخر سيريال 
 # ==========================================
 @router.get("/last_serial/{company_code}")
-async def get_last_serial(company_code: str, branch: Optional[str] = Query(None)):
+async def get_last_serial(company_code: str, branch_code: Optional[str] = Query(None)): # 👈 تم التعديل هنا
     try:
         query = db.collection("transactions").document(company_code).collection("daily_records")
         
-        # إذا تم تمرير الفرع من التطبيق، يتم جلب آخر سيريال خاص بهذا الفرع فقط
-        if branch and branch != "الكل" and branch != "كل الفروع":
-            query = query.where("branch", "==", branch)
+        # 👈 تم التعديل: الفلترة بكود الفرع
+        if branch_code and branch_code not in ["الكل", "كل الفروع", "all", ""]:
+            query = query.where("branch_code", "==", branch_code)
             
         docs = query.order_by("serial", direction=firestore.Query.DESCENDING).limit(1).get()
         

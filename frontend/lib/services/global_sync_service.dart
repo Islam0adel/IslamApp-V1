@@ -47,7 +47,10 @@ class GlobalSyncService {
       'category': updateData['category'] ?? "غير محدد",
       'date': updateData['date'] ?? DateTime.now().toString(),
       'treasury': updateData['treasury'] ?? "الرئيسية",
-      'branch': updateData['branch'] ?? "الفرع الرئيسي",
+      
+      // 👈 تم التعديل: قراءة وتخزين كود الفرع بدلاً من اسمه (تم وضع 1 ككود افتراضي بدلاً من الفرع الرئيسي)
+      'branch_code': updateData['branch_code']?.toString() ?? "1", 
+      
       'employee': updateData['employee'] ?? "غير محدد",
       'statement': updateData['statement'] ?? "",
       'company_code': updateData['company_code']?.toString() ?? companyCode,

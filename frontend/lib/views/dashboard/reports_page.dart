@@ -1,5 +1,5 @@
 import 'dart:ui' as ui; 
-import 'package:flutter/foundation.dart' show kIsWeb; // 🌟 للتحقق إذا كان البرنامج يعمل على الويب
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -9,14 +9,14 @@ import 'package:share_plus/share_plus.dart';
 import 'package:excel/excel.dart' as excel_lib;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:universal_html/html.dart' as html; // 🌟 المكتبة لتحميل الملفات على المتصفحات
+import 'package:universal_html/html.dart' as html;
 import '../../views/widgets/glass_card.dart';
 
 class ReportsPage extends StatefulWidget {
   final String companyCode;
-  final String? selectedBranch; 
-  
-  const ReportsPage({super.key, required this.companyCode, this.selectedBranch});
+  final String? selectedBranchCode;  // ✅ تغيير من selectedBranch إلى selectedBranchCode
+
+  const ReportsPage({super.key, required this.companyCode, this.selectedBranchCode});
 
   @override
   State<ReportsPage> createState() => _ReportsPageState();
@@ -29,24 +29,35 @@ class _ReportsPageState extends State<ReportsPage> {
   DateTime _toDate = DateTime.now();
   int _selectedReportType = 1;
 
+  // ✅ دالة مساعدة لجلب اسم الفرع من الكود
+  String _getBranchName(String? code) {
+    if (code == null || code == 'all' || code == '') return 'كل الفروع';
+    final Box codingBox = Hive.box('coding_box');
+    final rawData = codingBox.get("${widget.companyCode}_branches", defaultValue: []);
+    for (var item in rawData) {
+      if (item['code']?.toString() == code) return item['name']?.toString() ?? "فرع غير معروف";
+    }
+    return "فرع غير معروف";
+  }
+
   List<Map<dynamic, dynamic>> _getFilteredTransactions() {
     final box = Hive.box('daily_transactions_box');
     return box.values.where((tx) {
       if (tx['company_code'] != widget.companyCode) return false;
-      
-      if (widget.selectedBranch != null && 
-          widget.selectedBranch != "كل الفروع" && 
-          widget.selectedBranch != "الكل" && 
-          widget.selectedBranch != "") {
-        if (tx['branch'] != widget.selectedBranch) return false;
+
+      // ✅ الفلترة باستخدام كود الفرع بدلاً من الاسم
+      if (widget.selectedBranchCode != null &&
+          widget.selectedBranchCode != "all" &&
+          widget.selectedBranchCode != "") {
+        if (tx['branch_code']?.toString() != widget.selectedBranchCode) return false;
       }
-      
+
       try {
         DateTime txDate = DateTime.parse(tx['date'].toString().substring(0, 10));
         DateTime from = DateTime(_fromDate.year, _fromDate.month, _fromDate.day);
         DateTime to = DateTime(_toDate.year, _toDate.month, _toDate.day);
-        
-        return (txDate.isAtSameMomentAs(from) || txDate.isAfter(from)) && 
+
+        return (txDate.isAtSameMomentAs(from) || txDate.isAfter(from)) &&
                (txDate.isAtSameMomentAs(to) || txDate.isBefore(to));
       } catch (e) {
         return false;
@@ -54,7 +65,7 @@ class _ReportsPageState extends State<ReportsPage> {
     }).map((e) => e as Map<dynamic, dynamic>).toList();
   }
 
-  // ===================== 1. تصدير ومشاركة EXCEL (يدعم الويب والموبايل) =====================
+  // ===================== تصدير EXCEL =====================
   Future<void> _shareAsExcel() async {
     final transactions = _getFilteredTransactions();
     if (transactions.isEmpty) return _showEmptySheetRow();
@@ -65,7 +76,7 @@ class _ReportsPageState extends State<ReportsPage> {
       excel.rename(defaultSheet, 'التقرير المفلتر');
       excel_lib.Sheet sheetObject = excel['التقرير المفلتر'];
 
-      String branchName = widget.selectedBranch ?? 'كل الفروع';
+      String branchName = _getBranchName(widget.selectedBranchCode); // ✅ استخدام الاسم للعرض
       String dateStr = "من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}";
 
       sheetObject.appendRow([excel_lib.TextCellValue(_selectedReportType == 1 ? "تقرير المبيعات المفلتر" : "تقرير فترة إيراد ومصاريف")]);
@@ -79,7 +90,6 @@ class _ReportsPageState extends State<ReportsPage> {
       String fileName = "تقرير_${DateTime.now().millisecondsSinceEpoch}.xlsx";
 
       if (kIsWeb) {
-        // 🌐 تحضير التنزيل الفوري للمتصفحات (سفاري، كروم، إيدج)
         final blob = html.Blob([fileBytes], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         final url = html.Url.createObjectUrlFromBlob(blob);
         html.AnchorElement(href: url)
@@ -87,7 +97,6 @@ class _ReportsPageState extends State<ReportsPage> {
           ..click();
         html.Url.revokeObjectUrl(url);
       } else {
-        // 📱 فتح شاشة المشاركة الأصلية للهواتف الذكية
         final xFile = XFile.fromData(
           Uint8List.fromList(fileBytes),
           mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -100,7 +109,7 @@ class _ReportsPageState extends State<ReportsPage> {
     }
   }
 
-  // ===================== 2. تصدير ومشاركة PDF ملون (يدعم الويب والموبايل) =====================
+  // ===================== تصدير PDF =====================
   Future<void> _shareAsPdf() async {
     final transactions = _getFilteredTransactions();
     if (transactions.isEmpty) return _showEmptySheetRow();
@@ -109,7 +118,7 @@ class _ReportsPageState extends State<ReportsPage> {
       final pdf = pw.Document();
       var arabicFont = pw.Font.ttf(await rootBundle.load("assets/fonts/Cairo-Regular.ttf"));
 
-      String branchName = widget.selectedBranch ?? 'كل الفروع';
+      String branchName = _getBranchName(widget.selectedBranchCode); // ✅ استخدام الاسم للعرض
       String dateStr = "من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}";
       final primaryColor = PdfColor.fromHex('#050F4C');
       final accentColor = PdfColor.fromHex('#3062F8');
@@ -141,9 +150,9 @@ class _ReportsPageState extends State<ReportsPage> {
                 ),
               ),
               pw.SizedBox(height: 20),
-              _selectedReportType == 1 
-                ? _buildPdfSalesReportStructure(transactions, arabicFont, primaryColor)
-                : _buildPdfFinanceReportStructure(transactions, arabicFont, primaryColor, accentColor),
+              _selectedReportType == 1
+                  ? _buildPdfSalesReportStructure(transactions, arabicFont, primaryColor)
+                  : _buildPdfFinanceReportStructure(transactions, arabicFont, primaryColor, accentColor),
             ];
           },
         ),
@@ -153,7 +162,6 @@ class _ReportsPageState extends State<ReportsPage> {
       String fileName = "تقرير_${DateTime.now().millisecondsSinceEpoch}.pdf";
 
       if (kIsWeb) {
-        // 🌐 تنزيل ملف الـ PDF مباشرة على الكمبيوتر/المتصفح
         final blob = html.Blob([pdfBytes], 'application/pdf');
         final url = html.Url.createObjectUrlFromBlob(blob);
         html.AnchorElement(href: url)
@@ -161,7 +169,6 @@ class _ReportsPageState extends State<ReportsPage> {
           ..click();
         html.Url.revokeObjectUrl(url);
       } else {
-        // 📱 مشاركة الـ PDF لهواتف المحمول مباشرة
         final xFile = XFile.fromData(pdfBytes, mimeType: 'application/pdf', name: fileName);
         await Share.shareXFiles([xFile], text: "مرفق لكم تقرير PDF ملون");
       }
@@ -170,7 +177,7 @@ class _ReportsPageState extends State<ReportsPage> {
     }
   }
 
-  // ===================== 3. تصدير ومشاركة صورة كاملة للتقرير JPG (يدعم الويب والموبايل) =====================
+  // ===================== تصدير صورة =====================
   Future<void> _shareAsImage() async {
     try {
       showDialog(
@@ -182,15 +189,14 @@ class _ReportsPageState extends State<ReportsPage> {
       RenderRepaintBoundary boundary = _reportCaptureKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
       ui.Image image = await boundary.toImage(pixelRatio: 3.0);
       ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-      
-      if (mounted) Navigator.pop(context); 
+
+      if (mounted) Navigator.pop(context);
 
       if (byteData == null) return;
       Uint8List pngBytes = byteData.buffer.asUint8List();
       String fileName = "تقرير_مصور_${DateTime.now().millisecondsSinceEpoch}.png";
 
       if (kIsWeb) {
-        // 🌐 تنزيل الصورة الكاملة الممتدة للتقرير على المتصفح فورا
         final blob = html.Blob([pngBytes], 'image/png');
         final url = html.Url.createObjectUrlFromBlob(blob);
         html.AnchorElement(href: url)
@@ -198,7 +204,6 @@ class _ReportsPageState extends State<ReportsPage> {
           ..click();
         html.Url.revokeObjectUrl(url);
       } else {
-        // 📱 مشاركة الصورة لتطبيقات الموبايل
         final xFile = XFile.fromData(pngBytes, mimeType: 'image/png', name: fileName);
         await Share.shareXFiles([xFile], text: "مرفق لقطة صورة للتقرير");
       }
@@ -208,7 +213,6 @@ class _ReportsPageState extends State<ReportsPage> {
     }
   }
 
-  // ===================== واجهة قائمة الخيارات السفلية وبقية الدوال =====================
   void _showShareBottomSheet() {
     showModalBottomSheet(
       context: context,
@@ -230,21 +234,21 @@ class _ReportsPageState extends State<ReportsPage> {
                   mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: [
                     _buildShareOptionItem(
-                      icon: Icons.table_chart, 
-                      color: Colors.greenAccent, 
-                      label: "ملف Excel", 
+                      icon: Icons.table_chart,
+                      color: Colors.greenAccent,
+                      label: "ملف Excel",
                       onTap: () { Navigator.pop(context); _shareAsExcel(); }
                     ),
                     _buildShareOptionItem(
-                      icon: Icons.picture_as_pdf, 
-                      color: Colors.redAccent, 
-                      label: "تقرير PDF ملون", 
+                      icon: Icons.picture_as_pdf,
+                      color: Colors.redAccent,
+                      label: "تقرير PDF ملون",
                       onTap: () { Navigator.pop(context); _shareAsPdf(); }
                     ),
                     _buildShareOptionItem(
-                      icon: Icons.image, 
-                      color: Colors.cyanAccent, 
-                      label: "حفظ كـ صورة", 
+                      icon: Icons.image,
+                      color: Colors.cyanAccent,
+                      label: "حفظ كـ صورة",
                       onTap: () { Navigator.pop(context); _shareAsImage(); }
                     ),
                   ],
@@ -346,7 +350,7 @@ class _ReportsPageState extends State<ReportsPage> {
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Text(
-                "فرع: ${widget.selectedBranch == null || widget.selectedBranch == 'الكل' || widget.selectedBranch == 'كل الفروع' || widget.selectedBranch == '' ? 'كل الفروع' : widget.selectedBranch}",
+                "فرع: ${_getBranchName(widget.selectedBranchCode)}", // ✅ عرض الاسم بناءً على الكود
                 style: const TextStyle(fontFamily: 'Cairo', fontSize: 12, color: Colors.cyanAccent),
               ),
             ),
@@ -376,8 +380,8 @@ class _ReportsPageState extends State<ReportsPage> {
                   child: RepaintBoundary(
                     key: _reportCaptureKey,
                     child: GlassCard(
-                      child: _selectedReportType == 1 
-                          ? _buildSalesReport() 
+                      child: _selectedReportType == 1
+                          ? _buildSalesReport()
                           : _buildIncomeExpenseReport(),
                     ),
                   ),
@@ -433,7 +437,7 @@ class _ReportsPageState extends State<ReportsPage> {
     double totalIncome = 0; double totalExpenses = 0; double totalGoods = 0;
     for (var tx in transactions) {
       double amount = double.tryParse(tx['amount'].toString()) ?? 0.0;
-      if (tx['type'] == 'وارد') { totalIncome += amount; } 
+      if (tx['type'] == 'وارد') { totalIncome += amount; }
       else if (tx['type'] == 'صادر') {
         totalExpenses += amount;
         if (tx['category'] == 'بضاعة') totalGoods += amount;

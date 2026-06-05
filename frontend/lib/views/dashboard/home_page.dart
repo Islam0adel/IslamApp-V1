@@ -8,8 +8,12 @@ import 'coding_page.dart';
 import 'daily_page.dart';
 import 'reports_page.dart';
 import 'settings_page.dart';
-import '../../services/api_service.dart';
+// import '../../services/api_service.dart';
 import '../../main.dart'; // 👈 تأكد من إضافة هذا الاستيراد في أعلى الملف للوصول للرادار
+import 'package:hive_flutter/hive_flutter.dart';
+import '../../services/coding_service.dart';
+import '../../models/coding_model.dart';
+
 
 class HomePage extends StatefulWidget {
   final String userName;
@@ -34,10 +38,13 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   String _currentDate = "";
   late AnimationController _mainController;
 
-  final ApiService _apiService = ApiService();
+  // final ApiService _apiService = ApiService();
   // متغيرات الفروع الجديدة
-  String _selectedBranch = "كل الفروع"; // الفرع المختار حالياً
-  List<String> _branches = ["كل الفروع"]; // قائمة الفروع التي ستأتي من السيرفر
+  // متغيرات الفروع الجديدة (تم التعديل لتشمل الاسم والكود معاً)
+  final CodingService _codingService = CodingService();
+  String _selectedBranchName = "كل الفروع"; 
+  String _selectedBranchCode = "all"; 
+  List<Map<String, String>> _branches = [{'name': 'كل الفروع', 'code': 'all'}]; 
   bool _isLoadingBranches = true;
 
   @override
@@ -66,28 +73,70 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 
   // دالة جلب الفروع والفحص الذكي
+  // دالة جلب الفروع والفحص الذكي (قراءة فورية من Hive، والجلب من السيرفر عند أول تشغيل فقط)
   Future<void> _loadBranchesAndCheck() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      List<String> fetchedBranches =
-          await _apiService.getBranchesList(widget.companyCode);
+      final Box codingBox = Hive.box('coding_box');
+      final String localKey = "${widget.companyCode}_branches";
 
+      List<Map<String, String>> fetchedBranches = [{'name': 'كل الفروع', 'code': 'all'}];
+      bool hasLocalData = false;
+
+      // 1️⃣ المحاولة الأولى: القراءة الفورية من الذاكرة المحلية (Hive)
+      final dynamic rawData = codingBox.get(localKey, defaultValue: []);
+      
+      if (rawData is List && rawData.isNotEmpty) {
+        for (var item in rawData) {
+          if (item is Map && item['name'] != null && item['code'] != null) {
+            fetchedBranches.add({'name': item['name'].toString(), 'code': item['code'].toString()});
+          }
+        }
+        
+        // لو وجدنا فروع فعلية غير كلمة "كل الفروع"
+        if (fetchedBranches.length > 1) {
+          hasLocalData = true; 
+        }
+      }
+
+      // 2️⃣ المحاولة الثانية: لو الذاكرة فارغة (أول تشغيل للبرنامج) نلجأ للسيرفر
+      if (!hasLocalData) {
+        print("📥 الفروع غير موجودة محلياً.. جاري الجلب من السيرفر");
+        List<CodingModel> branchesData = await _codingService.getCodingList(
+          companyCode: widget.companyCode,
+          category: "branches",
+        );
+
+        // تفريغ القائمة وإعادة تعبئتها بالبيانات الجديدة من السيرفر
+        fetchedBranches = [{'name': 'كل الفروع', 'code': 'all'}];
+        for (var item in branchesData) {
+          fetchedBranches.add({'name': item.name, 'code': item.code});
+        }
+      }
+
+      // 3️⃣ تحديث الواجهة وتطبيق الفحص الذكي للفرع المختار سابقاً
       if (mounted) {
         setState(() {
           _branches = fetchedBranches;
           _isLoadingBranches = false;
 
-          String? savedBranch = prefs.getString('selected_branch');
-          // لو المستخدم كان مختار فرع والفرع ده لسه موجود في القائمة، ثبت الاختيار
-          if (savedBranch != null && _branches.contains(savedBranch)) {
-            _selectedBranch = savedBranch;
+          String? savedBranchCode = prefs.getString('selected_branch_code');
+          String? savedBranchName = prefs.getString('selected_branch_name');
+          
+          bool exists = _branches.any((b) => b['code'] == savedBranchCode);
+
+          if (savedBranchCode != null && exists) {
+            _selectedBranchCode = savedBranchCode;
+            _selectedBranchName = savedBranchName ?? "كل الفروع";
           } else {
             if (_branches.length <= 2) {
-              _selectedBranch =
-                  _branches.length == 2 ? _branches[1] : "كل الفروع";
-              prefs.setString('selected_branch', _selectedBranch);
+              _selectedBranchCode = _branches.length == 2 ? _branches[1]['code']! : "all";
+              _selectedBranchName = _branches.length == 2 ? _branches[1]['name']! : "كل الفروع";
+              prefs.setString('selected_branch_code', _selectedBranchCode);
+              prefs.setString('selected_branch_name', _selectedBranchName);
             } else {
-              _selectedBranch = "كل الفروع";
+              _selectedBranchCode = "all";
+              _selectedBranchName = "كل الفروع";
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 _showBranchSelectionDialog();
               });
@@ -96,27 +145,27 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         });
       }
     } catch (e) {
-      // معالجة الخطأ
+      print("خطأ في جلب الفروع: $e");
+      if (mounted) {
+        setState(() {
+          _isLoadingBranches = false;
+        });
+      }
     }
   }
 
-  // نافذة اختيار الفرع الإجبارية عند الدخول أو التغيير
+  // نافذة اختيار الفرع الإجبارية (تم التعديل للتعامل مع كود الفرع واسمه)
   void _showBranchSelectionDialog() {
     showDialog(
       context: context,
-      barrierDismissible: _selectedBranch !=
-          "كل الفروع", // يمنع قفلها بالضغط خارجها لو لسه مأخترش
+      barrierDismissible: _selectedBranchCode != "all", 
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF0F172A),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
         title: const Text(
           "اختر فرع العمل الحالي",
           textAlign: TextAlign.center,
-          style: TextStyle(
-              color: Colors.white,
-              fontFamily: 'Cairo',
-              fontSize: 16,
-              fontWeight: FontWeight.bold),
+          style: TextStyle(color: Colors.white, fontFamily: 'Cairo', fontSize: 16, fontWeight: FontWeight.bold),
         ),
         content: SizedBox(
           width: double.maxFinite,
@@ -124,28 +173,26 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             shrinkWrap: true,
             itemCount: _branches.length,
             itemBuilder: (context, index) {
-              String branchName = _branches[index];
-              bool isCurrent = _selectedBranch == branchName;
+              String branchName = _branches[index]['name']!;
+              String branchCode = _branches[index]['code']!;
+              bool isCurrent = _selectedBranchCode == branchCode;
               return Card(
-                color: isCurrent
-                    ? Colors.amber.withOpacity(0.2)
-                    : Colors.white.withOpacity(0.05),
+                color: isCurrent ? Colors.amber.withOpacity(0.2) : Colors.white.withOpacity(0.05),
                 margin: const EdgeInsets.symmetric(vertical: 5),
                 child: ListTile(
                   title: Text(
                     branchName,
                     textAlign: TextAlign.center,
-                    style: TextStyle(
-                        color: isCurrent ? Colors.amber : Colors.white,
-                        fontFamily: 'Cairo',
-                        fontSize: 14),
+                    style: TextStyle(color: isCurrent ? Colors.amber : Colors.white, fontFamily: 'Cairo', fontSize: 14),
                   ),
                   onTap: () async {
                     final prefs = await SharedPreferences.getInstance();
-                    await prefs.setString('selected_branch', branchName);
+                    await prefs.setString('selected_branch_code', branchCode);
+                    await prefs.setString('selected_branch_name', branchName);
                     if (mounted) {
                       setState(() {
-                        _selectedBranch = branchName;
+                        _selectedBranchCode = branchCode;
+                        _selectedBranchName = branchName;
                       });
                     }
                     Navigator.pop(context);
@@ -160,11 +207,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 
   String _formatDuration(int seconds) {
-    int h = seconds ~/ 3600;
-    int m = (seconds % 3600) ~/ 60;
-    int s = seconds % 60;
-    return "${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}";
-  }
+  int minutes = seconds ~/ 60;
+  int remainingSeconds = seconds % 60;
+  return '${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
+}
 
   @override
   Widget build(BuildContext context) {
@@ -233,8 +279,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                     _buildSmallInfo("التاريخ", _currentDate,
                         Icons.calendar_today, Colors.lightBlueAccent),
                     // كارت صغير يعرض الفرع النشط حالياً تحت التاريخ والوقت
-                    _buildSmallInfo("الفرع النشط", _selectedBranch,
-                        Icons.storefront, Colors.greenAccent),
+                    // كارت صغير يعرض الفرع النشط حالياً تحت التاريخ والوقت
+_buildSmallInfo("الفرع النشط", _selectedBranchName, Icons.storefront, Colors.greenAccent),
                   ],
                 ),
                 const SizedBox(height: 20),
@@ -343,53 +389,45 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       crossAxisSpacing: 15,
       childAspectRatio: 1.1,
       children: [
-        // 1️⃣ حركة الخزينة: أضفنا هنا تمرير اسم الموظف (userName) لحل مشكلة "غير معروف"
-        _menuItem("حركة الخزينة", Icons.account_balance_wallet_rounded,
-            Colors.greenAccent, () {
+        _menuItem("حركة الخزينة", Icons.account_balance_wallet_rounded, Colors.greenAccent, () {
           Navigator.push(
             context,
             MaterialPageRoute(
               builder: (c) => DailyPage(
                 companyCode: widget.companyCode,
-                selectedBranch: _selectedBranch,
-                userName:
-                    widget.userName, // 🌟 التعديل هنا: تمرير اسم الموظف لليومية
+                selectedBranchCode: _selectedBranchCode, // 🌟 التعديل هنا: تمرير الكود
+                userName: widget.userName,
               ),
             ),
           );
         }),
 
-        // 2️⃣ التكويد: تعديلك هنا ممتاز وسليم لعمل تحديث تلقائي للفروع بمجرد العودة للرئيسية
         _menuItem("التكويد", Icons.code_rounded, Colors.amber, () {
           Navigator.push(
             context,
-            MaterialPageRoute(
-                builder: (c) => CodingPage(companyCode: widget.companyCode)),
+            MaterialPageRoute(builder: (c) => CodingPage(companyCode: widget.companyCode)),
           ).then((_) {
-            // 🔄 إعادة تحميل الفروع فوراً عند الرجوع من شاشة التكويد
             _loadBranchesAndCheck();
           });
         }),
 
-        _menuItem("حسابات الموردين", Icons.local_shipping_rounded,
-            Colors.lightBlueAccent, () {}),
-        _menuItem("حركة الجرد", Icons.inventory_2_rounded, Colors.orangeAccent,
-            () {}),
+        _menuItem("حسابات الموردين", Icons.local_shipping_rounded, Colors.lightBlueAccent, () {}),
+        _menuItem("حركة الجرد", Icons.inventory_2_rounded, Colors.orangeAccent, () {}),
+        
         _menuItem("التقارير", Icons.analytics_rounded, Colors.purpleAccent, () {
           Navigator.push(
             context,
             MaterialPageRoute(
               builder: (c) => ReportsPage(
                 companyCode: widget.companyCode,
-                selectedBranch: _selectedBranch,
-                
+                selectedBranchCode: _selectedBranchCode, // 🌟 التعديل هنا: تمرير الكود
               ),
             ),
           );
         }),
+        
         _menuItem("الاعدادات", Icons.settings_rounded, Colors.blueGrey, () {
-          Navigator.push(
-              context, MaterialPageRoute(builder: (c) => const SettingsPage()));
+          Navigator.push(context, MaterialPageRoute(builder: (c) => const SettingsPage()));
         }),
       ],
     );

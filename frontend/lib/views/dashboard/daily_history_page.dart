@@ -12,13 +12,13 @@ import 'package:hive_flutter/hive_flutter.dart';
 class DailyHistoryPage extends StatefulWidget {
   final String companyCode;
   final String? userName;
-  final String? selectedBranch; // 🌟 استقبال الفرع المختار
+  final String? selectedBranchCode; // 🌟 التعديل هنا: استقبال الكود بدلاً من الاسم
 
   const DailyHistoryPage({
     super.key,
     required this.companyCode,
     this.userName,
-    this.selectedBranch,
+    this.selectedBranchCode,
   });
 
   @override
@@ -43,6 +43,17 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
     _fetchData(); // لتغذية وجلب البيانات وتحديث الكاش المحلي عند الفتح
   }
 
+  // 🌟 دالة مساعدة لجلب اسم الفرع من الكود الخاص به لعرضه للمستخدم
+  String _getBranchName(String? code) {
+    if (code == null || code == 'all' || code == '') return 'كل الفروع';
+    final Box codingBox = Hive.box('coding_box');
+    final rawData = codingBox.get("${widget.companyCode}_branches", defaultValue: []);
+    for(var item in rawData) {
+      if(item['code']?.toString() == code.toString()) return item['name']?.toString() ?? "فرع غير معروف";
+    }
+    return "فرع غير معروف";
+  }
+
   void _fetchData() async {
     setState(() => _isLoading = true);
     try {
@@ -50,15 +61,11 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
         widget.companyCode,
         DateFormat('yyyy-MM-dd').format(_fromDate),
         DateFormat('yyyy-MM-dd').format(_toDate),
-        branch: widget.selectedBranch,
+        branchCode: widget.selectedBranchCode, // 🌟 التعديل هنا
       );
 
       setState(() {
-        // تحويل آمن ومضمون ومطابق للنوع 100%
-        _historyData = data
-            .map<Map<String, dynamic>>(
-                (item) => Map<String, dynamic>.from(item))
-            .toList();
+        _historyData = data.map<Map<String, dynamic>>((item) => Map<String, dynamic>.from(item)).toList();
         _isLoading = false;
       });
     } catch (e) {
@@ -140,7 +147,7 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
           excel_lib.TextCellValue(row['statement'] ?? ""),
           excel_lib.TextCellValue(row['category'] ?? ""),
           excel_lib.TextCellValue(row['date'] ?? ""),
-          excel_lib.TextCellValue(row['branch'] ?? "الرئيسي"),   // 👈 إضافة جديدة
+          excel_lib.TextCellValue(_getBranchName(row['branch_code']?.toString())), // 🌟 التعديل هنا
           excel_lib.TextCellValue(row['employee'] ?? "غير معروف"), // 👈 إضافة جديدة
         ]);
       }
@@ -208,10 +215,10 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
           for (var item in box.values) {
             if (item is Map && item['company_code'] == widget.companyCode) {
               
-              // 🌟 فلترة ذكية: تجاهل الحركات التي لا تنتمي للفرع المختار (إلا لو اختار الكل)
-              if (widget.selectedBranch != null && widget.selectedBranch != "كل الفروع" && widget.selectedBranch != "الكل" && widget.selectedBranch != "") {
-                if (item['branch'] != widget.selectedBranch) continue;
-              }
+              // 🌟 فلترة ذكية: تجاهل الحركات التي لا تنتمي للفرع المختار (إلا لو اختار الكل) بناءً على الكود
+if (widget.selectedBranchCode != null && widget.selectedBranchCode != "all" && widget.selectedBranchCode != "") {
+  if (item['branch_code']?.toString() != widget.selectedBranchCode) continue;
+}
 
               String txDate = item['date']?.toString() ?? "";
               if (txDate.compareTo(startStr) >= 0 && txDate.compareTo(endStr) <= 0) {
@@ -241,13 +248,9 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
-                      "فرع: ${widget.selectedBranch == null || widget.selectedBranch == 'الكل' || widget.selectedBranch == '' ? 'كل الفروع' : widget.selectedBranch}",
-                      style: const TextStyle(
-                        fontFamily: 'Cairo', 
-                        fontSize: 12, 
-                        color: Colors.cyanAccent,
-                      ),
-                    ),
+  "فرع: ${_getBranchName(widget.selectedBranchCode)}", // 🌟 التعديل هنا
+  style: const TextStyle(fontFamily: 'Cairo', fontSize: 12, color: Colors.cyanAccent),
+),
                   ),
                 ],
               ),
@@ -522,12 +525,9 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
                         color: Colors.cyan, size: 12),
                     const SizedBox(width: 4),
                     Text(
-                      "الفرع: ${item['branch'] ?? 'الرئيسي'}",
-                      style: const TextStyle(
-                          color: Colors.white38,
-                          fontSize: 9,
-                          fontFamily: 'Cairo'),
-                    ),
+  "الفرع: ${_getBranchName(item['branch_code']?.toString())}", // 🌟 التعديل هنا
+  style: const TextStyle(color: Colors.white38, fontSize: 9, fontFamily: 'Cairo'),
+),
                   ],
                 ),
                 // عرض اسم الموظف مع أيقونة مستخدم صغيرة
@@ -560,13 +560,11 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
         builder: (context) => DailyPage(
           companyCode: widget.companyCode,
           editItem: item,
-          userName: widget.userName, // 🌟 الإضافة السحرية: تمرير الموظف عشان ميتنسيش
-          selectedBranch: item['branch'] ?? widget.selectedBranch, // 🌟 تمرير فرع الإذن نفسه
+          userName: widget.userName, 
+          selectedBranchCode: item['branch_code']?.toString() ?? widget.selectedBranchCode, // 🌟 التعديل هنا
         ),
       ),
     );
-
-    // 🔄 تحديث فوري ومضمون بمجرد العودة للشاشة في كل الحالات (سواء رجع بسهم الهاتف أو بالضغط على حفظ)
     _fetchData();
   }
 
@@ -610,34 +608,28 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: Colors.indigo.shade900,
-        title: const Text("تأكيد الحذف",
-            style: TextStyle(
-                color: Colors.white, fontFamily: 'Cairo', fontSize: 15)),
-        content: Text("حذف إذن رقم ${item['serial']}؟",
-            style: const TextStyle(
-                color: Colors.white70, fontFamily: 'Cairo', fontSize: 13)),
+        title: const Text("تأكيد الحذف", style: TextStyle(color: Colors.white, fontFamily: 'Cairo', fontSize: 15)),
+        content: Text("حذف إذن رقم ${item['serial']}؟", style: const TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 13)),
         actions: [
           TextButton(
             onPressed: () async {
               try {
-                // 1. استدعاء دالة الحذف من السيرفر والـ Hive محلياً
                 await _dailyService.deleteTransaction(
-                    widget.companyCode, item['serial'] ?? 0, item['branch'] ?? "الفرع الرئيسي");
+                    widget.companyCode, item['serial'] ?? 0, item['branch_code']?.toString() ?? "1"); // 🌟 التعديل هنا
                 
                 if (mounted) {
-                  Navigator.pop(context); // إغلاق صندوق التأكيد بعد نجاح العملية
+                  Navigator.pop(context); 
                   _showSnackBar("تم حذف الإذن بنجاح وتحديث الأرصدة محلياً", Colors.green);
-                  _fetchData(); // إعادة تحديث القائمة المفتوحة أمام المستخدم فوراً
+                  _fetchData(); 
                 }
               } catch (e) {
                 if (mounted) {
-                  Navigator.pop(context); // إغلاق الصندوق حتى لا يعلق التطبيق
-                  _showSnackBar(e.toString(), Colors.red); // عرض نص الخطأ القادم من السيرفر أو الخدمة
+                  Navigator.pop(context); 
+                  _showSnackBar(e.toString(), Colors.red); 
                 }
               }
             },
-            child: const Text("حذف",
-                style: TextStyle(color: Colors.red, fontFamily: 'Cairo', fontSize: 13)),
+            child: const Text("حذف", style: TextStyle(color: Colors.red, fontFamily: 'Cairo', fontSize: 13)),
           ),
         ],
       ),
