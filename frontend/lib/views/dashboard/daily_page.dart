@@ -8,6 +8,7 @@ import '../../services/daily_service.dart';
 import '../../services/coding_service.dart';
 import 'daily_history_page.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'treasury_transfer_page.dart';
 
 class DailyPage extends StatefulWidget {
   final String companyCode;
@@ -527,23 +528,62 @@ class _DailyPageState extends State<DailyPage> {
   }
 
   Widget _buildSecondaryActions() {
-    return TextButton.icon(
-      onPressed: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => DailyHistoryPage(
-              companyCode: widget.companyCode,
-              userName: widget.userName,
-              selectedBranchCode: widget.selectedBranchCode,   // تمرير كود الفرع
-            ),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch, // لجعل الأزرار بنفس العرض ومنسقة
+      children: [
+        // 1. زر المعاينة الأصلي كما هو
+        TextButton.icon(
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => DailyHistoryPage(
+                  companyCode: widget.companyCode,
+                  userName: widget.userName,
+                  selectedBranchCode: widget.selectedBranchCode,   // تمرير كود الفرع
+                ),
+              ),
+            ).then((value) {
+              _loadInitialData();
+            });
+          },
+          icon: const Icon(Icons.history, color: Colors.cyanAccent),
+          label: const Text("المعاينة", style: TextStyle(color: Colors.cyanAccent, fontFamily: 'Cairo')),
+        ),
+        
+        const SizedBox(height: 10), // مسافة جمالية بين الزرين
+
+        // 2. زر التحويل بين الخزائن الجديد
+        OutlinedButton.icon(
+          style: OutlinedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            side: const BorderSide(color: Colors.cyanAccent, width: 1.0), // إطار سماوي
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            backgroundColor: Colors.white.withOpacity(0.05), // خلفية زجاجية شفافة
           ),
-        ).then((value) {
-          _loadInitialData();
-        });
-      },
-      icon: const Icon(Icons.history, color: Colors.cyanAccent),
-      label: const Text("المعاينة", style: TextStyle(color: Colors.cyanAccent, fontFamily: 'Cairo')),
+          icon: const Icon(Icons.sync_alt, color: Colors.cyanAccent, size: 20),
+          label: const Text(
+            "تحويل بين الخزائن",
+            style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold, fontFamily: 'Cairo'),
+          ),
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => TreasuryTransferPage(
+                  companyCode: widget.companyCode,
+                  userName: widget.userName,
+                  selectedBranchCode: widget.selectedBranchCode, // تمرير كود الفرع
+                ),
+              ),
+            ).then((value) {
+              // 🌟 تحديث الأرصدة والبيانات فوراً عند إغلاق صفحة التحويل والعودة هنا
+              _loadInitialData();
+            });
+          },
+        ),
+      ],
     );
   }
 

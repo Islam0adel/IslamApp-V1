@@ -214,11 +214,13 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
 
           for (var item in box.values) {
             if (item is Map && item['company_code'] == widget.companyCode) {
-              
+
+            // 🌟 الإضافة السحرية: تجاهل حركات التحويل المخفية لكي لا تظهر نهائياً في الواجهة!
+            // if (item['category'] == 'transfer_hidden') continue; 
               // 🌟 فلترة ذكية: تجاهل الحركات التي لا تنتمي للفرع المختار (إلا لو اختار الكل) بناءً على الكود
-if (widget.selectedBranchCode != null && widget.selectedBranchCode != "all" && widget.selectedBranchCode != "") {
-  if (item['branch_code']?.toString() != widget.selectedBranchCode) continue;
-}
+            if (widget.selectedBranchCode != null && widget.selectedBranchCode != "all" && widget.selectedBranchCode != "") {
+              if (item['branch_code']?.toString() != widget.selectedBranchCode) continue;
+            }
 
               String txDate = item['date']?.toString() ?? "";
               if (txDate.compareTo(startStr) >= 0 && txDate.compareTo(endStr) <= 0) {
@@ -554,6 +556,12 @@ if (widget.selectedBranchCode != null && widget.selectedBranchCode != "all" && w
   }
 
   void _editTransaction(Map<String, dynamic> item) async {
+    // 🌟 منع التعديل لحركات التحويل المزدوجة لحماية الأرصدة
+    if (item['category'] == 'تحويل خزائن') {
+      _showSnackBar("لا يمكن تعديل إذن التحويل المزدوج! الرجاء حذفه وإنشاء تحويل جديد.", Colors.orange);
+      return;
+    }
+
     await Navigator.push(
       context,
       MaterialPageRoute(
@@ -561,7 +569,7 @@ if (widget.selectedBranchCode != null && widget.selectedBranchCode != "all" && w
           companyCode: widget.companyCode,
           editItem: item,
           userName: widget.userName, 
-          selectedBranchCode: item['branch_code']?.toString() ?? widget.selectedBranchCode, // 🌟 التعديل هنا
+          selectedBranchCode: item['branch_code']?.toString() ?? widget.selectedBranchCode,
         ),
       ),
     );
@@ -609,27 +617,66 @@ if (widget.selectedBranchCode != null && widget.selectedBranchCode != "all" && w
       builder: (context) => AlertDialog(
         backgroundColor: Colors.indigo.shade900,
         title: const Text("تأكيد الحذف", style: TextStyle(color: Colors.white, fontFamily: 'Cairo', fontSize: 15)),
-        content: Text("حذف إذن رقم ${item['serial']}؟", style: const TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 13)),
+        content: Text(
+          item['category'] == 'تحويل خزائن' 
+              ? "هل أنت متأكد من حذف هذا التحويل؟\n(سيقوم النظام آلياً بحذف حركة الصادر والوارد معاً لضبط الأرصدة)" 
+              : "حذف إذن رقم ${item['serial']}؟", 
+          style: const TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 13),
+        ),
         actions: [
           TextButton(
             onPressed: () async {
               try {
+                // 1. حذف الإذن الأساسي الذي ضغط عليه المستخدم
                 await _dailyService.deleteTransaction(
-                    widget.companyCode, item['serial'] ?? 0, item['branch_code']?.toString() ?? "1"); // 🌟 التعديل هنا
+                    widget.companyCode, item['serial'] ?? 0, item['branch_code']?.toString() ?? "1"); 
                 
+                // 2. 🌟 البحث الذكي عن الحركة التوأم (المقابلة) وحذفها آلياً
+                if (item['category'] == 'تحويل خزائن') {
+                  int counterpartSerial = -1;
+                  String counterpartBranch = item['branch_code']?.toString() ?? "1";
+                  double targetAmount = double.tryParse(item['amount'].toString()) ?? 0.0;
+                  
+                  final box = Hive.box('daily_transactions_box');
+                  for (var val in box.values) {
+                    if (val is Map && 
+                        val['company_code'] == widget.companyCode && 
+                        val['category'] == 'تحويل خزائن' && 
+                        val['date'] == item['date'] && 
+                        val['type'] != item['type'] && // نوع عكسي (لو صادر يبحث عن الوارد)
+                        (double.tryParse(val['amount'].toString()) ?? 0.0) == targetAmount) {
+                          
+                      counterpartSerial = val['serial'] ?? -1;
+                      counterpartBranch = val['branch_code']?.toString() ?? counterpartBranch;
+                      break; // وجدنا الحركة التوأم!
+                    }
+                  }
+                  
+                  // إذا وجدنا التوأم، نحذفه فوراً من الفايربيز أيضاً
+                  if (counterpartSerial != -1) {
+                    await _dailyService.deleteTransaction(
+                        widget.companyCode, counterpartSerial, counterpartBranch);
+                  }
+                }
+
                 if (mounted) {
                   Navigator.pop(context); 
-                  _showSnackBar("تم حذف الإذن بنجاح وتحديث الأرصدة محلياً", Colors.green);
+                  _showSnackBar(
+                    item['category'] == 'تحويل خزائن' 
+                        ? "تم حذف حركتي التحويل (الصادر والوارد) بنجاح لضبط ميزان الخزائن"
+                        : "تم حذف الإذن بنجاح وتحديث الأرصدة محلياً", 
+                    Colors.green
+                  );
                   _fetchData(); 
                 }
               } catch (e) {
                 if (mounted) {
                   Navigator.pop(context); 
-                  _showSnackBar(e.toString(), Colors.red); 
+                  _showSnackBar("فشل الحذف: ${e.toString()}", Colors.red); 
                 }
               }
             },
-            child: const Text("حذف", style: TextStyle(color: Colors.red, fontFamily: 'Cairo', fontSize: 13)),
+            child: const Text("حذف", style: TextStyle(color: Colors.redAccent, fontFamily: 'Cairo', fontSize: 13, fontWeight: FontWeight.bold)),
           ),
         ],
       ),

@@ -47,7 +47,8 @@ class _ReportsPageState extends State<ReportsPage> {
     final box = Hive.box('daily_transactions_box');
     return box.values.where((tx) {
       if (tx['company_code'] != widget.companyCode) return false;
-
+      // لعدم عرض التحويلات 
+      if (tx['category'] == 'transfer_hidden') return false;
       // ✅ الفلترة باستخدام كود الفرع بدلاً من الاسم
       if (widget.selectedBranchCode != null &&
           widget.selectedBranchCode != "all" &&
