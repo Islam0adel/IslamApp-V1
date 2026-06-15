@@ -282,8 +282,8 @@ async def delete_company(
         
         # التحقق من وجود مستخدمين (بدون async for)
         users_query = db.collection("users").where("company_code", "==", code).limit(1).get()
-        if len(users_query) > 0:
-            raise HTTPException(status_code=400, detail="لا يمكن حذف الشركة لأن بها مستخدمين مسجلين")
+        # if len(users_query) > 0:
+        #     raise HTTPException(status_code=400, detail="لا يمكن حذف الشركة لأن بها مستخدمين مسجلين")
         
         comp_ref.delete()
         return {"status": "success", "message": "تم حذف الشركة"}
