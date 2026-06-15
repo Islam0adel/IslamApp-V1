@@ -156,7 +156,7 @@ class _RegisterScreenState extends State<RegisterScreen> with TickerProviderStat
                     _buildAnimatedField(
                       index: 5,
                       icon: Icons.badge,
-                      label: 'كود الوظيفة (1، 200، 201، 99)',
+                      label: 'كود الوظيفة)',
                       controller: _jobCodeController,
                       node: _jobNode,
                       isLast: true, // هنا هيشغل الدالة علطول عند ضغط انتر

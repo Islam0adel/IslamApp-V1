@@ -207,7 +207,82 @@ class ApiService {
     if (response.statusCode != 200) throw 'فشل حذف الكود من السيرفر';
   }
  
+  // ================= 3. إدارة الشركات (لصاحب البرنامج فقط) =================
 
+Future<List<dynamic>> getAllCompanies(String adminJobCode) async {
+  final response = await http.get(
+    Uri.parse('$baseUrl/auth/companies/all?admin_job_code=$adminJobCode'),
+  );
+  if (response.statusCode == 200) {
+    return jsonDecode(response.body);
+  }
+  throw 'فشل جلب الشركات: ${response.body}';
+}
+
+Future<void> addCompany(String code, String name, String adminJobCode) async {
+  final response = await http.post(
+    Uri.parse('$baseUrl/auth/companies/add?admin_job_code=$adminJobCode'),
+    headers: {'Content-Type': 'application/json'},
+    body: jsonEncode({'code': code, 'name': name}),
+  );
+  if (response.statusCode != 200) {
+    throw jsonDecode(response.body)['detail'] ?? 'فشل إضافة الشركة';
+  }
+}
+
+Future<void> toggleCompanyStatus(String code, bool isActive, String adminJobCode) async {
+  final response = await http.post(
+    Uri.parse('$baseUrl/auth/companies/toggle'),
+    headers: {'Content-Type': 'application/json'},
+    body: jsonEncode({
+      'code': code,
+      'is_active': isActive,
+      'admin_job_code': adminJobCode,
+    }),
+  );
+  if (response.statusCode != 200) {
+    throw jsonDecode(response.body)['detail'] ?? 'فشل تغيير حالة الشركة';
+  }
+}
+
+// ================= إدارة الشركات (تعديل وحذف) =================
+
+Future<void> updateCompany({
+  required String oldCode,
+  required String newCode,
+  required String newName,
+  required String adminJobCode,
+}) async {
+  try {
+    final response = await http.put(
+      Uri.parse('$baseUrl/auth/companies/update'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'old_code': oldCode,
+        'new_code': newCode,
+        'new_name': newName,
+        'admin_job_code': adminJobCode,
+      }),
+    ).timeout(const Duration(seconds: 10));  // ✅ مهلة 10 ثواني
+    
+    if (response.statusCode != 200) {
+      final errorMsg = jsonDecode(response.body)['detail'] ?? 'فشل تحديث الشركة';
+      throw Exception(errorMsg);
+    }
+  } catch (e) {
+    print("❌ خطأ في updateCompany: $e");
+    throw e.toString();
+  }
+}
+
+Future<void> deleteCompany(String code, String adminJobCode) async {
+  final response = await http.delete(
+    Uri.parse('$baseUrl/auth/companies/delete/$code?admin_job_code=$adminJobCode'),
+  );
+  if (response.statusCode != 200) {
+    throw jsonDecode(response.body)['detail'] ?? 'فشل حذف الشركة';
+  }
+}
 
 
 

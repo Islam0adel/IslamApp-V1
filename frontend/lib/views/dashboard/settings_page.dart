@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../main.dart'; // عشان نوصل لدالة تغيير الثيم
+import '../../views/dashboard/admin_companies_screen.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key}); // شيلنا المتغيرات عشان متضربش في الهوم
@@ -215,6 +216,17 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
                               title: 'تواصل مع الدعم الفني',
                               onTap: () {
                                 // Action here
+                              },
+                            ),
+                            const Divider(color: Colors.white10, height: 20),
+                            _buildSettingRow(
+                              icon: Icons.business_center,
+                              title: 'إدارة الشركات',
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(builder: (_) => const AdminCompaniesScreen()),
+                                );
                               },
                             ),
                             const Divider(color: Colors.white10, height: 20),
