@@ -6,66 +6,43 @@ import '../core/constants.dart';
 
 class CodingService {
   final String baseUrl = ApiConstants.baseUrl;
-  
-  // الوصول إلى صندوق Hive الأساسي للتكويدات
   final Box _codingBox = Hive.box('coding_box');
 
-  // 1. جلب قائمة التكويد مع معالجة النوع بشكل صارم والتوافق التام مع الباك إند
-  // جلب البيانات ذكياً فقط في حالة حدوث تغيير في السيرفر
+  // 1. جلب قائمة التكويد (بدون version_control)
   Future<List<CodingModel>> getCodingList({
     required String companyCode,
     required String category,
   }) async {
     final String localKey = "${companyCode}_$category";
-    final String versionKey = "${localKey}_version";
 
+    // نقرأ من Hive أولاً
+    if (_codingBox.containsKey(localKey)) {
+      final dynamic rawData = _codingBox.get(localKey);
+      if (rawData is List) {
+        return rawData.map((item) => CodingModel.fromMap(Map<String, dynamic>.from(item as Map))).toList();
+      }
+    }
+
+    // إذا لم توجد محلياً، نجلب من السيرفر
     try {
-      // 1. نسأل السيرفر عن رقم النسخة الحالية لهذا القسم
-      final versionResponse = await http.get(Uri.parse("$baseUrl/coding/version/$companyCode/$category"));
-      
-      if (versionResponse.statusCode == 200) {
-        final Map<String, dynamic> versionData = json.decode(versionResponse.body);
-        int serverVersion = versionData['version'] ?? 0;
+      final response = await http.get(Uri.parse("$baseUrl/coding/list/$companyCode/$category"));
+      if (response.statusCode == 200) {
+        final List<dynamic> decodedData = json.decode(response.body);
+        List<CodingModel> newList = decodedData.map((item) => CodingModel.fromMap(item)).toList();
 
-        // 2. نقرأ رقم النسخة المحفوظ محلياً في الـ Hive
-        int localVersion = _codingBox.get(versionKey, defaultValue: -1);
-
-        // 🟢 لو مفيش تغيير ورقم النسخة متطابق، افتح الكاش فوراً ووفر الإنترنت والقراءات!
-        if (serverVersion == localVersion && _codingBox.containsKey(localKey)) {
-          final dynamic rawData = _codingBox.get(localKey);
-          if (rawData is List) {
-            return rawData.map((item) => CodingModel.fromMap(Map<String, dynamic>.from(item as Map))).toList();
-          }
-        }
-
-        // 🔵 لو حصل تغيير (النسخ غير متطابقة)، يسحب البيانات الجديدة من الفايربيز
-        final dataResponse = await http.get(Uri.parse("$baseUrl/coding/list/$companyCode/$category"));
-        if (dataResponse.statusCode == 200) {
-          final List<dynamic> decodedData = json.decode(dataResponse.body);
-          List<CodingModel> newList = decodedData.map((item) => CodingModel.fromMap(item)).toList();
-
-          // حفظ البيانات الجديدة ورقم النسخة الجديد في الـ Hive
-          await _codingBox.put(localKey, newList.map((item) => item.toMap()).toList());
-          await _codingBox.put(versionKey, serverVersion); // تحديث النسخة المحلية
-
-          return newList;
-        }
+        // حفظ في Hive
+        await _codingBox.put(localKey, newList.map((item) => item.toMap()).toList());
+        return newList;
       }
-      throw Exception("فشل الاتصال");
+      return [];
     } catch (e) {
-      // حائط الصد: لو الشبكة قطعت تماماً، يفتح الكاش الاحتياطي تلقائياً دون إيرور
-      if (_codingBox.containsKey(localKey)) {
-        final dynamic rawData = _codingBox.get(localKey);
-        if (rawData is List) {
-          return rawData.map((item) => CodingModel.fromMap(Map<String, dynamic>.from(item as Map))).toList();
-        }
-      }
+      // في حالة فشل الاتصال، نعيد قائمة فارغة
       return [];
     }
   }
 
-  // 2. حفظ أو تحديث تكويد جديد بالتزامن محلياً وعلى السيرفر
-  Future<bool> saveCode({
+  // 2. حفظ أو تحديث تكويد (مع دعم الكود الفارغ للإضافة)
+  Future<Map<String, dynamic>> saveCode({
     required String companyCode,
     required String category,
     required CodingModel model,
@@ -75,7 +52,8 @@ class CodingService {
       bodyData['company_code'] = companyCode;
       bodyData['category'] = category;
 
-      // 🔥 تم التعديل: إضافة البادئة /coding لتوجيه الطلب للـ Router الصحيح بـ FastAPI
+      // إذا كان الكود فارغاً، نعتبره إضافة جديدة
+      // (سيرسل الباك إند كوداً جديداً)
       final response = await http.post(
         Uri.parse("$baseUrl/coding/save"),
         headers: {"Content-Type": "application/json"},
@@ -83,42 +61,65 @@ class CodingService {
       );
 
       if (response.statusCode == 200) {
+        final Map<String, dynamic> result = json.decode(response.body);
+        final String newCode = result['code'] ?? model.code;
+        final String action = result['action'] ?? 'update';
+
+        // تحديث Hive
         final String localKey = "${companyCode}_$category";
-        final dynamic rawData = _codingBox.get(localKey, defaultValue: []);
-        
         List<Map<String, dynamic>> currentList = [];
-        if (rawData is List) {
-          currentList = rawData.map((item) => Map<String, dynamic>.from(item as Map)).toList();
+        if (_codingBox.containsKey(localKey)) {
+          final dynamic rawData = _codingBox.get(localKey);
+          if (rawData is List) {
+            currentList = rawData.map((item) => Map<String, dynamic>.from(item as Map)).toList();
+          }
         }
 
-        int index = currentList.indexWhere((element) => element['code'].toString() == model.code.toString());
-        if (index != -1) {
-          currentList[index] = model.toMap();
+        // إذا كانت إضافة (action == 'insert')، نضيف العنصر الجديد
+        // وإلا نعدل العنصر الموجود
+        if (action == 'insert') {
+          // نضيف الكود الجديد للبيانات
+          bodyData['code'] = newCode;
+          currentList.add(bodyData);
         } else {
-          currentList.add(model.toMap());
+          // تعديل: نبحث عن العنصر بالكود القديم ونستبدله
+          final int index = currentList.indexWhere((item) => item['code'] == model.code);
+          if (index != -1) {
+            currentList[index] = bodyData;
+          }
         }
 
-        // ترتيب الأكواد تصاعدياً لعدم لخبطة الأرقام السيريال في الواجهة
-        currentList.sort((a, b) => int.parse(a['code'].toString()).compareTo(int.parse(b['code'].toString())));
+        // ترتيب تصاعدي
+        currentList.sort((a, b) {
+          int aCode = int.tryParse(a['code']?.toString() ?? '0') ?? 0;
+          int bCode = int.tryParse(b['code']?.toString() ?? '0') ?? 0;
+          return aCode.compareTo(bCode);
+        });
+
         await _codingBox.put(localKey, currentList);
 
-        return true;
+        return {
+          'success': true,
+          'code': newCode,
+          'action': action,
+        };
       }
-      return false;
+      return {'success': false, 'error': 'فشل الحفظ من السيرفر'};
     } catch (e) {
-      return false;
+      return {'success': false, 'error': e.toString()};
     }
   }
 
-  // 3. حذف التكويد محلياً ومن السيرفر
+  // 3. حذف التكويد
   Future<bool> deleteCode({
     required String companyCode,
     required String category,
     required String code,
   }) async {
     try {
-      // 🔥 تم التعديل: إضافة البادئة /coding ليتطابق الـ URL بالكامل مع دالة الحذف بالباك إند
-      final response = await http.delete(Uri.parse("$baseUrl/coding/delete/$companyCode/$category/$code"));
+      final response = await http.delete(
+        Uri.parse("$baseUrl/coding/delete/$companyCode/$category/$code"),
+      );
 
       if (response.statusCode == 200) {
         final String localKey = "${companyCode}_$category";
@@ -126,7 +127,7 @@ class CodingService {
           final dynamic rawData = _codingBox.get(localKey);
           if (rawData is List) {
             List<Map<String, dynamic>> currentList = rawData.map((item) => Map<String, dynamic>.from(item as Map)).toList();
-            currentList.removeWhere((element) => element['code'].toString() == code.toString());
+            currentList.removeWhere((element) => element['code'].toString() == code);
             await _codingBox.put(localKey, currentList);
           }
         }

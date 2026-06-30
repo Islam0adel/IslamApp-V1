@@ -14,25 +14,43 @@ import 'services/global_sync_service.dart'; // 🌟 استيراد ملف الخ
 
 // 🌟 المتغيرات العالمية للرادار المركزي
 StreamSubscription? globalSyncSubscription;
+StreamSubscription? codingSyncSubscription; // ✅ إضافة اشتراك خاص بالتكويد
 final GlobalSyncService _syncService = GlobalSyncService(); // 🌟 الآن سيتعرف عليها بدون أي خطأ
 
 // 🌟 دالة تشغيل الرادار اللحظي المحدثة بالمنظومة الموضعية الذكية وتوفير القراءات
 void initializeGlobalListener(String companyCode) async { // 👈 تم إعادة async هنا لأننا سننتظر الـ Future
+  // إلغاء الاشتراكات السابقة
   globalSyncSubscription?.cancel(); 
+  codingSyncSubscription?.cancel();
   
-  // 👈 هنا تم إضافة await لأن الدالة تعيد Future<Stream> وبذلك نستخرج الـ Stream الفعلي
+  // 1. تشغيل مستمع اليوميات (القديم)
   Stream<QuerySnapshot> stream = await _syncService.startGlobalListener(companyCode);
-  
   globalSyncSubscription = stream.listen((snapshot) {
     for (var change in snapshot.docChanges) {
       final String docId = change.doc.id;
       final Map<String, dynamic> updateData = change.doc.data() as Map<String, dynamic>? ?? {};
 
-      // سيتم توجيه الكل لـ processIncomingUpdate وهي بداخلها ستفرز الإضافة من الحذف (بناءً على is_deleted)
       if (change.type == DocumentChangeType.added || change.type == DocumentChangeType.modified) {
         _syncService.processIncomingUpdate(companyCode, docId, updateData);
       } else if (change.type == DocumentChangeType.removed) {
         _syncService.processIncomingDelete(companyCode, docId);
+      }
+    }
+  });
+
+  // 2. تشغيل مستمع التكويد (الجديد)
+  Stream<QuerySnapshot> codingStream = await _syncService.startCodingListener(companyCode);
+  codingSyncSubscription = codingStream.listen((snapshot) {
+    print("📦 استقبلت لقطة جديدة من التكويد، عدد التغييرات: ${snapshot.docChanges.length}");
+    for (var change in snapshot.docChanges) {
+      final String docId = change.doc.id;
+      final Map<String, dynamic> data = change.doc.data() as Map<String, dynamic>? ?? {};
+
+      if (change.type == DocumentChangeType.added || change.type == DocumentChangeType.modified) {
+        _syncService.processCodingUpdate(companyCode, docId, data);
+      } else if (change.type == DocumentChangeType.removed) {
+        // في حالة الحذف، نستخدم الدالة التي تبحث في جميع الأقسام
+        _syncService.processCodingDelete(companyCode, docId, '');
       }
     }
   });
@@ -41,6 +59,7 @@ void initializeGlobalListener(String companyCode) async { // 👈 تم إعاد�
 // 🌟 دالة إيقاف الرادار عند تسجيل الخروج
 void disposeGlobalListener() {
   globalSyncSubscription?.cancel();
+  codingSyncSubscription?.cancel();
 }
 
 void main() async {

@@ -2,6 +2,8 @@ from fastapi import APIRouter, HTTPException
 from app.core.firebase_setup import db
 from pydantic import BaseModel
 from typing import Optional
+import traceback
+from google.cloud import firestore
 
 router = APIRouter()
 
@@ -24,22 +26,21 @@ DEFAULT_TYPES = [
     {"name": "بضاعة", "type": "صادر"}
 ]
 
-# 2. التكويدات الافتراضية لباقي الأقسام (تم تنظيف التكرار)
+# 2. التكويدات الافتراضية لباقي الأقسام
 DEFAULT_CATEGORIES_DATA = {
     "safes": [{"name": "نقدي"},
-                  {"name": "فيزا"},
-                  {"name": "محفظة الكترونية"}],            # الخزائن
-    "customers": [{"name": "عميل نقدي"}],                    # العملاء
-    "stores": [{"name": "المخزن الرئيسي"}],                  # المخازن
-    "branches": [{"name": "الفرع الرئيسي"}],                  # الفروع لضمان وجود فرع افتراضي للربط
-    "payment_methods": [                                    # طرق الدفع
+              {"name": "فيزا"},
+              {"name": "محفظة الكترونية"}],
+    "customers": [{"name": "عميل نقدي"}],
+    "stores": [{"name": "المخزن الرئيسي"}],
+    "branches": [{"name": "الفرع الرئيسي"}],
+    "payment_methods": [
         {"name": "نقدي"},
         {"name": "فيزا"},
         {"name": "محفظة الكترونية"}
     ]
 }
 
-# موديل البيانات المطور للأصناف والتصنيفات الشامل
 class CodingModel(BaseModel):
     company_code: str
     category: str
@@ -53,91 +54,105 @@ class CodingModel(BaseModel):
     profit_percent: Optional[float] = 0.0
 
 
-# 🟢 دالة مساعدة لزيادة رقم النسخة تلقائياً عند (الحفظ أو الحذف أو التعديل)
-def bump_version(company_code: str, category: str):
-    try:
-        doc_ref = db.collection("coding").document(company_code).collection(category).document("version_control")
-        doc = doc_ref.get()
-        current_version = doc.to_dict().get("version", 1) if doc.exists else 1
-        doc_ref.set({"version": current_version + 1}) # تزيد النسخة بمقدار 1 ليعرف الفرونت إند بوجود تغيير
-    except Exception as e:
-        print(f"Error bumping version: {str(e)}")
-
-
-# [تعديل دالة 1]: حفظ أو تحديث التكويد مع ترفيع رقم النسخة ذكياً لإعلام الكاش المحلي
+# ==============================================
+#          🟢 مسار الحفظ (بدون Transaction)
+#          الكود يُحدد من قبل المستخدم مباشرة
+# ==============================================
 @router.post("/save")
 async def save_code(data: CodingModel):
     try:
-        # تحويل الموديل بالكامل إلى قاموس (حتى لا نفقد أي ميزة أو خاصية قديمة أو مستقبلية)
-        save_data = data.dict()
-        
-        # إزالة الحقول التي تنتمي للمسار وليس لمستند التكويد نفسه
-        save_data.pop("company_code", None)
-        save_data.pop("category", None)
+        company_code = data.company_code
+        category = data.category
+        code = data.code
 
-        # حفظ المستند مباشرة في مساره الصحيح ديناميكياً
-        db.collection("coding")\
-            .document(data.company_code)\
-            .collection(data.category)\
-            .document(data.code)\
-            .set(save_data)
-        
-        # 🔥 تحديث النسخة لإجبار الكاش عند العميل على التحديث التلقائي
-        bump_version(data.company_code, data.category)
-        
-        return {"status": "success", "message": "تم حفظ التكويد بنجاح"}
+        if not code:
+            raise HTTPException(status_code=400, detail="الكود مطلوب ولا يمكن أن يكون فارغاً")
 
+        collection_ref = db.collection("coding").document(company_code).collection(category)
+        doc_ref = collection_ref.document(code)
+
+        # التحقق مما إذا كان المستند موجوداً بالفعل (لتحديد هل هي إضافة أم تعديل)
+        doc_snapshot = doc_ref.get()
+        is_new = not doc_snapshot.exists
+
+        # تحويل الموديل إلى قاموس مع توافق Pydantic v1/v2
+        try:
+            save_data = data.model_dump()
+        except AttributeError:
+            save_data = data.dict()
+
+        # إضافة الحقول الإلزامية (إن لم تكن موجودة)
+        save_data["company_code"] = company_code
+        save_data["category"] = category
+        save_data["updated_at"] = firestore.SERVER_TIMESTAMP
+        # حفظ المستند (سيتم استبدال البيانات إذا كان موجوداً)
+        doc_ref.set(save_data)
+
+        return {
+            "status": "success",
+            "message": "تم حفظ التكويد بنجاح",
+            "code": code,
+            "action": "insert" if is_new else "update"
+        }
+
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print("❌ خطأ في save_code:")
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"خطأ في السيرفر: {str(e)}")
 
 
-# [تعديل دالة 2]: جلب التكويدات ومعالجة ذكية لحفظ الـ types وتصفية ملفات النسخ
+# ==============================================
+#          🟢 مسار جلب القائمة (مع البيانات الافتراضية)
+# ==============================================
 @router.get("/list/{company_code}/{category}")
 async def list_codes(company_code: str, category: str):
     try:
-        collection_ref = db.collection("coding")\
-            .document(company_code)\
-            .collection(category)
+        collection_ref = db.collection("coding").document(company_code).collection(category)
 
         existing_docs = list(collection_ref.stream())
 
-        # الفحص الذكي: لو القسم فارغ عند أول فتح للبرنامج أو بعد الحذف الكامل، نملأه بالافتراضيات فوراً
-        # ملاحظة: نتحقق من وجود مستندات حقيقية غير مستند تحكم النسخة
+        # نستثني مستندات التحكم القديمة (version_control) إن وجدت
         real_docs = [d for d in existing_docs if d.id != "version_control"]
 
+        # إذا لم توجد مستندات حقيقية، ندرج البيانات الافتراضية
         if len(real_docs) == 0:
             if category == "types":
                 for index, item in enumerate(DEFAULT_TYPES, start=1):
                     code = str(index)
-                    collection_ref.document(code).set({
+                    doc_data = {
                         "name": item["name"],
                         "type": item["type"],
-                        "code": code
-                    })
-            
+                        "code": code,
+                        "company_code": company_code,
+                        "category": category
+                    }
+                    collection_ref.document(code).set(doc_data)
             elif category in DEFAULT_CATEGORIES_DATA:
                 for index, item in enumerate(DEFAULT_CATEGORIES_DATA[category], start=1):
                     code = str(index)
-                    collection_ref.document(code).set({
+                    doc_data = {
                         "name": item["name"],
-                        "code": code
-                    })
+                        "code": code,
+                        "company_code": company_code,
+                        "category": category
+                    }
+                    collection_ref.document(code).set(doc_data)
 
-            # إعادة قراءة المستندات بعد ملء البيانات الافتراضية
+            # إعادة قراءة المستندات بعد الإدراج
             existing_docs = list(collection_ref.stream())
 
-        # تجميع النتائج لترسل للفرونت إند ليحفظها في الـ Hive
+        # تجميع النتائج مع استثناء version_control
         results = []
         for d in existing_docs:
-            # 🔥 استثناء ذكي: مستند version_control لا يجب إرساله لقائمة التكويد بالواجهة
             if d.id == "version_control":
                 continue
-                
             item_data = d.to_dict()
             item_data["code"] = d.id
             results.append(item_data)
 
-        # ترتيب التكويدات بناءً على الكود تصاعدياً
+        # ترتيب تصاعدي حسب الكود (كرقم)
         results.sort(key=lambda x: int(x["code"]) if x["code"].isdigit() else x["code"])
         return results
 
@@ -145,35 +160,16 @@ async def list_codes(company_code: str, category: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# [دالة 3]: حذف التكويد مع ترفيع رقم نسخة التحكم
+# ==============================================
+#          🟢 مسار الحذف
+# ==============================================
 @router.delete("/delete/{company_code}/{category}/{code}")
 async def delete_code(company_code: str, category: str, code: str):
     try:
-        db.collection("coding")\
-            .document(company_code)\
-            .collection(category)\
-            .document(code)\
-            .delete()
-            
-        # 🔥 تحديث النسخة عند الحذف ليعلم الكاش أن السيرفر نقُص عن الهاتف
-        bump_version(company_code, category)
+        collection_ref = db.collection("coding").document(company_code).collection(category)
+        doc_ref = collection_ref.document(code)
+        doc_ref.delete()
         return {"status": "success", "message": "تم حذف التكويد بنجاح"}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-# [دالة 4]: جلب رقم النسخة الحالي للقسم من الفايربيز (استدعاء فائق الخفة)
-@router.get("/version/{company_code}/{category}")
-async def get_coding_version(company_code: str, category: str):
-    try:
-        doc_ref = db.collection("coding").document(company_code).collection(category).document("version_control")
-        doc = doc_ref.get()
-        if doc.exists:
-            return {"version": doc.to_dict().get("version", 1)}
-        else:
-            # لو مش موجودة بننشأها أول مرة برقم 1
-            doc_ref.set({"version": 1})
-            return {"version": 1}
-    except Exception as e:
-        return {"version": 1}
