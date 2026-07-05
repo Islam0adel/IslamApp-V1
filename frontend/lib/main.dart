@@ -76,11 +76,12 @@ void main() async {
   
   // فتح صندوق لتخزين الأذون اليومية (daily_records)
   await Hive.openBox('daily_transactions_box');
-  // 🌟 سطر مؤقت: قم بإلغاء التعليق عنه لمسح كل البيانات المحلية وتصفيرها تماماً، ثم قفل السطر بعد أول تشغيل
-  // Hive.box('daily_transactions_box').clear();
-  
   // فتح صندوق لتخزين التكويدات (الخزائن، الفروع، التصنيفات)
   await Hive.openBox('coding_box'); 
+
+    // 🌟 سطر مؤقت: قم بإلغاء التعليق عنه لمسح كل البيانات المحلية وتصفيرها تماماً، ثم قفل السطر بعد أول تشغيل
+  // Hive.box('daily_transactions_box').clear();
+  // Hive.box('coding_box').clear();
 
   // 4. قراءة حالة الدخول من الذاكرة المحلية (SharedPreferences مخصصة لبيانات الحساب فقط)
   final prefs = await SharedPreferences.getInstance();

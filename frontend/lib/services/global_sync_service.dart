@@ -6,12 +6,11 @@ import 'daily_service.dart';
 
 class GlobalSyncService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final Box _dailyBox = Hive.box('daily_transactions_box'); 
-  
-  // ✅ إضافة صندوق التكويد
-  final Box _codingBox = Hive.box('coding_box');
 
-  // ✅ إضافة اشتراك خاص بالتكويد (مع الحفاظ على الاشتراك العام لليوميات)
+  // ✅ استبدال الحقول بـ getters لتأخير الوصول إلى Hive حتى بعد فتح الصناديق
+  Box get _dailyBox => Hive.box('daily_transactions_box');
+  Box get _codingBox => Hive.box('coding_box');
+
   StreamSubscription<QuerySnapshot>? _codingSubscription;
 
   // ================== القسم القديم (اليوميات) ==================
@@ -84,99 +83,180 @@ class GlobalSyncService {
 
   // ================== إضافة دعم التكويد (بنفس النمط) ==================
   // 4. فتح مجرى الاستماع للتكويد
+  // 4. فتح مجرى الاستماع للتكويد (بالمسار المسطح النظيف)
   Future<Stream<QuerySnapshot>> startCodingListener(String companyCode) async {
-  final prefs = await SharedPreferences.getInstance();
-  final int? lastCodingSync = prefs.getInt('last_coding_sync_$companyCode');
-  
-  print("📡 بدء رادار التكويد لشركة: $companyCode");
-  
-  Query query = _firestore
-      .collectionGroup('coding')
-      .where('company_code', isEqualTo: companyCode);
+    final prefs = await SharedPreferences.getInstance();
+    final int? lastCodingSync = prefs.getInt('last_coding_sync_$companyCode');
+    
+    print("📡 بدء رادار التكويد لشركة: $companyCode");
+    
+    // 🌟 استخدام المسار المباشر الجديد 
+    Query query = _firestore
+        .collection('coding_records')
+        .where('company_code', isEqualTo: companyCode);
 
-  if (lastCodingSync != null) {
-    // جلب التحديثات الجديدة فقط!
-    Timestamp lastSyncTimestamp = Timestamp.fromMillisecondsSinceEpoch(lastCodingSync);
-    query = query.where('updated_at', isGreaterThan: lastSyncTimestamp);
+    if (lastCodingSync != null) {
+      // جلب التحديثات الجديدة فقط باستخدام حقل الوقت
+      Timestamp lastSyncTimestamp = Timestamp.fromMillisecondsSinceEpoch(lastCodingSync);
+      query = query.where('updated_at', isGreaterThan: lastSyncTimestamp);
+    }
+
+    // تحديث وقت آخر مزامنة
+    await prefs.setInt('last_coding_sync_$companyCode', DateTime.now().millisecondsSinceEpoch);
+
+    return query.snapshots();
   }
 
-  // تحديث وقت آخر مزامنة
-  await prefs.setInt('last_coding_sync_$companyCode', DateTime.now().millisecondsSinceEpoch);
+  Future<void> processCodingUpdate(String companyCode, String docId, Map<String, dynamic> data) async {
+  if (data.isEmpty) return;
 
-  return query.snapshots();
+  // تنظيف البيانات (لحل مشكلة Timestamp)
+  Map<String, dynamic> sanitizedData = Map<String, dynamic>.from(data);
+  sanitizedData.forEach((key, value) {
+    if (value is Timestamp) {
+      sanitizedData[key] = value.toDate().toIso8601String();
+    }
+  });
+
+  final String category = sanitizedData['category'] ?? '';
+  if (category.isEmpty) return;
+
+  final String key = "${companyCode}_$category";
+  List<Map<String, dynamic>> list = [];
+
+  // قراءة القائمة الحالية من Hive
+  if (_codingBox.containsKey(key)) {
+    final rawData = _codingBox.get(key);
+    if (rawData is List) {
+      list = rawData.map((item) => Map<String, dynamic>.from(item as Map)).toList();
+    }
+  }
+
+  // 🔥 التعديل المهم: استخدام `data['code']` للمقارنة بدلاً من `docId`
+  final String itemCode = sanitizedData['code']?.toString() ?? '';
+  if (itemCode.isEmpty) {
+    print("⚠️ تحديث تكويد بدون code، تم تجاهله.");
+    return;
+  }
+
+  // البحث عن العنصر باستخدام code
+  int index = list.indexWhere((item) => item['code']?.toString() == itemCode);
+  if (index != -1) {
+    // تحديث العنصر الموجود
+    list[index] = sanitizedData;
+  } else {
+    // إضافة عنصر جديد
+    list.add(sanitizedData);
+  }
+
+  // تنظيف إضافي: إزالة أي تكرار قديم (احتياطي)
+  final Map<String, Map<String, dynamic>> uniqueItems = {};
+  for (var item in list) {
+    String code = item['code']?.toString() ?? '';
+    if (code.isNotEmpty) {
+      uniqueItems[code] = item;
+    }
+  }
+  list = uniqueItems.values.toList();
+
+  // ترتيب تصاعدي
+  list.sort((a, b) {
+    int aCode = int.tryParse(a['code']?.toString() ?? '0') ?? 0;
+    int bCode = int.tryParse(b['code']?.toString() ?? '0') ?? 0;
+    return aCode.compareTo(bCode);
+  });
+
+  await _codingBox.put(key, list);
+  print("🔄 الرادار: تم تحديث القسم [$category]، العنصر [$itemCode].");
 }
 
-  // 5. معالجة إضافة/تعديل التكويد
-  Future<void> processCodingUpdate(String companyCode, String docId, Map<String, dynamic> data) async {
-    if (data.isEmpty) return;
+  // 6. معالجة حذف التكويد (من أي قسم) - نسخة ويب آمنة 100%
+  Future<void> _deleteCodingItemFromAllCategories(String docId) async {
+    // 1. أخذ نسخة ثابتة من المفاتيح لتجنب أخطاء التعديل المتزامن أثناء الحذف
+    final List<dynamic> keys = _codingBox.keys.toList();
 
-    final String category = data['category'] ?? '';
-    if (category.isEmpty) {
-      print("⚠️ تحديث تكويد بدون category، تم تجاهله.");
-      return;
-    }
+    // 2. المرور على كل الأقسام المحفوظة في الـ Hive
+    for (var key in keys) {
+      final dynamic rawData = _codingBox.get(key);
+      
+      // التأكد أن البيانات عبارة عن قائمة
+      if (rawData is List) {
+        
+        // 🌟 الحل الجذري: إنشاء قائمة جديدة تماماً بدون استخدام List.from
+        final List<Map<String, dynamic>> safeList = [];
+        
+        // 3. تفريغ العناصر يدوياً (عنصر بعنصر) لتجنب أخطاء تحويل الأنواع في الويب
+        for (var item in rawData) {
+          if (item is Map) {
+            final Map<String, dynamic> safeMap = {};
+            
+            // نقل المفاتيح والقيم يدوياً وتحويل المفتاح لنص صريح
+            for (var k in item.keys) {
+              safeMap[k.toString()] = item[k];
+            }
+            
+            // إضافة العنصر السليم للقائمة الآمنة
+            safeList.add(safeMap);
+          }
+        }
 
-    final String key = "${companyCode}_$category";
-    List<Map<String, dynamic>> list = [];
+        // حفظ طول القائمة قبل محاولة الحذف لمعرفة هل تم حذف شيء أم لا
+        int initialLength = safeList.length;
 
-    if (_codingBox.containsKey(key)) {
-      list = List<Map<String, dynamic>>.from(_codingBox.get(key) as List);
-    }
+        // 4. حذف العنصر المطلوب بناءً على الكود
+        safeList.removeWhere((item) {
+          String itemCode = item['code']?.toString() ?? '';
+          return itemCode == docId || docId.endsWith("_$itemCode");
+        });
 
-    // البحث عن العنصر حسب الكود (docId)
-    final int index = list.indexWhere((item) => item['code'] == docId);
-    if (index != -1) {
-      list[index] = Map<String, dynamic>.from(data);
-    } else {
-      list.add(Map<String, dynamic>.from(data));
-    }
-
-    // ترتيب تصاعدي حسب الكود (كرقم)
-    list.sort((a, b) {
-      int aCode = int.tryParse(a['code']?.toString() ?? '0') ?? 0;
-      int bCode = int.tryParse(b['code']?.toString() ?? '0') ?? 0;
-      return aCode.compareTo(bCode);
-    });
-
-    await _codingBox.put(key, list);
-    print("🔄 الرادار (التكويد): تم تحديث القسم [$category]، العنصر [$docId].");
-  }
-
-  // 6. معالجة حذف التكويد (من أي قسم)
-  Future<void> _deleteCodingItemFromAllCategories(String companyCode, String docId) async {
-    bool deleted = false;
-    for (var key in _codingBox.keys) {
-      if (key.toString().startsWith("${companyCode}_")) {
-        final List<Map<String, dynamic>> list = List<Map<String, dynamic>>.from(_codingBox.get(key) as List);
-        final int index = list.indexWhere((item) => item['code'] == docId);
-        if (index != -1) {
-          list.removeAt(index);
-          await _codingBox.put(key, list);
-          deleted = true;
-          print("🗑️ الرادار (التكويد): تم حذف العنصر [$docId] من المفتاح [$key].");
-          break;
+        // 5. إذا تم حذف العنصر (طول القائمة قل)، نقوم بتحديث الـ Hive
+        if (safeList.length < initialLength) {
+          await _codingBox.put(key, safeList);
+          print("🗑️ الرادار: تم حذف العنصر من الذاكرة المحلية بأمان من القسم [$key].");
         }
       }
     }
-    if (!deleted) {
-      print("⚠️ الرادار (التكويد): لم يتم العثور على العنصر [$docId] في أي قسم محلي.");
-    }
   }
 
-  // 7. دالة مساعدة للحذف من قسم معين (إذا عُرف)
+  // 7. دالة مساعدة للحذف من قسم معين (إذا عُرف) - نسخة ويب آمنة بدون List.from
   Future<void> processCodingDelete(String companyCode, String docId, String category) async {
     if (category.isEmpty) {
-      await _deleteCodingItemFromAllCategories(companyCode, docId);
+      await _deleteCodingItemFromAllCategories(docId);
       return;
     }
 
     final String key = "${companyCode}_$category";
     if (!_codingBox.containsKey(key)) return;
 
-    List<Map<String, dynamic>> list = List<Map<String, dynamic>>.from(_codingBox.get(key) as List);
-    list.removeWhere((item) => item['code'] == docId);
-    await _codingBox.put(key, list);
-    print("🗑️ الرادار (التكويد): تم حذف العنصر [$docId] من القسم [$category].");
+    final dynamic rawData = _codingBox.get(key);
+    
+    if (rawData is List) {
+      // 🌟 إنشاء قائمة جديدة صريحة لتجنب تحويلات Dart2JS الداخلية
+      final List<Map<String, dynamic>> safeList = [];
+      
+      // تفريغ العناصر يدوياً تماماً
+      for (int i = 0; i < rawData.length; i++) {
+        final dynamic item = rawData[i];
+        if (item is Map) {
+          final Map<String, dynamic> safeMap = {};
+          item.forEach((k, v) {
+            safeMap[k.toString()] = v;
+          });
+          safeList.add(safeMap);
+        }
+      }
+          
+      int initialLength = safeList.length;
+
+      // البحث عن العنصر ومسحه باستخدام الكود
+      safeList.removeWhere((item) => item['code']?.toString() == docId.toString());
+      
+      // حفظ القائمة الجديدة في الذاكرة المحلية
+      if (safeList.length < initialLength) {
+        await _codingBox.put(key, safeList);
+        print("🗑️ الرادار (التكويد): تم حذف العنصر [$docId] من القسم [$category] بنجاح.");
+      }
+    }
   }
 
   // 8. إلغاء جميع الاشتراكات (تم إضافتها للمساعدة)

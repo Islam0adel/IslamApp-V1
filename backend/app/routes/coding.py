@@ -68,24 +68,22 @@ async def save_code(data: CodingModel):
         if not code:
             raise HTTPException(status_code=400, detail="الكود مطلوب ولا يمكن أن يكون فارغاً")
 
-        collection_ref = db.collection("coding").document(company_code).collection(category)
-        doc_ref = collection_ref.document(code)
+        # 🌟 التعديل هنا: استخدام مسار واحد لكل التكويدات لسهولة قراءتها بالرادار
+        doc_id = f"{company_code}_{category}_{code}"
+        doc_ref = db.collection("coding_records").document(doc_id)
 
-        # التحقق مما إذا كان المستند موجوداً بالفعل (لتحديد هل هي إضافة أم تعديل)
         doc_snapshot = doc_ref.get()
         is_new = not doc_snapshot.exists
 
-        # تحويل الموديل إلى قاموس مع توافق Pydantic v1/v2
         try:
             save_data = data.model_dump()
         except AttributeError:
             save_data = data.dict()
 
-        # إضافة الحقول الإلزامية (إن لم تكن موجودة)
         save_data["company_code"] = company_code
         save_data["category"] = category
-        save_data["updated_at"] = firestore.SERVER_TIMESTAMP
-        # حفظ المستند (سيتم استبدال البيانات إذا كان موجوداً)
+        save_data["updated_at"] = firestore.SERVER_TIMESTAMP # إضافة حقل الوقت
+        
         doc_ref.set(save_data)
 
         return {
@@ -95,70 +93,60 @@ async def save_code(data: CodingModel):
             "action": "insert" if is_new else "update"
         }
 
-    except HTTPException:
-        raise
     except Exception as e:
-        print("❌ خطأ في save_code:")
-        print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"خطأ في السيرفر: {str(e)}")
 
-
 # ==============================================
-#          🟢 مسار جلب القائمة (مع البيانات الافتراضية)
+#          🟢 مسار جلب القائمة
 # ==============================================
 @router.get("/list/{company_code}/{category}")
 async def list_codes(company_code: str, category: str):
     try:
-        collection_ref = db.collection("coding").document(company_code).collection(category)
+        # 🌟 جلب البيانات من المسار المسطح بناءً على الشركة والقسم
+        collection_ref = db.collection("coding_records")
+        query = collection_ref.where("company_code", "==", company_code).where("category", "==", category)
+        existing_docs = list(query.stream())
 
-        existing_docs = list(collection_ref.stream())
-
-        # نستثني مستندات التحكم القديمة (version_control) إن وجدت
-        real_docs = [d for d in existing_docs if d.id != "version_control"]
-
-        # إذا لم توجد مستندات حقيقية، ندرج البيانات الافتراضية
-        if len(real_docs) == 0:
+        if len(existing_docs) == 0:
             if category == "types":
                 for index, item in enumerate(DEFAULT_TYPES, start=1):
                     code = str(index)
+                    doc_id = f"{company_code}_{category}_{code}"
                     doc_data = {
                         "name": item["name"],
                         "type": item["type"],
                         "code": code,
                         "company_code": company_code,
-                        "category": category
+                        "category": category,
+                        "updated_at": firestore.SERVER_TIMESTAMP
                     }
-                    collection_ref.document(code).set(doc_data)
+                    collection_ref.document(doc_id).set(doc_data)
             elif category in DEFAULT_CATEGORIES_DATA:
                 for index, item in enumerate(DEFAULT_CATEGORIES_DATA[category], start=1):
                     code = str(index)
+                    doc_id = f"{company_code}_{category}_{code}"
                     doc_data = {
                         "name": item["name"],
                         "code": code,
                         "company_code": company_code,
-                        "category": category
+                        "category": category,
+                        "updated_at": firestore.SERVER_TIMESTAMP
                     }
-                    collection_ref.document(code).set(doc_data)
+                    collection_ref.document(doc_id).set(doc_data)
 
-            # إعادة قراءة المستندات بعد الإدراج
-            existing_docs = list(collection_ref.stream())
+            existing_docs = list(query.stream())
 
-        # تجميع النتائج مع استثناء version_control
         results = []
         for d in existing_docs:
-            if d.id == "version_control":
-                continue
             item_data = d.to_dict()
-            item_data["code"] = d.id
+            # نتأكد إننا بناخد الكود من جوه الداتا مش من الـ ID لأنه بقى مدمج
             results.append(item_data)
 
-        # ترتيب تصاعدي حسب الكود (كرقم)
-        results.sort(key=lambda x: int(x["code"]) if x["code"].isdigit() else x["code"])
+        results.sort(key=lambda x: int(x.get("code", 0)) if str(x.get("code", "")).isdigit() else str(x.get("code", "")))
         return results
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 # ==============================================
 #          🟢 مسار الحذف
@@ -166,10 +154,10 @@ async def list_codes(company_code: str, category: str):
 @router.delete("/delete/{company_code}/{category}/{code}")
 async def delete_code(company_code: str, category: str, code: str):
     try:
-        collection_ref = db.collection("coding").document(company_code).collection(category)
-        doc_ref = collection_ref.document(code)
+        # 🌟 الحذف من المسار المسطح الجديد
+        doc_id = f"{company_code}_{category}_{code}"
+        doc_ref = db.collection("coding_records").document(doc_id)
         doc_ref.delete()
         return {"status": "success", "message": "تم حذف التكويد بنجاح"}
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
