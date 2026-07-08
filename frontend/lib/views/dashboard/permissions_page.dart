@@ -177,8 +177,8 @@ class _PermissionsPageState extends State<PermissionsPage> {
   }
 
   try {
-    // استخدام خدمة الصلاحيات للحفظ (تحديث Hive و Firestore مع updated_at)
-    await PermissionsService().savePermissions(userPermissions);
+    // تمرير selectedUserId كـ targetEmail
+    await PermissionsService().savePermissions(userPermissions, targetEmail: selectedUserId);
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(

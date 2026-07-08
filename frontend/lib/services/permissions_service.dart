@@ -9,6 +9,7 @@ class PermissionsService {
   PermissionsService._internal();
 
   Map<String, Map<String, bool>>? _permissions;
+  // ignore: unused_field
   String? _userId;
   int? _lastUpdate;
 
@@ -200,39 +201,40 @@ class PermissionsService {
     return allPermissions;
   }
 
-  Future<void> savePermissions(Map<String, Map<String, bool>> permissions) async {
-  if (_userId == null) return;
-  try {
+  // 🔥 تم تعديل هذه الدالة: إضافة معامل targetEmail لتحديد المستخدم المستهدف
+  Future<void> savePermissions(Map<String, Map<String, bool>> permissions, {String? targetEmail}) async {
     final prefs = await SharedPreferences.getInstance();
-    final email = prefs.getString('user_email') ?? '';
-    if (email.isEmpty) {
-      print("⚠️ user_email غير موجود");
+    // استخدام targetEmail إذا وُجد، وإلا استخدام البريد الإلكتروني للمستخدم الحالي
+    final email = targetEmail ?? prefs.getString('user_email');
+    if (email == null || email.isEmpty) {
+      print("⚠️ لا يوجد بريد إلكتروني مستهدف للحفظ");
       return;
     }
 
-    // 1. تحديث Hive محلياً أولاً
-    final box = Hive.box('coding_box');
-    final key = 'permissions_$_userId';
-    final lastUpdateKey = 'permissions_last_update_$_userId';
-    
-    await box.put(key, permissions);
-    int now = DateTime.now().millisecondsSinceEpoch;
-    await box.put(lastUpdateKey, now);
-    _lastUpdate = now;
-    _permissions = permissions;
-
-    // 2. تحديث Firestore عبر API (يتجاوز قواعد الأمان)
     try {
+      // 1. تحديث Hive للموظف المستهدف (حتى لو كان مختلفاً عن المستخدم الحالي)
+      final box = Hive.box('coding_box');
+      final key = 'permissions_$email';
+      final lastUpdateKey = 'permissions_last_update_$email';
+      
+      await box.put(key, permissions);
+      int now = DateTime.now().millisecondsSinceEpoch;
+      await box.put(lastUpdateKey, now);
+
+      // إذا كان المستهدف هو المستخدم الحالي، نقوم بتحديث المتغيرات المحلية أيضاً
+      if (email == prefs.getString('user_email')) {
+        _permissions = permissions;
+        _lastUpdate = now;
+      }
+
+      // 2. تحديث Firestore عبر API (يتجاوز قواعد الأمان)
       await ApiService().updatePermissions(email, permissions);
-      print("✅ تم حفظ الصلاحيات في Firestore عبر API بنجاح");
+      print("✅ تم حفظ صلاحيات $email في Firestore عبر API بنجاح");
     } catch (e) {
       print("⚠️ فشل حفظ الصلاحيات في Firestore عبر API: $e");
       // سيتم المحاولة لاحقاً أو سيبقى Hive محدثاً
     }
-  } catch (e) {
-    print("❌ خطأ في savePermissions: $e");
   }
-}
 
   bool hasPermission(String category, String permission) {
     if (_permissions == null) {
@@ -274,6 +276,6 @@ class PermissionsService {
   bool get canShowCoding => hasPermission('صلاحيات عامة', 'إظهار التكويد');
   bool get canShowReports => hasPermission('صلاحيات عامة', 'إظهار التقارير');
   // ========== صلاحيات إظهار الأزرار في الصفحة الرئيسية ==========
-bool get canShowSuppliers => hasPermission('صلاحيات عامة', 'إظهار حركة الموردين');
-bool get canShowInventory => hasPermission('صلاحيات عامة', 'إظهار حركة الجرد');
+  bool get canShowSuppliers => hasPermission('صلاحيات عامة', 'إظهار حركة الموردين');
+  bool get canShowInventory => hasPermission('صلاحيات عامة', 'إظهار حركة الجرد');
 }
