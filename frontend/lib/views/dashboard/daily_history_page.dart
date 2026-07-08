@@ -8,6 +8,7 @@ import 'daily_page.dart';
 import 'package:universal_html/html.dart' as html;
 import 'package:excel/excel.dart' as excel_lib;
 import 'package:hive_flutter/hive_flutter.dart';
+import '../../services/permissions_service.dart'; // ✅ استيراد خدمة الصلاحيات
 
 class DailyHistoryPage extends StatefulWidget {
   final String companyCode;
@@ -73,8 +74,6 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
     }
   }
 
-  // ⚠️ ملحوظة: باقي الدوال الخاصة بك مثل الـ build و _buildDataRow تظل كما هي بالأسفل ولا تحذفها!
-
   // دالة لفرز وترتيب الحركات المفلترة ديناميكياً
   List<Map<String, dynamic>> _getSortedData(List<Map<String, dynamic>> list) {
     List<Map<String, dynamic>> sortedList = List.from(list);
@@ -108,6 +107,12 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
   }
 
   Future<void> _exportToExcel(List<Map<String, dynamic>> currentData) async {
+    // ✅ التحقق من صلاحية التصدير
+    if (!PermissionsService().canExport) {
+      _showSnackBar("ليس لديك صلاحية لتصدير البيانات", Colors.orange);
+      return;
+    }
+
     if (currentData.isEmpty) {
       _showSnackBar("لا توجد بيانات لتصديرها", Colors.orange);
       return;
@@ -190,6 +195,32 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
 
   @override
   Widget build(BuildContext context) {
+    // ✅ التحقق من صلاحية المعاينة (إذا لم تكن موجودة، نمنع الدخول)
+    if (!PermissionsService().canViewTransactions) {
+      return Scaffold(
+        extendBodyBehindAppBar: true,
+        appBar: AppBar(
+          title: const Text("سجل الحركات", style: TextStyle(fontFamily: 'Cairo', color: Colors.white)),
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+        ),
+        body: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Colors.black, Colors.indigo.shade900, Colors.black],
+              begin: Alignment.topLeft, end: Alignment.bottomRight,
+            ),
+          ),
+          child: const Center(
+            child: Text(
+              "ليس لديك صلاحية لعرض سجل الحركات",
+              style: TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 16),
+            ),
+          ),
+        ),
+      );
+    }
+
     double screenWidth = MediaQuery.of(context).size.width;
     bool isWebOrDesktop = screenWidth > 600;
     final Box dailyBox = Hive.box('daily_transactions_box');
@@ -250,9 +281,9 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
-  "فرع: ${_getBranchName(widget.selectedBranchCode)}", // 🌟 التعديل هنا
-  style: const TextStyle(fontFamily: 'Cairo', fontSize: 12, color: Colors.cyanAccent),
-),
+                      "فرع: ${_getBranchName(widget.selectedBranchCode)}", // 🌟 التعديل هنا
+                      style: const TextStyle(fontFamily: 'Cairo', fontSize: 12, color: Colors.cyanAccent),
+                    ),
                   ),
                 ],
               ),
@@ -263,57 +294,59 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
 
               // 🌟 أزرار التحكم في أعلى اليسار
               actions: [
-                // 1️⃣ زر التجميع والفلترة حسب التصنيف
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8.0),
-                  child: Tooltip(
-                    message: _isCategoryGrouped ? "إلغاء تجميع التصنيفات" : "تجميع حسب التصنيف",
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.12), // خلفية زجاجية خفيفة
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: _isCategoryGrouped ? Colors.orangeAccent.withOpacity(0.5) : Colors.cyanAccent.withOpacity(0.3),
+                // 1️⃣ زر التجميع والفلترة حسب التصنيف (✅ يظهر فقط إذا كانت صلاحية الفلترة موجودة)
+                if (PermissionsService().canFilter)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8.0),
+                    child: Tooltip(
+                      message: _isCategoryGrouped ? "إلغاء تجميع التصنيفات" : "تجميع حسب التصنيف",
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.12), // خلفية زجاجية خفيفة
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: _isCategoryGrouped ? Colors.orangeAccent.withOpacity(0.5) : Colors.cyanAccent.withOpacity(0.3),
+                          ),
                         ),
-                      ),
-                      child: IconButton(
-                        icon: Icon(
-                          _isCategoryGrouped ? Icons.filter_alt : Icons.filter_alt_outlined,
-                          color: _isCategoryGrouped ? Colors.orangeAccent : Colors.cyanAccent,
-                          size: 22,
+                        child: IconButton(
+                          icon: Icon(
+                            _isCategoryGrouped ? Icons.filter_alt : Icons.filter_alt_outlined,
+                            color: _isCategoryGrouped ? Colors.orangeAccent : Colors.cyanAccent,
+                            size: 22,
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              _isCategoryGrouped = !_isCategoryGrouped;
+                            });
+                          },
                         ),
-                        onPressed: () {
-                          setState(() {
-                            _isCategoryGrouped = !_isCategoryGrouped;
-                          });
-                        },
                       ),
                     ),
                   ),
-                ),
                 const SizedBox(width: 8),
 
-                // 2️⃣ زر التصدير إلى إكسيل (يصدر الفترة الحالية المعروضة فقط المفلترة من وإلى)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8.0),
-                  child: Tooltip(
-                    message: "تصدير البيانات المعروضة لإكسيل",
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.12), // خلفية زجاجية خفيفة
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.greenAccent.withOpacity(0.4)),
-                      ),
-                      child: IconButton(
-                        icon: const Icon(Icons.file_download, color: Colors.greenAccent, size: 22),
-                        onPressed: () {
-                          // نقوم بتمرير الـ displayList التي تحتوي على بيانات البحث الحالي فقط
-                          _exportToExcel(displayList);
-                        },
+                // 2️⃣ زر التصدير إلى إكسيل (✅ يظهر فقط إذا كانت صلاحية التصدير موجودة)
+                if (PermissionsService().canExport)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8.0),
+                    child: Tooltip(
+                      message: "تصدير البيانات المعروضة لإكسيل",
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.12), // خلفية زجاجية خفيفة
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.greenAccent.withOpacity(0.4)),
+                        ),
+                        child: IconButton(
+                          icon: const Icon(Icons.file_download, color: Colors.greenAccent, size: 22),
+                          onPressed: () {
+                            // نقوم بتمرير الـ displayList التي تحتوي على بيانات البحث الحالي فقط
+                            _exportToExcel(displayList);
+                          },
+                        ),
                       ),
                     ),
                   ),
-                ),
                 const SizedBox(width: 12), // مسافة جمالية عن حافة الشاشة اليسرى
               ],
             ),
@@ -527,9 +560,9 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
                         color: Colors.cyan, size: 12),
                     const SizedBox(width: 4),
                     Text(
-  "الفرع: ${_getBranchName(item['branch_code']?.toString())}", // 🌟 التعديل هنا
-  style: const TextStyle(color: Colors.white38, fontSize: 9, fontFamily: 'Cairo'),
-),
+                      "الفرع: ${_getBranchName(item['branch_code']?.toString())}", // 🌟 التعديل هنا
+                      style: const TextStyle(color: Colors.white38, fontSize: 9, fontFamily: 'Cairo'),
+                    ),
                   ],
                 ),
                 // عرض اسم الموظف مع أيقونة مستخدم صغيرة
@@ -577,6 +610,15 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
   }
 
   void _showOptionsModal(Map<String, dynamic> item) {
+    bool canEdit = PermissionsService().canEditTransaction;
+    bool canDelete = PermissionsService().canDeleteTransaction;
+
+    // إذا لم تكن هناك صلاحية للتعديل ولا للحذف، نخرج بدون عرض القائمة
+    if (!canEdit && !canDelete) {
+      _showSnackBar("ليس لديك صلاحية لتعديل أو حذف الحركات", Colors.orange);
+      return;
+    }
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.indigo.shade900,
@@ -585,26 +627,30 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
       builder: (context) => Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          ListTile(
-            leading: const Icon(Icons.edit, color: Colors.orange, size: 20),
-            title: const Text("تعديل الإذن",
-                style: TextStyle(
-                    color: Colors.white, fontFamily: 'Cairo', fontSize: 14)),
-            onTap: () {
-              Navigator.pop(context);
-              _editTransaction(item);
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.delete, color: Colors.red, size: 20),
-            title: const Text("حذف الإذن",
-                style: TextStyle(
-                    color: Colors.white, fontFamily: 'Cairo', fontSize: 14)),
-            onTap: () {
-              Navigator.pop(context);
-              _confirmDelete(item);
-            },
-          ),
+          // ✅ خيار التعديل يظهر فقط إذا كانت الصلاحية موجودة
+          if (canEdit)
+            ListTile(
+              leading: const Icon(Icons.edit, color: Colors.orange, size: 20),
+              title: const Text("تعديل الإذن",
+                  style: TextStyle(
+                      color: Colors.white, fontFamily: 'Cairo', fontSize: 14)),
+              onTap: () {
+                Navigator.pop(context);
+                _editTransaction(item);
+              },
+            ),
+          // ✅ خيار الحذف يظهر فقط إذا كانت الصلاحية موجودة
+          if (canDelete)
+            ListTile(
+              leading: const Icon(Icons.delete, color: Colors.red, size: 20),
+              title: const Text("حذف الإذن",
+                  style: TextStyle(
+                      color: Colors.white, fontFamily: 'Cairo', fontSize: 14)),
+              onTap: () {
+                Navigator.pop(context);
+                _confirmDelete(item);
+              },
+            ),
           const SizedBox(height: 10),
         ],
       ),
@@ -612,6 +658,12 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
   }
 
   void _confirmDelete(Map<String, dynamic> item) {
+    // ✅ التحقق من صلاحية الحذف مرة أخرى قبل التأكيد
+    if (!PermissionsService().canDeleteTransaction) {
+      _showSnackBar("ليس لديك صلاحية للحذف", Colors.orange);
+      return;
+    }
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(

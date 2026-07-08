@@ -120,6 +120,25 @@ class ApiService {
     }
   }
 
+// في ApiService class
+Future<void> updatePermissions(String email, Map<String, dynamic> permissions) async {
+  try {
+    final response = await http.post(
+      Uri.parse('$baseUrl/auth/update-permissions'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'email': email,
+        'permissions': permissions,
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw jsonDecode(response.body)['detail'] ?? 'فشل تحديث الصلاحيات';
+    }
+  } catch (e) {
+    throw 'خطأ في تحديث الصلاحيات: $e';
+  }
+}
+
   // ================= 2. قسم التكويد الجديد (المنطق المحدث) =================
 
 // متغيرات ثابتة لحفظ الخزائن والتصنيفات مؤقتاً في الذاكرة لتوفير باقة الفايربيز

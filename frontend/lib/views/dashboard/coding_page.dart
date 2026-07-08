@@ -3,6 +3,7 @@ import '../../views/widgets/glass_card.dart';
 import '../../services/coding_service.dart';
 import '../../models/coding_model.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import '../../services/permissions_service.dart'; // ✅ استيراد خدمة الصلاحيات
 
 class CodingPage extends StatefulWidget {
   final String companyCode;
@@ -28,19 +29,14 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
   String _selectedCategory = "items";
   String? _selectedType;
 
-  // حقل الكود قابل للتعديل (مع عرض القيمة الافتراضية)
-  bool get _isCodeReadOnly => false;
-
   @override
   void initState() {
     super.initState();
     _wholesalePriceController.addListener(_calculateProfit);
     _sellingPriceController.addListener(_calculateProfit);
-    // تحميل الكود القادم عند بدء الصفحة
     _loadNextCode();
   }
 
-  // ================== حساب الربح ==================
   void _calculateProfit() {
     double wholesale = double.tryParse(_wholesalePriceController.text) ?? 0.0;
     double selling = double.tryParse(_sellingPriceController.text) ?? 0.0;
@@ -55,12 +51,10 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
     }
   }
 
-  // ================== تحميل الكود القادم من Hive ==================
   Future<void> _loadNextCode() async {
-    if (_isEditMode) return; // في وضع التعديل لا نغير الكود
+    if (_isEditMode) return;
 
     try {
-      // قراءة القائمة من Hive مباشرة عبر المفتاح المحلي
       final Box codingBox = Hive.box('coding_box');
       final String localKey = "${widget.companyCode}_$_selectedCategory";
       List<CodingModel> items = [];
@@ -74,7 +68,6 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
         }
       }
 
-      // إذا لم توجد بيانات في Hive، نجلب من السيرفر (لكن هذا نادر)
       if (items.isEmpty) {
         items = await _codingService.getCodingList(
           companyCode: widget.companyCode,
@@ -103,9 +96,38 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
     }
   }
 
-  // ================== واجهة المستخدم ==================
   @override
   Widget build(BuildContext context) {
+    // التحقق من وجود صلاحية للمعاينة أو الإضافة
+    bool canView = PermissionsService().canViewCoding;
+    bool canAdd = PermissionsService().canAddCodingItem;
+
+    // إذا لم تكن هناك صلاحية للمعاينة ولا للإضافة، نعرض رسالة
+    if (!canView && !canAdd) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text("شاشة التكويد", style: TextStyle(fontFamily: 'Cairo', color: Colors.white)),
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+        ),
+        extendBodyBehindAppBar: true,
+        body: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Colors.black, Colors.indigo.shade900, Colors.black],
+              begin: Alignment.topLeft, end: Alignment.bottomRight,
+            ),
+          ),
+          child: const Center(
+            child: Text(
+              "ليس لديك صلاحية للوصول إلى التكويد",
+              style: TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 16),
+            ),
+          ),
+        ),
+      );
+    }
+
     return PopScope(
       canPop: false,
       onPopInvoked: (didPop) async {
@@ -135,6 +157,7 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
                     padding: const EdgeInsets.all(15),
                     child: Column(
                       children: [
+                        // أزرار الأقسام (تظهر إذا كانت صلاحية المعاينة أو الإضافة موجودة)
                         GlassCard(
                           child: Column(
                             children: [
@@ -143,74 +166,96 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
                               Wrap(
                                 spacing: 8, runSpacing: 8, alignment: WrapAlignment.center,
                                 children: [
-                                  _buildTinyCategory("safes", "الخزائن", Icons.account_balance_wallet),
-                                  _buildTinyCategory("items", "الأصناف", Icons.inventory_2),
-                                  _buildTinyCategory("suppliers", "الموردين", Icons.local_shipping),
-                                  _buildTinyCategory("customers", "العملاء", Icons.groups),
-                                  _buildTinyCategory("stores", "المخازن", Icons.store),
-                                  _buildTinyCategory("types", "التصنيف", Icons.payments),
-                                  _buildTinyCategory("payment_methods", "طرق الدفع", Icons.credit_card),
-                                  _buildTinyCategory("banks", "البنوك", Icons.account_balance),
-                                  _buildTinyCategory("employees", "الموظفين", Icons.badge),
-                                  _buildTinyCategory("branches", "الفروع", Icons.storefront),
+                                  // نعرض الأقسام التي يملك صلاحية معاينتها أو إضافتها
+                                  if (PermissionsService().canViewCoding || PermissionsService().canAddSafe)
+                                    _buildTinyCategory("safes", "الخزائن", Icons.account_balance_wallet),
+                                  if (PermissionsService().canViewCoding || PermissionsService().canAddCodingItem)
+                                    _buildTinyCategory("items", "الأصناف", Icons.inventory_2),
+                                  if (PermissionsService().canViewCoding || PermissionsService().canAddSupplier)
+                                    _buildTinyCategory("suppliers", "الموردين", Icons.local_shipping),
+                                  if (PermissionsService().canViewCoding || PermissionsService().canAddCustomer)
+                                    _buildTinyCategory("customers", "العملاء", Icons.groups),
+                                  if (PermissionsService().canViewCoding || PermissionsService().canAddStore)
+                                    _buildTinyCategory("stores", "المخازن", Icons.store),
+                                  if (PermissionsService().canViewCoding || PermissionsService().canAddCodingItem) // types يمكن إضافتها
+                                    _buildTinyCategory("types", "التصنيف", Icons.payments),
+                                  if (PermissionsService().canViewCoding || PermissionsService().canAddPaymentMethod)
+                                    _buildTinyCategory("payment_methods", "طرق الدفع", Icons.credit_card),
+                                  if (PermissionsService().canViewCoding || PermissionsService().canAddBank)
+                                    _buildTinyCategory("banks", "البنوك", Icons.account_balance),
+                                  if (PermissionsService().canViewCoding || PermissionsService().canAddEmployee)
+                                    _buildTinyCategory("employees", "الموظفين", Icons.badge),
+                                  if (PermissionsService().canViewCoding || PermissionsService().canAddBranch)
+                                    _buildTinyCategory("branches", "الفروع", Icons.storefront),
                                 ],
                               ),
                             ],
                           ),
                         ),
                         const SizedBox(height: 20),
-                        GlassCard(
-                          child: Column(
-                            children: [
-                              _buildField("الاسم / البيان", _nameController, Icons.edit),
-                              const SizedBox(height: 10),
-                              _buildField("الكود", _codeController, Icons.qr_code, enabled: true),
-                              if (_selectedCategory == "types") ...[
+                        // نموذج الإدخال (يظهر فقط إذا كانت صلاحية الإضافة موجودة)
+                        if (canAdd)
+                          GlassCard(
+                            child: Column(
+                              children: [
+                                _buildField("الاسم / البيان", _nameController, Icons.edit),
                                 const SizedBox(height: 10),
-                                DropdownButtonFormField<String>(
-                                  value: _selectedType,
-                                  dropdownColor: Colors.indigo.shade900,
-                                  style: const TextStyle(color: Colors.white, fontSize: 14, fontFamily: 'Cairo'),
-                                  decoration: InputDecoration(
-                                    labelText: "نوع التصنيف (وارد / صادر)",
-                                    labelStyle: const TextStyle(color: Colors.white70, fontSize: 12, fontFamily: 'Cairo'),
-                                    prefixIcon: const Icon(Icons.swap_horiz, color: Colors.amber, size: 18),
-                                    filled: true, fillColor: Colors.white.withOpacity(0.03),
-                                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
-                                    contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                                _buildField("الكود", _codeController, Icons.qr_code, enabled: true),
+                                if (_selectedCategory == "types") ...[
+                                  const SizedBox(height: 10),
+                                  DropdownButtonFormField<String>(
+                                    value: _selectedType,
+                                    dropdownColor: Colors.indigo.shade900,
+                                    style: const TextStyle(color: Colors.white, fontSize: 14, fontFamily: 'Cairo'),
+                                    decoration: InputDecoration(
+                                      labelText: "نوع التصنيف (وارد / صادر)",
+                                      labelStyle: const TextStyle(color: Colors.white70, fontSize: 12, fontFamily: 'Cairo'),
+                                      prefixIcon: const Icon(Icons.swap_horiz, color: Colors.amber, size: 18),
+                                      filled: true, fillColor: Colors.white.withOpacity(0.03),
+                                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                                      contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                                    ),
+                                    items: const [
+                                      DropdownMenuItem(value: "وارد", child: Text("وارد", style: TextStyle(fontFamily: 'Cairo'))),
+                                      DropdownMenuItem(value: "صادر", child: Text("صادر", style: TextStyle(fontFamily: 'Cairo'))),
+                                    ],
+                                    onChanged: (val) {
+                                      setState(() {
+                                        _selectedType = val;
+                                      });
+                                    },
                                   ),
-                                  items: const [
-                                    DropdownMenuItem(value: "وارد", child: Text("وارد", style: TextStyle(fontFamily: 'Cairo'))),
-                                    DropdownMenuItem(value: "صادر", child: Text("صادر", style: TextStyle(fontFamily: 'Cairo'))),
-                                  ],
-                                  onChanged: (val) {
-                                    setState(() {
-                                      _selectedType = val;
-                                    });
-                                  },
-                                ),
+                                ],
+                                if (_selectedCategory == "items") ...[
+                                  const SizedBox(height: 10),
+                                  _buildField("الباركود", _barcodeController, Icons.barcode_reader),
+                                  const SizedBox(height: 10),
+                                  Row(children: [
+                                    Expanded(child: _buildField("سعر الجملة", _wholesalePriceController, Icons.money)),
+                                    const SizedBox(width: 10),
+                                    Expanded(child: _buildField("سعر البيع", _sellingPriceController, Icons.sell)),
+                                  ]),
+                                  const SizedBox(height: 10),
+                                  Row(children: [
+                                    Expanded(child: _buildField("هامش الربح", _profitMarginController, Icons.calculate, enabled: false)),
+                                    const SizedBox(width: 10),
+                                    Expanded(child: _buildField("نسبة الربح", _profitPercentController, Icons.percent, enabled: false)),
+                                  ]),
+                                ],
+                                const SizedBox(height: 20),
+                                _buildActionButtons(),
                               ],
-                              if (_selectedCategory == "items") ...[
-                                const SizedBox(height: 10),
-                                _buildField("الباركود", _barcodeController, Icons.barcode_reader),
-                                const SizedBox(height: 10),
-                                Row(children: [
-                                  Expanded(child: _buildField("سعر الجملة", _wholesalePriceController, Icons.money)),
-                                  const SizedBox(width: 10),
-                                  Expanded(child: _buildField("سعر البيع", _sellingPriceController, Icons.sell)),
-                                ]),
-                                const SizedBox(height: 10),
-                                Row(children: [
-                                  Expanded(child: _buildField("هامش الربح", _profitMarginController, Icons.calculate, enabled: false)),
-                                  const SizedBox(width: 10),
-                                  Expanded(child: _buildField("نسبة الربح", _profitPercentController, Icons.percent, enabled: false)),
-                                ]),
-                              ],
-                              const SizedBox(height: 20),
-                              _buildActionButtons(),
-                            ],
+                            ),
                           ),
-                        ),
+                        // إذا لم تكن صلاحية الإضافة موجودة، نعرض رسالة
+                        if (!canAdd)
+                          const Padding(
+                            padding: EdgeInsets.all(20.0),
+                            child: Text(
+                              "ليس لديك صلاحية لإضافة أو تعديل التكويدات",
+                              style: TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 14),
+                            ),
+                          ),
                       ],
                     ),
                   ),
@@ -230,7 +275,7 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
           _isEditMode = false;
           _clearControllers();
         });
-        _loadNextCode(); // تحميل الكود القادم للقسم الجديد
+        _loadNextCode();
       },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -269,25 +314,32 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
   }
 
   Widget _buildActionButtons() {
+    bool canAdd = PermissionsService().canAddCodingItem;
+    bool canView = PermissionsService().canViewCoding;
+
     return Row(
       children: [
-        Expanded(
-          child: ElevatedButton.icon(
-            onPressed: _handleSave,
-            icon: Icon(_isEditMode ? Icons.update : Icons.save, size: 18),
-            label: Text(_isEditMode ? "تحديث" : "حفظ", style: const TextStyle(fontFamily: 'Cairo')),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.amber, foregroundColor: Colors.black),
+        // زر الحفظ/تحديث (يظهر فقط إذا كانت صلاحية الإضافة موجودة)
+        if (canAdd)
+          Expanded(
+            child: ElevatedButton.icon(
+              onPressed: _handleSave,
+              icon: Icon(_isEditMode ? Icons.update : Icons.save, size: 18),
+              label: Text(_isEditMode ? "تحديث" : "حفظ", style: const TextStyle(fontFamily: 'Cairo')),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.amber, foregroundColor: Colors.black),
+            ),
           ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: ElevatedButton.icon(
-            onPressed: _showItemsModal,
-            icon: const Icon(Icons.visibility, size: 18),
-            label: const Text("معاينة", style: TextStyle(fontFamily: 'Cairo')),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.white10, foregroundColor: Colors.white),
+        // زر المعاينة (يظهر فقط إذا كانت صلاحية المعاينة موجودة)
+        if (canView)
+          Expanded(
+            child: ElevatedButton.icon(
+              onPressed: _showItemsModal,
+              icon: const Icon(Icons.visibility, size: 18),
+              label: const Text("معاينة", style: TextStyle(fontFamily: 'Cairo')),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.white10, foregroundColor: Colors.white),
+            ),
           ),
-        ),
+        // زر التحديث (Refresh) يظهر دائماً لإعادة تحميل الكود القادم
         IconButton(
           onPressed: () {
             _clearControllers();
@@ -299,8 +351,13 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
     );
   }
 
-  // ========== منطق الحفظ ==========
   void _handleSave() async {
+    // التحقق من صلاحية الإضافة
+    if (!PermissionsService().canAddCodingItem) {
+      _showSnackBar("ليس لديك صلاحية للحفظ", Colors.orange);
+      return;
+    }
+
     if (_nameController.text.isEmpty) {
       _showSnackBar("الاسم مطلوب", Colors.orange);
       return;
@@ -338,7 +395,7 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
       if (result['success'] == true) {
         _showSnackBar(_isEditMode ? "تم التحديث بنجاح" : "تم الحفظ بنجاح", Colors.green);
         _clearControllers();
-        _loadNextCode(); // تحديث الكود القادم بعد الحفظ
+        _loadNextCode();
       } else {
         _showSnackBar("فشل عملية الحفظ: ${result['error']}", Colors.red);
       }
@@ -349,8 +406,13 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
     }
   }
 
-  // ========== المعاينة ==========
   void _showItemsModal() async {
+    // التحقق من صلاحية المعاينة
+    if (!PermissionsService().canViewCoding) {
+      _showSnackBar("ليس لديك صلاحية للمعاينة", Colors.orange);
+      return;
+    }
+
     setState(() => _isLoading = true);
     try {
       List<CodingModel> items = await _codingService.getCodingList(
@@ -374,6 +436,8 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
   Widget _buildModal(List<CodingModel> initialItems) {
     return StatefulBuilder(
       builder: (BuildContext context, StateSetter setModalState) {
+        bool canAdd = PermissionsService().canAddCodingItem;
+
         return Container(
           height: MediaQuery.of(context).size.height * 0.7,
           decoration: BoxDecoration(
@@ -406,29 +470,33 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
                         ],
                       ],
                     ),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.delete, color: Colors.red),
-                      onPressed: () async {
-                        setState(() => _isLoading = true);
-                        bool isDeleted = await _codingService.deleteCode(
-                          companyCode: widget.companyCode,
-                          category: _selectedCategory,
-                          code: initialItems[i].code,
-                        );
-                        setState(() => _isLoading = false);
-                        if (isDeleted) {
-                          _showSnackBar("تم الحذف بنجاح", Colors.green);
-                          setModalState(() {
-                            initialItems.removeAt(i);
-                          });
-                          // تحديث الكود القادم بعد الحذف
-                          _loadNextCode();
-                        } else {
-                          _showSnackBar("فشل الحذف، تحقق من الاتصال", Colors.red);
-                        }
-                      },
-                    ),
+                    // زر الحذف يظهر فقط إذا كانت صلاحية الإضافة موجودة
+                    trailing: canAdd
+                        ? IconButton(
+                            icon: const Icon(Icons.delete, color: Colors.red),
+                            onPressed: () async {
+                              setState(() => _isLoading = true);
+                              bool isDeleted = await _codingService.deleteCode(
+                                companyCode: widget.companyCode,
+                                category: _selectedCategory,
+                                code: initialItems[i].code,
+                              );
+                              setState(() => _isLoading = false);
+                              if (isDeleted) {
+                                _showSnackBar("تم الحذف بنجاح", Colors.green);
+                                setModalState(() {
+                                  initialItems.removeAt(i);
+                                });
+                                _loadNextCode();
+                              } else {
+                                _showSnackBar("فشل الحذف، تحقق من الاتصال", Colors.red);
+                              }
+                            },
+                          )
+                        : null,
                     onTap: () {
+                      // يمكن التعديل فقط إذا كانت صلاحية الإضافة موجودة
+                      if (!canAdd) return;
                       Navigator.pop(context);
                       setState(() {
                         _isEditMode = true;

@@ -9,6 +9,7 @@ import '../../services/coding_service.dart';
 import 'daily_history_page.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'treasury_transfer_page.dart';
+import '../../services/permissions_service.dart'; // ✅ استيراد خدمة الصلاحيات
 
 class DailyPage extends StatefulWidget {
   final String companyCode;
@@ -177,6 +178,38 @@ class _DailyPageState extends State<DailyPage> {
     bool isWebOrDesktop = screenWidth > 600;
     final Box dailyBox = Hive.box('daily_transactions_box');
 
+    // ✅ التحقق من صلاحية المعاينة للإذن بالوصول للصفحة (اختياري)
+    bool canView = PermissionsService().canViewTransactions;
+    bool canAdd = PermissionsService().canAddTransaction;
+    bool canEdit = PermissionsService().canEditTransaction;
+    bool canImport = PermissionsService().canImportExcel;
+
+    // إذا لم تكن هناك صلاحية لعرض أو إضافة أو تعديل، نمنع الدخول
+    if (!canView && !canAdd && !canEdit) {
+      return Scaffold(
+        extendBodyBehindAppBar: true,
+        appBar: AppBar(
+          title: const Text("حركة الخزينة", style: TextStyle(fontFamily: 'Cairo', color: Colors.white)),
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+        ),
+        body: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Colors.black, Colors.indigo.shade900, Colors.black],
+              begin: Alignment.topLeft, end: Alignment.bottomRight,
+            ),
+          ),
+          child: const Center(
+            child: Text(
+              "ليس لديك صلاحية للوصول إلى حركة الخزينة",
+              style: TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 16),
+            ),
+          ),
+        ),
+      );
+    }
+
     return PopScope(
       canPop: false,
       onPopInvoked: (didPop) async {
@@ -217,7 +250,8 @@ class _DailyPageState extends State<DailyPage> {
           centerTitle: true,
           toolbarHeight: 70,
           actions: [
-            if (!isEditMode)
+            // ✅ صلاحية استيراد من اكسل
+            if (!isEditMode && canImport)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
                 child: Tooltip(
@@ -230,7 +264,7 @@ class _DailyPageState extends State<DailyPage> {
                     ),
                     child: IconButton(
                       icon: const Icon(Icons.upload_file, color: Colors.greenAccent, size: 22),
-                      onPressed: _importFromExcel,
+                      onPressed: canImport ? _importFromExcel : null,
                     ),
                   ),
                 ),
@@ -262,20 +296,22 @@ class _DailyPageState extends State<DailyPage> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            ValueListenableBuilder(
-                              valueListenable: dailyBox.listenable(keys: ["${widget.companyCode}_balances"]),
-                              builder: (context, Box box, child) {
-                                final rawBalances = box.get("${widget.companyCode}_balances");
-                                if (rawBalances is Map && rawBalances.isNotEmpty) {
-                                  Map<String, double> safeBalances = {};
-                                  rawBalances.forEach((key, value) {
-                                    safeBalances[key.toString()] = double.tryParse(value.toString()) ?? 0.0;
-                                  });
-                                  _treasuryBalances = safeBalances;
-                                }
-                                return _buildDynamicBalancesGrid();
-                              },
-                            ),
+                            // ✅ شاشات الأرصدة (تظهر فقط إذا كانت الصلاحية موجودة)
+                            if (PermissionsService().canViewBalances)
+                              ValueListenableBuilder(
+                                valueListenable: dailyBox.listenable(keys: ["${widget.companyCode}_balances"]),
+                                builder: (context, Box box, child) {
+                                  final rawBalances = box.get("${widget.companyCode}_balances");
+                                  if (rawBalances is Map && rawBalances.isNotEmpty) {
+                                    Map<String, double> safeBalances = {};
+                                    rawBalances.forEach((key, value) {
+                                      safeBalances[key.toString()] = double.tryParse(value.toString()) ?? 0.0;
+                                    });
+                                    _treasuryBalances = safeBalances;
+                                  }
+                                  return _buildDynamicBalancesGrid();
+                                },
+                              ),
                             const SizedBox(height: 12),
                             _buildInputForm(),
                             const SizedBox(height: 15),
@@ -361,16 +397,21 @@ class _DailyPageState extends State<DailyPage> {
   }
 
   Widget _buildInputForm() {
+    // ✅ صلاحية الإضافة تتحكم في تمكين/تعطيل الحقول
+    bool canAdd = PermissionsService().canAddTransaction;
+    bool isEdit = widget.editItem != null;
+    bool enabled = isEdit ? PermissionsService().canEditTransaction : canAdd;
+
     return GlassCard(
       child: Column(
         children: [
-          _buildTextField(_amountController, "المبلغ", Icons.attach_money, isNumber: true),
+          _buildTextField(_amountController, "المبلغ", Icons.attach_money, isNumber: true, enabled: enabled),
           const SizedBox(height: 15),
           Row(
             children: [
               Expanded(
                 child: _buildDropdown("الخزينة", _selectedTreasury, _treasuries,
-                    (val) => setState(() => _selectedTreasury = val)),
+                    (val) => setState(() => _selectedTreasury = val), enabled: enabled),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -395,14 +436,14 @@ class _DailyPageState extends State<DailyPage> {
                       }
                     }
                   });
-                }),
+                }, enabled: enabled),
               ),
             ],
           ),
           const SizedBox(height: 15),
-          _buildTextField(_statementController, "البيان", Icons.description),
+          _buildTextField(_statementController, "البيان", Icons.description, enabled: enabled),
           const SizedBox(height: 15),
-          _buildDatePicker(),
+          _buildDatePicker(enabled: enabled),
         ],
       ),
     );
@@ -410,6 +451,10 @@ class _DailyPageState extends State<DailyPage> {
 
   Widget _buildMainActions() {
     bool isEdit = widget.editItem != null;
+    bool canAdd = PermissionsService().canAddTransaction;
+    bool canEdit = PermissionsService().canEditTransaction;
+    bool isEnabled = isEdit ? canEdit : canAdd;
+
     return SizedBox(
       width: double.infinity,
       height: 55,
@@ -419,7 +464,7 @@ class _DailyPageState extends State<DailyPage> {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
           side: BorderSide(color: isEdit ? Colors.orangeAccent : Colors.white24),
         ),
-        onPressed: _handleSave,
+        onPressed: isEnabled ? _handleSave : null,
         child: Text(
           isEdit ? "تعديل الإذن" : "حفظ",
           style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, fontFamily: 'Cairo'),
@@ -429,6 +474,17 @@ class _DailyPageState extends State<DailyPage> {
   }
 
   void _handleSave() async {
+    // التحقق من الصلاحية مرة أخرى
+    bool isEdit = widget.editItem != null;
+    if (isEdit && !PermissionsService().canEditTransaction) {
+      _showSnackBar("ليس لديك صلاحية للتعديل", Colors.orange);
+      return;
+    }
+    if (!isEdit && !PermissionsService().canAddTransaction) {
+      _showSnackBar("ليس لديك صلاحية للإضافة", Colors.orange);
+      return;
+    }
+
     if (_amountController.text.isEmpty || _selectedTreasury == null || _selectedCategory == null) {
       _showSnackBar("برجاء إكمال البيانات", Colors.orange);
       return;
@@ -475,7 +531,7 @@ class _DailyPageState extends State<DailyPage> {
     }
   }
 
-  Widget _buildDropdown(String label, String? value, List<Map<String, dynamic>> items, Function(String?) onChanged) {
+  Widget _buildDropdown(String label, String? value, List<Map<String, dynamic>> items, Function(String?) onChanged, {bool enabled = true}) {
     return DropdownButtonFormField<String>(
       value: value,
       dropdownColor: Colors.indigo.shade900,
@@ -492,19 +548,20 @@ class _DailyPageState extends State<DailyPage> {
           child: Text(item['name']?.toString() ?? "")
         );
       }).toList(),
-      onChanged: onChanged,
+      onChanged: enabled ? onChanged : null,
     );
   }
 
-  Widget _buildTextField(TextEditingController ctrl, String label, IconData icon, {bool isNumber = false}) {
+  Widget _buildTextField(TextEditingController ctrl, String label, IconData icon, {bool isNumber = false, bool enabled = true}) {
     return TextField(
       controller: ctrl,
+      enabled: enabled,
       keyboardType: isNumber ? TextInputType.number : TextInputType.text,
       style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(
-        prefixIcon: Icon(icon, color: Colors.white70),
+        prefixIcon: Icon(icon, color: enabled ? Colors.white70 : Colors.white38),
         labelText: label,
-        labelStyle: const TextStyle(color: Colors.white70, fontFamily: 'Cairo'),
+        labelStyle: TextStyle(color: enabled ? Colors.white70 : Colors.white38, fontFamily: 'Cairo'),
         enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.white10)),
         focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.cyanAccent)),
         contentPadding: const EdgeInsets.symmetric(vertical: 18, horizontal: 15),
@@ -512,77 +569,82 @@ class _DailyPageState extends State<DailyPage> {
     );
   }
 
-  Widget _buildDatePicker() {
+  Widget _buildDatePicker({bool enabled = true}) {
     return TextField(
       controller: _dateController,
       readOnly: true,
+      enabled: enabled,
       style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(
-        prefixIcon: const Icon(Icons.calendar_today, color: Colors.white70),
+        prefixIcon: Icon(Icons.calendar_today, color: enabled ? Colors.white70 : Colors.white38),
         labelText: "التاريخ",
-        labelStyle: const TextStyle(color: Colors.white70, fontFamily: 'Cairo'),
+        labelStyle: TextStyle(color: enabled ? Colors.white70 : Colors.white38, fontFamily: 'Cairo'),
         enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.white10)),
       ),
-      onTap: _pickDate,
+      onTap: enabled ? _pickDate : null,
     );
   }
 
   Widget _buildSecondaryActions() {
+    bool canView = PermissionsService().canViewTransactions;
+    bool canAdd = PermissionsService().canAddTransaction;
+
     return Column(
       mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch, // لجعل الأزرار بنفس العرض ومنسقة
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // 1. زر المعاينة الأصلي كما هو
-        TextButton.icon(
-          onPressed: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => DailyHistoryPage(
-                  companyCode: widget.companyCode,
-                  userName: widget.userName,
-                  selectedBranchCode: widget.selectedBranchCode,   // تمرير كود الفرع
+        // ✅ صلاحية المعاينة
+        if (canView)
+          TextButton.icon(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => DailyHistoryPage(
+                    companyCode: widget.companyCode,
+                    userName: widget.userName,
+                    selectedBranchCode: widget.selectedBranchCode,
+                  ),
                 ),
-              ),
-            ).then((value) {
-              _loadInitialData();
-            });
-          },
-          icon: const Icon(Icons.history, color: Colors.cyanAccent),
-          label: const Text("المعاينة", style: TextStyle(color: Colors.cyanAccent, fontFamily: 'Cairo')),
-        ),
+              ).then((value) {
+                _loadInitialData();
+              });
+            },
+            icon: const Icon(Icons.history, color: Colors.cyanAccent),
+            label: const Text("المعاينة", style: TextStyle(color: Colors.cyanAccent, fontFamily: 'Cairo')),
+          ),
         
-        const SizedBox(height: 10), // مسافة جمالية بين الزرين
+        const SizedBox(height: 10),
 
-        // 2. زر التحويل بين الخزائن الجديد
-        OutlinedButton.icon(
-          style: OutlinedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            side: const BorderSide(color: Colors.cyanAccent, width: 1.0), // إطار سماوي
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            backgroundColor: Colors.white.withOpacity(0.05), // خلفية زجاجية شفافة
-          ),
-          icon: const Icon(Icons.sync_alt, color: Colors.cyanAccent, size: 20),
-          label: const Text(
-            "تحويل بين الخزائن",
-            style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold, fontFamily: 'Cairo'),
-          ),
-          onPressed: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => TreasuryTransferPage(
-                  companyCode: widget.companyCode,
-                  userName: widget.userName,
-                  selectedBranchCode: widget.selectedBranchCode, // تمرير كود الفرع
+        // ✅ التحويل بين الخزائن (يتطلب صلاحية الإضافة)
+        if (canAdd)
+          OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              side: const BorderSide(color: Colors.cyanAccent, width: 1.0),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              backgroundColor: Colors.white.withOpacity(0.05),
+            ),
+            icon: const Icon(Icons.sync_alt, color: Colors.cyanAccent, size: 20),
+            label: const Text(
+              "تحويل بين الخزائن",
+              style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold, fontFamily: 'Cairo'),
+            ),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => TreasuryTransferPage(
+                    companyCode: widget.companyCode,
+                    userName: widget.userName,
+                    selectedBranchCode: widget.selectedBranchCode,
+                  ),
                 ),
-              ),
-            ).then((value) {
-              // 🌟 تحديث الأرصدة والبيانات فوراً عند إغلاق صفحة التحويل والعودة هنا
-              _loadInitialData();
-            });
-          },
-        ),
+              ).then((value) {
+                _loadInitialData();
+              });
+            },
+          ),
       ],
     );
   }
@@ -593,6 +655,12 @@ class _DailyPageState extends State<DailyPage> {
   }
 
   void _importFromExcel() async {
+    // التحقق من صلاحية الاستيراد
+    if (!PermissionsService().canImportExcel) {
+      _showSnackBar("ليس لديك صلاحية للاستيراد", Colors.orange);
+      return;
+    }
+
     bool? proceed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -682,7 +750,7 @@ class _DailyPageState extends State<DailyPage> {
               category: categoryStr,
               date: formattedDate,
               type: calculatedType,
-              branchCode: widget.selectedBranchCode ?? 'all',   // استخدام كود الفرع الحالي
+              branchCode: widget.selectedBranchCode ?? 'all',
               employee: widget.userName ?? "غير معروف",
             );
           }

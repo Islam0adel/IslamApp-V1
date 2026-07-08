@@ -11,6 +11,7 @@ import 'views/dashboard/home_page.dart';
 import 'views/auth/forgot_password_screen.dart';
 import 'firebase_options.dart'; 
 import 'services/global_sync_service.dart'; // 🌟 استيراد ملف الخدمة ليتعرف على GlobalSyncService
+// import 'services/permissions_service.dart';
 
 // 🌟 المتغيرات العالمية للرادار المركزي
 StreamSubscription? globalSyncSubscription;
@@ -94,18 +95,21 @@ void main() async {
   if (rememberMe && userName != null && companyCode != null) {
     // 🌟 تفعيل الرادار اللحظي فوراً لو المستخدم مسجل دخول بالفعل لتحديث البيانات بالخلفية
     initializeGlobalListener(companyCode);
-
+    // بعد تحميل بيانات المستخدم
+    // await PermissionsService().loadPermissions();
     initialScreen = HomePage(
       userName: userName,
       companyName: companyName ?? 'شركتي',
       companyCode: companyCode,
+      
     );
   } else {
     initialScreen = const LoginScreen();
   }
-
+  
   runApp(IslamApp(initialScreen: initialScreen));
 }
+
 
 class IslamApp extends StatefulWidget {
   final Widget initialScreen;

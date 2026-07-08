@@ -81,7 +81,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
       await prefs.setString('company_code', result['company_code']);
       await prefs.setString('job_code', result['job_code']); // حفظ كود الوظيفة
       await prefs.setString('job_title', result['job_title']); // حفظ مسمى الوظيفة
-
+      await prefs.setString('user_email', _emailController.text.trim());
       if (mounted) {
         Navigator.pushReplacement(
           context,

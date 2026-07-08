@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../views/widgets/glass_card.dart';
-import '../../main.dart'; // عشان نوصل لدالة تغيير الثيم
+import '../../main.dart'; 
 import '../../views/dashboard/admin_companies_screen.dart';
+// 1. استدعاء صفحة الصلاحيات الجديدة (تأكد من مسار الملف عندك)
+import '../../views/dashboard/permissions_page.dart'; 
+import '../../services/permissions_service.dart';
 
 class SettingsPage extends StatefulWidget {
-  const SettingsPage({super.key}); // شيلنا المتغيرات عشان متضربش في الهوم
+  const SettingsPage({super.key}); 
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -16,6 +19,7 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
   bool _isDark = true;
   String _userName = "جاري التحميل...";
   String _companyName = "شركتي";
+  String _jobCode = ""; // 2. متغير جديد لحفظ كود الوظيفة
   bool _isLoadingData = true;
 
   @override
@@ -25,7 +29,7 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
       vsync: this,
       duration: const Duration(milliseconds: 800),
     )..forward();
-    _loadUserData(); // تحميل البيانات محلياً لمنع الأخطاء
+    _loadUserData(); 
   }
 
   // دالة لقراءة البيانات المقروءة عند تسجيل الدخول
@@ -35,6 +39,8 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
       setState(() {
         _userName = prefs.getString('user_name') ?? "مستخدم غير معروف";
         _companyName = prefs.getString('company_name') ?? "شركتي";
+        // 3. قراءة كود الوظيفة المحفوظ وقت تسجيل الدخول[cite: 9, 12]
+        _jobCode = prefs.getString('job_code') ?? ""; 
         _isLoadingData = false;
       });
     }
@@ -48,17 +54,15 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
 
   @override
   Widget build(BuildContext context) {
-    // التحقق من الثيم الحالي للنظام أو التطبيق
     _isDark = Theme.of(context).brightness == Brightness.dark;
 
-    // 🌟 السحر هنا: تغليف الصفحة بـ PopScope لتوحيد سلوك زر وإيماءة الرجوع الخاصة بالهاتف
     return PopScope(
-      canPop: false, // تعطيل الخروج التلقائي العشوائي للنظام
+      canPop: false, 
       onPopInvoked: (didPop) async {
-        if (didPop) return; // إذا تم الرجوع بالفعل لا تفعل شيء
+        if (didPop) return; 
         
         if (context.mounted) {
-          Navigator.pop(context); // 🌟 تنفيذ نفس أمر الرجوع المعتمد داخل البرنامج
+          Navigator.pop(context); 
         }
       },
       child: Scaffold(
@@ -67,13 +71,12 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
           title: const Text('الإعدادات', 
             style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold, color: Colors.white)),
           centerTitle: true,
-          backgroundColor: Color.fromARGB(24, 75, 42, 194),
+          backgroundColor: const Color.fromARGB(24, 75, 42, 194),
           elevation: 0,
           iconTheme: const IconThemeData(color: Colors.white),
         ),
         body: Stack(
           children: [
-            // 1. Background basic gradient
             Positioned.fill(
               child: Container(
                 decoration: BoxDecoration(
@@ -81,14 +84,13 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                     colors: _isDark 
-                      ? [Color.fromARGB(255, 33, 31, 147), const Color(0xFF161B22)]
-                      : [Color.fromARGB(255, 33, 44, 159), const Color(0xFF3949AB)],
+                      ? [const Color.fromARGB(255, 33, 31, 147), const Color(0xFF161B22)]
+                      : [const Color.fromARGB(255, 33, 44, 159), const Color(0xFF3949AB)],
                   ),
                 ),
               ),
             ),
             
-            // 2. Background circles for Glassmorphism
             Positioned(
               top: -100,
               right: -50,
@@ -102,7 +104,6 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
               ),
             ),
   
-            // 3. Content inside SafeArea
             SafeArea(
               child: FadeTransition(
                 opacity: _controller,
@@ -110,7 +111,6 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                   child: Column(
                     children: [
-                      // GlassCard - Profile Info
                       GlassCard(
                         child: Row(
                           children: [
@@ -161,7 +161,6 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
                       ),
                       const SizedBox(height: 25),
   
-                      // Appearance Section
                       _buildSectionTitle("المظهر والنظام"),
                       const SizedBox(height: 10),
                       GlassCard(
@@ -197,38 +196,56 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
                       
                       const SizedBox(height: 25),
   
-                      // Support & Privacy Section
                       _buildSectionTitle("الدعم والخصوصية"),
                       const SizedBox(height: 10),
                       GlassCard(
                         child: Column(
                           children: [
+                            // 4. زر إدارة الصلاحيات محمي بشرط كود الوظيفة
+                            if (_jobCode == '99' || _jobCode == '200') ...[
+  _buildSettingRow(
+    icon: Icons.security_rounded,
+    title: 'إدارة الصلاحيات',
+    onTap: () async {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const PermissionsPage()),
+      );
+      // 🔥 إعادة تحميل الصلاحيات للمستخدم الحالي بعد العودة
+      await PermissionsService().loadPermissions();
+      setState(() {}); // تحديث الواجهة إن لزم
+    },
+  ),
+  const Divider(color: Colors.white10, height: 20),
+],
+                            
                             _buildSettingRow(
                               icon: Icons.lock_reset_rounded,
                               title: 'تغيير كلمة المرور',
-                              onTap: () {
-                                // Action here
-                              },
+                              onTap: () {},
                             ),
                             const Divider(color: Colors.white10, height: 20),
                             _buildSettingRow(
                               icon: Icons.contact_support_rounded,
                               title: 'تواصل مع الدعم الفني',
-                              onTap: () {
-                                // Action here
-                              },
+                              onTap: () {},
                             ),
-                            const Divider(color: Colors.white10, height: 20),
-                            _buildSettingRow(
-                              icon: Icons.business_center,
-                              title: 'إدارة الشركات',
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(builder: (_) => const AdminCompaniesScreen()),
-                                );
-                              },
-                            ),
+                            
+                            // زر إدارة الشركات محمي أيضاً لصاحب البرنامج (99)
+                            if (_jobCode == '99') ...[
+                              const Divider(color: Colors.white10, height: 20),
+                              _buildSettingRow(
+                                icon: Icons.business_center,
+                                title: 'إدارة الشركات',
+                                onTap: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(builder: (_) => const AdminCompaniesScreen()),
+                                  );
+                                },
+                              ),
+                            ],
+                            
                             const Divider(color: Colors.white10, height: 20),
                             _buildSettingRow(
                               icon: Icons.info_outline_rounded,
@@ -258,7 +275,6 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
     );
   }
 
-  // ودجت لعنوان القسم الفرعي
   Widget _buildSectionTitle(String title) {
     return Align(
       alignment: Alignment.centerRight,
@@ -277,7 +293,6 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
     );
   }
 
-  // ودجت لسطر الإعدادات المفرد
   Widget _buildSettingRow({
     required IconData icon,
     required String title,

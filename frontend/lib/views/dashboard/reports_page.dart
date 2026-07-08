@@ -1,7 +1,6 @@
-// import 'dart:ui' as ui; 
+// import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-// import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -11,28 +10,39 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:universal_html/html.dart' as html;
 import '../../views/widgets/glass_card.dart';
-// import 'package:screenshot/screenshot.dart';
+import '../../services/permissions_service.dart';
 
 class ReportsPage extends StatefulWidget {
   final String companyCode;
-  final String? selectedBranchCode;  // ✅ تغيير من selectedBranch إلى selectedBranchCode
-  
+  final String? selectedBranchCode;
+
   const ReportsPage({super.key, required this.companyCode, this.selectedBranchCode});
 
   @override
   State<ReportsPage> createState() => _ReportsPageState();
-  
 }
 
 class _ReportsPageState extends State<ReportsPage> {
-  
-  // final ScreenshotController _screenshotController = ScreenshotController();
-
   DateTime _fromDate = DateTime(DateTime.now().year, DateTime.now().month, 1);
   DateTime _toDate = DateTime.now();
   int _selectedReportType = 1;
 
-  // ✅ دالة مساعدة لجلب اسم الفرع من الكود
+  @override
+  void initState() {
+    super.initState();
+    _setDefaultReportType();
+  }
+
+  void _setDefaultReportType() {
+    if (PermissionsService().canViewReportsSales) {
+      _selectedReportType = 1;
+    } else if (PermissionsService().canViewReportsPeriod) {
+      _selectedReportType = 2;
+    } else {
+      _selectedReportType = 1; // سيتم عرض رسالة
+    }
+  }
+
   String _getBranchName(String? code) {
     if (code == null || code == 'all' || code == '') return 'كل الفروع';
     final Box codingBox = Hive.box('coding_box');
@@ -47,20 +57,16 @@ class _ReportsPageState extends State<ReportsPage> {
     final box = Hive.box('daily_transactions_box');
     return box.values.where((tx) {
       if (tx['company_code'] != widget.companyCode) return false;
-      // لعدم عرض التحويلات 
       if (tx['category'] == 'transfer_hidden') return false;
-      // ✅ الفلترة باستخدام كود الفرع بدلاً من الاسم
       if (widget.selectedBranchCode != null &&
           widget.selectedBranchCode != "all" &&
           widget.selectedBranchCode != "") {
         if (tx['branch_code']?.toString() != widget.selectedBranchCode) return false;
       }
-
       try {
         DateTime txDate = DateTime.parse(tx['date'].toString().substring(0, 10));
         DateTime from = DateTime(_fromDate.year, _fromDate.month, _fromDate.day);
         DateTime to = DateTime(_toDate.year, _toDate.month, _toDate.day);
-
         return (txDate.isAtSameMomentAs(from) || txDate.isAfter(from)) &&
                (txDate.isAtSameMomentAs(to) || txDate.isBefore(to));
       } catch (e) {
@@ -71,145 +77,146 @@ class _ReportsPageState extends State<ReportsPage> {
 
   // ===================== تصدير EXCEL =====================
   Future<void> _shareAsExcel() async {
-  final transactions = _getFilteredTransactions();
-  if (transactions.isEmpty) return _showEmptySheetRow();
+    if (!PermissionsService().canShareReports) {
+      _showErrorSnackBar("ليس لديك صلاحية لتصدير التقارير");
+      return;
+    }
+    final transactions = _getFilteredTransactions();
+    if (transactions.isEmpty) return _showEmptySheetRow();
 
-  try {
-    var excel = excel_lib.Excel.createExcel();
-    String defaultSheet = excel.tables.keys.first;
-    excel.rename(defaultSheet, 'التقرير المفلتر');
-    excel_lib.Sheet sheetObject = excel['التقرير المفلتر'];
+    try {
+      var excel = excel_lib.Excel.createExcel();
+      String defaultSheet = excel.tables.keys.first;
+      excel.rename(defaultSheet, 'التقرير المفلتر');
+      excel_lib.Sheet sheetObject = excel['التقرير المفلتر'];
 
-    String branchName = _getBranchName(widget.selectedBranchCode);
-    String dateStr = "من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}";
+      String branchName = _getBranchName(widget.selectedBranchCode);
+      String dateStr = "من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}";
 
-    // عنوان رئيسي
-    sheetObject.appendRow([excel_lib.TextCellValue(_selectedReportType == 1 ? "تقرير المبيعات" : "تقرير الفترة")]);
-    sheetObject.appendRow([excel_lib.TextCellValue("الفرع: $branchName")]);
-    sheetObject.appendRow([excel_lib.TextCellValue("الفترة: $dateStr")]);
-    sheetObject.appendRow([]); // سطر فارغ
-
-    // ------ إضافة البيانات حسب نوع التقرير ------
-    if (_selectedReportType == 1) {
-      // تقرير المبيعات (وارد)
-      // تجميع البيانات اليومية والفئات
-      Map<String, Map<String, double>> dailyData = {};
-      Set<String> allCategories = {};
-      for (var tx in transactions) {
-        if (tx['type'] == 'وارد') {
-          String date = tx['date'].toString().substring(0, 10);
-          String category = tx['category'] ?? 'عام';
-          double amount = double.tryParse(tx['amount'].toString()) ?? 0.0;
-          allCategories.add(category);
-          dailyData.putIfAbsent(date, () => {});
-          dailyData[date]![category] = (dailyData[date]![category] ?? 0.0) + amount;
-          dailyData[date]!['الإجمالي اليومي'] = (dailyData[date]!['الإجمالي اليومي'] ?? 0.0) + amount;
-        }
-      }
-      List<String> sortedDates = dailyData.keys.toList()..sort();
-      List<String> categories = allCategories.toList()..sort();
-
-      // صف العناوين
-      List<String> headers = ['التاريخ', ...categories, 'الإجمالي اليومي'];
-      sheetObject.appendRow(headers.map((h) => excel_lib.TextCellValue(h)).toList());
-
-      // صفوف البيانات
-      for (String date in sortedDates) {
-        List<excel_lib.CellValue?> row = [excel_lib.TextCellValue(date)];
-        for (String cat in categories) {
-          double val = dailyData[date]![cat] ?? 0.0;
-          row.add(excel_lib.DoubleCellValue(val));
-        }
-        double total = dailyData[date]!['الإجمالي اليومي'] ?? 0.0;
-        row.add(excel_lib.DoubleCellValue(total));
-        sheetObject.appendRow(row);
-      }
-
-      // إجماليات نهائية
+      sheetObject.appendRow([excel_lib.TextCellValue(_selectedReportType == 1 ? "تقرير المبيعات" : "تقرير الفترة")]);
+      sheetObject.appendRow([excel_lib.TextCellValue("الفرع: $branchName")]);
+      sheetObject.appendRow([excel_lib.TextCellValue("الفترة: $dateStr")]);
       sheetObject.appendRow([]);
-      Map<String, double> categoryTotals = {};
-      for (var tx in transactions.where((t) => t['type'] == 'وارد')) {
-        String cat = tx['category'] ?? 'عام';
-        double amt = double.tryParse(tx['amount'].toString()) ?? 0.0;
-        categoryTotals[cat] = (categoryTotals[cat] ?? 0.0) + amt;
-      }
-      double grandTotal = categoryTotals.values.fold(0.0, (sum, val) => sum + val);
-      sheetObject.appendRow([excel_lib.TextCellValue("إجمالي الفترة")]);
-      for (String cat in categories) {
-        sheetObject.appendRow([excel_lib.TextCellValue(cat), excel_lib.DoubleCellValue(categoryTotals[cat] ?? 0.0)]);
-      }
-      sheetObject.appendRow([excel_lib.TextCellValue("الإجمالي الكلي"), excel_lib.DoubleCellValue(grandTotal)]);
-    } 
-    else if (_selectedReportType == 2) {
-      // تقرير الفترة (إيرادات ومصروفات)
-      double totalIncome = 0, totalExpenses = 0, totalGoods = 0;
-      Map<String, double> incomeByTreasury = {};
-      Map<String, double> expensesByCategory = {};
 
-      for (var tx in transactions) {
-        double amt = double.tryParse(tx['amount'].toString()) ?? 0.0;
-        if (tx['type'] == 'وارد') {
-          totalIncome += amt;
-          String treasury = tx['treasury'] ?? 'غير محدد';
-          incomeByTreasury[treasury] = (incomeByTreasury[treasury] ?? 0.0) + amt;
-        } else if (tx['type'] == 'صادر') {
-          totalExpenses += amt;
+      if (_selectedReportType == 1) {
+        // تقرير المبيعات
+        Map<String, Map<String, double>> dailyData = {};
+        Set<String> allCategories = {};
+        for (var tx in transactions) {
+          if (tx['type'] == 'وارد') {
+            String date = tx['date'].toString().substring(0, 10);
+            String category = tx['category'] ?? 'عام';
+            double amount = double.tryParse(tx['amount'].toString()) ?? 0.0;
+            allCategories.add(category);
+            dailyData.putIfAbsent(date, () => {});
+            dailyData[date]![category] = (dailyData[date]![category] ?? 0.0) + amount;
+            dailyData[date]!['الإجمالي اليومي'] = (dailyData[date]!['الإجمالي اليومي'] ?? 0.0) + amount;
+          }
+        }
+        List<String> sortedDates = dailyData.keys.toList()..sort();
+        List<String> categories = allCategories.toList()..sort();
+
+        List<String> headers = ['التاريخ', ...categories, 'الإجمالي اليومي'];
+        sheetObject.appendRow(headers.map((h) => excel_lib.TextCellValue(h)).toList());
+
+        for (String date in sortedDates) {
+          List<excel_lib.CellValue?> row = [excel_lib.TextCellValue(date)];
+          for (String cat in categories) {
+            double val = dailyData[date]![cat] ?? 0.0;
+            row.add(excel_lib.DoubleCellValue(val));
+          }
+          double total = dailyData[date]!['الإجمالي اليومي'] ?? 0.0;
+          row.add(excel_lib.DoubleCellValue(total));
+          sheetObject.appendRow(row);
+        }
+
+        sheetObject.appendRow([]);
+        Map<String, double> categoryTotals = {};
+        for (var tx in transactions.where((t) => t['type'] == 'وارد')) {
           String cat = tx['category'] ?? 'عام';
-          expensesByCategory[cat] = (expensesByCategory[cat] ?? 0.0) + amt;
-          if (cat == 'بضاعة') totalGoods += amt;
+          double amt = double.tryParse(tx['amount'].toString()) ?? 0.0;
+          categoryTotals[cat] = (categoryTotals[cat] ?? 0.0) + amt;
         }
+        double grandTotal = categoryTotals.values.fold(0.0, (sum, val) => sum + val);
+        sheetObject.appendRow([excel_lib.TextCellValue("إجمالي الفترة")]);
+        for (String cat in categories) {
+          sheetObject.appendRow([excel_lib.TextCellValue(cat), excel_lib.DoubleCellValue(categoryTotals[cat] ?? 0.0)]);
+        }
+        sheetObject.appendRow([excel_lib.TextCellValue("الإجمالي الكلي"), excel_lib.DoubleCellValue(grandTotal)]);
+      } else if (_selectedReportType == 2) {
+        // تقرير الفترة
+        double totalIncome = 0, totalExpenses = 0, totalGoods = 0;
+        Map<String, double> incomeByTreasury = {};
+        Map<String, double> expensesByCategory = {};
+
+        for (var tx in transactions) {
+          double amt = double.tryParse(tx['amount'].toString()) ?? 0.0;
+          if (tx['type'] == 'وارد') {
+            totalIncome += amt;
+            String treasury = tx['treasury'] ?? 'غير محدد';
+            incomeByTreasury[treasury] = (incomeByTreasury[treasury] ?? 0.0) + amt;
+          } else if (tx['type'] == 'صادر') {
+            totalExpenses += amt;
+            String cat = tx['category'] ?? 'عام';
+            expensesByCategory[cat] = (expensesByCategory[cat] ?? 0.0) + amt;
+            if (cat == 'بضاعة') totalGoods += amt;
+          }
+        }
+
+        sheetObject.appendRow([excel_lib.TextCellValue("تفاصيل الإيرادات")]);
+        sheetObject.appendRow(["الخزينة", "المبلغ"].map((h) => excel_lib.TextCellValue(h)).toList());
+        incomeByTreasury.forEach((key, val) {
+          sheetObject.appendRow([excel_lib.TextCellValue(key), excel_lib.DoubleCellValue(val)]);
+        });
+        sheetObject.appendRow([excel_lib.TextCellValue("إجمالي الإيرادات"), excel_lib.DoubleCellValue(totalIncome)]);
+
+        sheetObject.appendRow([]);
+        sheetObject.appendRow([excel_lib.TextCellValue("تفاصيل المصروفات")]);
+        sheetObject.appendRow(["الفئة", "المبلغ"].map((h) => excel_lib.TextCellValue(h)).toList());
+        expensesByCategory.forEach((key, val) {
+          sheetObject.appendRow([excel_lib.TextCellValue(key), excel_lib.DoubleCellValue(val)]);
+        });
+        sheetObject.appendRow([excel_lib.TextCellValue("إجمالي المصروفات"), excel_lib.DoubleCellValue(totalExpenses)]);
+
+        sheetObject.appendRow([]);
+        double netExpenses = totalExpenses - totalGoods;
+        double finalBalance = totalIncome - totalExpenses;
+        sheetObject.appendRow([excel_lib.TextCellValue("صافي المصروفات (بدون بضاعة)"), excel_lib.DoubleCellValue(netExpenses)]);
+        sheetObject.appendRow([excel_lib.TextCellValue("قيمة البضاعة المشتراة"), excel_lib.DoubleCellValue(totalGoods)]);
+        sheetObject.appendRow([excel_lib.TextCellValue("صافي الرصيد النهائي"), excel_lib.DoubleCellValue(finalBalance)]);
       }
 
-      sheetObject.appendRow([excel_lib.TextCellValue("تفاصيل الإيرادات")]);
-      sheetObject.appendRow(["الخزينة", "المبلغ"].map((h) => excel_lib.TextCellValue(h)).toList());
-      incomeByTreasury.forEach((key, val) {
-        sheetObject.appendRow([excel_lib.TextCellValue(key), excel_lib.DoubleCellValue(val)]);
-      });
-      sheetObject.appendRow([excel_lib.TextCellValue("إجمالي الإيرادات"), excel_lib.DoubleCellValue(totalIncome)]);
+      var fileBytes = excel.encode();
+      if (fileBytes == null) return;
 
-      sheetObject.appendRow([]);
-      sheetObject.appendRow([excel_lib.TextCellValue("تفاصيل المصروفات")]);
-      sheetObject.appendRow(["الفئة", "المبلغ"].map((h) => excel_lib.TextCellValue(h)).toList());
-      expensesByCategory.forEach((key, val) {
-        sheetObject.appendRow([excel_lib.TextCellValue(key), excel_lib.DoubleCellValue(val)]);
-      });
-      sheetObject.appendRow([excel_lib.TextCellValue("إجمالي المصروفات"), excel_lib.DoubleCellValue(totalExpenses)]);
+      String fileName = "تقرير_${DateTime.now().millisecondsSinceEpoch}.xlsx";
 
-      sheetObject.appendRow([]);
-      double netExpenses = totalExpenses - totalGoods;
-      double finalBalance = totalIncome - totalExpenses;
-      sheetObject.appendRow([excel_lib.TextCellValue("صافي المصروفات (بدون بضاعة)"), excel_lib.DoubleCellValue(netExpenses)]);
-      sheetObject.appendRow([excel_lib.TextCellValue("قيمة البضاعة المشتراة"), excel_lib.DoubleCellValue(totalGoods)]);
-      sheetObject.appendRow([excel_lib.TextCellValue("صافي الرصيد النهائي"), excel_lib.DoubleCellValue(finalBalance)]);
+      if (kIsWeb) {
+        final blob = html.Blob([fileBytes], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        final url = html.Url.createObjectUrlFromBlob(blob);
+        html.AnchorElement(href: url)
+          ..setAttribute("download", fileName)
+          ..click();
+        html.Url.revokeObjectUrl(url);
+      } else {
+        final xFile = XFile.fromData(
+          Uint8List.fromList(fileBytes),
+          mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          name: fileName,
+        );
+        await Share.shareXFiles([xFile], text: "مرفق لكم تقرير إكسيل");
+      }
+    } catch (e) {
+      _showErrorSnackBar(e.toString());
     }
-
-    var fileBytes = excel.encode();
-    if (fileBytes == null) return;
-
-    String fileName = "تقرير_${DateTime.now().millisecondsSinceEpoch}.xlsx";
-
-    if (kIsWeb) {
-      final blob = html.Blob([fileBytes], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      final url = html.Url.createObjectUrlFromBlob(blob);
-      html.AnchorElement(href: url)
-        ..setAttribute("download", fileName)
-        ..click();
-      html.Url.revokeObjectUrl(url);
-    } else {
-      final xFile = XFile.fromData(
-        Uint8List.fromList(fileBytes),
-        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        name: fileName,
-      );
-      await Share.shareXFiles([xFile], text: "مرفق لكم تقرير إكسيل");
-    }
-  } catch (e) {
-    _showErrorSnackBar(e.toString());
   }
-}
 
   // ===================== تصدير PDF =====================
   Future<void> _shareAsPdf() async {
+    if (!PermissionsService().canShareReports) {
+      _showErrorSnackBar("ليس لديك صلاحية لتصدير التقارير");
+      return;
+    }
     final transactions = _getFilteredTransactions();
     if (transactions.isEmpty) return _showEmptySheetRow();
 
@@ -217,7 +224,7 @@ class _ReportsPageState extends State<ReportsPage> {
       final pdf = pw.Document();
       var arabicFont = pw.Font.ttf(await rootBundle.load("assets/fonts/Cairo-Regular.ttf"));
 
-      String branchName = _getBranchName(widget.selectedBranchCode); // ✅ استخدام الاسم للعرض
+      String branchName = _getBranchName(widget.selectedBranchCode);
       String dateStr = "من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}";
       final primaryColor = PdfColor.fromHex('#050F4C');
       final accentColor = PdfColor.fromHex('#3062F8');
@@ -276,94 +283,51 @@ class _ReportsPageState extends State<ReportsPage> {
     }
   }
 
-  // ===================== تصدير صورة =====================
-//   Future<void> _shareAsImage() async {
-//   try {
-//     // عرض مؤشر تحميل
-//     showDialog(
-//       context: context,
-//       barrierDismissible: false,
-//       builder: (context) => const Center(
-//         child: CircularProgressIndicator(color: Colors.cyanAccent),
-//       ),
-//     );
-
-//     // انتظر لحظة لضمان اكتمال بناء الـ Widget
-//     await Future.delayed(const Duration(milliseconds: 500));
-
-//     // التقاط الصورة لكامل المحتوى (حتى الطويل)
-//     Uint8List? pngBytes = await _screenshotController.capture();
-
-//     // إغلاق مؤشر التحميل إذا كانت الصفحة لا تزال موجودة
-//     if (mounted) Navigator.pop(context);
-
-//     if (pngBytes == null) return;
-
-//     // إنشاء اسم الملف
-//     String fileName = "تقرير_مصور_${DateTime.now().millisecondsSinceEpoch}.png";
-
-//     if (kIsWeb) {
-//       // حفظ على المتصفح
-//       final blob = html.Blob([pngBytes], 'image/png');
-//       final url = html.Url.createObjectUrlFromBlob(blob);
-//       html.AnchorElement(href: url)
-//         ..setAttribute("download", fileName)
-//         ..click();
-//       html.Url.revokeObjectUrl(url);
-//     } else {
-//       // مشاركة على الهاتف
-//       final xFile = XFile.fromData(pngBytes, mimeType: 'image/png', name: fileName);
-//       await Share.shareXFiles([xFile], text: "مرفق لقطة صورة للتقرير");
-//     }
-//   } catch (e) {
-//     // إغلاق مؤشر التحميل في حالة الخطأ
-//     if (mounted) Navigator.pop(context);
-//     _showErrorSnackBar("فشل التقاط الصورة: $e");
-//   }
-// }
-
   void _showShareBottomSheet() {
-  showModalBottomSheet(
-    context: context,
-    backgroundColor: const Color.fromARGB(255, 11, 20, 78),
-    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-    builder: (context) {
-      return SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                kIsWeb ? "تحميل التقرير الحالي على جهازك" : "مشاركة التقرير عبر تطبيقات الهاتف",
-                style: const TextStyle(fontFamily: 'Cairo', color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 20),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  _buildShareOptionItem(
-                    icon: Icons.table_chart,
-                    color: Colors.greenAccent,
-                    label: "ملف Excel",
-                    onTap: () { Navigator.pop(context); _shareAsExcel(); }
-                  ),
-                  _buildShareOptionItem(
-                    icon: Icons.picture_as_pdf,
-                    color: Colors.redAccent,
-                    label: "تقرير PDF ملون",
-                    onTap: () { Navigator.pop(context); _shareAsPdf(); }
-                  ),
-                  // ❌ تم إزالة خيار الصورة بسبب مشكلة التوافق
-                ],
-              ),
-            ],
+    if (!PermissionsService().canShareReports) {
+      _showErrorSnackBar("ليس لديك صلاحية لمشاركة التقارير");
+      return;
+    }
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color.fromARGB(255, 11, 20, 78),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  kIsWeb ? "تحميل التقرير الحالي على جهازك" : "مشاركة التقرير عبر تطبيقات الهاتف",
+                  style: const TextStyle(fontFamily: 'Cairo', color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 20),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _buildShareOptionItem(
+                      icon: Icons.table_chart,
+                      color: Colors.greenAccent,
+                      label: "ملف Excel",
+                      onTap: () { Navigator.pop(context); _shareAsExcel(); }
+                    ),
+                    _buildShareOptionItem(
+                      icon: Icons.picture_as_pdf,
+                      color: Colors.redAccent,
+                      label: "تقرير PDF ملون",
+                      onTap: () { Navigator.pop(context); _shareAsPdf(); }
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
-        ),
-      );
-    },
-  );
-}
+        );
+      },
+    );
+  }
 
   Widget _buildShareOptionItem({required IconData icon, required Color color, required String label, required VoidCallback onTap}) {
     return InkWell(
@@ -422,78 +386,100 @@ class _ReportsPageState extends State<ReportsPage> {
   }
 
   @override
-Widget build(BuildContext context) {
-  return Scaffold(
-    appBar: AppBar(
-      backgroundColor: const Color.fromARGB(149, 5, 15, 76),
-      elevation: 0,
-      actions: [
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 8.0),
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.cyanAccent.withOpacity(0.4)),
-            ),
-            child: IconButton(
-              icon: const Icon(Icons.share, color: Colors.cyanAccent, size: 22),
-              onPressed: _showShareBottomSheet,
-            ),
-          ),
-        ),
-      ],
-      title: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Text("التقارير", style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold, fontSize: 16)),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-            decoration: BoxDecoration(
-              color: Colors.cyanAccent.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Text(
-              "فرع: ${_getBranchName(widget.selectedBranchCode)}",
-              style: const TextStyle(fontFamily: 'Cairo', fontSize: 12, color: Colors.cyanAccent),
-            ),
-          ),
-        ],
-      ),
-      centerTitle: true,
-    ),
-    extendBodyBehindAppBar: true,
-    body: Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Theme.of(context).scaffoldBackgroundColor, const Color.fromARGB(238, 48, 98, 248)],
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-        ),
-      ),
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            children: [
-              _buildDateFilters(),
-              const SizedBox(height: 15),
-              _buildReportTypeSelector(),
-              const SizedBox(height: 20),
-              Expanded(
-                child: GlassCard(
-                  child: _selectedReportType == 1
-                      ? _buildSalesReport()
-                      : _buildIncomeExpenseReport(),
+  Widget build(BuildContext context) {
+    // التحقق من صحة التحديد الحالي وإعادة تعيينه إذا لزم الأمر
+    bool canSales = PermissionsService().canViewReportsSales;
+    bool canPeriod = PermissionsService().canViewReportsPeriod;
+
+    if (_selectedReportType == 1 && !canSales) {
+      if (canPeriod) {
+        _selectedReportType = 2;
+      }
+    } else if (_selectedReportType == 2 && !canPeriod) {
+      if (canSales) {
+        _selectedReportType = 1;
+      }
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: const Color.fromARGB(149, 5, 15, 76),
+        elevation: 0,
+        actions: [
+          if (PermissionsService().canShareReports)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 8.0),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.cyanAccent.withOpacity(0.4)),
+                ),
+                child: IconButton(
+                  icon: const Icon(Icons.share, color: Colors.cyanAccent, size: 22),
+                  onPressed: _showShareBottomSheet,
                 ),
               ),
-            ],
+            ),
+        ],
+        title: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text("التقارير", style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold, fontSize: 16)),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.cyanAccent.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                "فرع: ${_getBranchName(widget.selectedBranchCode)}",
+                style: const TextStyle(fontFamily: 'Cairo', fontSize: 12, color: Colors.cyanAccent),
+              ),
+            ),
+          ],
+        ),
+        centerTitle: true,
+      ),
+      extendBodyBehindAppBar: true,
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Theme.of(context).scaffoldBackgroundColor, const Color.fromARGB(238, 48, 98, 248)],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+          ),
+        ),
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              children: [
+                _buildDateFilters(),
+                const SizedBox(height: 15),
+                _buildReportTypeSelector(),
+                const SizedBox(height: 20),
+                Expanded(
+                  child: GlassCard(
+                    child: (!canSales && !canPeriod)
+                        ? const Center(
+                            child: Text(
+                              'لا توجد تقارير متاحة لك',
+                              style: TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 16),
+                            ),
+                          )
+                        : (_selectedReportType == 1
+                            ? _buildSalesReport()
+                            : _buildIncomeExpenseReport()),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
-    ),
-  );
-}
+    );
+  }
 
   pw.Widget _buildPdfSalesReportStructure(List<Map<dynamic, dynamic>> transactions, pw.Font font, PdfColor primaryColor) {
     Map<String, Map<String, double>> dailyData = {};
@@ -609,31 +595,44 @@ Widget build(BuildContext context) {
   }
 
   Widget _buildReportTypeSelector() {
+    bool canSales = PermissionsService().canViewReportsSales;
+    bool canPeriod = PermissionsService().canViewReportsPeriod;
+
+    if (!canSales && !canPeriod) {
+      return const Center(
+        child: Text(
+          'ليس لديك صلاحية لعرض أي تقرير',
+          style: TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 16),
+        ),
+      );
+    }
+
     return Row(
       children: [
-        Expanded(
-          child: ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _selectedReportType == 1 ? Theme.of(context).primaryColor : Colors.white.withOpacity(0.1),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-              padding: const EdgeInsets.symmetric(vertical: 12),
+        if (canSales)
+          Expanded(
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _selectedReportType == 1 ? Theme.of(context).primaryColor : Colors.white.withOpacity(0.1),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              onPressed: () => setState(() => _selectedReportType = 1),
+              child: const Text("تقرير المبيعات (وارد)", style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
             ),
-            onPressed: () => setState(() => _selectedReportType = 1),
-            child: const Text("تقرير المبيعات (وارد)", style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
           ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _selectedReportType == 2 ? Theme.of(context).primaryColor : Colors.white.withOpacity(0.1),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-              padding: const EdgeInsets.symmetric(vertical: 12),
+        if (canPeriod)
+          Expanded(
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _selectedReportType == 2 ? Theme.of(context).primaryColor : Colors.white.withOpacity(0.1),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              onPressed: () => setState(() => _selectedReportType = 2),
+              child: const Text("تقرير فترة", style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
             ),
-            onPressed: () => setState(() => _selectedReportType = 2),
-            child: const Text("تقرير فترة", style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
           ),
-        ),
       ],
     );
   }

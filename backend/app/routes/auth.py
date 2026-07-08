@@ -293,3 +293,32 @@ async def delete_company(
     except Exception as e:
         print(f"⚠️ خطأ في حذف الشركة: {e}")
         raise HTTPException(status_code=500, detail=f"خطأ داخلي: {str(e)}")
+
+# =====================================================================
+# مسار حفظ الصلاحيات (خاص بالخادم لتجاوز قواعد الأمان)
+# =====================================================================
+class PermissionsUpdateModel(BaseModel):
+    email: str
+    permissions: dict
+
+@router.post("/update-permissions")
+async def update_user_permissions(data: PermissionsUpdateModel):
+    """تحديث صلاحيات المستخدم من الخادم (يتجاوز قواعد الأمان)"""
+    try:
+        email = data.email.strip().lower()
+        permissions = data.permissions
+
+        # التحقق من وجود المستخدم
+        user_ref = db.collection("users").document(email)
+        if not user_ref.get().exists:
+            raise HTTPException(status_code=404, detail="المستخدم غير موجود")
+
+        # تحديث الصلاحيات مع updated_at
+        user_ref.update({
+            "permissions": permissions,
+            "updated_at": firestore.SERVER_TIMESTAMP
+        })
+
+        return {"status": "success", "message": "تم تحديث الصلاحيات بنجاح"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
