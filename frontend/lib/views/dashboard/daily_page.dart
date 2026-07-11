@@ -330,71 +330,85 @@ class _DailyPageState extends State<DailyPage> {
   }
 
   Widget _buildDynamicBalancesGrid() {
-    if (_treasuries.isEmpty) return const SizedBox.shrink();
-    double screenWidth = MediaQuery.of(context).size.width;
-    int columnsCount = screenWidth > 500 ? 3 : 2;
+  if (_treasuries.isEmpty) return const SizedBox.shrink();
 
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: columnsCount,
-        crossAxisSpacing: 10,
-        mainAxisSpacing: 10,
-        childAspectRatio: screenWidth > 500 ? 2.4 : 1.7,
-      ),
-      itemCount: _treasuries.length,
-      itemBuilder: (context, index) {
-        String treasuryName = _treasuries[index]['name'] ?? "خزينة غير معرفة";
-        double liveBalance = _getLiveBalanceForTreasury(treasuryName);
-        return GlassCard(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: .5, horizontal: 1),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Expanded(
-                  flex: 4,
-                  child: Center(
-                    child: Text(
-                      treasuryName,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                        fontFamily: 'Cairo',
-                        fontWeight: FontWeight.bold,
-                        height: 1.2,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Expanded(
-                  flex: 5,
-                  child: Center(
-                    child: FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: Text(
-                        liveBalance.toStringAsFixed(2),
-                        style: const TextStyle(
-                          color: Colors.greenAccent,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          fontFamily: 'Cairo',
+  return LayoutBuilder(
+    builder: (context, constraints) {
+      double availableWidth = constraints.maxWidth;
+      if (availableWidth <= 0) return const SizedBox.shrink();
+
+      double screenWidth = MediaQuery.of(context).size.width;
+      int columnsCount = screenWidth > 500 ? 3 : 2;
+      double spacing = 5.0;
+
+      // حساب عرض البطاقة بناءً على العرض المتاح والمسافات بينها
+      double cardWidth = (availableWidth - (spacing * (columnsCount - 1))) / columnsCount;
+      cardWidth = cardWidth.clamp(80.0, double.infinity); // لمنع القيم الصغيرة جداً
+
+      return Wrap(
+        spacing: spacing,
+        runSpacing: 10,
+        alignment: WrapAlignment.center, // 🎯 توسيط الصف الأخير
+        children: _treasuries.map((treasury) {
+          String treasuryName = treasury['name'] ?? "خزينة غير معرفة";
+          double liveBalance = _getLiveBalanceForTreasury(treasuryName);
+
+          return SizedBox(
+            width: cardWidth,
+            child: AspectRatio(
+              aspectRatio: screenWidth > 500 ? 2.1 : 1.7, // نفس النسبة السابقة
+              child: GlassCard(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(
+                        flex: 4,
+                        child: Center(
+                          child: Text(
+                            treasuryName,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                              fontFamily: 'Cairo',
+                              fontWeight: FontWeight.bold,
+                              height: 0.8,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
                         ),
                       ),
-                    ),
+                      const SizedBox(height: 4),
+                      Expanded(
+                        flex: 5,
+                        child: Center(
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              liveBalance.toStringAsFixed(2),
+                              style: const TextStyle(
+                                color: Colors.greenAccent,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                fontFamily: 'Cairo',
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ],
+              ),
             ),
-          ),
-        );
-      },
-    );
-  }
+          );
+        }).toList(),
+      );
+    },
+  );
+}
 
   Widget _buildInputForm() {
     // ✅ صلاحية الإضافة تتحكم في تمكين/تعطيل الحقول

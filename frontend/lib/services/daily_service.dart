@@ -132,7 +132,7 @@ class DailyService {
           // 🌟 هنمنع الدالة دي تشتغل لو بنعدل إذن قديم عشان متسحبش كل الأذون اللي بعده من الفايربيز
           if (serial == 0) {
             // تشغيل المزامنة التلقائية التراكمية في حالة الإضافة الجديدة فقط
-            await syncCacheFromServer(companyCode, assignedSerial);
+            // await syncCacheFromServer(companyCode, assignedSerial);
           }
 
           return {"success": true, "serial": assignedSerial};
