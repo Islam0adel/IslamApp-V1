@@ -339,7 +339,7 @@ class _DailyPageState extends State<DailyPage> {
 
       double screenWidth = MediaQuery.of(context).size.width;
       int columnsCount = screenWidth > 500 ? 3 : 2;
-      double spacing = 5.0;
+      double spacing = 10.0;
 
       // حساب عرض البطاقة بناءً على العرض المتاح والمسافات بينها
       double cardWidth = (availableWidth - (spacing * (columnsCount - 1))) / columnsCount;
