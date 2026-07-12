@@ -108,7 +108,7 @@ class _RegisterScreenState extends State<RegisterScreen> with TickerProviderStat
                     Icon(Icons.person_add_outlined, size: 80, color: Colors.white),
                     SizedBox(height: 10),
                     Text(
-                      'إنشاء حساب جديد',
+                      'إنشاء حساب',
                       style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold),
                     ),
                   ],
@@ -156,7 +156,7 @@ class _RegisterScreenState extends State<RegisterScreen> with TickerProviderStat
                     _buildAnimatedField(
                       index: 5,
                       icon: Icons.badge,
-                      label: 'كود الوظيفة)',
+                      label: 'كود الوظيفة (الافتراضي 1)',
                       controller: _jobCodeController,
                       node: _jobNode,
                       isLast: true, // هنا هيشغل الدالة علطول عند ضغط انتر

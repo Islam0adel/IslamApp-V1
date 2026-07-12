@@ -80,7 +80,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                 ),
                 const SizedBox(height: 10),
                 const Text(
-                  'أدخل البيانات بدقة لتوليد رابط الاستعادة',
+                  'أدخل البيانات بدقة',
                   style: TextStyle(color: Colors.white70, fontSize: 14),
                   textAlign: TextAlign.center,
                 ),

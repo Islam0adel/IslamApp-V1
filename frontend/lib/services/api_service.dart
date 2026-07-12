@@ -18,7 +18,7 @@ class ApiService {
       );
       // إضافة (true) تجبر Firebase على جلب توكن جديد وتحديث التوكن الحالي
       String? token = await userCredential.user?.getIdToken(true);
-      print("🔑 التوكن الذي يتم إرساله: $token");
+      // print("🔑 التوكن الذي يتم إرساله: $token");
       final response = await http.post(
         Uri.parse('$baseUrl/auth/verify-user'),
         headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $token'},
