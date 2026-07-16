@@ -109,12 +109,20 @@ class _PermissionsPageState extends State<PermissionsPage> {
         'تعديل': false,
         'حذف': false,
         'معاينة': false,
+        'استيراد': false,
+        'تصدير': false,
       },
       'التقارير': {
         'تقرير المبيعات': false,
         'تقرير فترة': false,
         'مشاركة': false,
       },
+      'رصيد المخزون': {
+  'معاينة': false,
+  'عرض سعر الجملة': false,
+  'عرض قيمة الجملة': false,
+  'تصدير': false,
+},
       'صلاحيات عامة': {
         'تغيير الفرع(صفحة الهوم)': false,
         'صفحة الصلاحيات(الاعدادات)': false,
@@ -204,7 +212,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
     return Directionality(
       textDirection: TextDirection.rtl,
       child: DefaultTabController(
-        length: 6,
+        length: 7,
         child: Scaffold(
           extendBodyBehindAppBar: true,
           body: Stack(
@@ -343,6 +351,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
                               Tab(text: 'حسابات الموردين'),
                               Tab(text: 'حركة الجرد'),
                               Tab(text: 'التقارير'),
+                              Tab(text: 'رصيد المخزون'),
                               Tab(text: 'صلاحيات عامة'),
                             ],
                           ),
@@ -354,6 +363,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
                                 buildPermissionsTab('حسابات الموردين'),
                                 buildPermissionsTab('حركة الجرد'),
                                 buildPermissionsTab('التقارير'),
+                                buildPermissionsTab('رصيد المخزون'),
                                 buildPermissionsTab('صلاحيات عامة'),
                               ],
                             ),

@@ -16,6 +16,7 @@ import 'services/global_sync_service.dart'; // 🌟 استيراد ملف الخ
 // 🌟 المتغيرات العالمية للرادار المركزي
 StreamSubscription? globalSyncSubscription;
 StreamSubscription? codingSyncSubscription; // ✅ إضافة اشتراك خاص بالتكويد
+StreamSubscription? inventorySyncSubscription;
 final GlobalSyncService _syncService = GlobalSyncService(); // 🌟 الآن سيتعرف عليها بدون أي خطأ
 
 // 🌟 دالة تشغيل الرادار اللحظي المحدثة بالمنظومة الموضعية الذكية وتوفير القراءات
@@ -55,12 +56,27 @@ void initializeGlobalListener(String companyCode) async { // 👈 تم إعاد�
       }
     }
   });
+
+  // 3. تشغيل مستمع الجرد
+Stream<QuerySnapshot> inventoryStream = await _syncService.startInventoryListener(companyCode);
+inventorySyncSubscription = inventoryStream.listen((snapshot) {
+  for (var change in snapshot.docChanges) {
+    final String docId = change.doc.id;
+    final Map<String, dynamic> data = change.doc.data() as Map<String, dynamic>? ?? {};
+    if (change.type == DocumentChangeType.added || change.type == DocumentChangeType.modified) {
+      _syncService.processInventoryUpdate(companyCode, docId, data);
+    } else if (change.type == DocumentChangeType.removed) {
+      _syncService.processInventoryDelete(companyCode, docId);
+    }
+  }
+});
 }
 
 // 🌟 دالة إيقاف الرادار عند تسجيل الخروج
 void disposeGlobalListener() {
   globalSyncSubscription?.cancel();
   codingSyncSubscription?.cancel();
+  inventorySyncSubscription?.cancel();
 }
 
 void main() async {
@@ -79,6 +95,7 @@ void main() async {
   await Hive.openBox('daily_transactions_box');
   // فتح صندوق لتخزين التكويدات (الخزائن، الفروع، التصنيفات)
   await Hive.openBox('coding_box'); 
+  await Hive.openBox('inventory_box');
 
     // 🌟 سطر مؤقت: قم بإلغاء التعليق عنه لمسح كل البيانات المحلية وتصفيرها تماماً، ثم قفل السطر بعد أول تشغيل
   // Hive.box('daily_transactions_box').clear();

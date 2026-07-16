@@ -170,11 +170,13 @@ class PermissionsService {
         'معاينة': false,
       },
       'حركة الجرد': {
-        'اضافة': false,
-        'تعديل': false,
-        'حذف': false,
-        'معاينة': false,
-      },
+  'اضافة': false,
+  'تعديل': false,
+  'حذف': false,
+  'معاينة': false,
+  'استيراد': false,
+  'تصدير': false,
+},
       'التقارير': {
         'تقرير المبيعات': false,
         'تقرير فترة': false,
@@ -189,6 +191,13 @@ class PermissionsService {
         'إظهار حركة الموردين': false,   // 🔥 جديد
         'إظهار حركة الجرد': false,
       },
+      // داخل _createDefaultPermissions
+'رصيد المخزون': {
+  'معاينة': false,
+  'عرض سعر الجملة': false,
+  'عرض قيمة الجملة': false,
+  'تصدير': false,
+},
     };
 
     if (jobCode == '99' || jobCode == '200') {
@@ -278,4 +287,17 @@ class PermissionsService {
   // ========== صلاحيات إظهار الأزرار في الصفحة الرئيسية ==========
   bool get canShowSuppliers => hasPermission('صلاحيات عامة', 'إظهار حركة الموردين');
   bool get canShowInventory => hasPermission('صلاحيات عامة', 'إظهار حركة الجرد');
+
+  // ========== صلاحيات الجرد ==========
+bool get canAddInventory => hasPermission('حركة الجرد', 'اضافة');
+bool get canEditInventory => hasPermission('حركة الجرد', 'تعديل');
+bool get canDeleteInventory => hasPermission('حركة الجرد', 'حذف');
+bool get canViewInventory => hasPermission('حركة الجرد', 'معاينة');
+bool get canImportInventory => hasPermission('حركة الجرد', 'استيراد');
+bool get canExportInventory => hasPermission('حركة الجرد', 'تصدير');
+// ========== صلاحيات رصيد المخزون ==========
+bool get canShowStock => hasPermission('رصيد المخزون', 'معاينة');
+bool get canViewStockWholesalePrice => hasPermission('رصيد المخزون', 'عرض سعر الجملة');
+bool get canViewStockWholesaleValue => hasPermission('رصيد المخزون', 'عرض قيمة الجملة');
+bool get canExportStock => hasPermission('رصيد المخزون', 'تصدير');
 }

@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import auth, transactions, coding # ضفنا كودينج هنا
+from app.routes import auth, transactions, coding, inventory # ضفنا كودينج هنا
 
 app = FastAPI(title="IslamApp V1.0 API")
 
@@ -17,6 +17,7 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 app.include_router(transactions.router, prefix="/transactions", tags=["Transactions"])
 app.include_router(coding.router, prefix="/coding", tags=["Coding"]) # السطر ده مهم جداً
+app.include_router(inventory.router, prefix="/inventory", tags=["Inventory"]) 
 
 @app.get("/")
 async def root():

@@ -13,6 +13,8 @@ import 'package:hive_flutter/hive_flutter.dart';
 import '../../services/coding_service.dart';
 import '../../models/coding_model.dart';
 import '../../services/permissions_service.dart';
+import '../../views/dashboard/inventory_page.dart'; // تأكد من المسار الصحيح
+import 'stock_balance_page.dart'; // تأكد من المسار الصحيح
 
 class HomePage extends StatefulWidget {
   final String userName;
@@ -425,14 +427,35 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     }
 
     // 4. 🔥 حركة الجرد (جديد)
-    if (PermissionsService().canShowInventory) {
-      menuItems.add(
-        _menuItem("حركة الجرد", Icons.inventory_2_rounded, Colors.orangeAccent, () {
-          // TODO: Navigate to Inventory Page
-          _showSnackBar("جاري تطوير صفحة حركة الجرد");
-        }),
+    // 4. 🔥 حركة الجرد
+if (PermissionsService().canShowInventory) {
+  menuItems.add(
+    _menuItem("حركة الجرد", Icons.inventory_2_rounded, Colors.orangeAccent, () {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (c) => InventoryPage(companyCode: widget.companyCode),
+        ),
       );
-    }
+    }),
+  );
+}
+// 5. 🔥 رصيد المخزون
+if (PermissionsService().canShowInventory) { // أو يمكنك إنشاء صلاحية جديدة canShowStock
+  menuItems.add(
+    _menuItem("رصيد المخزون", Icons.storage_rounded, Colors.tealAccent, () {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (c) => StockBalancePage(
+            companyCode: widget.companyCode,
+            selectedBranchCode: _selectedBranchCode,
+          ),
+        ),
+      );
+    }),
+  );
+}
 
     // 5. التقارير
     if (PermissionsService().canShowReports) {

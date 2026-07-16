@@ -217,6 +217,74 @@ class GlobalSyncService {
       }
     }
   }
+  // ================== دعم الجرد ==================
+
+Future<Stream<QuerySnapshot>> startInventoryListener(String companyCode) async {
+  final prefs = await SharedPreferences.getInstance();
+  final int? lastSync = prefs.getInt('last_inventory_sync_$companyCode');
+
+  Query query = _firestore
+      .collection('inventory_records')
+      .where('company_code', isEqualTo: companyCode);
+
+  if (lastSync != null) {
+    Timestamp lastTimestamp = Timestamp.fromMillisecondsSinceEpoch(lastSync);
+    query = query.where('updated_at', isGreaterThan: lastTimestamp);
+  }
+
+  await prefs.setInt('last_inventory_sync_$companyCode', DateTime.now().millisecondsSinceEpoch);
+  return query.snapshots();
+}
+
+Future<void> processInventoryUpdate(String companyCode, String docId, Map<String, dynamic> data) async {
+  if (data.isEmpty) return;
+
+  // تنظيف Timestamp
+  Map<String, dynamic> sanitized = Map.from(data);
+  sanitized.forEach((key, value) {
+    if (value is Timestamp) {
+      sanitized[key] = value.toDate().toIso8601String();
+    }
+  });
+
+  final box = Hive.box('inventory_box');
+  // مفتاح التخزين المحلي: companyCode_branchCode_storeCode_date
+  final branchCode = sanitized['branch_code'] ?? '';
+  final storeCode = sanitized['store_code'] ?? '';
+  final date = sanitized['date'] ?? '';
+  final localKey = '${companyCode}_${branchCode}_${storeCode}_$date';
+
+  List<Map<String, dynamic>> list = [];
+  if (box.containsKey(localKey)) {
+    final raw = box.get(localKey);
+    if (raw is List) {
+      list = raw.map((e) => Map<String, dynamic>.from(e)).toList();
+    }
+  }
+
+  // إزالة أي عنصر له نفس doc_id وتحديثه
+  list.removeWhere((e) => e['doc_id'] == docId);
+  list.add(sanitized);
+
+  await box.put(localKey, list);
+  print('🔄 الرادار: تحديث الجرد [$docId]');
+}
+
+Future<void> processInventoryDelete(String companyCode, String docId) async {
+  final box = Hive.box('inventory_box');
+  final keys = box.keys.toList();
+  for (var key in keys) {
+    final raw = box.get(key);
+    if (raw is List) {
+      final updated = raw.where((e) => e['doc_id'] != docId).toList();
+      if (updated.length != raw.length) {
+        await box.put(key, updated);
+        break;
+      }
+    }
+  }
+  print('🗑️ الرادار: حذف الجرد [$docId]');
+}
 
   // 7. دالة مساعدة للحذف من قسم معين (إذا عُرف) - نسخة ويب آمنة بدون List.from
   Future<void> processCodingDelete(String companyCode, String docId, String category) async {
