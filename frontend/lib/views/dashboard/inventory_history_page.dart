@@ -378,449 +378,662 @@ Future<void> _exportAllPDF() async {
 
   // ================== عرض القائمة الرئيسية ==================
   Widget _buildListView() {
-    return Column(
-      children: [
-        // فلاتر
-        GlassCard(
-          child: Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: DropdownButtonFormField<String?>(
-                    value: _filterBranchCode,
-                    dropdownColor: Colors.indigo.shade900,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: const InputDecoration(labelText: 'الفرع', isDense: true),
-                    items: _branches.map((b) {
-                      return DropdownMenuItem<String?>(
-                        value: b['code'],
-                        child: Text(b['name'] ?? ''),
-                      );
-                    }).toList(),
-                    onChanged: (val) {
-                      setState(() {
-                        _filterBranchCode = val;
-                        _loadData();
-                      });
-                    },
+  final bool isMobile = MediaQuery.of(context).size.width < 600;
+
+  return Column(
+    children: [
+      // الفلاتر مع تمرير على الموبايل
+      GlassCard(
+        child: Padding(
+          padding: const EdgeInsets.all(6.0),
+          child: isMobile
+              ? SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 110,
+                        child: DropdownButtonFormField<String?>(
+                          value: _filterBranchCode,
+                          dropdownColor: Colors.indigo.shade900,
+                          style: const TextStyle(color: Colors.white, fontSize: 11),
+                          decoration: const InputDecoration(
+                            labelText: 'الفرع',
+                            labelStyle: TextStyle(color: Colors.white70, fontSize: 9),
+                            isDense: true,
+                            contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                          ),
+                          items: _branches.map((b) {
+                            return DropdownMenuItem<String?>(
+                              value: b['code'],
+                              child: Text(b['name'] ?? '', style: const TextStyle(fontSize: 10)),
+                            );
+                          }).toList(),
+                          onChanged: (val) {
+                            setState(() {
+                              _filterBranchCode = val;
+                              _loadData();
+                            });
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      SizedBox(
+                        width: 110,
+                        child: DropdownButtonFormField<String?>(
+                          value: _filterStoreCode,
+                          dropdownColor: Colors.indigo.shade900,
+                          style: const TextStyle(color: Colors.white, fontSize: 11),
+                          decoration: const InputDecoration(
+                            labelText: 'المخزن',
+                            labelStyle: TextStyle(color: Colors.white70, fontSize: 9),
+                            isDense: true,
+                            contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                          ),
+                          items: _stores.map((s) {
+                            return DropdownMenuItem<String?>(
+                              value: s['code'],
+                              child: Text(s['name'] ?? '', style: const TextStyle(fontSize: 10)),
+                            );
+                          }).toList(),
+                          onChanged: (val) {
+                            setState(() {
+                              _filterStoreCode = val;
+                              _loadData();
+                            });
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      SizedBox(
+                        width: 130,
+                        child: TextFormField(
+                          initialValue: _filterDate,
+                          readOnly: true,
+                          style: const TextStyle(color: Colors.white, fontSize: 11),
+                          decoration: const InputDecoration(
+                            labelText: 'التاريخ',
+                            labelStyle: TextStyle(color: Colors.white70, fontSize: 9),
+                            suffixIcon: Icon(Icons.calendar_today, size: 14),
+                            isDense: true,
+                            contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                          ),
+                          onTap: () async {
+                            DateTime? picked = await showDatePicker(
+                              context: context,
+                              initialDate: DateTime.now(),
+                              firstDate: DateTime(2020),
+                              lastDate: DateTime(2101),
+                            );
+                            if (picked != null) {
+                              setState(() {
+                                _filterDate = DateFormat('yyyy-MM-dd').format(picked);
+                                _loadData();
+                              });
+                            }
+                          },
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.clear, color: Colors.white70, size: 18),
+                        onPressed: () {
+                          setState(() {
+                            _filterBranchCode = null;
+                            _filterStoreCode = null;
+                            _filterDate = null;
+                            _loadData();
+                          });
+                        },
+                        tooltip: 'إلغاء الفلاتر',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      ),
+                    ],
                   ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: DropdownButtonFormField<String?>(
-                    value: _filterStoreCode,
-                    dropdownColor: Colors.indigo.shade900,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: const InputDecoration(labelText: 'المخزن', isDense: true),
-                    items: _stores.map((s) {
-                      return DropdownMenuItem<String?>(
-                        value: s['code'],
-                        child: Text(s['name'] ?? ''),
-                      );
-                    }).toList(),
-                    onChanged: (val) {
-                      setState(() {
-                        _filterStoreCode = val;
-                        _loadData();
-                      });
-                    },
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: TextFormField(
-                    initialValue: _filterDate,
-                    readOnly: true,
-                    decoration: const InputDecoration(
-                      labelText: 'التاريخ',
-                      suffixIcon: Icon(Icons.calendar_today),
-                      isDense: true,
+                )
+              : Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<String?>(
+                        value: _filterBranchCode,
+                        dropdownColor: Colors.indigo.shade900,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: const InputDecoration(labelText: 'الفرع', isDense: true),
+                        items: _branches.map((b) {
+                          return DropdownMenuItem<String?>(
+                            value: b['code'],
+                            child: Text(b['name'] ?? ''),
+                          );
+                        }).toList(),
+                        onChanged: (val) {
+                          setState(() {
+                            _filterBranchCode = val;
+                            _loadData();
+                          });
+                        },
+                      ),
                     ),
-                    onTap: () async {
-                      DateTime? picked = await showDatePicker(
-                        context: context,
-                        initialDate: DateTime.now(),
-                        firstDate: DateTime(2020),
-                        lastDate: DateTime(2101),
-                      );
-                      if (picked != null) {
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: DropdownButtonFormField<String?>(
+                        value: _filterStoreCode,
+                        dropdownColor: Colors.indigo.shade900,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: const InputDecoration(labelText: 'المخزن', isDense: true),
+                        items: _stores.map((s) {
+                          return DropdownMenuItem<String?>(
+                            value: s['code'],
+                            child: Text(s['name'] ?? ''),
+                          );
+                        }).toList(),
+                        onChanged: (val) {
+                          setState(() {
+                            _filterStoreCode = val;
+                            _loadData();
+                          });
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextFormField(
+                        initialValue: _filterDate,
+                        readOnly: true,
+                        decoration: const InputDecoration(
+                          labelText: 'التاريخ',
+                          suffixIcon: Icon(Icons.calendar_today),
+                          isDense: true,
+                        ),
+                        onTap: () async {
+                          DateTime? picked = await showDatePicker(
+                            context: context,
+                            initialDate: DateTime.now(),
+                            firstDate: DateTime(2020),
+                            lastDate: DateTime(2101),
+                          );
+                          if (picked != null) {
+                            setState(() {
+                              _filterDate = DateFormat('yyyy-MM-dd').format(picked);
+                              _loadData();
+                            });
+                          }
+                        },
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.clear, color: Colors.white70),
+                      onPressed: () {
                         setState(() {
-                          _filterDate = DateFormat('yyyy-MM-dd').format(picked);
+                          _filterBranchCode = null;
+                          _filterStoreCode = null;
+                          _filterDate = null;
                           _loadData();
                         });
-                      }
-                    },
-                  ),
+                      },
+                      tooltip: 'إلغاء الفلاتر',
+                    ),
+                  ],
                 ),
-                IconButton(
-                  icon: const Icon(Icons.clear, color: Colors.white70),
-                  onPressed: () {
-                    setState(() {
-                      _filterBranchCode = null;
-                      _filterStoreCode = null;
-                      _filterDate = null;
-                      _loadData();
-                    });
-                  },
-                  tooltip: 'إلغاء الفلاتر',
+        ),
+      ),
+      const SizedBox(height: 6),
+      // قائمة الجردات
+      Expanded(
+        child: _inventories.isEmpty
+            ? const Center(child: Text('لا توجد جردات', style: TextStyle(color: Colors.white70)))
+            : ListView.builder(
+                itemCount: _inventories.length,
+                itemBuilder: (c, i) {
+                  final inv = _inventories[i];
+                  return Card(
+                    color: Colors.white.withOpacity(0.05),
+                    margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(10),
+                      onTap: () => _showInventoryDetails(inv),
+                      child: Padding(
+                        padding: EdgeInsets.all(isMobile ? 8.0 : 12.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                CircleAvatar(
+                                  radius: isMobile ? 16 : 20,
+                                  backgroundColor: Colors.cyanAccent.withOpacity(0.2),
+                                  child: Text(
+                                    '${inv.serial ?? ''}',
+                                    style: TextStyle(
+                                      color: Colors.cyanAccent,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: isMobile ? 10 : 12,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        '${_getBranchName(inv.branchCode)} - ${_getStoreName(inv.storeCode)}',
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: isMobile ? 12 : 14,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      Text(
+                                        'التاريخ: ${inv.date}',
+                                        style: TextStyle(
+                                          color: Colors.white60,
+                                          fontSize: isMobile ? 10 : 12,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: inv.inventoryType == 'general'
+                                        ? Colors.greenAccent.withOpacity(0.15)
+                                        : Colors.orangeAccent.withOpacity(0.15),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(
+                                      color: inv.inventoryType == 'general'
+                                          ? Colors.greenAccent.withOpacity(0.3)
+                                          : Colors.orangeAccent.withOpacity(0.3),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    inv.inventoryType == 'general' ? 'جرد عام' : 'جرد محدد',
+                                    style: TextStyle(
+                                      color: inv.inventoryType == 'general' ? Colors.greenAccent : Colors.orangeAccent,
+                                      fontSize: isMobile ? 8 : 10,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            Wrap(
+                              spacing: isMobile ? 4 : 8,
+                              runSpacing: 4,
+                              children: [
+                                _buildInfoChip('الأصناف', inv.items.length.toString(), Colors.blueAccent, isMobile),
+                                _buildInfoChip('إجمالي الجملة', _formatCurrency(inv.totalWholesale), Colors.greenAccent, isMobile),
+                                _buildInfoChip('إجمالي البيع', _formatCurrency(inv.totalRetail), Colors.amber, isMobile),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                if (PermissionsService().canEditInventory)
+                                  IconButton(
+                                    icon: const Icon(Icons.edit, color: Colors.orange, size: 18),
+                                    onPressed: () => _editInventory(inv),
+                                    tooltip: 'تعديل',
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(),
+                                  ),
+                                if (PermissionsService().canDeleteInventory)
+                                  IconButton(
+                                    icon: const Icon(Icons.delete, color: Colors.red, size: 18),
+                                    onPressed: () => _confirmDelete(inv),
+                                    tooltip: 'حذف',
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(),
+                                  ),
+                                IconButton(
+                                  icon: Icon(Icons.arrow_forward_ios, color: Colors.cyanAccent, size: isMobile ? 16 : 18),
+                                  onPressed: () => _showInventoryDetails(inv),
+                                  tooltip: 'عرض التفاصيل',
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+      ),
+    ],
+  );
+}
+
+Widget _buildInfoChip(String label, String value, Color color, bool isMobile) {
+  return Container(
+    padding: EdgeInsets.symmetric(horizontal: isMobile ? 6 : 8, vertical: isMobile ? 2 : 4),
+    decoration: BoxDecoration(
+      color: color.withOpacity(0.1),
+      borderRadius: BorderRadius.circular(6),
+      border: Border.all(color: color.withOpacity(0.2)),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(label, style: TextStyle(color: Colors.white60, fontSize: isMobile ? 9 : 11)),
+        const SizedBox(width: 4),
+        Text(value, style: TextStyle(color: color, fontSize: isMobile ? 10 : 12, fontWeight: FontWeight.bold)),
+      ],
+    ),
+  );
+}
+
+  // ================== عرض تفاصيل الجرد (صفحة منفصلة) ==================
+  Widget _buildDetailsView(InventoryModel inv) {
+  final bool isMobile = MediaQuery.of(context).size.width < 600;
+
+  return SingleChildScrollView(
+    padding: const EdgeInsets.all(12),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // بطاقة معلومات الجرد
+        GlassCard(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'إذن جرد رقم ${inv.serial ?? ''}',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: isMobile ? 16 : 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'التاريخ: ${inv.date}',
+                            style: TextStyle(
+                              color: Colors.white60,
+                              fontSize: isMobile ? 12 : 14,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: inv.inventoryType == 'general'
+                            ? Colors.greenAccent.withOpacity(0.15)
+                            : Colors.orangeAccent.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: inv.inventoryType == 'general'
+                              ? Colors.greenAccent.withOpacity(0.3)
+                              : Colors.orangeAccent.withOpacity(0.3),
+                        ),
+                      ),
+                      child: Text(
+                        inv.inventoryType == 'general' ? 'جرد عام' : 'جرد محدد',
+                        style: TextStyle(
+                          color: inv.inventoryType == 'general' ? Colors.greenAccent : Colors.orangeAccent,
+                          fontSize: isMobile ? 10 : 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const Divider(color: Colors.white24, height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildDetailItem('الفرع', _getBranchName(inv.branchCode), Icons.storefront, isMobile),
+                    ),
+                    Expanded(
+                      child: _buildDetailItem('المخزن', _getStoreName(inv.storeCode), Icons.store, isMobile),
+                    ),
+                    Expanded(
+                      child: _buildDetailItem('عدد الأصناف', inv.items.length.toString(), Icons.list_alt, isMobile),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    if (PermissionsService().canExportInventory)
+                      TextButton.icon(
+                        onPressed: () => _exportSingleExcel(inv),
+                        icon: Icon(Icons.download, color: Colors.blueAccent, size: isMobile ? 16 : 18),
+                        label: Text(
+                          'تصدير Excel',
+                          style: TextStyle(color: Colors.blueAccent, fontSize: isMobile ? 11 : 13),
+                        ),
+                      ),
+                    const SizedBox(width: 4),
+                    if (PermissionsService().canExportInventory)
+                      TextButton.icon(
+                        onPressed: () => _exportSinglePDF(inv),
+                        icon: Icon(Icons.picture_as_pdf, color: Colors.redAccent, size: isMobile ? 16 : 18),
+                        label: Text(
+                          'تصدير PDF',
+                          style: TextStyle(color: Colors.redAccent, fontSize: isMobile ? 11 : 13),
+                        ),
+                      ),
+                  ],
                 ),
               ],
             ),
           ),
         ),
-        const SizedBox(height: 8),
-        // قائمة الجردات
-        Expanded(
-          child: _inventories.isEmpty
-              ? const Center(child: Text('لا توجد جردات', style: TextStyle(color: Colors.white70)))
-              : ListView.builder(
-                  itemCount: _inventories.length,
-                  itemBuilder: (c, i) {
-                    final inv = _inventories[i];
-                    return Card(
-                      color: Colors.white.withOpacity(0.05),
-                      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(12),
-                        onTap: () => _showInventoryDetails(inv),
-                        child: Padding(
-                          padding: const EdgeInsets.all(12.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  CircleAvatar(
-                                    backgroundColor: Colors.cyanAccent.withOpacity(0.2),
-                                    child: Text('${inv.serial ?? ''}', style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          '${_getBranchName(inv.branchCode)} - ${_getStoreName(inv.storeCode)}',
-                                          style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
-                                        ),
-                                        Text(
-                                          'التاريخ: ${inv.date}',
-                                          style: const TextStyle(color: Colors.white60, fontSize: 12),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                    decoration: BoxDecoration(
-                                      color: inv.inventoryType == 'general'
-                                          ? Colors.greenAccent.withOpacity(0.15)
-                                          : Colors.orangeAccent.withOpacity(0.15),
-                                      borderRadius: BorderRadius.circular(12),
-                                      border: Border.all(
-                                        color: inv.inventoryType == 'general'
-                                            ? Colors.greenAccent.withOpacity(0.3)
-                                            : Colors.orangeAccent.withOpacity(0.3),
-                                      ),
-                                    ),
-                                    child: Text(
-                                      inv.inventoryType == 'general' ? 'جرد عام' : 'جرد محدد',
-                                      style: TextStyle(
-                                        color: inv.inventoryType == 'general' ? Colors.greenAccent : Colors.orangeAccent,
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                                children: [
-                                  _buildInfoChip('الأصناف', inv.items.length.toString(), Colors.blueAccent),
-                                  _buildInfoChip('إجمالي الجملة', _formatCurrency(inv.totalWholesale), Colors.greenAccent),
-                                  _buildInfoChip('إجمالي البيع', _formatCurrency(inv.totalRetail), Colors.amber),
-                                ],
-                              ),
-                              const SizedBox(height: 6),
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.end,
-                                children: [
-                                  if (PermissionsService().canEditInventory)
-                                    IconButton(
-                                      icon: const Icon(Icons.edit, color: Colors.orange, size: 20),
-                                      onPressed: () => _editInventory(inv),
-                                      tooltip: 'تعديل',
-                                    ),
-                                  if (PermissionsService().canDeleteInventory)
-                                    IconButton(
-                                      icon: const Icon(Icons.delete, color: Colors.red, size: 20),
-                                      onPressed: () => _confirmDelete(inv),
-                                      tooltip: 'حذف',
-                                    ),
-                                  IconButton(
-                                    icon: const Icon(Icons.arrow_forward_ios, color: Colors.cyanAccent, size: 18),
-                                    onPressed: () => _showInventoryDetails(inv),
-                                    tooltip: 'عرض التفاصيل',
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    );
-                  },
+        const SizedBox(height: 12),
+
+        // ===== جدول الأصناف =====
+        GlassCard(
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'تفاصيل الأصناف',
+                  style: TextStyle(
+                    color: Colors.cyanAccent,
+                    fontSize: isMobile ? 14 : 16,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-        ),
-      ],
-    );
-  }
+                const SizedBox(height: 8),
 
-  Widget _buildInfoChip(String label, String value, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withOpacity(0.2)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(label, style: TextStyle(color: Colors.white60, fontSize: 11)),
-          const SizedBox(width: 4),
-          Text(value, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold)),
-        ],
-      ),
-    );
-  }
-
-  // ================== عرض تفاصيل الجرد (صفحة منفصلة) ==================
-  Widget _buildDetailsView(InventoryModel inv) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // بطاقة معلومات الجرد
-          GlassCard(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
+                // ✅ جدول كامل داخل مسطرة واحدة للموبايل
+                isMobile
+                    ? SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              'إذن جرد رقم ${inv.serial ?? ''}',
-                              style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                            // عناوين الأعمدة
+                            Container(
+                              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+                              decoration: BoxDecoration(
+                                color: Colors.white10,
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Row(
+                                children: [
+                                  SizedBox(width: 30, child: Text('#', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 9))),
+                                  const SizedBox(width: 4),
+                                  SizedBox(width: 60, child: Text('الكود', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 9))),
+                                  const SizedBox(width: 4),
+                                  SizedBox(width: 80, child: Text('الصنف', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 9))),
+                                  const SizedBox(width: 4),
+                                  SizedBox(width: 50, child: Text('الكمية', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 9))),
+                                  const SizedBox(width: 4),
+                                  SizedBox(width: 65, child: Text('سعر الجملة', textAlign: TextAlign.center, style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 8))),
+                                  const SizedBox(width: 4),
+                                  SizedBox(width: 65, child: Text('قيمة الجملة', textAlign: TextAlign.center, style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 8))),
+                                  const SizedBox(width: 4),
+                                  SizedBox(width: 65, child: Text('سعر البيع', textAlign: TextAlign.center, style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 8))),
+                                  const SizedBox(width: 4),
+                                  SizedBox(width: 65, child: Text('قيمة البيع', textAlign: TextAlign.center, style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 8))),
+                                ],
+                              ),
                             ),
                             const SizedBox(height: 4),
-                            Text(
-                              'التاريخ: ${inv.date}',
-                              style: const TextStyle(color: Colors.white60, fontSize: 14),
+                            // صفوف البيانات
+                            ...inv.items.asMap().entries.map((entry) {
+                              int idx = entry.key;
+                              final item = entry.value;
+                              return Container(
+                                padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                                decoration: BoxDecoration(
+                                  border: Border(
+                                    bottom: BorderSide(color: Colors.white.withOpacity(0.05), width: 0.5),
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    SizedBox(width: 30, child: Text('${idx + 1}', style: TextStyle(color: Colors.white54, fontSize: 9), textAlign: TextAlign.center)),
+                                    const SizedBox(width: 4),
+                                    SizedBox(width: 60, child: Text(item.code, style: TextStyle(color: Colors.white70, fontSize: 9), textAlign: TextAlign.center)),
+                                    const SizedBox(width: 4),
+                                    SizedBox(width: 80, child: Text(item.name, style: TextStyle(color: Colors.white, fontSize: 10), textAlign: TextAlign.center)),
+                                    const SizedBox(width: 4),
+                                    SizedBox(width: 50, child: Text(item.quantity.toStringAsFixed(0), style: TextStyle(color: Colors.white70, fontSize: 9), textAlign: TextAlign.center)),
+                                    const SizedBox(width: 4),
+                                    SizedBox(width: 65, child: Text(_formatCurrency(item.wholesalePrice), style: TextStyle(color: Colors.greenAccent, fontSize: 9), textAlign: TextAlign.center)),
+                                    const SizedBox(width: 4),
+                                    SizedBox(width: 65, child: Text(_formatCurrency(item.wholesaleValue), style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 9), textAlign: TextAlign.center)),
+                                    const SizedBox(width: 4),
+                                    SizedBox(width: 65, child: Text(_formatCurrency(item.retailPrice), style: TextStyle(color: Colors.amber, fontSize: 9), textAlign: TextAlign.center)),
+                                    const SizedBox(width: 4),
+                                    SizedBox(width: 65, child: Text(_formatCurrency(item.retailValue), style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 9), textAlign: TextAlign.center)),
+                                  ],
+                                ),
+                              );
+                            }).toList(),
+                          ],
+                        ),
+                      )
+                    : Column(
+                        children: [
+                          // عناوين الأعمدة (سطح المكتب)
+                          Container(
+                            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.white10,
+                              borderRadius: BorderRadius.circular(6),
                             ),
-                          ],
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: inv.inventoryType == 'general'
-                              ? Colors.greenAccent.withOpacity(0.15)
-                              : Colors.orangeAccent.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: inv.inventoryType == 'general'
-                                ? Colors.greenAccent.withOpacity(0.3)
-                                : Colors.orangeAccent.withOpacity(0.3),
+                            child: const Row(
+                              children: [
+                                Expanded(flex: 0, child: Text('#', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 11))),
+                                Expanded(flex: 1, child: Text('الكود', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 11))),
+                                Expanded(flex: 2, child: Text('الصنف', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 11))),
+                                Expanded(flex: 1, child: Text('الكمية', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 11))),
+                                Expanded(flex: 1, child: Text('سعر الجملة', textAlign: TextAlign.center, style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 11))),
+                                Expanded(flex: 1, child: Text('قيمة الجملة', textAlign: TextAlign.center, style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 11))),
+                                Expanded(flex: 1, child: Text('سعر البيع', textAlign: TextAlign.center, style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 11))),
+                                Expanded(flex: 1, child: Text('قيمة البيع', textAlign: TextAlign.center, style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 11))),
+                              ],
+                            ),
                           ),
-                        ),
-                        child: Text(
-                          inv.inventoryType == 'general' ? 'جرد عام' : 'جرد محدد',
-                          style: TextStyle(
-                            color: inv.inventoryType == 'general' ? Colors.greenAccent : Colors.orangeAccent,
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
+                          const SizedBox(height: 4),
+                          // صفوف البيانات
+                          ListView.separated(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            itemCount: inv.items.length,
+                            separatorBuilder: (_, __) => const Divider(color: Colors.white10, height: 1),
+                            itemBuilder: (ctx, idx) {
+                              final item = inv.items[idx];
+                              return Container(
+                                padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+                                child: Row(
+                                  children: [
+                                    Expanded(flex: 0, child: Text('${idx + 1}', style: const TextStyle(color: Colors.white54, fontSize: 10), textAlign: TextAlign.center)),
+                                    Expanded(flex: 1, child: Text(item.code, style: const TextStyle(color: Colors.white70, fontSize: 10), textAlign: TextAlign.center)),
+                                    Expanded(flex: 2, child: Text(item.name, style: const TextStyle(color: Colors.white, fontSize: 11), textAlign: TextAlign.center)),
+                                    Expanded(flex: 1, child: Text(item.quantity.toStringAsFixed(0), style: const TextStyle(color: Colors.white70, fontSize: 10), textAlign: TextAlign.center)),
+                                    Expanded(flex: 1, child: Text(_formatCurrency(item.wholesalePrice), style: const TextStyle(color: Colors.greenAccent, fontSize: 10), textAlign: TextAlign.center)),
+                                    Expanded(flex: 1, child: Text(_formatCurrency(item.wholesaleValue), style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 10), textAlign: TextAlign.center)),
+                                    Expanded(flex: 1, child: Text(_formatCurrency(item.retailPrice), style: const TextStyle(color: Colors.amber, fontSize: 10), textAlign: TextAlign.center)),
+                                    Expanded(flex: 1, child: Text(_formatCurrency(item.retailValue), style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 10), textAlign: TextAlign.center)),
+                                  ],
+                                ),
+                              );
+                            },
                           ),
-                        ),
+                        ],
                       ),
-                    ],
-                  ),
-                  const Divider(color: Colors.white24, height: 20),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildDetailItem('الفرع', _getBranchName(inv.branchCode), Icons.storefront),
-                      ),
-                      Expanded(
-                        child: _buildDetailItem('المخزن', _getStoreName(inv.storeCode), Icons.store),
-                      ),
-                      Expanded(
-                        child: _buildDetailItem('عدد الأصناف', inv.items.length.toString(), Icons.list_alt),
-                      ),
-                    ],
-                  ),
-                  // ✅ إضافة أزرار التصدير للتفاصيل
-                  const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      if (PermissionsService().canExportInventory)
-                        TextButton.icon(
-                          onPressed: () => _exportSingleExcel(inv),
-                          icon: const Icon(Icons.download, color: Colors.blueAccent, size: 18),
-                          label: const Text('تصدير Excel', style: TextStyle(color: Colors.blueAccent)),
-                        ),
-                      const SizedBox(width: 8),
-                      if (PermissionsService().canExportInventory)
-                        TextButton.icon(
-                          onPressed: () => _exportSinglePDF(inv),
-                          icon: const Icon(Icons.picture_as_pdf, color: Colors.redAccent, size: 18),
-                          label: const Text('تصدير PDF', style: TextStyle(color: Colors.redAccent)),
-                        ),
-                    ],
-                  ),
-                ],
-              ),
+              ],
             ),
           ),
-          const SizedBox(height: 16),
+        ),
+        const SizedBox(height: 12),
 
-          // جدول الأصناف
-          GlassCard(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'تفاصيل الأصناف',
-                    style: TextStyle(color: Colors.cyanAccent, fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 12),
-                  // عناوين الجدول (مصغرة لتجنب Overflow)
-                  Container(
-                    padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
-                    decoration: BoxDecoration(
-                      color: Colors.white10,
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(flex: 0, child: const Text('#', style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 9))),
-                        Expanded(flex: 1, child: const Text('الكود', style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 9))),
-                        Expanded(flex: 2, child: const Text('الصنف', style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 9))),
-                        Expanded(flex: 1, child: const Text('الكمية', style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 9))),
-                        Expanded(flex: 1, child: const Text('سعر الجملة', style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 9))),
-                        Expanded(flex: 1, child: const Text('قيمة الجملة', style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 9))),
-                        Expanded(flex: 1, child: const Text('سعر البيع', style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 9))),
-                        Expanded(flex: 1, child: const Text('قيمة البيع', style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 9))),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  // صفوف البيانات
-                  ListView.separated(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: inv.items.length,
-                    separatorBuilder: (_, __) => const Divider(color: Colors.white10, height: 1),
-                    itemBuilder: (ctx, idx) {
-                      final item = inv.items[idx];
-                      return Container(
-                        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
-                        child: Row(
-                          children: [
-                            Expanded(flex: 0, child: Text('${idx + 1}', style: const TextStyle(color: Colors.white54, fontSize: 9), textAlign: TextAlign.center)),
-                            Expanded(flex: 1, child: Text(item.code, style: const TextStyle(color: Colors.white70, fontSize: 10), textAlign: TextAlign.center)),
-                            Expanded(flex: 2, child: Text(item.name, style: const TextStyle(color: Colors.white, fontSize: 11), textAlign: TextAlign.center)),
-                            Expanded(flex: 1, child: Text(item.quantity.toStringAsFixed(0), style: const TextStyle(color: Colors.white70, fontSize: 10), textAlign: TextAlign.center)),
-                            Expanded(flex: 1, child: Text(_formatCurrency(item.wholesalePrice), style: const TextStyle(color: Colors.greenAccent, fontSize: 10), textAlign: TextAlign.center)),
-                            Expanded(flex: 1, child: Text(_formatCurrency(item.wholesaleValue), style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 10), textAlign: TextAlign.center)),
-                            Expanded(flex: 1, child: Text(_formatCurrency(item.retailPrice), style: const TextStyle(color: Colors.amber, fontSize: 10), textAlign: TextAlign.center)),
-                            Expanded(flex: 1, child: Text(_formatCurrency(item.retailValue), style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 10), textAlign: TextAlign.center)),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                ],
-              ),
+        // بطاقة الإجماليات
+        GlassCard(
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                Column(
+                  children: [
+                    Text('إجمالي الجملة', style: TextStyle(color: Colors.white60, fontSize: isMobile ? 10 : 12)),
+                    const SizedBox(height: 2),
+                    Text(_formatCurrency(inv.totalWholesale), style: TextStyle(color: Colors.greenAccent, fontSize: isMobile ? 16 : 18, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                Container(width: 1, height: isMobile ? 24 : 30, color: Colors.white24),
+                Column(
+                  children: [
+                    Text('إجمالي البيع', style: TextStyle(color: Colors.white60, fontSize: isMobile ? 10 : 12)),
+                    const SizedBox(height: 2),
+                    Text(_formatCurrency(inv.totalRetail), style: TextStyle(color: Colors.amber, fontSize: isMobile ? 16 : 18, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                Container(width: 1, height: isMobile ? 24 : 30, color: Colors.white24),
+                Column(
+                  children: [
+                    Text('إجمالي الكميات', style: TextStyle(color: Colors.white60, fontSize: isMobile ? 10 : 12)),
+                    const SizedBox(height: 2),
+                    Text(inv.items.fold(0.0, (sum, item) => sum + item.quantity).toStringAsFixed(0), style: TextStyle(color: Colors.cyanAccent, fontSize: isMobile ? 16 : 18, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 16),
+        ),
+        const SizedBox(height: 16),
+      ],
+    ),
+  );
+}
 
-          // بطاقة الإجماليات
-          GlassCard(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  Column(
-                    children: [
-                      const Text('إجمالي الجملة', style: TextStyle(color: Colors.white60, fontSize: 12)),
-                      const SizedBox(height: 4),
-                      Text(
-                        _formatCurrency(inv.totalWholesale),
-                        style: const TextStyle(color: Colors.greenAccent, fontSize: 18, fontWeight: FontWeight.bold),
-                      ),
-                    ],
-                  ),
-                  Container(width: 1, height: 30, color: Colors.white24),
-                  Column(
-                    children: [
-                      const Text('إجمالي البيع', style: TextStyle(color: Colors.white60, fontSize: 12)),
-                      const SizedBox(height: 4),
-                      Text(
-                        _formatCurrency(inv.totalRetail),
-                        style: const TextStyle(color: Colors.amber, fontSize: 18, fontWeight: FontWeight.bold),
-                      ),
-                    ],
-                  ),
-                  Container(width: 1, height: 30, color: Colors.white24),
-                  Column(
-                    children: [
-                      const Text('إجمالي الكميات', style: TextStyle(color: Colors.white60, fontSize: 12)),
-                      const SizedBox(height: 4),
-                      Text(
-                        inv.items.fold(0.0, (sum, item) => sum + item.quantity).toStringAsFixed(0),
-                        style: const TextStyle(color: Colors.cyanAccent, fontSize: 18, fontWeight: FontWeight.bold),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 20),
+Widget _buildDetailItem(String label, String value, IconData icon, bool isMobile) {
+  return Row(
+    children: [
+      Icon(icon, color: Colors.cyanAccent, size: isMobile ? 14 : 16),
+      const SizedBox(width: 4),
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: TextStyle(color: Colors.white60, fontSize: isMobile ? 8 : 10)),
+          Text(value, style: TextStyle(color: Colors.white, fontSize: isMobile ? 11 : 13, fontWeight: FontWeight.w500)),
         ],
       ),
-    );
-  }
-
-  Widget _buildDetailItem(String label, String value, IconData icon) {
-    return Row(
-      children: [
-        Icon(icon, color: Colors.cyanAccent, size: 16),
-        const SizedBox(width: 6),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(label, style: const TextStyle(color: Colors.white60, fontSize: 10)),
-            Text(value, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
-          ],
-        ),
-      ],
-    );
-  }
+    ],
+  );
+}
 }
