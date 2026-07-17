@@ -86,7 +86,6 @@ class _StockBalancePageState extends State<StockBalancePage> {
       final box = Hive.box('inventory_box');
       List<InventoryModel> allInventories = [];
 
-      // 1. جلب جميع الجردات للفرع والمخزن المختارين
       for (var key in box.keys) {
         final raw = box.get(key);
         if (raw is List) {
@@ -106,10 +105,8 @@ class _StockBalancePageState extends State<StockBalancePage> {
         }
       }
 
-      // ترتيب الجردات من الأقدم إلى الأحدث
       allInventories.sort((a, b) => a.date.compareTo(b.date));
 
-      // 2. جلب جميع الأصناف من التكويد
       final codingBox = Hive.box('coding_box');
       final itemsKey = '${widget.companyCode}_items';
       List<Map<String, dynamic>> allItems = [];
@@ -120,7 +117,6 @@ class _StockBalancePageState extends State<StockBalancePage> {
         }
       }
 
-      // 3. بناء خريطة الرصيد بجميع الأصناف (قيمة ابتدائية 0)
       Map<String, double> balances = {};
       Map<String, Map<String, dynamic>> itemsMap = {};
       for (var item in allItems) {
@@ -129,7 +125,6 @@ class _StockBalancePageState extends State<StockBalancePage> {
         itemsMap[code] = item;
       }
 
-      // 4. تطبيق الجردات بالتسلسل الزمني
       for (var inv in allInventories) {
         if (inv.inventoryType == 'general') {
           for (var key in balances.keys) {
@@ -145,10 +140,8 @@ class _StockBalancePageState extends State<StockBalancePage> {
         }
       }
 
-      // 5. إزالة الأصناف التي رصيدها 0
       balances.removeWhere((key, value) => value == 0.0);
 
-      // 6. تجهيز البيانات للعرض مع معلومات الصنف والأسعار
       List<Map<String, dynamic>> itemsData = [];
       balances.forEach((code, quantity) {
         final item = itemsMap[code] ?? {};
@@ -172,7 +165,6 @@ class _StockBalancePageState extends State<StockBalancePage> {
         });
       });
 
-      // ترتيب حسب الكود
       itemsData.sort((a, b) => a['code'].compareTo(b['code']));
 
       setState(() {
@@ -222,7 +214,6 @@ class _StockBalancePageState extends State<StockBalancePage> {
       return;
     }
     try {
-      // تحضير البيانات حسب الصلاحيات
       List<String> headers = ['الكود', 'الصنف', 'الكمية'];
       List<String> keys = ['code', 'name', 'quantity'];
 
@@ -291,7 +282,6 @@ class _StockBalancePageState extends State<StockBalancePage> {
         return row;
       }).toList();
 
-      // حساب الإجماليات للتقرير
       final summary = {
         'totalQuantity': totalQuantity,
         'totalWholesale': totalWholesaleValue,
@@ -347,9 +337,190 @@ class _StockBalancePageState extends State<StockBalancePage> {
     }
   }
 
+  // ================== بناء الجدول مع تمرير أفقي ورأسي ==================
+  Widget _buildTable() {
+    // تحديد أعمدة الجدول حسب الصلاحيات
+    List<String> headers = ['#', 'الكود', 'الصنف', 'الكمية'];
+    List<String> keys = ['index', 'code', 'name', 'quantity'];
+    List<double> columnWidths = [40, 70, 120, 70]; // العرض لكل عمود
+
+    if (PermissionsService().canViewStockWholesalePrice) {
+      headers.add('سعر الجملة');
+      keys.add('wholesalePrice');
+      columnWidths.add(80);
+    }
+    if (PermissionsService().canViewStockWholesalePrice) {
+      headers.add('قيمة الجملة');
+      keys.add('totalWholesale');
+      columnWidths.add(80);
+    }
+    headers.add('سعر البيع');
+    keys.add('sellingPrice');
+    columnWidths.add(80);
+    headers.add('قيمة البيع');
+    keys.add('totalRetail');
+    columnWidths.add(80);
+
+    // بناء العناوين
+    List<Widget> headerWidgets = [];
+    for (int i = 0; i < headers.length; i++) {
+      headerWidgets.add(
+        SizedBox(
+          width: columnWidths[i],
+          child: Text(
+            headers[i],
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.cyan,
+              fontWeight: FontWeight.bold,
+              fontSize: 11,
+              fontFamily: 'Cairo',
+            ),
+          ),
+        ),
+      );
+    }
+
+    // بناء الصفوف
+    List<Widget> rows = [];
+    for (int idx = 0; idx < _itemsData.length; idx++) {
+      final item = _itemsData[idx];
+      List<Widget> rowCells = [];
+      int cellIndex = 0;
+      rowCells.add(
+        SizedBox(
+          width: columnWidths[cellIndex++],
+          child: Text(
+            '${idx + 1}',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white54, fontSize: 11),
+          ),
+        ),
+      );
+      rowCells.add(
+        SizedBox(
+          width: columnWidths[cellIndex++],
+          child: Text(
+            item['code'],
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white70, fontSize: 11),
+          ),
+        ),
+      );
+      rowCells.add(
+        SizedBox(
+          width: columnWidths[cellIndex++],
+          child: Text(
+            item['name'],
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white, fontSize: 12),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      );
+      rowCells.add(
+        SizedBox(
+          width: columnWidths[cellIndex++],
+          child: Text(
+            (item['quantity'] as double).toStringAsFixed(0),
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.cyanAccent, fontSize: 12, fontWeight: FontWeight.bold),
+          ),
+        ),
+      );
+      if (PermissionsService().canViewStockWholesalePrice) {
+        rowCells.add(
+          SizedBox(
+            width: columnWidths[cellIndex++],
+            child: Text(
+              _formatCurrency(item['wholesalePrice'] as double),
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.greenAccent, fontSize: 11),
+            ),
+          ),
+        );
+      }
+      if (PermissionsService().canViewStockWholesalePrice) {
+        rowCells.add(
+          SizedBox(
+            width: columnWidths[cellIndex++],
+            child: Text(
+              _formatCurrency(item['totalWholesale'] as double),
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.greenAccent, fontSize: 12, fontWeight: FontWeight.bold),
+            ),
+          ),
+        );
+      }
+      rowCells.add(
+        SizedBox(
+          width: columnWidths[cellIndex++],
+          child: Text(
+            _formatCurrency(item['sellingPrice'] as double),
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.amber, fontSize: 11),
+          ),
+        ),
+      );
+      rowCells.add(
+        SizedBox(
+          width: columnWidths[cellIndex++],
+          child: Text(
+            _formatCurrency(item['totalRetail'] as double),
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.bold),
+          ),
+        ),
+      );
+
+      rows.add(
+        Container(
+          padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+          decoration: BoxDecoration(
+            border: Border(
+              bottom: BorderSide(color: Colors.white.withOpacity(0.05), width: 0.5),
+            ),
+          ),
+          child: Row(
+            children: rowCells,
+          ),
+        ),
+      );
+    }
+
+    // الجدول النهائي: مسطرة أفقية (العناوين + الصفوف) داخل مسطرة رأسية
+    return SingleChildScrollView(
+      scrollDirection: Axis.vertical,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // العناوين
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+              decoration: BoxDecoration(
+                color: Colors.white10,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: headerWidgets,
+              ),
+            ),
+            const SizedBox(height: 4),
+            // الصفوف
+            Column(
+              children: rows,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ================== build الرئيسي ==================
   @override
   Widget build(BuildContext context) {
-    // ===== التحقق من صلاحية المعاينة =====
     if (!PermissionsService().canShowStock) {
       return Scaffold(
         appBar: AppBar(
@@ -388,14 +559,12 @@ class _StockBalancePageState extends State<StockBalancePage> {
           onPressed: () => Navigator.pop(context),
         ),
         actions: [
-          // ✅ زر تصدير Excel
           if (PermissionsService().canExportStock)
             IconButton(
               icon: const Icon(Icons.download, color: Colors.blueAccent),
               onPressed: _exportExcel,
               tooltip: 'تصدير Excel',
             ),
-          // ✅ زر تصدير PDF
           if (PermissionsService().canExportStock)
             IconButton(
               icon: const Icon(Icons.picture_as_pdf, color: Colors.redAccent),
@@ -494,7 +663,8 @@ class _StockBalancePageState extends State<StockBalancePage> {
                               },
                               child: Container(
                                 padding: const EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 12),
+                                  horizontal: 12, vertical: 12,
+                                ),
                                 decoration: BoxDecoration(
                                   color: Colors.white.withOpacity(0.05),
                                   borderRadius: BorderRadius.circular(8),
@@ -502,13 +672,18 @@ class _StockBalancePageState extends State<StockBalancePage> {
                                 ),
                                 child: Row(
                                   children: [
-                                    const Icon(Icons.calendar_today,
-                                        color: Colors.amber, size: 18),
+                                    const Icon(
+                                      Icons.calendar_today,
+                                      color: Colors.amber,
+                                      size: 18,
+                                    ),
                                     const SizedBox(width: 8),
                                     Text(
                                       'التاريخ: ${DateFormat('yyyy-MM-dd').format(_selectedDate)}',
                                       style: const TextStyle(
-                                          color: Colors.white, fontSize: 13),
+                                        color: Colors.white,
+                                        fontSize: 13,
+                                      ),
                                     ),
                                   ],
                                 ),
@@ -519,24 +694,30 @@ class _StockBalancePageState extends State<StockBalancePage> {
                           Expanded(
                             child: Container(
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 12),
+                                horizontal: 12, vertical: 12,
+                              ),
                               decoration: BoxDecoration(
                                 color: Colors.cyanAccent.withOpacity(0.1),
                                 borderRadius: BorderRadius.circular(8),
                                 border: Border.all(
-                                    color: Colors.cyanAccent.withOpacity(0.3)),
+                                  color: Colors.cyanAccent.withOpacity(0.3),
+                                ),
                               ),
                               child: Row(
                                 children: [
-                                  const Icon(Icons.info_outline,
-                                      color: Colors.cyanAccent, size: 18),
+                                  const Icon(
+                                    Icons.info_outline,
+                                    color: Colors.cyanAccent,
+                                    size: 18,
+                                  ),
                                   const SizedBox(width: 8),
                                   Text(
                                     'آخر جرد: ${_getLastInventoryDate()}',
                                     style: const TextStyle(
-                                        color: Colors.cyanAccent,
-                                        fontSize: 12,
-                                        fontFamily: 'Cairo'),
+                                      color: Colors.cyanAccent,
+                                      fontSize: 12,
+                                      fontFamily: 'Cairo',
+                                    ),
                                   ),
                                 ],
                               ),
@@ -550,343 +731,110 @@ class _StockBalancePageState extends State<StockBalancePage> {
               ),
               const SizedBox(height: 8),
 
-              // ===== عرض البيانات =====
+              // ===== الجدول =====
               Expanded(
                 child: _isLoading
-                    ? const Center(
-                        child: CircularProgressIndicator(color: Colors.white))
+                    ? const Center(child: CircularProgressIndicator(color: Colors.white))
                     : !_hasData
                         ? const Center(
                             child: Text(
-                            'اختر الفرع والمخزن لعرض الرصيد',
-                            style: TextStyle(color: Colors.white60),
-                          ))
+                              'اختر الفرع والمخزن لعرض الرصيد',
+                              style: TextStyle(color: Colors.white60),
+                            ),
+                          )
                         : _itemsData.isEmpty
                             ? const Center(
                                 child: Text(
-                                'لا توجد أصناف برصيد أكبر من صفر',
-                                style: TextStyle(color: Colors.white60),
-                              ))
-                            : Column(
-                                children: [
-                                  // عناوين الجدول (ديناميكية حسب الصلاحيات)
-                                  Container(
-                                    margin: const EdgeInsets.symmetric(
-                                        horizontal: 8),
-                                    padding: const EdgeInsets.symmetric(
-                                        vertical: 8, horizontal: 4),
-                                    decoration: BoxDecoration(
-                                      color: Colors.white10,
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        const Expanded(
-                                            flex: 1,
-                                            child: Text('#',
-                                                textAlign: TextAlign.center,
-                                                style: TextStyle(
-                                                    color: Colors.cyan,
-                                                    fontWeight:
-                                                        FontWeight.bold,
-                                                    fontSize: 11))),
-                                        const Expanded(
-                                            flex: 1,
-                                            child: Text('الكود',
-                                                textAlign: TextAlign.center,
-                                                style: TextStyle(
-                                                    color: Colors.cyan,
-                                                    fontWeight:
-                                                        FontWeight.bold,
-                                                    fontSize: 11))),
-                                        const Expanded(
-                                            flex: 2,
-                                            child: Text('الصنف',
-                                                textAlign: TextAlign.center,
-                                                style: TextStyle(
-                                                    color: Colors.cyan,
-                                                    fontWeight:
-                                                        FontWeight.bold,
-                                                    fontSize: 11))),
-                                        const Expanded(
-                                            flex: 1,
-                                            child: Text('الكمية',
-                                                textAlign: TextAlign.center,
-                                                style: TextStyle(
-                                                    color: Colors.cyan,
-                                                    fontWeight:
-                                                        FontWeight.bold,
-                                                    fontSize: 11))),
-                                        // ✅ سعر الجملة (حسب الصلاحية)
-                                        if (PermissionsService()
-                                            .canViewStockWholesalePrice)
-                                          const Expanded(
-                                              flex: 1,
-                                              child: Text('سعر الجملة',
-                                                  textAlign: TextAlign.center,
-                                                  style: TextStyle(
-                                                      color: Colors
-                                                          .greenAccent,
-                                                      fontWeight:
-                                                          FontWeight.bold,
-                                                      fontSize: 10))),
-                                        // ✅ قيمة الجملة (حسب الصلاحية)
-                                        if (PermissionsService()
-                                            .canViewStockWholesaleValue)
-                                          const Expanded(
-                                              flex: 1,
-                                              child: Text('قيمة الجملة',
-                                                  textAlign: TextAlign.center,
-                                                  style: TextStyle(
-                                                      color: Colors
-                                                          .greenAccent,
-                                                      fontWeight:
-                                                          FontWeight.bold,
-                                                      fontSize: 10))),
-                                        const Expanded(
-                                            flex: 1,
-                                            child: Text('سعر البيع',
-                                                textAlign: TextAlign.center,
-                                                style: TextStyle(
-                                                    color: Colors.amber,
-                                                    fontWeight:
-                                                        FontWeight.bold,
-                                                    fontSize: 10))),
-                                        const Expanded(
-                                            flex: 1,
-                                            child: Text('قيمة البيع',
-                                                textAlign: TextAlign.center,
-                                                style: TextStyle(
-                                                    color: Colors.amber,
-                                                    fontWeight:
-                                                        FontWeight.bold,
-                                                    fontSize: 10))),
-                                      ],
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  // قائمة الأصناف
-                                  Expanded(
-                                    child: ListView.builder(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 8),
-                                      itemCount: _itemsData.length,
-                                      itemBuilder: (ctx, idx) {
-                                        final item = _itemsData[idx];
-                                        return Card(
-                                          color: Colors.white
-                                              .withOpacity(0.05),
-                                          margin: const EdgeInsets.symmetric(
-                                              vertical: 3),
-                                          shape: RoundedRectangleBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(8)),
-                                          child: Padding(
-                                            padding: const EdgeInsets.symmetric(
-                                                vertical: 6, horizontal: 8),
-                                            child: Row(
-                                              children: [
-                                                Expanded(
-                                                    flex: 1,
-                                                    child: Text(
-                                                      '${idx + 1}',
-                                                      textAlign:
-                                                          TextAlign.center,
-                                                      style: const TextStyle(
-                                                          color: Colors
-                                                              .white54,
-                                                          fontSize: 11),
-                                                    )),
-                                                Expanded(
-                                                    flex: 1,
-                                                    child: Text(
-                                                      item['code'],
-                                                      textAlign:
-                                                          TextAlign.center,
-                                                      style: const TextStyle(
-                                                          color: Colors
-                                                              .white70,
-                                                          fontSize: 11),
-                                                    )),
-                                                Expanded(
-                                                    flex: 2,
-                                                    child: Text(
-                                                      item['name'],
-                                                      textAlign:
-                                                          TextAlign.center,
-                                                      style: const TextStyle(
-                                                          color: Colors.white,
-                                                          fontSize: 12),
-                                                    )),
-                                                Expanded(
-                                                    flex: 1,
-                                                    child: Text(
-                                                      (item['quantity']
-                                                              as double)
-                                                          .toStringAsFixed(0),
-                                                      textAlign:
-                                                          TextAlign.center,
-                                                      style: const TextStyle(
-                                                          color: Colors
-                                                              .cyanAccent,
-                                                          fontSize: 12,
-                                                          fontWeight:
-                                                              FontWeight
-                                                                  .bold),
-                                                    )),
-                                                // ✅ سعر الجملة (حسب الصلاحية)
-                                                if (PermissionsService()
-                                                    .canViewStockWholesalePrice)
-                                                  Expanded(
-                                                      flex: 1,
-                                                      child: Text(
-                                                        _formatCurrency(item[
-                                                            'wholesalePrice']
-                                                            as double),
-                                                        textAlign:
-                                                            TextAlign.center,
-                                                        style: const TextStyle(
-                                                            color: Colors
-                                                                .greenAccent,
-                                                            fontSize: 11),
-                                                      )),
-                                                // ✅ قيمة الجملة (حسب الصلاحية)
-                                                if (PermissionsService()
-                                                    .canViewStockWholesaleValue)
-                                                  Expanded(
-                                                      flex: 1,
-                                                      child: Text(
-                                                        _formatCurrency(item[
-                                                            'totalWholesale']
-                                                            as double),
-                                                        textAlign:
-                                                            TextAlign.center,
-                                                        style: const TextStyle(
-                                                            color: Colors
-                                                                .greenAccent,
-                                                            fontSize: 12,
-                                                            fontWeight:
-                                                                FontWeight
-                                                                    .bold),
-                                                      )),
-                                                Expanded(
-                                                    flex: 1,
-                                                    child: Text(
-                                                      _formatCurrency(item[
-                                                          'sellingPrice']
-                                                          as double),
-                                                      textAlign:
-                                                          TextAlign.center,
-                                                      style: const TextStyle(
-                                                          color: Colors
-                                                              .amber,
-                                                          fontSize: 11),
-                                                    )),
-                                                Expanded(
-                                                    flex: 1,
-                                                    child: Text(
-                                                      _formatCurrency(item[
-                                                          'totalRetail']
-                                                          as double),
-                                                      textAlign:
-                                                          TextAlign.center,
-                                                      style: const TextStyle(
-                                                          color: Colors
-                                                              .amber,
-                                                          fontSize: 12,
-                                                          fontWeight:
-                                                              FontWeight
-                                                                  .bold),
-                                                    )),
-                                              ],
-                                            ),
-                                          ),
-                                        );
-                                      },
-                                    ),
-                                  ),
-                                ],
-                              ),
+                                  'لا توجد أصناف برصيد أكبر من صفر',
+                                  style: TextStyle(color: Colors.white60),
+                                ),
+                              )
+                            : _buildTable(),
               ),
 
               // ===== الإجماليات (أسفل الشاشة) =====
-              if (_hasData && _itemsData.isNotEmpty)
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.05),
-                    border: Border(
-                      top: BorderSide(
-                          color: Colors.white.withOpacity(0.1), width: 1),
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      Column(
-                        children: [
-                          const Text(
-                            'إجمالي الكميات',
-                            style: TextStyle(
-                                color: Colors.white60,
-                                fontSize: 12,
-                                fontFamily: 'Cairo'),
-                          ),
-                          Text(
-                            totalQuantity.toStringAsFixed(0),
-                            style: const TextStyle(
-                                color: Colors.cyanAccent,
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold),
-                          ),
-                        ],
-                      ),
-                      Container(
-                          width: 1, height: 30, color: Colors.white24),
-                      // ✅ إجمالي قيمة الجملة (يظهر فقط إذا كانت الصلاحية مفعلة)
-                      if (PermissionsService().canViewStockWholesaleValue)
-                        Column(
-                          children: [
-                            const Text(
-                              'قيمة الجملة الكلية',
-                              style: TextStyle(
-                                  color: Colors.white60,
-                                  fontSize: 12,
-                                  fontFamily: 'Cairo'),
-                            ),
-                            Text(
-                              _formatCurrency(totalWholesaleValue),
-                              style: const TextStyle(
-                                  color: Colors.greenAccent,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold),
-                            ),
-                          ],
-                        ),
-                      if (PermissionsService().canViewStockWholesaleValue)
-                        Container(
-                            width: 1, height: 30, color: Colors.white24),
-                      Column(
-                        children: [
-                          const Text(
-                            'قيمة البيع الكلية',
-                            style: TextStyle(
-                                color: Colors.white60,
-                                fontSize: 12,
-                                fontFamily: 'Cairo'),
-                          ),
-                          Text(
-                            _formatCurrency(totalRetailValue),
-                            style: const TextStyle(
-                                color: Colors.amber,
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
+if (_hasData && _itemsData.isNotEmpty)
+  Container(
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: Colors.white.withOpacity(0.05), // ✅ نفس لون خلفية البطاقات
+      border: Border(
+        top: BorderSide(
+          color: Colors.white.withOpacity(0.1),
+          width: 1,
+        ),
+      ),
+    ),
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.spaceAround,
+      children: [
+        Column(
+          children: [
+            const Text(
+              'إجمالي الكميات',
+              style: TextStyle(
+                color: Colors.white60,
+                fontSize: 12,
+                fontFamily: 'Cairo',
+              ),
+            ),
+            Text(
+              totalQuantity.toStringAsFixed(0),
+              style: const TextStyle(
+                color: Colors.cyanAccent,
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        Container(width: 1, height: 30, color: Colors.white24),
+        if (PermissionsService().canViewStockWholesalePrice)
+          Column(
+            children: [
+              const Text(
+                'قيمة الجملة',
+                style: TextStyle(
+                  color: Colors.white60,
+                  fontSize: 12,
+                  fontFamily: 'Cairo',
                 ),
+              ),
+              Text(
+                _formatCurrency(totalWholesaleValue),
+                style: const TextStyle(
+                  color: Colors.greenAccent,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        if (PermissionsService().canViewStockWholesalePrice)
+          Container(width: 1, height: 30, color: Colors.white24),
+        Column(
+          children: [
+            const Text(
+              'قيمة البيع',
+              style: TextStyle(
+                color: Colors.white60,
+                fontSize: 12,
+                fontFamily: 'Cairo',
+              ),
+            ),
+            Text(
+              _formatCurrency(totalRetailValue),
+              style: const TextStyle(
+                color: Colors.amber,
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      ],
+    ),
+  ),
             ],
           ),
         ),

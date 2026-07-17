@@ -120,7 +120,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
       'رصيد المخزون': {
   'معاينة': false,
   'عرض سعر الجملة': false,
-  'عرض قيمة الجملة': false,
+  // 'عرض قيمة الجملة': false,
   'تصدير': false,
 },
       'صلاحيات عامة': {
@@ -379,40 +379,45 @@ class _PermissionsPageState extends State<PermissionsPage> {
   }
 
   Widget buildPermissionsTab(String tabName) {
-    var permissionsMap = userPermissions[tabName] ?? {};
+  var permissionsMap = userPermissions[tabName] ?? {};
 
-    return ListView.builder(
-      padding: const EdgeInsets.all(20),
-      itemCount: permissionsMap.length,
-      itemBuilder: (context, index) {
-        String key = permissionsMap.keys.elementAt(index);
-        bool value = permissionsMap[key]!;
-
-        return Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.05),
-            borderRadius: BorderRadius.circular(15),
-            border: Border.all(color: Colors.white.withOpacity(0.1)),
-          ),
-          child: SwitchListTile(
-            activeColor: Colors.cyanAccent,
-            inactiveTrackColor: Colors.white24,
-            title: Text(
-              key,
-              style: const TextStyle(color: Colors.white, fontSize: 16, fontFamily: 'Cairo'),
-            ),
-            value: value,
-            onChanged: selectedUserId == null
-                ? null
-                : (newValue) {
-                    setState(() {
-                      userPermissions[tabName]![key] = newValue;
-                    });
-                  },
-          ),
-        );
-      },
-    );
+  // ✅ إزالة صلاحية 'عرض قيمة الجملة' من تبويب 'رصيد المخزون'
+  if (tabName == 'رصيد المخزون') {
+    permissionsMap.remove('عرض قيمة الجملة');
   }
+
+  return ListView.builder(
+    padding: const EdgeInsets.all(20),
+    itemCount: permissionsMap.length,
+    itemBuilder: (context, index) {
+      String key = permissionsMap.keys.elementAt(index);
+      bool value = permissionsMap[key]!;
+
+      return Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(color: Colors.white.withOpacity(0.1)),
+        ),
+        child: SwitchListTile(
+          activeColor: Colors.cyanAccent,
+          inactiveTrackColor: Colors.white24,
+          title: Text(
+            key,
+            style: const TextStyle(color: Colors.white, fontSize: 16, fontFamily: 'Cairo'),
+          ),
+          value: value,
+          onChanged: selectedUserId == null
+              ? null
+              : (newValue) {
+                  setState(() {
+                    userPermissions[tabName]![key] = newValue;
+                  });
+                },
+        ),
+      );
+    },
+  );
+}
 }

@@ -195,7 +195,7 @@ class PermissionsService {
 'رصيد المخزون': {
   'معاينة': false,
   'عرض سعر الجملة': false,
-  'عرض قيمة الجملة': false,
+  // 'عرض قيمة الجملة': false,
   'تصدير': false,
 },
     };
@@ -298,6 +298,6 @@ bool get canExportInventory => hasPermission('حركة الجرد', 'تصدير'
 // ========== صلاحيات رصيد المخزون ==========
 bool get canShowStock => hasPermission('رصيد المخزون', 'معاينة');
 bool get canViewStockWholesalePrice => hasPermission('رصيد المخزون', 'عرض سعر الجملة');
-bool get canViewStockWholesaleValue => hasPermission('رصيد المخزون', 'عرض قيمة الجملة');
+// bool get canViewStockWholesaleValue => hasPermission('رصيد المخزون', 'عرض قيمة الجملة');
 bool get canExportStock => hasPermission('رصيد المخزون', 'تصدير');
 }

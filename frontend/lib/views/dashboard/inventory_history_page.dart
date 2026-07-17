@@ -387,110 +387,164 @@ Future<void> _exportAllPDF() async {
         child: Padding(
           padding: const EdgeInsets.all(6.0),
           child: isMobile
-              ? SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      SizedBox(
-                        width: 110,
-                        child: DropdownButtonFormField<String?>(
-                          value: _filterBranchCode,
-                          dropdownColor: Colors.indigo.shade900,
-                          style: const TextStyle(color: Colors.white, fontSize: 11),
-                          decoration: const InputDecoration(
-                            labelText: 'الفرع',
-                            labelStyle: TextStyle(color: Colors.white70, fontSize: 9),
-                            isDense: true,
-                            contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                          ),
-                          items: _branches.map((b) {
-                            return DropdownMenuItem<String?>(
-                              value: b['code'],
-                              child: Text(b['name'] ?? '', style: const TextStyle(fontSize: 10)),
-                            );
-                          }).toList(),
-                          onChanged: (val) {
-                            setState(() {
-                              _filterBranchCode = val;
-                              _loadData();
-                            });
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      SizedBox(
-                        width: 110,
-                        child: DropdownButtonFormField<String?>(
-                          value: _filterStoreCode,
-                          dropdownColor: Colors.indigo.shade900,
-                          style: const TextStyle(color: Colors.white, fontSize: 11),
-                          decoration: const InputDecoration(
-                            labelText: 'المخزن',
-                            labelStyle: TextStyle(color: Colors.white70, fontSize: 9),
-                            isDense: true,
-                            contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                          ),
-                          items: _stores.map((s) {
-                            return DropdownMenuItem<String?>(
-                              value: s['code'],
-                              child: Text(s['name'] ?? '', style: const TextStyle(fontSize: 10)),
-                            );
-                          }).toList(),
-                          onChanged: (val) {
-                            setState(() {
-                              _filterStoreCode = val;
-                              _loadData();
-                            });
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      SizedBox(
-                        width: 130,
-                        child: TextFormField(
-                          initialValue: _filterDate,
-                          readOnly: true,
-                          style: const TextStyle(color: Colors.white, fontSize: 11),
-                          decoration: const InputDecoration(
-                            labelText: 'التاريخ',
-                            labelStyle: TextStyle(color: Colors.white70, fontSize: 9),
-                            suffixIcon: Icon(Icons.calendar_today, size: 14),
-                            isDense: true,
-                            contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                          ),
-                          onTap: () async {
-                            DateTime? picked = await showDatePicker(
-                              context: context,
-                              initialDate: DateTime.now(),
-                              firstDate: DateTime(2020),
-                              lastDate: DateTime(2101),
-                            );
-                            if (picked != null) {
-                              setState(() {
-                                _filterDate = DateFormat('yyyy-MM-dd').format(picked);
-                                _loadData();
-                              });
-                            }
-                          },
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.clear, color: Colors.white70, size: 18),
-                        onPressed: () {
-                          setState(() {
-                            _filterBranchCode = null;
-                            _filterStoreCode = null;
-                            _filterDate = null;
-                            _loadData();
-                          });
-                        },
-                        tooltip: 'إلغاء الفلاتر',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                      ),
-                    ],
+    ? SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // الفرع
+            SizedBox(
+              width: 110,
+              height: 56,
+              child: DropdownButtonFormField<String?>(
+                value: _filterBranchCode,
+                dropdownColor: Colors.indigo.shade900,
+                style: const TextStyle(color: Colors.white, fontSize: 12),
+                decoration: const InputDecoration(
+                  labelText: 'الفرع',
+                  labelStyle: TextStyle(color: Colors.white70, fontSize: 10),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                  border: OutlineInputBorder(
+                    borderSide: BorderSide(color: Colors.white24),
+                    borderRadius: BorderRadius.all(Radius.circular(12)),
                   ),
-                )
+                  enabledBorder: OutlineInputBorder(
+                    borderSide: BorderSide(color: Colors.white24),
+                    borderRadius: BorderRadius.all(Radius.circular(12)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderSide: BorderSide(color: Colors.cyanAccent),
+                    borderRadius: BorderRadius.all(Radius.circular(12)),
+                  ),
+                  filled: true,
+                  fillColor: Colors.transparent,
+                  isDense: false,
+                ),
+                items: _branches.map((b) {
+                  return DropdownMenuItem<String?>(
+                    value: b['code'],
+                    child: Text(b['name'] ?? '', style: const TextStyle(fontSize: 10)),
+                  );
+                }).toList(),
+                onChanged: (val) {
+                  setState(() {
+                    _filterBranchCode = val;
+                    _loadData();
+                  });
+                },
+              ),
+            ),
+            const SizedBox(width: 6),
+            // المخزن
+            SizedBox(
+              width: 110,
+              height: 56,
+              child: DropdownButtonFormField<String?>(
+                value: _filterStoreCode,
+                dropdownColor: Colors.indigo.shade900,
+                style: const TextStyle(color: Colors.white, fontSize: 12),
+                decoration: const InputDecoration(
+                  labelText: 'المخزن',
+                  labelStyle: TextStyle(color: Colors.white70, fontSize: 10),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                  border: OutlineInputBorder(
+                    borderSide: BorderSide(color: Colors.white24),
+                    borderRadius: BorderRadius.all(Radius.circular(12)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderSide: BorderSide(color: Colors.white24),
+                    borderRadius: BorderRadius.all(Radius.circular(12)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderSide: BorderSide(color: Colors.cyanAccent),
+                    borderRadius: BorderRadius.all(Radius.circular(12)),
+                  ),
+                  filled: true,
+                  fillColor: Colors.transparent,
+                  isDense: false,
+                ),
+                items: _stores.map((s) {
+                  return DropdownMenuItem<String?>(
+                    value: s['code'],
+                    child: Text(s['name'] ?? '', style: const TextStyle(fontSize: 10)),
+                  );
+                }).toList(),
+                onChanged: (val) {
+                  setState(() {
+                    _filterStoreCode = val;
+                    _loadData();
+                  });
+                },
+              ),
+            ),
+            const SizedBox(width: 6),
+            // التاريخ
+            SizedBox(
+              width: 110,
+              height: 56,
+              child: TextFormField(
+                initialValue: _filterDate,
+                readOnly: true,
+                style: const TextStyle(color: Colors.white, fontSize: 12),
+                decoration: const InputDecoration(
+                  labelText: 'التاريخ',
+                  labelStyle: TextStyle(color: Colors.white70, fontSize: 10),
+                  suffixIcon: Icon(Icons.calendar_today, size: 18, color: Colors.white54),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                  border: OutlineInputBorder(
+                    borderSide: BorderSide(color: Colors.white24),
+                    borderRadius: BorderRadius.all(Radius.circular(12)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderSide: BorderSide(color: Colors.white24),
+                    borderRadius: BorderRadius.all(Radius.circular(12)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderSide: BorderSide(color: Colors.cyanAccent),
+                    borderRadius: BorderRadius.all(Radius.circular(12)),
+                  ),
+                  filled: true,
+                  fillColor: Colors.transparent,
+                  isDense: false,
+                ),
+                onTap: () async {
+                  DateTime? picked = await showDatePicker(
+                    context: context,
+                    initialDate: DateTime.now(),
+                    firstDate: DateTime(2020),
+                    lastDate: DateTime(2101),
+                  );
+                  if (picked != null) {
+                    setState(() {
+                      _filterDate = DateFormat('yyyy-MM-dd').format(picked);
+                      _loadData();
+                    });
+                  }
+                },
+              ),
+            ),
+            const SizedBox(width: 6),
+            // زر إلغاء الفلاتر
+            SizedBox(
+              height: 56,
+              child: IconButton(
+                icon: const Icon(Icons.clear, color: Colors.white70, size: 20),
+                onPressed: () {
+                  setState(() {
+                    _filterBranchCode = null;
+                    _filterStoreCode = null;
+                    _filterDate = null;
+                    _loadData();
+                  });
+                },
+                tooltip: 'إلغاء الفلاتر',
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+              ),
+            ),
+          ],
+        ),
+      )
               : Row(
                   children: [
                     Expanded(
