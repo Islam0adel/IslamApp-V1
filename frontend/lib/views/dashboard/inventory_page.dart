@@ -11,12 +11,21 @@ import '../../models/inventory_model.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../services/permissions_service.dart';
 import 'inventory_history_page.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class InventoryPage extends StatefulWidget {
   final String companyCode;
+  final String? selectedBranchCode;   // ✅ المعامل الجديد
+  final String? branchName; 
   final InventoryModel? editItem;
 
-  const InventoryPage({super.key, required this.companyCode, this.editItem});
+  const InventoryPage({
+    super.key,
+    required this.companyCode,
+    this.selectedBranchCode,          // ✅ إضافته
+    this.branchName,
+    this.editItem,
+  });
 
   @override
   State<InventoryPage> createState() => _InventoryPageState();
@@ -36,7 +45,7 @@ class _InventoryPageState extends State<InventoryPage> {
   bool _isSaving = false;
   int? _currentSerial;
 
-  List<Map<String, String>> _branches = [];
+
   List<Map<String, String>> _stores = [];
 
   List<List<TextEditingController>> _controllers = [];
@@ -50,52 +59,64 @@ class _InventoryPageState extends State<InventoryPage> {
     super.initState();
     _loadDropdowns();
   }
-
-  Future<void> _loadDropdowns() async {
-    setState(() => _isLoading = true);
-    try {
-      final box = Hive.box('coding_box');
-
-      var branches = box.get('${widget.companyCode}_branches') as List? ?? [];
-      _branches = branches
-          .map((e) => {'code': e['code'].toString(), 'name': e['name'].toString()})
-          .toList()
-        ..removeWhere((b) => b['code'] == null || b['code']!.isEmpty);
-
-      var stores = box.get('${widget.companyCode}_stores') as List? ?? [];
-      _stores = stores
-          .map((e) => {'code': e['code'].toString(), 'name': e['name'].toString()})
-          .toList()
-        ..removeWhere((s) => s['code'] == null || s['code']!.isEmpty);
-
-      if (_branches.isNotEmpty) _selectedBranchCode ??= _branches.first['code'];
-      if (_stores.isNotEmpty) _selectedStoreCode ??= _stores.first['code'];
-
-      if (widget.editItem != null) {
-        _loadEditData();
-      } else {
-        await _loadLastSerial();
-        _addEmptyRow();
+  String _getBranchName(String? code) {
+    if (code == null || code == 'all' || code == '') return 'كل الفروع';
+    final Box codingBox = Hive.box('coding_box');
+    final rawData = codingBox.get("${widget.companyCode}_branches", defaultValue: []);
+    for (var item in rawData) {
+      if (item['code']?.toString() == code) {
+        return item['name']?.toString() ?? "فرع غير معروف";
       }
-    } catch (e) {
-      print('خطأ في تحميل القوائم: $e');
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
     }
+    return "فرع غير معروف";
   }
+  
+  Future<void> _loadDropdowns() async {
+  setState(() => _isLoading = true);
+  try {
+    final prefs = await SharedPreferences.getInstance();
+
+    // تحديد الفرع النشط
+    _selectedBranchCode = widget.selectedBranchCode ?? prefs.getString('selected_branch_code');
+    if (_selectedBranchCode == null || _selectedBranchCode!.isEmpty) {
+      _selectedBranchCode = 'all'; // قيمة افتراضية
+    }
+
+    // تحميل المخازن فقط (لا نحتاج الفروع)
+    final box = Hive.box('coding_box');
+    var stores = box.get('${widget.companyCode}_stores') as List? ?? [];
+    _stores = stores
+        .map((e) => {'code': e['code'].toString(), 'name': e['name'].toString()})
+        .toList()
+      ..removeWhere((s) => s['code'] == null || s['code']!.isEmpty);
+
+    if (_stores.isNotEmpty) _selectedStoreCode ??= _stores.first['code'];
+
+    if (widget.editItem != null) {
+      _loadEditData(); // تستخدم فرع النموذج
+    } else {
+      await _loadLastSerial();
+      _addEmptyRow();
+    }
+  } catch (e) {
+    print('خطأ في تحميل القوائم: $e');
+  } finally {
+    if (mounted) setState(() => _isLoading = false);
+  }
+}
 
   void _loadEditData() {
-    final model = widget.editItem!;
-    setState(() {
-      _selectedBranchCode = model.branchCode;
-      _selectedStoreCode = model.storeCode;
-      _selectedDate = model.date;
-      _inventoryType = model.inventoryType;
-      _currentSerial = model.serial;
-      _items = List.from(model.items)..add(InventoryItem(code: '', name: '', quantity: 0, wholesalePrice: 0, retailPrice: 0));
-      _rebuildControllersAndFocus();
-    });
-  }
+  final model = widget.editItem!;
+  setState(() {
+    _selectedBranchCode = model.branchCode;   // فرع النموذج يغلب
+    _selectedStoreCode = model.storeCode;
+    _selectedDate = model.date;
+    _inventoryType = model.inventoryType;
+    _currentSerial = model.serial;
+    _items = List.from(model.items)..add(InventoryItem(code: '', name: '', quantity: 0, wholesalePrice: 0, retailPrice: 0));
+    _rebuildControllersAndFocus();
+  });
+}
 
   void _rebuildControllersAndFocus() {
     for (var row in _controllers) for (var c in row) c.dispose();
@@ -585,36 +606,62 @@ Future<void> _importFromExcel() async {
       child: Scaffold(
         extendBodyBehindAppBar: true,
         appBar: AppBar(
-          title: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(widget.editItem != null ? 'تعديل جرد' : 'جرد المخزون', style: const TextStyle(fontFamily: 'Cairo', color: Colors.white, fontSize: 16)),
-              if (_currentSerial != null)
-                Text('إذن رقم: $_currentSerial', style: const TextStyle(fontFamily: 'Cairo', fontSize: 14, color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
-            ],
+  title: Column(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Text(
+        widget.editItem != null ? 'تعديل جرد' : 'جرد المخزون',
+        style: const TextStyle(fontFamily: 'Cairo', color: Colors.white, fontSize: 16),
+      ),
+      if (_currentSerial != null)
+        Text(
+          'إذن رقم: $_currentSerial',
+          style: const TextStyle(
+            fontFamily: 'Cairo',
+            fontSize: 14,
+            color: Colors.cyanAccent,
+            fontWeight: FontWeight.bold,
           ),
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          centerTitle: true,
-          toolbarHeight: 75,
-          actions: [
-            if (PermissionsService().canViewInventory)
-              IconButton(
-                icon: const Icon(Icons.history, color: Colors.cyanAccent, size: 24),
-                onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (c) => InventoryHistoryPage(companyCode: widget.companyCode)),
-                ).then((_) => _loadLastSerial()),
-                tooltip: 'معاينة الجردات',
-              ),
-            if (PermissionsService().canImportInventory)
-              IconButton(
-                icon: const Icon(Icons.upload_file, color: Colors.greenAccent, size: 24),
-                onPressed: _importFromExcel,
-                tooltip: 'استيراد من Excel',
-              ),
-          ],
         ),
+      // ✅ إضافة سطر اسم الفرع أسفل رقم الإذن
+      Text(
+        "الفرع: ${widget.branchName ?? _getBranchName(_selectedBranchCode)}",
+        style: const TextStyle(
+          fontFamily: 'Cairo',
+          fontSize: 11,
+          color: Colors.white70,
+        ),
+      ),
+    ],
+  ),
+  backgroundColor: Colors.transparent,
+  elevation: 0,
+  centerTitle: true,
+  toolbarHeight: 75,
+  actions: [
+    if (PermissionsService().canViewInventory)
+      IconButton(
+        icon: const Icon(Icons.history, color: Colors.cyanAccent, size: 24),
+        onPressed: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+      builder: (c) => InventoryHistoryPage(
+        companyCode: widget.companyCode,
+        selectedBranchCode: _selectedBranchCode,
+        branchName: widget.branchName,   // ✅ تمرير اسم الفرع
+      ),
+    ),
+  ).then((_) => _loadLastSerial()),
+  tooltip: 'معاينة الجردات',
+),
+    if (PermissionsService().canImportInventory)
+      IconButton(
+        icon: const Icon(Icons.upload_file, color: Colors.greenAccent, size: 24),
+        onPressed: _importFromExcel,
+        tooltip: 'استيراد من Excel',
+      ),
+  ],
+),
         body: Container(
           width: double.infinity,
           height: double.infinity,
@@ -628,16 +675,15 @@ Future<void> _importFromExcel() async {
                       child: Column(
                         children: [
                           Padding(
-  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4), // ✅ تقليل vertical
+  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
   child: GlassCard(
     child: Padding(
-      padding: const EdgeInsets.all(4.0), // ✅ تصغير padding الداخلي
+      padding: const EdgeInsets.all(4.0),
       child: Row(
         children: [
           Expanded(flex: 2, child: _buildSmallDateField()),
           const SizedBox(width: 4),
-          Expanded(flex: 2, child: _buildSmallDropdown('الفرع', _selectedBranchCode, _branches, (v) => setState(() => _selectedBranchCode = v))),
-          const SizedBox(width: 4),
+          // ✅ تم إزالة حقل اختيار الفرع
           Expanded(flex: 2, child: _buildSmallDropdown('المخزن', _selectedStoreCode, _stores, (v) => setState(() => _selectedStoreCode = v))),
           const SizedBox(width: 4),
           Expanded(flex: 1, child: _buildSmallTypeSelector()),

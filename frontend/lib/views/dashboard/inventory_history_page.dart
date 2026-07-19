@@ -12,11 +12,13 @@ import 'inventory_page.dart';
 class InventoryHistoryPage extends StatefulWidget {
   final String companyCode;
   final String? selectedBranchCode; // ✅ إضافة لفلترة الأذون حسب الفرع
+  final String? branchName; 
 
   const InventoryHistoryPage({
     super.key,
     required this.companyCode,
     this.selectedBranchCode,
+    this.branchName,
   });
 
   @override
@@ -29,11 +31,11 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
   bool _isLoading = true;
 
   // فلاتر
-  String? _filterBranchCode;
+  
   String? _filterStoreCode;
   String? _filterDate;
 
-  List<Map<String, String>> _branches = [];
+  
   List<Map<String, String>> _stores = [];
 
   // متغير لعرض الجرد المحدد بتفاصيل كاملة
@@ -49,12 +51,6 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
 
   Future<void> _loadDropdowns() async {
     final box = Hive.box('coding_box');
-    _branches = [{'code': 'all', 'name': 'كل الفروع'}];
-    var branches = box.get('${widget.companyCode}_branches') as List? ?? [];
-    for (var item in branches) {
-      _branches.add({'code': item['code'].toString(), 'name': item['name'].toString()});
-    }
-
     _stores = [{'code': 'all', 'name': 'كل المخازن'}];
     var stores = box.get('${widget.companyCode}_stores') as List? ?? [];
     for (var item in stores) {
@@ -80,23 +76,23 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
         }
       }
 
-      // ✅ فلترة حسب الفرع المختار من الهوم (مثل معاينة اليوميات)
+      // ✅ فلترة أساسية حسب الفرع المختار من الهوم
       if (widget.selectedBranchCode != null &&
           widget.selectedBranchCode != 'all' &&
           widget.selectedBranchCode!.isNotEmpty) {
         all = all.where((inv) => inv.branchCode == widget.selectedBranchCode).toList();
       }
 
-      // تطبيق الفلاتر
-      if (_filterBranchCode != null && _filterBranchCode != 'all') {
-        all = all.where((inv) => inv.branchCode == _filterBranchCode).toList();
-      }
+      // ✅ فلتر المخزن (اختياري)
       if (_filterStoreCode != null && _filterStoreCode != 'all') {
         all = all.where((inv) => inv.storeCode == _filterStoreCode).toList();
       }
+
+      // ✅ فلتر التاريخ
       if (_filterDate != null && _filterDate!.isNotEmpty) {
         all = all.where((inv) => inv.date == _filterDate).toList();
       }
+
       all.sort((a, b) {
         int dateCmp = b.date.compareTo(a.date);
         if (dateCmp != 0) return dateCmp;
@@ -113,10 +109,16 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
   }
 
   String _getBranchName(String? code) {
-    if (code == null || code == 'all') return 'كل الفروع';
-    final found = _branches.firstWhere((b) => b['code'] == code, orElse: () => {});
-    return found['name'] ?? code;
+  if (code == null || code == 'all' || code == '') return 'كل الفروع';
+  final box = Hive.box('coding_box');
+  final rawData = box.get("${widget.companyCode}_branches", defaultValue: []);
+  for (var item in rawData) {
+    if (item['code']?.toString() == code) {
+      return item['name']?.toString() ?? "فرع غير معروف";
+    }
   }
+  return "فرع غير معروف";
+}
 
   String _getStoreName(String? code) {
     if (code == null || code == 'all') return 'كل المخازن';
@@ -377,197 +379,159 @@ Future<void> _exportAllPDF() async {
   }
 
   // ================== عرض القائمة الرئيسية ==================
-  Widget _buildListView() {
+Widget _buildListView() {
   final bool isMobile = MediaQuery.of(context).size.width < 600;
+  // اسم الفرع المعروض (من المعامل أو من Hive)
+  String displayBranchName = widget.branchName ?? _getBranchName(widget.selectedBranchCode);
 
   return Column(
     children: [
-      // الفلاتر مع تمرير على الموبايل
+      // ✅ بطاقة عرض الفرع الحالي (بدلاً من فلتر الفرع)
+      GlassCard(
+        child: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Row(
+            children: [
+              const Icon(Icons.storefront, color: Colors.cyanAccent, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'الفرع الحالي: $displayBranchName',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    fontFamily: 'Cairo',
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      const SizedBox(height: 6),
+
+      // الفلاتر (مخزن + تاريخ + إلغاء) - بدون الفرع
       GlassCard(
         child: Padding(
           padding: const EdgeInsets.all(6.0),
           child: isMobile
-    ? SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // الفرع
-            SizedBox(
-              width: 110,
-              height: 56,
-              child: DropdownButtonFormField<String?>(
-                value: _filterBranchCode,
-                dropdownColor: Colors.indigo.shade900,
-                style: const TextStyle(color: Colors.white, fontSize: 12),
-                decoration: const InputDecoration(
-                  labelText: 'الفرع',
-                  labelStyle: TextStyle(color: Colors.white70, fontSize: 10),
-                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-                  border: OutlineInputBorder(
-                    borderSide: BorderSide(color: Colors.white24),
-                    borderRadius: BorderRadius.all(Radius.circular(12)),
+              ? SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // المخزن
+                      SizedBox(
+                        width: 110,
+                        height: 56,
+                        child: DropdownButtonFormField<String?>(
+                          value: _filterStoreCode,
+                          dropdownColor: Colors.indigo.shade900,
+                          style: const TextStyle(color: Colors.white, fontSize: 12),
+                          decoration: const InputDecoration(
+                            labelText: 'المخزن',
+                            labelStyle: TextStyle(color: Colors.white70, fontSize: 10),
+                            contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                            border: OutlineInputBorder(
+                              borderSide: BorderSide(color: Colors.white24),
+                              borderRadius: BorderRadius.all(Radius.circular(12)),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderSide: BorderSide(color: Colors.white24),
+                              borderRadius: BorderRadius.all(Radius.circular(12)),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderSide: BorderSide(color: Colors.cyanAccent),
+                              borderRadius: BorderRadius.all(Radius.circular(12)),
+                            ),
+                            filled: true,
+                            fillColor: Colors.transparent,
+                            isDense: false,
+                          ),
+                          items: _stores.map((s) {
+                            return DropdownMenuItem<String?>(
+                              value: s['code'],
+                              child: Text(s['name'] ?? '', style: const TextStyle(fontSize: 10)),
+                            );
+                          }).toList(),
+                          onChanged: (val) {
+                            setState(() {
+                              _filterStoreCode = val;
+                              _loadData();
+                            });
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      // التاريخ
+                      SizedBox(
+                        width: 110,
+                        height: 56,
+                        child: TextFormField(
+                          initialValue: _filterDate,
+                          readOnly: true,
+                          style: const TextStyle(color: Colors.white, fontSize: 12),
+                          decoration: const InputDecoration(
+                            labelText: 'التاريخ',
+                            labelStyle: TextStyle(color: Colors.white70, fontSize: 10),
+                            suffixIcon: Icon(Icons.calendar_today, size: 18, color: Colors.white54),
+                            contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                            border: OutlineInputBorder(
+                              borderSide: BorderSide(color: Colors.white24),
+                              borderRadius: BorderRadius.all(Radius.circular(12)),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderSide: BorderSide(color: Colors.white24),
+                              borderRadius: BorderRadius.all(Radius.circular(12)),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderSide: BorderSide(color: Colors.cyanAccent),
+                              borderRadius: BorderRadius.all(Radius.circular(12)),
+                            ),
+                            filled: true,
+                            fillColor: Colors.transparent,
+                            isDense: false,
+                          ),
+                          onTap: () async {
+                            DateTime? picked = await showDatePicker(
+                              context: context,
+                              initialDate: DateTime.now(),
+                              firstDate: DateTime(2020),
+                              lastDate: DateTime(2101),
+                            );
+                            if (picked != null) {
+                              setState(() {
+                                _filterDate = DateFormat('yyyy-MM-dd').format(picked);
+                                _loadData();
+                              });
+                            }
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      // زر إلغاء الفلاتر
+                      SizedBox(
+                        height: 56,
+                        child: IconButton(
+                          icon: const Icon(Icons.clear, color: Colors.white70, size: 20),
+                          onPressed: () {
+                            setState(() {
+                              _filterStoreCode = null;
+                              _filterDate = null;
+                              _loadData();
+                            });
+                          },
+                          tooltip: 'إلغاء الفلاتر',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                        ),
+                      ),
+                    ],
                   ),
-                  enabledBorder: OutlineInputBorder(
-                    borderSide: BorderSide(color: Colors.white24),
-                    borderRadius: BorderRadius.all(Radius.circular(12)),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderSide: BorderSide(color: Colors.cyanAccent),
-                    borderRadius: BorderRadius.all(Radius.circular(12)),
-                  ),
-                  filled: true,
-                  fillColor: Colors.transparent,
-                  isDense: false,
-                ),
-                items: _branches.map((b) {
-                  return DropdownMenuItem<String?>(
-                    value: b['code'],
-                    child: Text(b['name'] ?? '', style: const TextStyle(fontSize: 10)),
-                  );
-                }).toList(),
-                onChanged: (val) {
-                  setState(() {
-                    _filterBranchCode = val;
-                    _loadData();
-                  });
-                },
-              ),
-            ),
-            const SizedBox(width: 6),
-            // المخزن
-            SizedBox(
-              width: 110,
-              height: 56,
-              child: DropdownButtonFormField<String?>(
-                value: _filterStoreCode,
-                dropdownColor: Colors.indigo.shade900,
-                style: const TextStyle(color: Colors.white, fontSize: 12),
-                decoration: const InputDecoration(
-                  labelText: 'المخزن',
-                  labelStyle: TextStyle(color: Colors.white70, fontSize: 10),
-                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-                  border: OutlineInputBorder(
-                    borderSide: BorderSide(color: Colors.white24),
-                    borderRadius: BorderRadius.all(Radius.circular(12)),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderSide: BorderSide(color: Colors.white24),
-                    borderRadius: BorderRadius.all(Radius.circular(12)),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderSide: BorderSide(color: Colors.cyanAccent),
-                    borderRadius: BorderRadius.all(Radius.circular(12)),
-                  ),
-                  filled: true,
-                  fillColor: Colors.transparent,
-                  isDense: false,
-                ),
-                items: _stores.map((s) {
-                  return DropdownMenuItem<String?>(
-                    value: s['code'],
-                    child: Text(s['name'] ?? '', style: const TextStyle(fontSize: 10)),
-                  );
-                }).toList(),
-                onChanged: (val) {
-                  setState(() {
-                    _filterStoreCode = val;
-                    _loadData();
-                  });
-                },
-              ),
-            ),
-            const SizedBox(width: 6),
-            // التاريخ
-            SizedBox(
-              width: 110,
-              height: 56,
-              child: TextFormField(
-                initialValue: _filterDate,
-                readOnly: true,
-                style: const TextStyle(color: Colors.white, fontSize: 12),
-                decoration: const InputDecoration(
-                  labelText: 'التاريخ',
-                  labelStyle: TextStyle(color: Colors.white70, fontSize: 10),
-                  suffixIcon: Icon(Icons.calendar_today, size: 18, color: Colors.white54),
-                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-                  border: OutlineInputBorder(
-                    borderSide: BorderSide(color: Colors.white24),
-                    borderRadius: BorderRadius.all(Radius.circular(12)),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderSide: BorderSide(color: Colors.white24),
-                    borderRadius: BorderRadius.all(Radius.circular(12)),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderSide: BorderSide(color: Colors.cyanAccent),
-                    borderRadius: BorderRadius.all(Radius.circular(12)),
-                  ),
-                  filled: true,
-                  fillColor: Colors.transparent,
-                  isDense: false,
-                ),
-                onTap: () async {
-                  DateTime? picked = await showDatePicker(
-                    context: context,
-                    initialDate: DateTime.now(),
-                    firstDate: DateTime(2020),
-                    lastDate: DateTime(2101),
-                  );
-                  if (picked != null) {
-                    setState(() {
-                      _filterDate = DateFormat('yyyy-MM-dd').format(picked);
-                      _loadData();
-                    });
-                  }
-                },
-              ),
-            ),
-            const SizedBox(width: 6),
-            // زر إلغاء الفلاتر
-            SizedBox(
-              height: 56,
-              child: IconButton(
-                icon: const Icon(Icons.clear, color: Colors.white70, size: 20),
-                onPressed: () {
-                  setState(() {
-                    _filterBranchCode = null;
-                    _filterStoreCode = null;
-                    _filterDate = null;
-                    _loadData();
-                  });
-                },
-                tooltip: 'إلغاء الفلاتر',
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-              ),
-            ),
-          ],
-        ),
-      )
+                )
               : Row(
                   children: [
-                    Expanded(
-                      child: DropdownButtonFormField<String?>(
-                        value: _filterBranchCode,
-                        dropdownColor: Colors.indigo.shade900,
-                        style: const TextStyle(color: Colors.white),
-                        decoration: const InputDecoration(labelText: 'الفرع', isDense: true),
-                        items: _branches.map((b) {
-                          return DropdownMenuItem<String?>(
-                            value: b['code'],
-                            child: Text(b['name'] ?? ''),
-                          );
-                        }).toList(),
-                        onChanged: (val) {
-                          setState(() {
-                            _filterBranchCode = val;
-                            _loadData();
-                          });
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 8),
                     Expanded(
                       child: DropdownButtonFormField<String?>(
                         value: _filterStoreCode,
@@ -618,7 +582,6 @@ Future<void> _exportAllPDF() async {
                       icon: const Icon(Icons.clear, color: Colors.white70),
                       onPressed: () {
                         setState(() {
-                          _filterBranchCode = null;
                           _filterStoreCode = null;
                           _filterDate = null;
                           _loadData();
@@ -631,6 +594,7 @@ Future<void> _exportAllPDF() async {
         ),
       ),
       const SizedBox(height: 6),
+
       // قائمة الجردات
       Expanded(
         child: _inventories.isEmpty

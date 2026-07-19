@@ -333,4 +333,48 @@ Future<void> processInventoryDelete(String companyCode, String docId) async {
     _codingSubscription = null;
     // ملاحظة: الاشتراك العام (globalSyncSubscription) يُدار من main.dart، لذلك لا نلغيه هنا.
   }
+
+  Future<Stream<QuerySnapshot>> startSupplierListener(String companyCode) async {
+  final prefs = await SharedPreferences.getInstance();
+  final int? lastSync = prefs.getInt('last_supplier_sync_$companyCode');
+  Query query = _firestore.collection('supplier_records').where('company_code', isEqualTo: companyCode);
+  if (lastSync != null) {
+    Timestamp last = Timestamp.fromMillisecondsSinceEpoch(lastSync);
+    query = query.where('updated_at', isGreaterThan: last);
+  }
+  await prefs.setInt('last_supplier_sync_$companyCode', DateTime.now().millisecondsSinceEpoch);
+  return query.snapshots();
+}
+
+Future<void> processSupplierUpdate(String companyCode, String docId, Map<String, dynamic> data) async {
+  if (data.isEmpty) return;
+  Map<String, dynamic> sanitized = Map.from(data);
+  sanitized.forEach((key, value) {
+    if (value is Timestamp) sanitized[key] = value.toDate().toIso8601String();
+  });
+  final box = Hive.box('supplier_box');
+  final branchCode = sanitized['branch_code'] ?? '';
+  final date = sanitized['date'] ?? '';
+  final localKey = '${companyCode}_${branchCode}_$date';
+  List<Map<String, dynamic>> list = [];
+  if (box.containsKey(localKey)) {
+    final raw = box.get(localKey);
+    if (raw is List) list = raw.map((e) => Map<String, dynamic>.from(e)).toList();
+  }
+  list.removeWhere((e) => e['doc_id'] == docId);
+  list.add(sanitized);
+  await box.put(localKey, list);
+}
+
+Future<void> processSupplierDelete(String companyCode, String docId) async {
+  final box = Hive.box('supplier_box');
+  final keys = box.keys.toList();
+  for (var key in keys) {
+    final raw = box.get(key);
+    if (raw is List) {
+      final updated = raw.where((e) => e['doc_id'] != docId).toList();
+      if (updated.length != raw.length) { await box.put(key, updated); break; }
+    }
+  }
+}
 }

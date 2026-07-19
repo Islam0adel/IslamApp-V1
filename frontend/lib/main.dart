@@ -96,6 +96,7 @@ void main() async {
   // فتح صندوق لتخزين التكويدات (الخزائن، الفروع، التصنيفات)
   await Hive.openBox('coding_box'); 
   await Hive.openBox('inventory_box');
+  await Hive.openBox('supplier_box');
 
     // 🌟 سطر مؤقت: قم بإلغاء التعليق عنه لمسح كل البيانات المحلية وتصفيرها تماماً، ثم قفل السطر بعد أول تشغيل
   // Hive.box('daily_transactions_box').clear();

@@ -135,34 +135,41 @@ class _DailyPageState extends State<DailyPage> {
       int nextSerial = maxSerial + 1;
 
       // جلب الأرصدة للفرع الحالي (تمرير كود الفرع)
-      final summary = await _dailyService.getDailySummaryLocal(widget.companyCode, branchCode: widget.selectedBranchCode ?? 'all');
-      Hive.box('daily_transactions_box').put("${widget.companyCode}_balances", summary['balances']);
+      // جلب الأرصدة للفرع الحالي (تمرير كود الفرع)
+final summary = await _dailyService.getDailySummaryLocal(widget.companyCode, branchCode: widget.selectedBranchCode ?? 'all');
+Hive.box('daily_transactions_box').put("${widget.companyCode}_balances", summary['balances']);
 
-      final Box codingBox = Hive.box('coding_box');
-      List<Map<String, dynamic>> safesList = [];
-      List<Map<String, dynamic>> typesList = [];
+final Box codingBox = Hive.box('coding_box');
+List<Map<String, dynamic>> safesList = [];
+List<Map<String, dynamic>> typesList = [];
 
-      if (!codingBox.containsKey("${widget.companyCode}_safes") || !codingBox.containsKey("${widget.companyCode}_types")) {
-        final safes = await _codingService.getCodingList(companyCode: widget.companyCode, category: "safes");
-        final types = await _codingService.getCodingList(companyCode: widget.companyCode, category: "types");
-        safesList = safes.map((e) => Map<String, dynamic>.from(e.toMap())).toList();
-        typesList = types.map((e) => Map<String, dynamic>.from(e.toMap())).toList();
-      } else {
-        var localSafes = codingBox.get("${widget.companyCode}_safes");
-        safesList = (localSafes as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
-        var localTypes = codingBox.get("${widget.companyCode}_types");
-        typesList = (localTypes as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
-      }
+if (!codingBox.containsKey("${widget.companyCode}_safes") || !codingBox.containsKey("${widget.companyCode}_types")) {
+  final safes = await _codingService.getCodingList(companyCode: widget.companyCode, category: "safes");
+  final types = await _codingService.getCodingList(companyCode: widget.companyCode, category: "types");
+  safesList = safes.map((e) => Map<String, dynamic>.from(e.toMap())).toList();
+  typesList = types.map((e) => Map<String, dynamic>.from(e.toMap())).toList();
+} else {
+  var localSafes = codingBox.get("${widget.companyCode}_safes");
+  safesList = (localSafes as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  var localTypes = codingBox.get("${widget.companyCode}_types");
+  typesList = (localTypes as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+}
 
-      setState(() {
-        _treasuryBalances = Map<String, double>.from(summary['balances'] ?? {});
-        _treasuries = safesList;
-        _categories = typesList;
-        if (widget.editItem == null) _currentSerial = nextSerial;
-        if (widget.editItem == null && _selectedTreasury == null && _treasuries.isNotEmpty) {
-          var defaultSafe = _treasuries.firstWhere((s) => s['code']?.toString() == "1", orElse: () => _treasuries.first);
-          if (defaultSafe.containsKey('name')) _selectedTreasury = defaultSafe['name'];
-        }
+// ✅ إضافة التصفية هنا (بعد جلب الأنواع)
+typesList = typesList.where((item) {
+  final name = item['name']?.toString() ?? '';
+  return !name.contains('دخول بضاعة') && !name.contains('دفعة');
+}).toList();
+
+setState(() {
+  _treasuryBalances = Map<String, double>.from(summary['balances'] ?? {});
+  _treasuries = safesList;
+  _categories = typesList;
+  if (widget.editItem == null) _currentSerial = nextSerial;
+  if (widget.editItem == null && _selectedTreasury == null && _treasuries.isNotEmpty) {
+    var defaultSafe = _treasuries.firstWhere((s) => s['code']?.toString() == "1", orElse: () => _treasuries.first);
+    if (defaultSafe.containsKey('name')) _selectedTreasury = defaultSafe['name'];
+  }
         _isLoading = false;
       });
     } catch (e) {

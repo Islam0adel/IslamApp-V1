@@ -10,11 +10,13 @@ import '../../services/export_service.dart';
 class StockBalancePage extends StatefulWidget {
   final String companyCode;
   final String? selectedBranchCode;
+  final String? branchName; // ✅ معامل جديد لاسم الفرع
 
   const StockBalancePage({
     super.key,
     required this.companyCode,
     this.selectedBranchCode,
+    this.branchName,
   });
 
   @override
@@ -22,7 +24,7 @@ class StockBalancePage extends StatefulWidget {
 }
 
 class _StockBalancePageState extends State<StockBalancePage> {
-  // الفلاتر
+  // الفرع ثابت (نستخدم القيمة الممررة)
   String? _selectedBranchCode;
   String? _selectedStoreCode;
   DateTime _selectedDate = DateTime.now();
@@ -32,13 +34,13 @@ class _StockBalancePageState extends State<StockBalancePage> {
   bool _isLoading = false;
   bool _hasData = false;
 
-  // قوائم الفروع والمخازن
-  List<Map<String, String>> _branches = [];
+  // قوائم المخازن فقط
   List<Map<String, String>> _stores = [];
 
   @override
   void initState() {
     super.initState();
+    // تعيين الفرع من المعامل أو من SharedPreferences (اختياري)
     _selectedBranchCode = widget.selectedBranchCode;
     _loadDropdowns();
   }
@@ -46,23 +48,13 @@ class _StockBalancePageState extends State<StockBalancePage> {
   Future<void> _loadDropdowns() async {
     final box = Hive.box('coding_box');
 
-    // تحميل الفروع
-    _branches = [];
-    var branches = box.get('${widget.companyCode}_branches') as List? ?? [];
-    for (var item in branches) {
-      _branches.add({'code': item['code'].toString(), 'name': item['name'].toString()});
-    }
-    if (_branches.isNotEmpty && _selectedBranchCode == null) {
-      _selectedBranchCode = _branches.first['code'];
-    }
-
-    // تحميل المخازن
+    // تحميل المخازن فقط (لا نحتاج الفروع)
     _stores = [];
     var stores = box.get('${widget.companyCode}_stores') as List? ?? [];
     for (var item in stores) {
       _stores.add({'code': item['code'].toString(), 'name': item['name'].toString()});
     }
-    if (_stores.isNotEmpty) {
+    if (_stores.isNotEmpty && _selectedStoreCode == null) {
       _selectedStoreCode = _stores.first['code'];
     }
 
@@ -70,6 +62,30 @@ class _StockBalancePageState extends State<StockBalancePage> {
     _calculateBalances();
   }
 
+  // دالة للحصول على اسم الفرع (من المعامل أو من Hive احتياطياً)
+  String _getBranchName() {
+    if (widget.branchName != null && widget.branchName!.isNotEmpty) {
+      return widget.branchName!;
+    }
+    // احتياطي: جلب من Hive
+    if (_selectedBranchCode == null) return 'غير محدد';
+    final box = Hive.box('coding_box');
+    final rawData = box.get("${widget.companyCode}_branches", defaultValue: []);
+    for (var item in rawData) {
+      if (item['code']?.toString() == _selectedBranchCode) {
+        return item['name']?.toString() ?? "فرع غير معروف";
+      }
+    }
+    return _selectedBranchCode!;
+  }
+
+  String _getStoreName(String? code) {
+    if (code == null) return 'غير محدد';
+    final found = _stores.firstWhere((s) => s['code'] == code, orElse: () => {});
+    return found['name'] ?? code;
+  }
+
+  // باقي الدوال كما هي (لم تتغير)
   // ================== المنطق الأساسي لحساب الرصيد ==================
   Future<void> _calculateBalances() async {
     if (_selectedBranchCode == null || _selectedStoreCode == null) {
@@ -193,19 +209,8 @@ class _StockBalancePageState extends State<StockBalancePage> {
     return NumberFormat('#,##0.00', 'ar_EG').format(amount);
   }
 
-  String _getBranchName(String? code) {
-    if (code == null) return 'غير محدد';
-    final found = _branches.firstWhere((b) => b['code'] == code, orElse: () => {});
-    return found['name'] ?? code;
-  }
-
-  String _getStoreName(String? code) {
-    if (code == null) return 'غير محدد';
-    final found = _stores.firstWhere((s) => s['code'] == code, orElse: () => {});
-    return found['name'] ?? code;
-  }
-
   // ================== دوال التصدير ==================
+  // (نفس الكود السابق، لم يتغير)
   Future<void> _exportExcel() async {
     if (_itemsData.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -294,7 +299,7 @@ class _StockBalancePageState extends State<StockBalancePage> {
         headers: headers,
         keys: keys,
         summary: summary,
-        branchName: _getBranchName(_selectedBranchCode),
+        branchName: _getBranchName(),
         storeName: _getStoreName(_selectedStoreCode),
         date: DateFormat('yyyy-MM-dd').format(_selectedDate),
       );
@@ -339,10 +344,10 @@ class _StockBalancePageState extends State<StockBalancePage> {
 
   // ================== بناء الجدول مع تمرير أفقي ورأسي ==================
   Widget _buildTable() {
-    // تحديد أعمدة الجدول حسب الصلاحيات
+    // (نفس الكود السابق، لم يتغير)
     List<String> headers = ['#', 'الكود', 'الصنف', 'الكمية'];
     List<String> keys = ['index', 'code', 'name', 'quantity'];
-    List<double> columnWidths = [40, 70, 120, 70]; // العرض لكل عمود
+    List<double> columnWidths = [40, 70, 120, 70];
 
     if (PermissionsService().canViewStockWholesalePrice) {
       headers.add('سعر الجملة');
@@ -361,7 +366,6 @@ class _StockBalancePageState extends State<StockBalancePage> {
     keys.add('totalRetail');
     columnWidths.add(80);
 
-    // بناء العناوين
     List<Widget> headerWidgets = [];
     for (int i = 0; i < headers.length; i++) {
       headerWidgets.add(
@@ -381,7 +385,6 @@ class _StockBalancePageState extends State<StockBalancePage> {
       );
     }
 
-    // بناء الصفوف
     List<Widget> rows = [];
     for (int idx = 0; idx < _itemsData.length; idx++) {
       final item = _itemsData[idx];
@@ -488,7 +491,6 @@ class _StockBalancePageState extends State<StockBalancePage> {
       );
     }
 
-    // الجدول النهائي: مسطرة أفقية (العناوين + الصفوف) داخل مسطرة رأسية
     return SingleChildScrollView(
       scrollDirection: Axis.vertical,
       child: SingleChildScrollView(
@@ -496,7 +498,6 @@ class _StockBalancePageState extends State<StockBalancePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // العناوين
             Container(
               padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
               decoration: BoxDecoration(
@@ -508,7 +509,6 @@ class _StockBalancePageState extends State<StockBalancePage> {
               ),
             ),
             const SizedBox(height: 4),
-            // الصفوف
             Column(
               children: rows,
             ),
@@ -548,12 +548,32 @@ class _StockBalancePageState extends State<StockBalancePage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          'رصيد المخزون',
-          style: TextStyle(color: Colors.white, fontFamily: 'Cairo'),
+        title: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'رصيد المخزون',
+              style: TextStyle(
+                color: Colors.white,
+                fontFamily: 'Cairo',
+                fontSize: 16,
+              ),
+            ),
+            // ✅ إضافة سطر اسم الفرع
+            Text(
+              'الفرع: ${_getBranchName()}',
+              style: const TextStyle(
+                fontFamily: 'Cairo',
+                fontSize: 11,
+                color: Colors.white70,
+              ),
+            ),
+          ],
         ),
         backgroundColor: Colors.transparent,
         elevation: 0,
+        centerTitle: true,
+        toolbarHeight: 75,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () => Navigator.pop(context),
@@ -589,7 +609,7 @@ class _StockBalancePageState extends State<StockBalancePage> {
         child: SafeArea(
           child: Column(
             children: [
-              // ===== فلاتر البحث =====
+              // ===== فلاتر البحث (بدون الفرع) =====
               GlassCard(
                 child: Padding(
                   padding: const EdgeInsets.all(12.0),
@@ -597,29 +617,6 @@ class _StockBalancePageState extends State<StockBalancePage> {
                     children: [
                       Row(
                         children: [
-                          Expanded(
-                            child: DropdownButtonFormField<String?>(
-                              value: _selectedBranchCode,
-                              dropdownColor: Colors.indigo.shade900,
-                              style: const TextStyle(color: Colors.white),
-                              decoration: const InputDecoration(
-                                labelText: 'الفرع',
-                                labelStyle: TextStyle(color: Colors.white70),
-                                isDense: true,
-                              ),
-                              items: _branches.map((b) {
-                                return DropdownMenuItem<String?>(
-                                  value: b['code'],
-                                  child: Text(b['name'] ?? ''),
-                                );
-                              }).toList(),
-                              onChanged: (val) {
-                                setState(() => _selectedBranchCode = val);
-                                _calculateBalances();
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 8),
                           Expanded(
                             child: DropdownButtonFormField<String?>(
                               value: _selectedStoreCode,
@@ -642,11 +639,7 @@ class _StockBalancePageState extends State<StockBalancePage> {
                               },
                             ),
                           ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
+                          const SizedBox(width: 8),
                           Expanded(
                             child: GestureDetector(
                               onTap: () async {
@@ -690,7 +683,11 @@ class _StockBalancePageState extends State<StockBalancePage> {
                               ),
                             ),
                           ),
-                          const SizedBox(width: 8),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
                           Expanded(
                             child: Container(
                               padding: const EdgeInsets.symmetric(
@@ -738,7 +735,7 @@ class _StockBalancePageState extends State<StockBalancePage> {
                     : !_hasData
                         ? const Center(
                             child: Text(
-                              'اختر الفرع والمخزن لعرض الرصيد',
+                              'اختر المخزن لعرض الرصيد',
                               style: TextStyle(color: Colors.white60),
                             ),
                           )
@@ -752,89 +749,89 @@ class _StockBalancePageState extends State<StockBalancePage> {
                             : _buildTable(),
               ),
 
-              // ===== الإجماليات (أسفل الشاشة) =====
-if (_hasData && _itemsData.isNotEmpty)
-  Container(
-    padding: const EdgeInsets.all(12),
-    decoration: BoxDecoration(
-      color: Colors.white.withOpacity(0.05), // ✅ نفس لون خلفية البطاقات
-      border: Border(
-        top: BorderSide(
-          color: Colors.white.withOpacity(0.1),
-          width: 1,
-        ),
-      ),
-    ),
-    child: Row(
-      mainAxisAlignment: MainAxisAlignment.spaceAround,
-      children: [
-        Column(
-          children: [
-            const Text(
-              'إجمالي الكميات',
-              style: TextStyle(
-                color: Colors.white60,
-                fontSize: 12,
-                fontFamily: 'Cairo',
-              ),
-            ),
-            Text(
-              totalQuantity.toStringAsFixed(0),
-              style: const TextStyle(
-                color: Colors.cyanAccent,
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-        Container(width: 1, height: 30, color: Colors.white24),
-        if (PermissionsService().canViewStockWholesalePrice)
-          Column(
-            children: [
-              const Text(
-                'قيمة الجملة',
-                style: TextStyle(
-                  color: Colors.white60,
-                  fontSize: 12,
-                  fontFamily: 'Cairo',
+              // ===== الإجماليات =====
+              if (_hasData && _itemsData.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.05),
+                    border: Border(
+                      top: BorderSide(
+                        color: Colors.white.withOpacity(0.1),
+                        width: 1,
+                      ),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      Column(
+                        children: [
+                          const Text(
+                            'إجمالي الكميات',
+                            style: TextStyle(
+                              color: Colors.white60,
+                              fontSize: 12,
+                              fontFamily: 'Cairo',
+                            ),
+                          ),
+                          Text(
+                            totalQuantity.toStringAsFixed(0),
+                            style: const TextStyle(
+                              color: Colors.cyanAccent,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                      Container(width: 1, height: 30, color: Colors.white24),
+                      if (PermissionsService().canViewStockWholesalePrice)
+                        Column(
+                          children: [
+                            const Text(
+                              'قيمة الجملة',
+                              style: TextStyle(
+                                color: Colors.white60,
+                                fontSize: 12,
+                                fontFamily: 'Cairo',
+                              ),
+                            ),
+                            Text(
+                              _formatCurrency(totalWholesaleValue),
+                              style: const TextStyle(
+                                color: Colors.greenAccent,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      if (PermissionsService().canViewStockWholesalePrice)
+                        Container(width: 1, height: 30, color: Colors.white24),
+                      Column(
+                        children: [
+                          const Text(
+                            'قيمة البيع',
+                            style: TextStyle(
+                              color: Colors.white60,
+                              fontSize: 12,
+                              fontFamily: 'Cairo',
+                            ),
+                          ),
+                          Text(
+                            _formatCurrency(totalRetailValue),
+                            style: const TextStyle(
+                              color: Colors.amber,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              Text(
-                _formatCurrency(totalWholesaleValue),
-                style: const TextStyle(
-                  color: Colors.greenAccent,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-        if (PermissionsService().canViewStockWholesalePrice)
-          Container(width: 1, height: 30, color: Colors.white24),
-        Column(
-          children: [
-            const Text(
-              'قيمة البيع',
-              style: TextStyle(
-                color: Colors.white60,
-                fontSize: 12,
-                fontFamily: 'Cairo',
-              ),
-            ),
-            Text(
-              _formatCurrency(totalRetailValue),
-              style: const TextStyle(
-                color: Colors.amber,
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-      ],
-    ),
-  ),
             ],
           ),
         ),

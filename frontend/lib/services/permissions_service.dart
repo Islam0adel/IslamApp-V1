@@ -168,6 +168,7 @@ class PermissionsService {
         'تعديل': false,
         'حذف': false,
         'معاينة': false,
+        'تصدير': false,
       },
       'حركة الجرد': {
   'اضافة': false,
@@ -300,4 +301,10 @@ bool get canShowStock => hasPermission('رصيد المخزون', 'معاينة'
 bool get canViewStockWholesalePrice => hasPermission('رصيد المخزون', 'عرض سعر الجملة');
 // bool get canViewStockWholesaleValue => hasPermission('رصيد المخزون', 'عرض قيمة الجملة');
 bool get canExportStock => hasPermission('رصيد المخزون', 'تصدير');
+
+bool get canAddSupplierTransaction => hasPermission('حسابات الموردين', 'اضافة');
+bool get canEditSupplierTransaction => hasPermission('حسابات الموردين', 'تعديل');
+bool get canDeleteSupplierTransaction => hasPermission('حسابات الموردين', 'حذف');
+bool get canViewSupplierHistory => hasPermission('حسابات الموردين', 'معاينة');
+bool get canExportSupplier => hasPermission('حسابات الموردين', 'تصدير');
 }
