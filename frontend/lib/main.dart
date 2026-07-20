@@ -101,7 +101,8 @@ void main() async {
     // 🌟 سطر مؤقت: قم بإلغاء التعليق عنه لمسح كل البيانات المحلية وتصفيرها تماماً، ثم قفل السطر بعد أول تشغيل
   // Hive.box('daily_transactions_box').clear();
   // Hive.box('coding_box').clear();
-
+  // Hive.Box('inventory_box').clear();
+  // Hive.Box('supplier_box').clear();
   // 4. قراءة حالة الدخول من الذاكرة المحلية (SharedPreferences مخصصة لبيانات الحساب فقط)
   final prefs = await SharedPreferences.getInstance();
   final bool rememberMe = prefs.getBool('remember_me') ?? false;

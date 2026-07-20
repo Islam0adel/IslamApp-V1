@@ -3,6 +3,7 @@ from pydantic import BaseModel, EmailStr
 from app.core.firebase_setup import db
 from google.cloud import firestore
 from firebase_admin import auth as admin_auth
+from typing import Optional, List
 
 router = APIRouter()
 
@@ -84,7 +85,9 @@ async def register(user: UserRegister):
             "company_name": company_name,
             "job_code": job_code,
             "job_title": job_title,
+            "allowed_branches": ["all"],
             "created_at": firestore.SERVER_TIMESTAMP,
+            
         }
         
         user_ref.set(user_data_to_save)
@@ -300,25 +303,22 @@ async def delete_company(
 class PermissionsUpdateModel(BaseModel):
     email: str
     permissions: dict
+    allowed_branches: Optional[List[str]] = None
 
 @router.post("/update-permissions")
 async def update_user_permissions(data: PermissionsUpdateModel):
-    """تحديث صلاحيات المستخدم من الخادم (يتجاوز قواعد الأمان)"""
     try:
         email = data.email.strip().lower()
-        permissions = data.permissions
-
-        # التحقق من وجود المستخدم
         user_ref = db.collection("users").document(email)
         if not user_ref.get().exists:
             raise HTTPException(status_code=404, detail="المستخدم غير موجود")
-
-        # تحديث الصلاحيات مع updated_at
-        user_ref.update({
-            "permissions": permissions,
+        update_data = {
+            "permissions": data.permissions,
             "updated_at": firestore.SERVER_TIMESTAMP
-        })
-
+        }
+        if data.allowed_branches is not None:
+            update_data["allowed_branches"] = data.allowed_branches
+        user_ref.update(update_data)
         return {"status": "success", "message": "تم تحديث الصلاحيات بنجاح"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

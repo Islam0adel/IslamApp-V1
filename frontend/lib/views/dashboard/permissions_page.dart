@@ -20,12 +20,34 @@ class _PermissionsPageState extends State<PermissionsPage> {
   Map<String, Map<String, bool>> userPermissions = {};
 
   List<QueryDocumentSnapshot> usersList = [];
+  List<Map<String, String>> _allBranches = [];
+  bool _allowAllBranches = true;
+  List<String> _selectedBranchCodes = [];
 
   @override
   void initState() {
     super.initState();
-    _loadCompanyCode();
+    _loadCompanyCode().then((_) {
+    _loadBranches();
+  });
   }
+
+  Future<void> _loadBranches() async {
+  if (currentCompanyCode.isEmpty) return;
+  final box = Hive.box('coding_box');
+  final branchesKey = '${currentCompanyCode}_branches';
+  var branches = box.get(branchesKey) as List? ?? [];
+  setState(() {
+    _allBranches = branches.map((e) => {
+      'code': e['code'].toString(),
+      'name': e['name'].toString(),
+    }).toList();
+    // إذا كانت القائمة فارغة، نضيف رسالة توضيحية اختيارية
+    if (_allBranches.isEmpty) {
+      _allBranches = [{'code': 'none', 'name': 'لا توجد فروع مسجلة'}];
+    }
+  });
+}
 
   Future<void> _loadCompanyCode() async {
     final prefs = await SharedPreferences.getInstance();
@@ -151,8 +173,27 @@ class _PermissionsPageState extends State<PermissionsPage> {
       userPermissions = defaultPerms;
     });
 
-    final box = Hive.box('coding_box');
+   
     final localKey = 'permissions_$userId';
+    final box = Hive.box('coding_box');
+var savedBranches = box.get('allowed_branches_$userId');
+if (savedBranches != null && savedBranches is List) {
+  var list = savedBranches.map((e) => e.toString()).toList();
+  setState(() {
+    if (list.contains('all')) {
+      _allowAllBranches = true;
+      _selectedBranchCodes = [];
+    } else {
+      _allowAllBranches = false;
+      _selectedBranchCodes = list;
+    }
+  });
+} else {
+  setState(() {
+    _allowAllBranches = true;
+    _selectedBranchCodes = [];
+  });
+}
 
     // 2. محاولة قراءة من Hive
     if (box.containsKey(localKey)) {
@@ -184,10 +225,25 @@ class _PermissionsPageState extends State<PermissionsPage> {
     return;
   }
 
-  try {
-    // تمرير selectedUserId كـ targetEmail
-    await PermissionsService().savePermissions(userPermissions, targetEmail: selectedUserId);
+  List<String> allowedBranches;
+  if (_allowAllBranches) {
+    allowedBranches = ['all'];
+  } else {
+    allowedBranches = List.from(_selectedBranchCodes);
+    if (allowedBranches.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('يرجى اختيار فرع واحد على الأقل أو "كل الفروع"'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+  }
 
+  try {
+    await PermissionsService().savePermissions(
+      userPermissions,
+      targetEmail: selectedUserId,
+      allowedBranches: allowedBranches,
+    );
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('تم حفظ الصلاحيات بنجاح!'), backgroundColor: Colors.green),
@@ -196,10 +252,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
   } catch (e) {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('تم الحفظ محلياً بنجاح (وضع عدم الاتصال). ستتم المزامنة لاحقاً.'),
-          backgroundColor: Colors.orangeAccent,
-        ),
+        const SnackBar(content: Text('تم الحفظ محلياً (وضع عدم الاتصال)'), backgroundColor: Colors.orangeAccent),
       );
     }
   }
@@ -380,19 +433,112 @@ class _PermissionsPageState extends State<PermissionsPage> {
 
   Widget buildPermissionsTab(String tabName) {
   var permissionsMap = userPermissions[tabName] ?? {};
-
-  // ✅ إزالة صلاحية 'عرض قيمة الجملة' من تبويب 'رصيد المخزون'
   if (tabName == 'رصيد المخزون') {
     permissionsMap.remove('عرض قيمة الجملة');
   }
 
+  // إذا كان التبويب هو "صلاحيات عامة"، نضيف واجهة الفروع
+  if (tabName == 'صلاحيات عامة') {
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        // مفاتيح الصلاحيات الحالية
+        ...permissionsMap.entries.map((entry) {
+          return Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(15),
+              border: Border.all(color: Colors.white.withOpacity(0.1)),
+            ),
+            child: SwitchListTile(
+              activeColor: Colors.cyanAccent,
+              inactiveTrackColor: Colors.white24,
+              title: Text(entry.key, style: const TextStyle(color: Colors.white, fontSize: 16, fontFamily: 'Cairo')),
+              value: entry.value,
+              onChanged: selectedUserId == null ? null : (newValue) {
+                setState(() {
+                  userPermissions[tabName]![entry.key] = newValue;
+                });
+              },
+            ),
+          );
+        }).toList(),
+        const Divider(color: Colors.white24),
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 12),
+          child: Text(
+            'الفروع المسموح بها',
+            style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, fontFamily: 'Cairo'),
+          ),
+        ),
+        // خيار "كل الفروع"
+        Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(15),
+            border: Border.all(color: Colors.white.withOpacity(0.1)),
+          ),
+          child: CheckboxListTile(
+            activeColor: Colors.cyanAccent,
+            checkColor: Colors.black,
+            title: const Text('كل الفروع', style: TextStyle(color: Colors.white, fontSize: 16, fontFamily: 'Cairo')),
+            value: _allowAllBranches,
+            onChanged: selectedUserId == null ? null : (val) {
+              setState(() {
+                _allowAllBranches = val!;
+                if (_allowAllBranches) {
+                  _selectedBranchCodes = [];
+                }
+              });
+            },
+          ),
+        ),
+        // قائمة الفروع الفردية
+        if (!_allowAllBranches)
+          ..._allBranches.map((branch) {
+            bool isSelected = _selectedBranchCodes.contains(branch['code']);
+            return Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white.withOpacity(0.1)),
+              ),
+              child: CheckboxListTile(
+                activeColor: Colors.cyanAccent,
+                checkColor: Colors.black,
+                title: Text(branch['name']!, style: const TextStyle(color: Colors.white, fontSize: 14, fontFamily: 'Cairo')),
+                value: isSelected,
+                onChanged: selectedUserId == null ? null : (val) {
+                  setState(() {
+                    if (val!) {
+                      _selectedBranchCodes.add(branch['code']!);
+                    } else {
+                      _selectedBranchCodes.remove(branch['code']);
+                    }
+                  });
+                },
+              ),
+            );
+          }).toList(),
+        if (!_allowAllBranches && _selectedBranchCodes.isEmpty)
+          const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: Text('⚠️ يجب اختيار فرع واحد على الأقل', style: TextStyle(color: Colors.orangeAccent, fontFamily: 'Cairo')),
+          ),
+      ],
+    );
+  }
+
+  // باقي التبويبات كما هي
   return ListView.builder(
     padding: const EdgeInsets.all(20),
     itemCount: permissionsMap.length,
     itemBuilder: (context, index) {
       String key = permissionsMap.keys.elementAt(index);
       bool value = permissionsMap[key]!;
-
       return Container(
         margin: const EdgeInsets.only(bottom: 12),
         decoration: BoxDecoration(
@@ -403,18 +549,13 @@ class _PermissionsPageState extends State<PermissionsPage> {
         child: SwitchListTile(
           activeColor: Colors.cyanAccent,
           inactiveTrackColor: Colors.white24,
-          title: Text(
-            key,
-            style: const TextStyle(color: Colors.white, fontSize: 16, fontFamily: 'Cairo'),
-          ),
+          title: Text(key, style: const TextStyle(color: Colors.white, fontSize: 16, fontFamily: 'Cairo')),
           value: value,
-          onChanged: selectedUserId == null
-              ? null
-              : (newValue) {
-                  setState(() {
-                    userPermissions[tabName]![key] = newValue;
-                  });
-                },
+          onChanged: selectedUserId == null ? null : (newValue) {
+            setState(() {
+              userPermissions[tabName]![key] = newValue;
+            });
+          },
         ),
       );
     },

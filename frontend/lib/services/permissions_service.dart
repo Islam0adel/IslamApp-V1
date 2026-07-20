@@ -9,9 +9,11 @@ class PermissionsService {
   PermissionsService._internal();
 
   Map<String, Map<String, bool>>? _permissions;
-  // ignore: unused_field
-  String? _userId;
+  // ❌ حذف: String? _userId;
   int? _lastUpdate;
+
+  List<String>? _allowedBranchCodes;
+  String? _defaultBranchCode;
 
   Future<void> loadPermissions() async {
     try {
@@ -21,18 +23,17 @@ class PermissionsService {
         print("⚠️ PermissionsService: user_email غير موجود في SharedPreferences");
         return;
       }
-      _userId = userId;
+      // نستخدم userId محلياً دون تخزينه في متغير
       final jobCode = prefs.getString('job_code') ?? '1';
       print("📂 تحميل صلاحيات للمستخدم: $userId، jobCode: $jobCode");
 
       final box = Hive.box('coding_box');
       final key = 'permissions_$userId';
       final lastUpdateKey = 'permissions_last_update_$userId';
+      final branchKey = 'allowed_branches_$userId';
 
-      // 1. قراءة التاريخ المحلي
       _lastUpdate = box.get(lastUpdateKey);
 
-      // 2. قراءة من Firestore (updated_at + permissions)
       int? firestoreUpdate;
       Map<String, dynamic>? firestoreData;
       try {
@@ -45,12 +46,18 @@ class PermissionsService {
           if (data.containsKey('permissions') && data['permissions'] != null) {
             firestoreData = data['permissions'] as Map<String, dynamic>;
           }
+          // ========== قراءة الفروع المسموح بها ==========
+          if (data.containsKey('allowed_branches')) {
+            _allowedBranchCodes = _parseBranchList(data['allowed_branches']);
+          }
+          if (data.containsKey('default_branch')) {
+            _defaultBranchCode = data['default_branch']?.toString();
+          }
         }
       } catch (e) {
         print("⚠️ فشل قراءة من Firestore: $e");
       }
 
-      // 3. تحديد الحاجة للجلب من Firestore
       bool needFetch = false;
       if (_lastUpdate == null || firestoreUpdate == null) {
         needFetch = true;
@@ -59,7 +66,6 @@ class PermissionsService {
         print("🔄 يوجد تحديث جديد في Firestore (${DateTime.fromMillisecondsSinceEpoch(firestoreUpdate)})");
       }
 
-      // 4. إذا كان هناك تحديث جديد أو لا توجد بيانات محلية
       if (needFetch && firestoreData != null) {
         _permissions = _convertToPermissionsMap(firestoreData);
         await box.put(key, _permissions);
@@ -67,37 +73,48 @@ class PermissionsService {
           await box.put(lastUpdateKey, firestoreUpdate);
           _lastUpdate = firestoreUpdate;
         }
+        if (_allowedBranchCodes != null) {
+          await box.put(branchKey, _allowedBranchCodes);
+        }
         print("✅ تم جلب الصلاحيات من Firestore وحفظها في Hive");
         return;
       }
 
-      // 5. محاولة استخدام Hive إن وجدت بيانات محلية
+      // محاولة استخدام Hive
       if (box.containsKey(key)) {
         var rawData = box.get(key);
         if (rawData != null && rawData is Map) {
           _permissions = _convertToPermissionsMap(rawData);
+          var savedBranches = box.get(branchKey);
+          if (savedBranches != null && savedBranches is List) {
+            _allowedBranchCodes = savedBranches.map((e) => e.toString()).toList();
+          } else {
+            _allowedBranchCodes = ['all'];
+          }
           print("✅ تم تحميل الصلاحيات من Hive (محلياً)");
           return;
         }
       }
 
-      // 6. لا توجد بيانات محلية ولا في Firestore → ننشئ صلاحيات افتراضية ونحفظها في Firestore أيضاً
+      // إنشاء صلاحيات افتراضية
       print("📡 إنشاء صلاحيات افتراضية وحفظها في Firestore و Hive...");
       _permissions = _createDefaultPermissions(jobCode);
-      
-      // حفظ في Hive
+      _allowedBranchCodes = ['all'];
+      _defaultBranchCode = null;
+
       await box.put(key, _permissions);
+      await box.put(branchKey, _allowedBranchCodes);
       int now = DateTime.now().millisecondsSinceEpoch;
       await box.put(lastUpdateKey, now);
       _lastUpdate = now;
 
-      // حفظ في Firestore (لأول مرة)
       try {
         await FirebaseFirestore.instance.collection('users').doc(userId).set({
           'permissions': _permissions,
+          'allowed_branches': _allowedBranchCodes,
           'updated_at': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
-        print("✅ تم حفظ الصلاحيات الافتراضية في Firestore لأول مرة");
+        print("✅ تم حفظ الصلاحيات الافتراضية في Firestore");
       } catch (e) {
         print("⚠️ فشل حفظ الصلاحيات في Firestore: $e");
       }
@@ -105,17 +122,86 @@ class PermissionsService {
       print("✅ تم إنشاء صلاحيات افتراضية وحفظها محلياً وسحابياً");
     } catch (e) {
       print("❌ خطأ في loadPermissions: $e");
-      // احتياطي
       try {
         final prefs = await SharedPreferences.getInstance();
         final jobCode = prefs.getString('job_code') ?? '1';
         _permissions = _createDefaultPermissions(jobCode);
+        _allowedBranchCodes = ['all'];
       } catch (_) {
         _permissions = _createDefaultPermissions('1');
+        _allowedBranchCodes = ['all'];
       }
     }
   }
 
+  // ========== دالة مساعدة لتحويل بيانات الفروع ==========
+  List<String>? _parseBranchList(dynamic data) {
+    if (data == null) return null;
+    if (data is String && data == 'all') return ['all'];
+    if (data is List) {
+      return data.map((e) => e.toString()).toList();
+    }
+    return null;
+  }
+
+  // ========== Getters للفروع ==========
+  List<String>? get allowedBranches => _allowedBranchCodes;
+  String? get defaultBranch => _defaultBranchCode;
+
+  bool hasSingleBranch() {
+    if (_allowedBranchCodes == null) return false;
+    if (_allowedBranchCodes!.contains('all')) return false;
+    return _allowedBranchCodes!.length == 1;
+  }
+
+  bool canAccessBranch(String branchCode) {
+    if (_allowedBranchCodes == null) return true;
+    if (_allowedBranchCodes!.contains('all')) return true;
+    return _allowedBranchCodes!.contains(branchCode);
+  }
+
+  // ========== حفظ الصلاحيات مع allowed_branches ==========
+  Future<void> savePermissions(
+    Map<String, Map<String, bool>> permissions, {
+    String? targetEmail,
+    List<String>? allowedBranches,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final email = targetEmail ?? prefs.getString('user_email');
+    if (email == null || email.isEmpty) {
+      print("⚠️ لا يوجد بريد إلكتروني مستهدف للحفظ");
+      return;
+    }
+
+    try {
+      final box = Hive.box('coding_box');
+      final key = 'permissions_$email';
+      final lastUpdateKey = 'permissions_last_update_$email';
+      final branchKey = 'allowed_branches_$email';
+
+      await box.put(key, permissions);
+      if (allowedBranches != null) {
+        await box.put(branchKey, allowedBranches);
+        if (email == prefs.getString('user_email')) {
+          _allowedBranchCodes = allowedBranches;
+        }
+      }
+      int now = DateTime.now().millisecondsSinceEpoch;
+      await box.put(lastUpdateKey, now);
+
+      if (email == prefs.getString('user_email')) {
+        _permissions = permissions;
+        _lastUpdate = now;
+      }
+
+      await ApiService().updatePermissions(email, permissions, allowedBranches: allowedBranches);
+      print("✅ تم حفظ صلاحيات $email في Firestore عبر API بنجاح");
+    } catch (e) {
+      print("⚠️ فشل حفظ الصلاحيات في Firestore عبر API: $e");
+    }
+  }
+
+  // ========== تحويل البيانات إلى خريطة الصلاحيات ==========
   Map<String, Map<String, bool>> _convertToPermissionsMap(dynamic data) {
     Map<String, Map<String, bool>> converted = {};
     data.forEach((categoryKey, categoryValue) {
@@ -138,6 +224,7 @@ class PermissionsService {
     return converted;
   }
 
+  // ========== إنشاء الصلاحيات الافتراضية ==========
   Map<String, Map<String, bool>> _createDefaultPermissions(String jobCode) {
     var allPermissions = {
       'حركة الخزينة': {
@@ -171,13 +258,13 @@ class PermissionsService {
         'تصدير': false,
       },
       'حركة الجرد': {
-  'اضافة': false,
-  'تعديل': false,
-  'حذف': false,
-  'معاينة': false,
-  'استيراد': false,
-  'تصدير': false,
-},
+        'اضافة': false,
+        'تعديل': false,
+        'حذف': false,
+        'معاينة': false,
+        'استيراد': false,
+        'تصدير': false,
+      },
       'التقارير': {
         'تقرير المبيعات': false,
         'تقرير فترة': false,
@@ -189,16 +276,14 @@ class PermissionsService {
         'إظهار حركة الخزينة': false,
         'إظهار التكويد': false,
         'إظهار التقارير': false,
-        'إظهار حركة الموردين': false,   // 🔥 جديد
+        'إظهار حركة الموردين': false,
         'إظهار حركة الجرد': false,
       },
-      // داخل _createDefaultPermissions
-'رصيد المخزون': {
-  'معاينة': false,
-  'عرض سعر الجملة': false,
-  // 'عرض قيمة الجملة': false,
-  'تصدير': false,
-},
+      'رصيد المخزون': {
+        'معاينة': false,
+        'عرض سعر الجملة': false,
+        'تصدير': false,
+      },
     };
 
     if (jobCode == '99' || jobCode == '200') {
@@ -211,41 +296,7 @@ class PermissionsService {
     return allPermissions;
   }
 
-  // 🔥 تم تعديل هذه الدالة: إضافة معامل targetEmail لتحديد المستخدم المستهدف
-  Future<void> savePermissions(Map<String, Map<String, bool>> permissions, {String? targetEmail}) async {
-    final prefs = await SharedPreferences.getInstance();
-    // استخدام targetEmail إذا وُجد، وإلا استخدام البريد الإلكتروني للمستخدم الحالي
-    final email = targetEmail ?? prefs.getString('user_email');
-    if (email == null || email.isEmpty) {
-      print("⚠️ لا يوجد بريد إلكتروني مستهدف للحفظ");
-      return;
-    }
-
-    try {
-      // 1. تحديث Hive للموظف المستهدف (حتى لو كان مختلفاً عن المستخدم الحالي)
-      final box = Hive.box('coding_box');
-      final key = 'permissions_$email';
-      final lastUpdateKey = 'permissions_last_update_$email';
-      
-      await box.put(key, permissions);
-      int now = DateTime.now().millisecondsSinceEpoch;
-      await box.put(lastUpdateKey, now);
-
-      // إذا كان المستهدف هو المستخدم الحالي، نقوم بتحديث المتغيرات المحلية أيضاً
-      if (email == prefs.getString('user_email')) {
-        _permissions = permissions;
-        _lastUpdate = now;
-      }
-
-      // 2. تحديث Firestore عبر API (يتجاوز قواعد الأمان)
-      await ApiService().updatePermissions(email, permissions);
-      print("✅ تم حفظ صلاحيات $email في Firestore عبر API بنجاح");
-    } catch (e) {
-      print("⚠️ فشل حفظ الصلاحيات في Firestore عبر API: $e");
-      // سيتم المحاولة لاحقاً أو سيبقى Hive محدثاً
-    }
-  }
-
+  // ========== دوال مساعدة للصلاحيات الأساسية (getters) ==========
   bool hasPermission(String category, String permission) {
     if (_permissions == null) {
       print("⚠️ hasPermission: _permissions is null");
@@ -254,7 +305,6 @@ class PermissionsService {
     return _permissions?[category]?[permission] ?? false;
   }
 
-  // دوال مساعدة (getters)
   bool get canViewBalances => hasPermission('حركة الخزينة', 'شاشات الارصدة');
   bool get canAddTransaction => hasPermission('حركة الخزينة', 'ادخال اذون');
   bool get canViewTransactions => hasPermission('حركة الخزينة', 'المعاينة');
@@ -285,26 +335,23 @@ class PermissionsService {
   bool get canShowTreasury => hasPermission('صلاحيات عامة', 'إظهار حركة الخزينة');
   bool get canShowCoding => hasPermission('صلاحيات عامة', 'إظهار التكويد');
   bool get canShowReports => hasPermission('صلاحيات عامة', 'إظهار التقارير');
-  // ========== صلاحيات إظهار الأزرار في الصفحة الرئيسية ==========
   bool get canShowSuppliers => hasPermission('صلاحيات عامة', 'إظهار حركة الموردين');
   bool get canShowInventory => hasPermission('صلاحيات عامة', 'إظهار حركة الجرد');
 
-  // ========== صلاحيات الجرد ==========
-bool get canAddInventory => hasPermission('حركة الجرد', 'اضافة');
-bool get canEditInventory => hasPermission('حركة الجرد', 'تعديل');
-bool get canDeleteInventory => hasPermission('حركة الجرد', 'حذف');
-bool get canViewInventory => hasPermission('حركة الجرد', 'معاينة');
-bool get canImportInventory => hasPermission('حركة الجرد', 'استيراد');
-bool get canExportInventory => hasPermission('حركة الجرد', 'تصدير');
-// ========== صلاحيات رصيد المخزون ==========
-bool get canShowStock => hasPermission('رصيد المخزون', 'معاينة');
-bool get canViewStockWholesalePrice => hasPermission('رصيد المخزون', 'عرض سعر الجملة');
-// bool get canViewStockWholesaleValue => hasPermission('رصيد المخزون', 'عرض قيمة الجملة');
-bool get canExportStock => hasPermission('رصيد المخزون', 'تصدير');
+  bool get canAddInventory => hasPermission('حركة الجرد', 'اضافة');
+  bool get canEditInventory => hasPermission('حركة الجرد', 'تعديل');
+  bool get canDeleteInventory => hasPermission('حركة الجرد', 'حذف');
+  bool get canViewInventory => hasPermission('حركة الجرد', 'معاينة');
+  bool get canImportInventory => hasPermission('حركة الجرد', 'استيراد');
+  bool get canExportInventory => hasPermission('حركة الجرد', 'تصدير');
 
-bool get canAddSupplierTransaction => hasPermission('حسابات الموردين', 'اضافة');
-bool get canEditSupplierTransaction => hasPermission('حسابات الموردين', 'تعديل');
-bool get canDeleteSupplierTransaction => hasPermission('حسابات الموردين', 'حذف');
-bool get canViewSupplierHistory => hasPermission('حسابات الموردين', 'معاينة');
-bool get canExportSupplier => hasPermission('حسابات الموردين', 'تصدير');
+  bool get canShowStock => hasPermission('رصيد المخزون', 'معاينة');
+  bool get canViewStockWholesalePrice => hasPermission('رصيد المخزون', 'عرض سعر الجملة');
+  bool get canExportStock => hasPermission('رصيد المخزون', 'تصدير');
+
+  bool get canAddSupplierTransaction => hasPermission('حسابات الموردين', 'اضافة');
+  bool get canEditSupplierTransaction => hasPermission('حسابات الموردين', 'تعديل');
+  bool get canDeleteSupplierTransaction => hasPermission('حسابات الموردين', 'حذف');
+  bool get canViewSupplierHistory => hasPermission('حسابات الموردين', 'معاينة');
+  bool get canExportSupplier => hasPermission('حسابات الموردين', 'تصدير');
 }

@@ -91,75 +91,120 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 
   Future<void> _loadBranchesAndCheck() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final Box codingBox = Hive.box('coding_box');
-      final String localKey = "${widget.companyCode}_branches";
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final Box codingBox = Hive.box('coding_box');
+    final String localKey = "${widget.companyCode}_branches";
 
-      List<Map<String, String>> fetchedBranches = [{'name': 'كل الفروع', 'code': 'all'}];
-      bool hasLocalData = false;
+    List<Map<String, String>> fetchedBranches = [];
+    bool hasLocalData = false;
 
-      final dynamic rawData = codingBox.get(localKey, defaultValue: []);
-      if (rawData is List && rawData.isNotEmpty) {
-        for (var item in rawData) {
-          if (item is Map && item['name'] != null && item['code'] != null) {
-            fetchedBranches.add({'name': item['name'].toString(), 'code': item['code'].toString()});
-          }
-        }
-        if (fetchedBranches.length > 1) {
-          hasLocalData = true;
+    // 1️⃣ قراءة الفروع من Hive
+    final dynamic rawData = codingBox.get(localKey, defaultValue: []);
+    if (rawData is List && rawData.isNotEmpty) {
+      for (var item in rawData) {
+        if (item is Map && item['name'] != null && item['code'] != null) {
+          fetchedBranches.add({'name': item['name'].toString(), 'code': item['code'].toString()});
         }
       }
-
-      if (!hasLocalData) {
-        print("📥 الفروع غير موجودة محلياً.. جاري الجلب من السيرفر");
-        List<CodingModel> branchesData = await _codingService.getCodingList(
-          companyCode: widget.companyCode,
-          category: "branches",
-        );
-        fetchedBranches = [{'name': 'كل الفروع', 'code': 'all'}];
-        for (var item in branchesData) {
-          fetchedBranches.add({'name': item.name, 'code': item.code});
-        }
+      if (fetchedBranches.isNotEmpty) {
+        hasLocalData = true;
       }
+    }
 
-      if (mounted) {
-        setState(() {
-          _branches = fetchedBranches;
-          _isLoadingBranches = false;
+    // 2️⃣ جلب من السيرفر إذا لم تكن محلية
+    if (!hasLocalData) {
+      print("📥 الفروع غير موجودة محلياً.. جاري الجلب من السيرفر");
+      List<CodingModel> branchesData = await _codingService.getCodingList(
+        companyCode: widget.companyCode,
+        category: "branches",
+      );
+      fetchedBranches = [];
+      for (var item in branchesData) {
+        fetchedBranches.add({'name': item.name, 'code': item.code});
+      }
+    }
 
-          String? savedBranchCode = prefs.getString('selected_branch_code');
-          String? savedBranchName = prefs.getString('selected_branch_name');
-          bool exists = _branches.any((b) => b['code'] == savedBranchCode);
+    // 3️⃣ تصفية الفروع حسب صلاحية المستخدم
+    final allowed = PermissionsService().allowedBranches;
+    List<Map<String, String>> filteredBranches;
+    if (allowed != null && !allowed.contains('all')) {
+      // المستخدم لديه فروع محددة
+      filteredBranches = fetchedBranches.where((b) => allowed.contains(b['code'])).toList();
+    } else {
+      // المستخدم لديه صلاحية كل الفروع (أو null)
+      filteredBranches = List.from(fetchedBranches);
+    }
 
-          if (savedBranchCode != null && exists) {
-            _selectedBranchCode = savedBranchCode;
-            _selectedBranchName = savedBranchName ?? "كل الفروع";
-          } else {
-            if (_branches.length <= 2) {
-              _selectedBranchCode = _branches.length == 2 ? _branches[1]['code']! : "all";
-              _selectedBranchName = _branches.length == 2 ? _branches[1]['name']! : "كل الفروع";
-              prefs.setString('selected_branch_code', _selectedBranchCode);
-              prefs.setString('selected_branch_name', _selectedBranchName);
+    // ═══ إضافة خيار "كل الفروع" دائماً إذا كانت الصلاحية تسمح بذلك ═══
+    if (allowed == null || allowed.contains('all')) {
+      // نضيف "كل الفروع" في البداية (بغض النظر عن عدد الفروع)
+      filteredBranches.insert(0, {'name': 'كل الفروع', 'code': 'all'});
+    }
+
+    // إذا كانت القائمة فارغة (لا توجد فروع مسموحة)، نضيف عنصر وهمي
+    if (filteredBranches.isEmpty) {
+      filteredBranches = [{'name': 'لا توجد فروع مسموحة', 'code': 'none'}];
+    }
+
+    if (mounted) {
+      setState(() {
+        _branches = filteredBranches;
+        _isLoadingBranches = false;
+
+        // 4️⃣ اختيار الفرع الافتراضي
+        String? savedBranchCode = prefs.getString('selected_branch_code');
+        String? savedBranchName = prefs.getString('selected_branch_name');
+
+        bool isAllowed = _branches.any((b) => b['code'] == savedBranchCode);
+        if (savedBranchCode != null && isAllowed && savedBranchCode != 'none') {
+          _selectedBranchCode = savedBranchCode;
+          _selectedBranchName = savedBranchName ?? "كل الفروع";
+        } else {
+          // استبعاد 'none' للحصول على الفروع الحقيقية (بما فيها 'all')
+          var realBranches = _branches.where((b) => b['code'] != 'none').toList();
+          if (realBranches.length == 1) {
+            // خيار واحد فقط (قد يكون 'all' أو فرع حقيقي)
+            _selectedBranchCode = realBranches[0]['code']!;
+            _selectedBranchName = realBranches[0]['name']!;
+            prefs.setString('selected_branch_code', _selectedBranchCode);
+            prefs.setString('selected_branch_name', _selectedBranchName);
+          } else if (realBranches.isNotEmpty) {
+            // عدة خيارات → نختار 'all' إذا وجد، وإلا الأول
+            if (_branches.any((b) => b['code'] == 'all')) {
+              _selectedBranchCode = 'all';
+              _selectedBranchName = 'كل الفروع';
             } else {
-              _selectedBranchCode = "all";
-              _selectedBranchName = "كل الفروع";
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                _showBranchSelectionDialog();
-              });
+              _selectedBranchCode = realBranches[0]['code']!;
+              _selectedBranchName = realBranches[0]['name']!;
             }
+            prefs.setString('selected_branch_code', _selectedBranchCode);
+            prefs.setString('selected_branch_name', _selectedBranchName);
+          } else {
+            // لا توجد خيارات
+            _selectedBranchCode = 'none';
+            _selectedBranchName = 'لا توجد فروع';
           }
-        });
-      }
-    } catch (e) {
-      print("خطأ في جلب الفروع: $e");
-      if (mounted) {
-        setState(() {
-          _isLoadingBranches = false;
+        }
+      });
+
+      // ═══ عرض الحوار التلقائي فقط إذا كان عدد الفروع الحقيقية (غير 'all' و 'none') > 1 ═══
+      var realBranches = _branches.where((b) => b['code'] != 'all' && b['code'] != 'none').toList();
+      if (realBranches.length > 1) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _showBranchSelectionDialog();
         });
       }
     }
+  } catch (e) {
+    print("خطأ في جلب الفروع: $e");
+    if (mounted) {
+      setState(() {
+        _isLoadingBranches = false;
+      });
+    }
   }
+}
 
   void _showBranchSelectionDialog() {
     showDialog(
@@ -302,58 +347,59 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 
   Widget _buildHeader() {
-    return GlassCard(
-      child: Row(
-        children: [
-          const Icon(Icons.business, color: Colors.amber, size: 30),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(widget.companyName,
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        fontFamily: 'Cairo')),
-                Text("مرحبا: ${widget.userName}",
-                    style: const TextStyle(
-                        color: Colors.white60,
-                        fontSize: 12,
-                        fontFamily: 'Cairo')),
-              ],
-            ),
+  return GlassCard(
+    child: Row(
+      children: [
+        const Icon(Icons.business, color: Colors.amber, size: 30),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(widget.companyName,
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      fontFamily: 'Cairo')),
+              Text("مرحبا: ${widget.userName}",
+                  style: const TextStyle(
+                      color: Colors.white60,
+                      fontSize: 12,
+                      fontFamily: 'Cairo')),
+            ],
           ),
-          if (!_isLoadingBranches && PermissionsService().canChangeBranch)
-            InkWell(
-              onTap: _showBranchSelectionDialog,
-              borderRadius: BorderRadius.circular(8),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.amber.withOpacity(0.15),
-                  border: Border.all(color: Colors.amber.withOpacity(0.5)),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Row(
-                  children: [
-                    Icon(Icons.swap_horiz, color: Colors.amber, size: 16),
-                    SizedBox(width: 4),
-                    Text("تغيير الفرع",
-                        style: TextStyle(
-                            color: Colors.amber,
-                            fontSize: 11,
-                            fontFamily: 'Cairo',
-                            fontWeight: FontWeight.bold)),
-                  ],
-                ),
+        ),
+        // ✅ زر "تغيير الفرع" يظهر دائماً إذا كان لدى المستخدم صلاحية
+        if (!_isLoadingBranches && PermissionsService().canChangeBranch)
+          InkWell(
+            onTap: _showBranchSelectionDialog,
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.amber.withOpacity(0.15),
+                border: Border.all(color: Colors.amber.withOpacity(0.5)),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.swap_horiz, color: Colors.amber, size: 16),
+                  SizedBox(width: 4),
+                  Text("تغيير الفرع",
+                      style: TextStyle(
+                          color: Colors.amber,
+                          fontSize: 11,
+                          fontFamily: 'Cairo',
+                          fontWeight: FontWeight.bold)),
+                ],
               ),
             ),
-        ],
-      ),
-    );
-  }
+          ),
+      ],
+    ),
+  );
+}
 
   Widget _buildSmallInfo(String label, String value, IconData icon, Color color) {
     return Container(
