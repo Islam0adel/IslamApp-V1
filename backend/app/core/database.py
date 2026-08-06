@@ -1,37 +1,39 @@
-
 import os
 from dotenv import load_dotenv
 from pathlib import Path
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.pool import NullPool
-import re
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-ENV_PATH = BASE_DIR / "D:\IslamApp-V1\.env"
+ENV_PATH = BASE_DIR / ".env"
 load_dotenv(dotenv_path=ENV_PATH)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("❌ DATABASE_URL environment variable is not set!")
 
-# ✅ تنظيف الرابط: إزالة أي معاملات بعد علامة الاستفهام (?) أو (&)
-# نقسم الرابط على '?' ونأخذ الجزء الأول فقط (قبل المعاملات)
+# ✅ تنظيف الرابط من المعاملات الإضافية
 clean_url = DATABASE_URL.split('?')[0]
 
-# إذا كان هناك معاملات أخرى بعد علامة & (نادرة لكن للاحتياط)
-# نضمن أن clean_url لا يحتوي على '?'
-print(f"🔗 Original URL: {DATABASE_URL[:50]}...")
-print(f"🔗 Clean URL: {clean_url[:50]}...")
+# ✅ تحويل البروتوكول إلى asyncpg إذا لزم الأمر
+if clean_url.startswith("postgresql://"):
+    clean_url = clean_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+print(f"🔗 Original URL: {DATABASE_URL[:80]}...")
+print(f"🔗 Clean URL: {clean_url[:80]}...")
 
 engine = create_async_engine(
-    clean_url,   # ✅ استخدم الرابط النظيف
+    clean_url,
     echo=True,
     future=True,
     pool_pre_ping=True,
     pool_recycle=300,
     poolclass=NullPool,
-    connect_args={"ssl": True}  # ✅ تفعيل SSL بشكل آمن
+    connect_args={
+        "ssl": True,
+        "server_settings": {"application_name": "myapp"}
+    }
 )
 
 AsyncSessionLocal = async_sessionmaker(
