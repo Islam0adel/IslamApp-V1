@@ -8,6 +8,9 @@ import '../../views/widgets/glass_card.dart';
 import '../../services/permissions_service.dart';
 import '../../services/export_service.dart';
 import 'inventory_page.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import '../../core/constants.dart';
 
 class InventoryHistoryPage extends StatefulWidget {
   final String companyCode;
@@ -43,11 +46,15 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
   bool _showDetails = false;
 
   @override
-  void initState() {
-    super.initState();
-    _loadData();
-    _loadDropdowns();
-  }
+void initState() {
+  super.initState();
+  Hive.box('inventory_box').listenable().addListener(_onInventoryBoxChanged);
+  _loadData();
+}
+
+void _onInventoryBoxChanged() {
+  _loadData();  // إعادة تحميل البيانات من Hive
+}
 
   Future<void> _loadDropdowns() async {
     final box = Hive.box('coding_box');
@@ -60,53 +67,96 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
   }
 
   Future<void> _loadData() async {
-    setState(() => _isLoading = true);
-    try {
-      final box = Hive.box('inventory_box');
-      List<InventoryModel> all = [];
-      for (var key in box.keys) {
-        final raw = box.get(key);
-        if (raw is List) {
-          for (var item in raw) {
-            if (item['company_code'] == widget.companyCode) {
-              final map = Map<String, dynamic>.from(item as Map);
-              all.add(InventoryModel.fromMap(map));
-            }
+  setState(() => _isLoading = true);
+  try {
+    final box = Hive.box('inventory_box');
+    List<InventoryModel> all = [];
+    bool hasLocalData = false;
+
+    // 1️⃣ محاولة القراءة من Hive
+    for (var key in box.keys) {
+      final raw = box.get(key);
+      if (raw is List) {
+        for (var item in raw) {
+          if (item['company_code'] == widget.companyCode) {
+            all.add(InventoryModel.fromMap(item));
+            hasLocalData = true;
           }
         }
       }
-
-      // ✅ فلترة أساسية حسب الفرع المختار من الهوم
-      if (widget.selectedBranchCode != null &&
-          widget.selectedBranchCode != 'all' &&
-          widget.selectedBranchCode!.isNotEmpty) {
-        all = all.where((inv) => inv.branchCode == widget.selectedBranchCode).toList();
-      }
-
-      // ✅ فلتر المخزن (اختياري)
-      if (_filterStoreCode != null && _filterStoreCode != 'all') {
-        all = all.where((inv) => inv.storeCode == _filterStoreCode).toList();
-      }
-
-      // ✅ فلتر التاريخ
-      if (_filterDate != null && _filterDate!.isNotEmpty) {
-        all = all.where((inv) => inv.date == _filterDate).toList();
-      }
-
-      all.sort((a, b) {
-        int dateCmp = b.date.compareTo(a.date);
-        if (dateCmp != 0) return dateCmp;
-        return (b.serial ?? 0).compareTo(a.serial ?? 0);
-      });
-      setState(() {
-        _inventories = all;
-        _isLoading = false;
-      });
-    } catch (e) {
-      print('خطأ في تحميل الجردات: $e');
-      setState(() => _isLoading = false);
     }
+
+    // 2️⃣ إذا لم توجد بيانات محلية، جلب من السيرفر
+    if (!hasLocalData) {
+      print("📥 لا توجد جردات محلياً.. جاري الجلب من السيرفر");
+      try {
+        final response = await http.get(
+          Uri.parse('${ApiConstants.baseUrl}/inventory/list/${widget.companyCode}'),
+        );
+        if (response.statusCode == 200) {
+          final List<dynamic> decoded = json.decode(response.body);
+          for (var item in decoded) {
+            final model = InventoryModel.fromMap(item);
+            // حفظ في Hive بنفس المفتاح المستخدم في saveInventory
+            final String localKey = '${model.companyCode}_${model.branchCode}_${model.storeCode}_${model.date}';
+            List<Map<String, dynamic>> list = [];
+            if (box.containsKey(localKey)) {
+              final raw = box.get(localKey);
+              if (raw is List) {
+                list = raw.map((e) => Map<String, dynamic>.from(e)).toList();
+              }
+            }
+            // إزالة أي عنصر له نفس docId ثم إضافة الجديد
+            list.removeWhere((e) => e['doc_id'] == model.docId);
+            list.add(model.toMap());
+            await box.put(localKey, list);
+          }
+          // إعادة تحميل البيانات من Hive بعد الحفظ
+          all = [];
+          for (var key in box.keys) {
+            final raw = box.get(key);
+            if (raw is List) {
+              for (var item in raw) {
+                if (item['company_code'] == widget.companyCode) {
+                  all.add(InventoryModel.fromMap(item));
+                }
+              }
+            }
+          }
+          print("✅ تم جلب ${all.length} جرد من السيرفر وحفظها في Hive");
+        }
+      } catch (e) {
+        print("❌ فشل جلب الجردات من السيرفر: $e");
+      }
+    }
+
+    // 3️⃣ تطبيق الفلاتر
+    if (widget.selectedBranchCode != null &&
+        widget.selectedBranchCode != 'all' &&
+        widget.selectedBranchCode!.isNotEmpty) {
+      all = all.where((inv) => inv.branchCode == widget.selectedBranchCode).toList();
+    }
+    if (_filterStoreCode != null && _filterStoreCode != 'all') {
+      all = all.where((inv) => inv.storeCode == _filterStoreCode).toList();
+    }
+    if (_filterDate != null && _filterDate!.isNotEmpty) {
+      all = all.where((inv) => inv.date == _filterDate).toList();
+    }
+    all.sort((a, b) {
+      int dateCmp = b.date.compareTo(a.date);
+      if (dateCmp != 0) return dateCmp;
+      return (b.serial ?? 0).compareTo(a.serial ?? 0);
+    });
+
+    setState(() {
+      _inventories = all;
+      _isLoading = false;
+    });
+  } catch (e) {
+    print('خطأ في تحميل الجردات: $e');
+    setState(() => _isLoading = false);
   }
+}
 
   String _getBranchName(String? code) {
   if (code == null || code == 'all' || code == '') return 'كل الفروع';

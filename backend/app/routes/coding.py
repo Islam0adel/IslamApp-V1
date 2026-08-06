@@ -1,13 +1,16 @@
-from fastapi import APIRouter, HTTPException
-from app.core.firebase_setup import db
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, and_
+from app.core.database import get_db
+from app.core.models import CodingRecord
+from app.core.schemas import CodingModel
+from app.core.sync import manager
 from typing import Optional
-import traceback
-from google.cloud import firestore
+import datetime
 
 router = APIRouter()
 
-# 1. التكويدات الافتراضية لقسم "التصنيف" (types) مع الاتجاهات الصحيحة
+# ===== التكويدات الافتراضية (نفس القيم السابقة) =====
 DEFAULT_TYPES = [
     {"name": "ايراد", "type": "وارد"},
     {"name": "فيزا", "type": "وارد"},
@@ -26,40 +29,24 @@ DEFAULT_TYPES = [
     {"name": "بضاعة", "type": "صادر"}
 ]
 
-# 2. التكويدات الافتراضية لباقي الأقسام
 DEFAULT_CATEGORIES_DATA = {
-    "safes": [{"name": "نقدي"},
-              {"name": "فيزا"},
-              {"name": "محفظة الكترونية"}],
+    "safes": [{"name": "نقدي"}, {"name": "فيزا"}, {"name": "محفظة الكترونية"}],
     "customers": [{"name": "عميل نقدي"}],
     "stores": [{"name": "المخزن الرئيسي"}],
     "branches": [{"name": "الفرع الرئيسي"}],
-    "payment_methods": [
-        {"name": "نقدي"},
-        {"name": "فيزا"},
-        {"name": "محفظة الكترونية"}
-    ]
+    "payment_methods": [{"name": "نقدي"}, {"name": "فيزا"}, {"name": "محفظة الكترونية"}]
 }
 
-class CodingModel(BaseModel):
-    company_code: str
-    category: str
-    code: str
-    name: str
-    type: Optional[str] = "وارد"
-    barcode: Optional[str] = ""
-    wholesale_price: Optional[float] = 0.0
-    selling_price: Optional[float] = 0.0
-    profit_margin: Optional[float] = 0.0
-    profit_percent: Optional[float] = 0.0
+router = APIRouter()
 
-
-# ==============================================
-#          🟢 مسار الحفظ (بدون Transaction)
-#          الكود يُحدد من قبل المستخدم مباشرة
-# ==============================================
+# ==========================================
+# 1. حفظ تكويد (إضافة أو تحديث)
+# ==========================================
 @router.post("/save")
-async def save_code(data: CodingModel):
+async def save_code(
+    data: CodingModel,
+    db: AsyncSession = Depends(get_db)
+):
     try:
         company_code = data.company_code
         category = data.category
@@ -68,96 +55,197 @@ async def save_code(data: CodingModel):
         if not code:
             raise HTTPException(status_code=400, detail="الكود مطلوب ولا يمكن أن يكون فارغاً")
 
-        # 🌟 التعديل هنا: استخدام مسار واحد لكل التكويدات لسهولة قراءتها بالرادار
-        doc_id = f"{company_code}_{category}_{code}"
-        doc_ref = db.collection("coding_records").document(doc_id)
+        # البحث عن السجل
+        stmt = select(CodingRecord).where(
+            CodingRecord.company_code == company_code,
+            CodingRecord.category == category,
+            CodingRecord.code == code
+        )
+        result = await db.execute(stmt)
+        existing = result.scalar_one_or_none()
 
-        doc_snapshot = doc_ref.get()
-        is_new = not doc_snapshot.exists
+        if existing:
+            # تحديث
+            existing.name = data.name
+            existing.type = data.type
+            existing.barcode = data.barcode
+            existing.wholesale_price = data.wholesale_price
+            existing.selling_price = data.selling_price
+            existing.profit_margin = data.profit_margin
+            existing.profit_percent = data.profit_percent
+            existing.updated_at = datetime.datetime.utcnow()
+            action = "update"
+        else:
+            # إضافة جديدة
+            new_record = CodingRecord(
+                company_code=company_code,
+                category=category,
+                code=code,
+                name=data.name,
+                type=data.type or "وارد",
+                barcode=data.barcode or "",
+                wholesale_price=data.wholesale_price or 0.0,
+                selling_price=data.selling_price or 0.0,
+                profit_margin=data.profit_margin or 0.0,
+                profit_percent=data.profit_percent or 0.0,
+            )
+            db.add(new_record)
+            action = "insert"
 
-        try:
-            save_data = data.model_dump()
-        except AttributeError:
-            save_data = data.dict()
+        await db.commit()
 
-        save_data["company_code"] = company_code
-        save_data["category"] = category
-        save_data["updated_at"] = firestore.SERVER_TIMESTAMP # إضافة حقل الوقت
-        
-        doc_ref.set(save_data)
+        # بث التغيير
+        await manager.broadcast(company_code, {
+            "type": "coding",
+            "action": action,
+            "data": {
+                "company_code": company_code,
+                "category": category,
+                "code": code,
+                "name": data.name,
+                "type": data.type,
+                "barcode": data.barcode,
+                "wholesale_price": data.wholesale_price,
+                "selling_price": data.selling_price,
+                "profit_margin": data.profit_margin,
+                "profit_percent": data.profit_percent,
+                "updated_at": datetime.datetime.utcnow().isoformat()
+            }
+        })
 
         return {
             "status": "success",
             "message": "تم حفظ التكويد بنجاح",
             "code": code,
-            "action": "insert" if is_new else "update"
+            "action": action
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
+        await db.rollback()
         raise HTTPException(status_code=500, detail=f"خطأ في السيرفر: {str(e)}")
 
-# ==============================================
-#          🟢 مسار جلب القائمة
-# ==============================================
+# ==========================================
+# 2. جلب قائمة التكويدات
+# ==========================================
 @router.get("/list/{company_code}/{category}")
-async def list_codes(company_code: str, category: str):
+async def list_codes(
+    company_code: str,
+    category: str,
+    db: AsyncSession = Depends(get_db)
+):
     try:
-        # 🌟 جلب البيانات من المسار المسطح بناءً على الشركة والقسم
-        collection_ref = db.collection("coding_records")
-        query = collection_ref.where("company_code", "==", company_code).where("category", "==", category)
-        existing_docs = list(query.stream())
+        stmt = select(CodingRecord).where(
+            CodingRecord.company_code == company_code,
+            CodingRecord.category == category
+        ).order_by(CodingRecord.code)
+        result = await db.execute(stmt)
+        docs = result.scalars().all()
 
-        if len(existing_docs) == 0:
+        # إذا لم توجد بيانات، ننشئ البيانات الافتراضية
+        if not docs:
             if category == "types":
                 for index, item in enumerate(DEFAULT_TYPES, start=1):
                     code = str(index)
-                    doc_id = f"{company_code}_{category}_{code}"
-                    doc_data = {
-                        "name": item["name"],
-                        "type": item["type"],
-                        "code": code,
-                        "company_code": company_code,
-                        "category": category,
-                        "updated_at": firestore.SERVER_TIMESTAMP
-                    }
-                    collection_ref.document(doc_id).set(doc_data)
+                    new_record = CodingRecord(
+                        company_code=company_code,
+                        category=category,
+                        code=code,
+                        name=item["name"],
+                        type=item["type"],
+                    )
+                    db.add(new_record)
+                await db.commit()
+                # إعادة الجلب
+                stmt = select(CodingRecord).where(
+                    CodingRecord.company_code == company_code,
+                    CodingRecord.category == category
+                ).order_by(CodingRecord.code)
+                result = await db.execute(stmt)
+                docs = result.scalars().all()
+
             elif category in DEFAULT_CATEGORIES_DATA:
                 for index, item in enumerate(DEFAULT_CATEGORIES_DATA[category], start=1):
                     code = str(index)
-                    doc_id = f"{company_code}_{category}_{code}"
-                    doc_data = {
-                        "name": item["name"],
-                        "code": code,
-                        "company_code": company_code,
-                        "category": category,
-                        "updated_at": firestore.SERVER_TIMESTAMP
-                    }
-                    collection_ref.document(doc_id).set(doc_data)
+                    new_record = CodingRecord(
+                        company_code=company_code,
+                        category=category,
+                        code=code,
+                        name=item["name"],
+                    )
+                    db.add(new_record)
+                await db.commit()
+                stmt = select(CodingRecord).where(
+                    CodingRecord.company_code == company_code,
+                    CodingRecord.category == category
+                ).order_by(CodingRecord.code)
+                result = await db.execute(stmt)
+                docs = result.scalars().all()
 
-            existing_docs = list(query.stream())
-
+        # تحويل النتائج إلى قواميس (نفس تنسيق Firestore)
         results = []
-        for d in existing_docs:
-            item_data = d.to_dict()
-            # نتأكد إننا بناخد الكود من جوه الداتا مش من الـ ID لأنه بقى مدمج
-            results.append(item_data)
+        for doc in docs:
+            results.append({
+                "company_code": doc.company_code,
+                "category": doc.category,
+                "code": doc.code,
+                "name": doc.name,
+                "type": doc.type,
+                "barcode": doc.barcode,
+                "wholesale_price": doc.wholesale_price,
+                "selling_price": doc.selling_price,
+                "profit_margin": doc.profit_margin,
+                "profit_percent": doc.profit_percent,
+                "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
+            })
 
+        # ترتيب حسب الكود (نفس المنطق القديم)
         results.sort(key=lambda x: int(x.get("code", 0)) if str(x.get("code", "")).isdigit() else str(x.get("code", "")))
         return results
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ==============================================
-#          🟢 مسار الحذف
-# ==============================================
+# ==========================================
+# 3. حذف تكويد
+# ==========================================
 @router.delete("/delete/{company_code}/{category}/{code}")
-async def delete_code(company_code: str, category: str, code: str):
+async def delete_code(
+    company_code: str,
+    category: str,
+    code: str,
+    db: AsyncSession = Depends(get_db)
+):
     try:
-        # 🌟 الحذف من المسار المسطح الجديد
-        doc_id = f"{company_code}_{category}_{code}"
-        doc_ref = db.collection("coding_records").document(doc_id)
-        doc_ref.delete()
+        stmt = select(CodingRecord).where(
+            CodingRecord.company_code == company_code,
+            CodingRecord.category == category,
+            CodingRecord.code == code
+        )
+        result = await db.execute(stmt)
+        existing = result.scalar_one_or_none()
+        if not existing:
+            raise HTTPException(status_code=404, detail="التكويد غير موجود")
+
+        await db.delete(existing)
+        await db.commit()
+
+        # بث حدث الحذف
+        await manager.broadcast(company_code, {
+            "type": "coding",
+            "action": "delete",
+            "data": {
+                "company_code": company_code,
+                "category": category,
+                "code": code,
+            }
+        })
+
         return {"status": "success", "message": "تم حذف التكويد بنجاح"}
+
+    except HTTPException:
+        raise
     except Exception as e:
+        await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

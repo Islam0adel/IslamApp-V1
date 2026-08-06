@@ -1,189 +1,274 @@
-from fastapi import APIRouter, HTTPException, Query
-from app.core.firebase_setup import db
-from pydantic import BaseModel
-from typing import Optional
-from google.cloud import firestore
+# backend/app/routes/transactions.py
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, and_, desc
+from app.core.database import get_db
+from app.core.models import Transaction
+from app.core.schemas import TransactionModel
+from app.core.sync import manager
+import datetime
 
 router = APIRouter()
 
-# 🌟 الموديل الموحد للبيانات المطور ليدعم أكواد الفروع بدلاً من أسمائها
-class TransactionModel(BaseModel):
-    company_code: str
-    serial: int  
-    treasury: str
-    amount: float
-    statement: str
-    category: str
-    date: str
-    type: str
-    employee: Optional[str] = "غير محدد"  
-    branch_code: Optional[str] = "1"  # 👈 تم التعديل: استخدام كود الفرع الافتراضي بدلاً من الاسم
-
-
-# 🔥 [دالة المعاملة الذرية المؤمّنة لمنع تكرار السيريال نهائياً]
-@firestore.transactional
-def run_save_transaction(transaction, records_ref, data: TransactionModel, is_update: bool):
-    if is_update:
-        final_serial = data.serial
-    else:
-        # 👈 تم التعديل: جلب آخر سيريال مسجل "لهذا الكود تحديداً" 
-        query = records_ref.where("branch_code", "==", data.branch_code).order_by("serial", direction=firestore.Query.DESCENDING).limit(1)
-        docs = list(query.stream(transaction=transaction))
-        
-        final_serial = 1
-        if docs:
-            final_serial = int(docs[0].to_dict().get("serial", 0)) + 1
-            
-    # تحويل بيانات الموديل إلى قاموس
-    transaction_data = data.dict()
-    transaction_data["serial"] = final_serial
-    transaction_data["updated_at"] = firestore.SERVER_TIMESTAMP 
-    
-    # 👈 تم التعديل: إنشاء المعرف الفريد الآمن جداً بناءً على كود الفرع بدلاً من اسمه
-    unique_doc_id = f"branch_{data.branch_code}_{final_serial}"
-    
-    # الحفظ الآمن داخل الـ Transaction
-    doc_ref = records_ref.document(unique_doc_id)
-    transaction.set(doc_ref, transaction_data)
-    
-    return final_serial
-
-
 # ==========================================
-# 1. حفظ أو تحديث إذن - تم تأمينه بالكامل عبر الـ Transaction
+# 1. حفظ أو تحديث إذن (PostgreSQL + WebSocket Broadcast)
 # ==========================================
 @router.post("/save")
-async def save_transaction(data: TransactionModel):
+async def save_transaction(
+    data: TransactionModel,
+    db: AsyncSession = Depends(get_db)
+):
     try:
-        records_ref = db.collection("transactions").document(data.company_code).collection("daily_records")
-        
-        # تحديد نوع العملية: تعديل أم إضافة جديدة
-        is_update = data.serial > 0
-        
-        # إنشاء المعاملة واستدعاء الدالة المؤمّنة لضمان طابور منظم ومنع الـ Race Condition
-        transaction = db.transaction()
-        final_serial = run_save_transaction(transaction, records_ref, data, is_update)
-        
+        # 🔹 حساب serial جديد إذا كان 0 (إضافة جديدة)
+        if data.serial == 0:
+            stmt = select(Transaction).where(
+                Transaction.company_code == data.company_code,
+                Transaction.branch_code == data.branch_code
+            ).order_by(desc(Transaction.serial)).limit(1)
+            result = await db.execute(stmt)
+            last = result.scalar_one_or_none()
+            new_serial = (last.serial + 1) if last else 1
+        else:
+            new_serial = data.serial
+
+        # 🔹 البحث عن السجل إذا كان تعديل (serial > 0)
+        if data.serial > 0:
+            stmt = select(Transaction).where(
+                Transaction.company_code == data.company_code,
+                Transaction.branch_code == data.branch_code,
+                Transaction.serial == data.serial
+            )
+            result = await db.execute(stmt)
+            tx = result.scalar_one_or_none()
+            if not tx:
+                raise HTTPException(status_code=404, detail="Transaction not found")
+            # تحديث الحقول
+            tx.treasury = data.treasury
+            tx.amount = data.amount
+            tx.statement = data.statement
+            tx.category = data.category
+            tx.date = data.date
+            tx.type = data.type
+            tx.employee = data.employee
+            tx.updated_at = datetime.datetime.utcnow()
+            action = "update"
+        else:
+            # إضافة جديدة
+            tx = Transaction(
+                company_code=data.company_code,
+                branch_code=data.branch_code,
+                serial=new_serial,
+                treasury=data.treasury,
+                amount=data.amount,
+                statement=data.statement,
+                category=data.category,
+                date=data.date,
+                type=data.type,
+                employee=data.employee,
+            )
+            db.add(tx)
+            action = "insert"
+
+        await db.commit()
+        await db.refresh(tx)
+
+        # 🔹 بث التغيير عبر WebSocket لكل الأجهزة المتصلة بنفس الشركة
+        await manager.broadcast(data.company_code, {
+            "type": "transaction",
+            "action": action,
+            "data": {
+                "id": tx.id,
+                "company_code": tx.company_code,
+                "branch_code": tx.branch_code,
+                "serial": tx.serial,
+                "treasury": tx.treasury,
+                "amount": tx.amount,
+                "statement": tx.statement,
+                "category": tx.category,
+                "date": tx.date,
+                "type": tx.type,
+                "employee": tx.employee,
+                "updated_at": tx.updated_at.isoformat() if tx.updated_at else None
+            }
+        })
+
+        # 🔹 نفس الرد الذي كان يعود من Firebase (متطابق تماماً)
         return {
-            "status": "success", 
-            "message": "تم تعديل الإذن وتحديث قاعدة البيانات بنجاح" if is_update else "تم حفظ الإذن الجديد بنجاح",
-            "serial": final_serial,
-            "action": "update" if is_update else "insert"
+            "status": "success",
+            "serial": tx.serial,
+            "action": action,
+            "message": "تم تعديل الإذن وتحديث قاعدة البيانات بنجاح" if action == "update" else "تم حفظ الإذن الجديد بنجاح"
         }
+
+    except HTTPException:
+        raise
     except Exception as e:
+        await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 
 # ==========================================
-# 4. حذف إذن من الأرشيف (الرادار سيلتقط الحذف تلقائياً)
-# ==========================================
-# 👈 تم التعديل: المسار الآن يستقبل branch_code
-@router.delete("/delete/{company_code}/{branch_code}/{serial}")
-async def delete_transaction(company_code: str, branch_code: str, serial: int):
-    try:
-        # 👈 تم التعديل: مطابقة المعرف الفريد الجديد في الفايربيز
-        unique_doc_id = f"branch_{branch_code}_{serial}"
-
-        # الحذف الفعلي للمستند (الفلاتر سيلتقط إشارة DocumentChangeType.removed فوراً)
-        db.collection("transactions").document(company_code)\
-            .collection("daily_records").document(unique_doc_id).delete()
-            
-        return {
-            "status": "success", 
-            "message": "تم حذف الإذن بنجاح من الخادم الرئيسي", 
-            "deleted_id": unique_doc_id
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ==========================================
-# 2. جلب قائمة الأذون للمعاينة المفلترة بالتاريخ وكود الفرع ذكياً
+# 2. جلب قائمة الأذون (مع فلترة بالتاريخ والفرع)
 # ==========================================
 @router.get("/list/{company_code}")
 async def get_transactions(
-    company_code: str, 
-    start_date: str, 
-    end_date: str, 
-    branch_code: Optional[str] = Query(None) # 👈 تم التعديل هنا
+    company_code: str,
+    start_date: str = Query(...),
+    end_date: str = Query(...),
+    branch_code: str = Query(None),
+    db: AsyncSession = Depends(get_db)
 ):
     try:
-        # 1️⃣ بناء الاستعلام الأساسي المفلتر بنطاق التاريخ
-        query = db.collection("transactions").document(company_code)\
-            .collection("daily_records")\
-            .where("date", ">=", start_date)\
-            .where("date", "<=", end_date)
-        
-        # 2️⃣ شرط الفلترة الذكي: بناءً على كود الفرع
-        # وضعنا استثناء للكلمات العامة التي قد يرسلها الفلاتر عند اختيار "الكل"
+        stmt = select(Transaction).where(
+            Transaction.company_code == company_code,
+            Transaction.date >= start_date,
+            Transaction.date <= end_date
+        )
         if branch_code and branch_code not in ["الكل", "كل الفروع", "all", ""]:
-            query = query.where("branch_code", "==", branch_code)
-            
-        # تنفيذ الاستعلام وجلب المستندات
-        docs = query.stream()
-        
+            stmt = stmt.where(Transaction.branch_code == branch_code)
+
+        stmt = stmt.order_by(desc(Transaction.date), desc(Transaction.serial))
+        result = await db.execute(stmt)
+        docs = result.scalars().all()
+
+        # تحويل النتائج إلى قواميس (نفس تنسيق Firestore القديم)
         results = []
-        for d in docs:
-            item = d.to_dict()
-            results.append(item)
-            
-        # الترتيب بناءً على التاريخ (أحدث تاريخ أولاً) ثم بناءً على السيريال
-        return sorted(results, key=lambda x: (x.get('date', ''), x.get('serial', 0)), reverse=True)
-        
+        for doc in docs:
+            results.append({
+                "id": doc.id,
+                "company_code": doc.company_code,
+                "branch_code": doc.branch_code,
+                "serial": doc.serial,
+                "treasury": doc.treasury,
+                "amount": doc.amount,
+                "statement": doc.statement,
+                "category": doc.category,
+                "date": doc.date,
+                "type": doc.type,
+                "employee": doc.employee,
+                "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
+            })
+        return results
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 # ==========================================
-# 3. جلب التحديثات بدءاً من رقم إذن معين لتحديث الـ Hive لباقي المستخدمين
+# 3. جلب التحديثات بدءاً من رقم إذن معين
 # ==========================================
 @router.get("/updates/{company_code}/{from_serial}")
-async def get_transactions_from_serial(company_code: str, from_serial: int):
+async def get_transactions_from_serial(
+    company_code: str,
+    from_serial: int,
+    db: AsyncSession = Depends(get_db)
+):
     try:
-        docs = db.collection("transactions").document(company_code)\
-            .collection("daily_records")\
-            .where("serial", ">=", from_serial)\
-            .stream()
-        
+        stmt = select(Transaction).where(
+            Transaction.company_code == company_code,
+            Transaction.serial >= from_serial
+        ).order_by(Transaction.serial)
+        result = await db.execute(stmt)
+        docs = result.scalars().all()
+
         results = []
-        for d in docs:
-            results.append(d.to_dict())
-            
-        return sorted(results, key=lambda x: x.get('serial', 0))
+        for doc in docs:
+            results.append({
+                "id": doc.id,
+                "company_code": doc.company_code,
+                "branch_code": doc.branch_code,
+                "serial": doc.serial,
+                "treasury": doc.treasury,
+                "amount": doc.amount,
+                "statement": doc.statement,
+                "category": doc.category,
+                "date": doc.date,
+                "type": doc.type,
+                "employee": doc.employee,
+                "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
+            })
+        return results
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 # ==========================================
-# 5. ملخص الأرصدة الخفيف والمتوافق مع حسابات الـ Hive المحلية
+# 4. حذف إذن
+# ==========================================
+@router.delete("/delete/{company_code}/{branch_code}/{serial}")
+async def delete_transaction(
+    company_code: str,
+    branch_code: str,
+    serial: int,
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        stmt = select(Transaction).where(
+            Transaction.company_code == company_code,
+            Transaction.branch_code == branch_code,
+            Transaction.serial == serial
+        )
+        result = await db.execute(stmt)
+        tx = result.scalar_one_or_none()
+        if not tx:
+            raise HTTPException(status_code=404, detail="Transaction not found")
+
+        await db.delete(tx)
+        await db.commit()
+
+        # بث حدث الحذف
+        await manager.broadcast(company_code, {
+            "type": "transaction",
+            "action": "delete",
+            "data": {
+                "id": tx.id,
+                "company_code": tx.company_code,
+                "branch_code": tx.branch_code,
+                "serial": tx.serial,
+            }
+        })
+
+        return {
+            "status": "success",
+            "message": "تم حذف الإذن بنجاح من الخادم الرئيسي",
+            "deleted_id": f"branch_{branch_code}_{serial}"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==========================================
+# 5. جلب آخر سيريال
+# ==========================================
+@router.get("/last_serial/{company_code}")
+async def get_last_serial(
+    company_code: str,
+    branch_code: str = Query(None),
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        stmt = select(Transaction).where(Transaction.company_code == company_code)
+        if branch_code and branch_code not in ["الكل", "كل الفروع", "all", ""]:
+            stmt = stmt.where(Transaction.branch_code == branch_code)
+        stmt = stmt.order_by(desc(Transaction.serial)).limit(1)
+        result = await db.execute(stmt)
+        last = result.scalar_one_or_none()
+        return {"last_serial": last.serial if last else 0}
+
+    except Exception as e:
+        return {"last_serial": 0}
+
+
+# ==========================================
+# 6. ملخص الأرصدة (يتم حسابه محلياً في Flutter، لكن نتركه للتوافق)
 # ==========================================
 @router.get("/summary/{company_code}")
 async def get_summary(company_code: str):
-    try:
-        treasuries_docs = db.collection("coding").document(company_code).collection("treasuries").stream()
-        active_treasuries = [t.to_dict().get("name") for t in treasuries_docs if t.to_dict().get("name")]
-        
-        return {"status": "success", "active_treasuries": active_treasuries}
-    except Exception as e:
-        return {"status": "error", "active_treasuries": [], "detail": str(e)}
-
-
-# ==========================================
-# 6. جلب آخر سيريال 
-# ==========================================
-@router.get("/last_serial/{company_code}")
-async def get_last_serial(company_code: str, branch_code: Optional[str] = Query(None)): # 👈 تم التعديل هنا
-    try:
-        query = db.collection("transactions").document(company_code).collection("daily_records")
-        
-        # 👈 تم التعديل: الفلترة بكود الفرع
-        if branch_code and branch_code not in ["الكل", "كل الفروع", "all", ""]:
-            query = query.where("branch_code", "==", branch_code)
-            
-        docs = query.order_by("serial", direction=firestore.Query.DESCENDING).limit(1).get()
-        
-        if not docs:
-            return {"last_serial": 0}
-        return {"last_serial": docs[0].to_dict().get("serial", 0)}
-    except Exception as e:
-        return {"last_serial": 0}
+    # يتم حساب الأرصدة محلياً في Flutter عبر Hive، لذا نعيد قائمة فارغة
+    # لكن نحتفظ بالدالة للتوافق مع الكود القديم
+    return {"status": "success", "active_treasuries": []}

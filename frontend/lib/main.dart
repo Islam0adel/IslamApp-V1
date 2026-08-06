@@ -3,29 +3,40 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart'; 
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_flutter/hive_flutter.dart'; 
-import 'package:cloud_firestore/cloud_firestore.dart'; // 🌟 استيراد الفايربيز
+// import 'package:cloud_firestore/cloud_firestore.dart'; // 🌟 استيراد الفايربيز (يبقى للتوافق مع الكود القديم)
 import 'core/theme.dart';
 import 'views/auth/login_screen.dart';
 import 'views/auth/register_screen.dart';
 import 'views/dashboard/home_page.dart';
 import 'views/auth/forgot_password_screen.dart';
 import 'firebase_options.dart'; 
-import 'services/global_sync_service.dart'; // 🌟 استيراد ملف الخدمة ليتعرف على GlobalSyncService
-// import 'services/permissions_service.dart';
+import 'services/global_sync_service.dart'; // 🌟 استيراد ملف الخدمة (الذي يحتوي على WebSocket الآن)
 
-// 🌟 المتغيرات العالمية للرادار المركزي
+// 🌟 المتغيرات العالمية للرادار المركزي (تم إلغاؤها لاستخدام WebSocket)
+// لكن نتركها مؤقتاً للتوافق
 StreamSubscription? globalSyncSubscription;
-StreamSubscription? codingSyncSubscription; // ✅ إضافة اشتراك خاص بالتكويد
+StreamSubscription? codingSyncSubscription;
 StreamSubscription? inventorySyncSubscription;
-final GlobalSyncService _syncService = GlobalSyncService(); // 🌟 الآن سيتعرف عليها بدون أي خطأ
+StreamSubscription? supplierSyncSubscription;
 
-// 🌟 دالة تشغيل الرادار اللحظي المحدثة بالمنظومة الموضعية الذكية وتوفير القراءات
-void initializeGlobalListener(String companyCode) async { // 👈 تم إعادة async هنا لأننا سننتظر الـ Future
-  // إلغاء الاشتراكات السابقة
+final GlobalSyncService _syncService = GlobalSyncService(); // 🌟 الآن يستخدم WebSocket داخلياً
+
+// 🌟 دالة تشغيل الرادار اللحظي - الآن تستخدم WebSocket بدلاً من Firestore Listeners
+void initializeGlobalListener(String companyCode) async {
+  // إلغاء الاشتراكات السابقة (إن وجدت)
   globalSyncSubscription?.cancel(); 
   codingSyncSubscription?.cancel();
+  inventorySyncSubscription?.cancel();
+  supplierSyncSubscription?.cancel();
   
-  // 1. تشغيل مستمع اليوميات (القديم)
+  // ✅ استخدام WebSocket للمزامنة بدلاً من Firestore Listeners
+  print("🌐 بدء المزامنة عبر WebSocket للشركة: $companyCode");
+  _syncService.startSync(companyCode); // استخدام WebSocketSyncService
+  
+  // ملاحظة: لم نعد بحاجة إلى مستمعات Firestore، كل شيء يتم عبر WebSocket
+  // لكننا نترك الكود القديم معلقاً للرجوع إليه إذا دعت الحاجة
+  /*
+  // 1. تشغيل مستمع اليوميات (القديم) - ملغى لصالح WebSocket
   Stream<QuerySnapshot> stream = await _syncService.startGlobalListener(companyCode);
   globalSyncSubscription = stream.listen((snapshot) {
     for (var change in snapshot.docChanges) {
@@ -40,7 +51,7 @@ void initializeGlobalListener(String companyCode) async { // 👈 تم إعاد�
     }
   });
 
-  // 2. تشغيل مستمع التكويد (الجديد)
+  // 2. تشغيل مستمع التكويد (القديم) - ملغى لصالح WebSocket
   Stream<QuerySnapshot> codingStream = await _syncService.startCodingListener(companyCode);
   codingSyncSubscription = codingStream.listen((snapshot) {
     print("📦 استقبلت لقطة جديدة من التكويد، عدد التغييرات: ${snapshot.docChanges.length}");
@@ -51,25 +62,25 @@ void initializeGlobalListener(String companyCode) async { // 👈 تم إعاد�
       if (change.type == DocumentChangeType.added || change.type == DocumentChangeType.modified) {
         _syncService.processCodingUpdate(companyCode, docId, data);
       } else if (change.type == DocumentChangeType.removed) {
-        // في حالة الحذف، نستخدم الدالة التي تبحث في جميع الأقسام
         _syncService.processCodingDelete(companyCode, docId, '');
       }
     }
   });
 
-  // 3. تشغيل مستمع الجرد
-Stream<QuerySnapshot> inventoryStream = await _syncService.startInventoryListener(companyCode);
-inventorySyncSubscription = inventoryStream.listen((snapshot) {
-  for (var change in snapshot.docChanges) {
-    final String docId = change.doc.id;
-    final Map<String, dynamic> data = change.doc.data() as Map<String, dynamic>? ?? {};
-    if (change.type == DocumentChangeType.added || change.type == DocumentChangeType.modified) {
-      _syncService.processInventoryUpdate(companyCode, docId, data);
-    } else if (change.type == DocumentChangeType.removed) {
-      _syncService.processInventoryDelete(companyCode, docId);
+  // 3. تشغيل مستمع الجرد (القديم) - ملغى لصالح WebSocket
+  Stream<QuerySnapshot> inventoryStream = await _syncService.startInventoryListener(companyCode);
+  inventorySyncSubscription = inventoryStream.listen((snapshot) {
+    for (var change in snapshot.docChanges) {
+      final String docId = change.doc.id;
+      final Map<String, dynamic> data = change.doc.data() as Map<String, dynamic>? ?? {};
+      if (change.type == DocumentChangeType.added || change.type == DocumentChangeType.modified) {
+        _syncService.processInventoryUpdate(companyCode, docId, data);
+      } else if (change.type == DocumentChangeType.removed) {
+        _syncService.processInventoryDelete(companyCode, docId);
+      }
     }
-  }
-});
+  });
+  */
 }
 
 // 🌟 دالة إيقاف الرادار عند تسجيل الخروج
@@ -77,13 +88,18 @@ void disposeGlobalListener() {
   globalSyncSubscription?.cancel();
   codingSyncSubscription?.cancel();
   inventorySyncSubscription?.cancel();
+  supplierSyncSubscription?.cancel();
+  
+  // ✅ إيقاف اتصال WebSocket
+  _syncService.stopSync();
+  print("🔌 تم إيقاف المزامنة (WebSocket)");
 }
 
 void main() async {
   // 1. تأمين ربط العناصر قبل أي عمليات أخرى
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 2. تهيئة فايربيز 
+  // 2. تهيئة فايربيز (يبقى للتحقق والمصادقة)
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
@@ -98,11 +114,12 @@ void main() async {
   await Hive.openBox('inventory_box');
   await Hive.openBox('supplier_box');
 
-    // 🌟 سطر مؤقت: قم بإلغاء التعليق عنه لمسح كل البيانات المحلية وتصفيرها تماماً، ثم قفل السطر بعد أول تشغيل
+  // 🌟 سطر مؤقت: قم بإلغاء التعليق عنه لمسح كل البيانات المحلية وتصفيرها تماماً، ثم قفل السطر بعد أول تشغيل
   // Hive.box('daily_transactions_box').clear();
   // Hive.box('coding_box').clear();
-  // Hive.Box('inventory_box').clear();
-  // Hive.Box('supplier_box').clear();
+  // Hive.box('inventory_box').clear();
+  // Hive.box('supplier_box').clear();
+  
   // 4. قراءة حالة الدخول من الذاكرة المحلية (SharedPreferences مخصصة لبيانات الحساب فقط)
   final prefs = await SharedPreferences.getInstance();
   final bool rememberMe = prefs.getBool('remember_me') ?? false;
@@ -120,7 +137,6 @@ void main() async {
       userName: userName,
       companyName: companyName ?? 'شركتي',
       companyCode: companyCode,
-      
     );
   } else {
     initialScreen = const LoginScreen();
@@ -152,7 +168,7 @@ class _IslamAppState extends State<IslamApp> {
 
   @override
   void dispose() {
-    disposeGlobalListener(); // 🌟 غلق الرادار عند إغلاق التطبيق بالكامل
+    disposeGlobalListener(); // 🌟 غلق الرادار عند إغلاق التطبيق بالكامل (يغلق WebSocket أيضاً)
     super.dispose();
   }
 

@@ -129,20 +129,16 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     final allowed = PermissionsService().allowedBranches;
     List<Map<String, String>> filteredBranches;
     if (allowed != null && !allowed.contains('all')) {
-      // المستخدم لديه فروع محددة
       filteredBranches = fetchedBranches.where((b) => allowed.contains(b['code'])).toList();
     } else {
-      // المستخدم لديه صلاحية كل الفروع (أو null)
       filteredBranches = List.from(fetchedBranches);
     }
 
     // ═══ إضافة خيار "كل الفروع" دائماً إذا كانت الصلاحية تسمح بذلك ═══
     if (allowed == null || allowed.contains('all')) {
-      // نضيف "كل الفروع" في البداية (بغض النظر عن عدد الفروع)
       filteredBranches.insert(0, {'name': 'كل الفروع', 'code': 'all'});
     }
 
-    // إذا كانت القائمة فارغة (لا توجد فروع مسموحة)، نضيف عنصر وهمي
     if (filteredBranches.isEmpty) {
       filteredBranches = [{'name': 'لا توجد فروع مسموحة', 'code': 'none'}];
     }
@@ -161,34 +157,31 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           _selectedBranchCode = savedBranchCode;
           _selectedBranchName = savedBranchName ?? "كل الفروع";
         } else {
-          // استبعاد 'none' للحصول على الفروع الحقيقية (بما فيها 'all')
-          var realBranches = _branches.where((b) => b['code'] != 'none').toList();
-          if (realBranches.length == 1) {
-            // خيار واحد فقط (قد يكون 'all' أو فرع حقيقي)
+          // ✅ استبعاد 'none' و 'all' للحصول على الفروع الحقيقية فقط
+          var realBranches = _branches.where((b) => b['code'] != 'none' && b['code'] != 'all').toList();
+          
+          if (realBranches.isNotEmpty) {
+            // ✅ اختيار أول فرع حقيقي (الفرع الرئيسي عادة)
             _selectedBranchCode = realBranches[0]['code']!;
             _selectedBranchName = realBranches[0]['name']!;
+            // ✅ حفظ الاختيار ليتم تذكره في下次
             prefs.setString('selected_branch_code', _selectedBranchCode);
             prefs.setString('selected_branch_name', _selectedBranchName);
-          } else if (realBranches.isNotEmpty) {
-            // عدة خيارات → نختار 'all' إذا وجد، وإلا الأول
+            print("✅ تم اختيار الفرع الافتراضي: $_selectedBranchName ($_selectedBranchCode)");
+          } else {
+            // لا توجد فروع حقيقية → نستخدم 'all' إذا وجد
             if (_branches.any((b) => b['code'] == 'all')) {
               _selectedBranchCode = 'all';
               _selectedBranchName = 'كل الفروع';
             } else {
-              _selectedBranchCode = realBranches[0]['code']!;
-              _selectedBranchName = realBranches[0]['name']!;
+              _selectedBranchCode = 'none';
+              _selectedBranchName = 'لا توجد فروع';
             }
-            prefs.setString('selected_branch_code', _selectedBranchCode);
-            prefs.setString('selected_branch_name', _selectedBranchName);
-          } else {
-            // لا توجد خيارات
-            _selectedBranchCode = 'none';
-            _selectedBranchName = 'لا توجد فروع';
           }
         }
       });
 
-      // ═══ عرض الحوار التلقائي فقط إذا كان عدد الفروع الحقيقية (غير 'all' و 'none') > 1 ═══
+      // عرض الحوار التلقائي فقط إذا كان عدد الفروع الحقيقية > 1
       var realBranches = _branches.where((b) => b['code'] != 'all' && b['code'] != 'none').toList();
       if (realBranches.length > 1) {
         WidgetsBinding.instance.addPostFrameCallback((_) {

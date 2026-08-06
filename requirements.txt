@@ -5,3 +5,7 @@ pydantic
 google-cloud-firestore
 python-multipart
 pydantic[email]>=2.0.0
+python-dotenv
+sqlalchemy
+asyncpg
+psycopg2-binary

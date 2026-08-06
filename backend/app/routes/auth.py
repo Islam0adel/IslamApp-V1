@@ -1,15 +1,41 @@
-from fastapi import APIRouter, HTTPException, Header, Body, Query
+from fastapi import APIRouter, HTTPException, Header, Body, Query, Depends
 from pydantic import BaseModel, EmailStr
-from app.core.firebase_setup import db
+from app.core.firebase_setup import db  # نبقيه للتحقق من التوكن
 from google.cloud import firestore
 from firebase_admin import auth as admin_auth
 from typing import Optional, List
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.database import get_db
+from app.core.models import Company, Branch
+from sqlalchemy import select
 
 router = APIRouter()
 
-# ========== إنشاء شركة افتراضية إذا لم تكن موجودة ==========
+USER_ROLES = {
+    "1": "موظف",
+    "200": "مشرف",
+    "201": "مدير",
+    "99": "صاحب البرنامج"
+}
+
+class UserRegister(BaseModel):
+    name: str
+    email: EmailStr
+    uid: str
+    company_code: str
+    job_code: str
+
+class CompanyModel(BaseModel):
+    code: str
+    name: str
+
+class PermissionsUpdateModel(BaseModel):
+    email: str
+    permissions: dict
+    allowed_branches: Optional[List[str]] = None
+
+# ========== إنشاء شركة افتراضية ==========
 def create_default_company():
-    """تأكد من وجود شركة 01 - اسلام في قاعدة البيانات"""
     try:
         default_company_ref = db.collection("companies").document("01")
         if not default_company_ref.get().exists:
@@ -23,60 +49,43 @@ def create_default_company():
     except Exception as e:
         print(f"⚠️ خطأ في إنشاء الشركة الافتراضية: {e}")
 
-# استدعاء الدالة عند بدء التشغيل (ضعها بعد تعريف `db` مباشرة)
 create_default_company()
-# ======================================================
 
-USER_ROLES = {
-    "1": "موظف",
-    "200": "مشرف",
-    "201": "مدير",
-    "99": "صاحب البرنامج"
-}
-
-class UserRegister(BaseModel):
-    name: str
-    email: EmailStr
-    uid: str  # سنستقبل الـ UID الناتج من Firebase Auth
-    company_code: str
-    job_code: str
-
-# نموذج جديد مخصص لإضافة شركة
-class CompanyModel(BaseModel):
-    code: str
-    name: str
-
+# ==========================================
+# 1. تسجيل مستخدم جديد
+# ==========================================
 @router.post("/register")
-async def register(user: UserRegister):
+async def register(
+    user: UserRegister,
+    db: AsyncSession = Depends(get_db)
+):
     try:
         email_clean = user.email.strip().lower()
         comp_code = user.company_code.strip()
         job_code = user.job_code.strip()
 
-        # 1. التحقق من الشركة من الفايربيز مباشرة
+        # التحقق من الشركة من Firestore
         company_doc = db.collection("companies").document(comp_code).get()
         if not company_doc.exists:
             raise HTTPException(status_code=403, detail="كود الشركة غير صحيح أو غير مسجل في النظام")
-            
+
         company_data = company_doc.to_dict()
-        # التأكد أن الشركة غير موقوفة
         if not company_data.get("is_active", True):
             raise HTTPException(status_code=403, detail="هذه الشركة موقوفة حالياً، يرجى مراجعة إدارة البرنامج")
-            
+
         company_name = company_data.get("name")
 
-        # 2. التحقق من كود الوظيفة
         if job_code not in USER_ROLES:
             raise HTTPException(status_code=403, detail="كود الوظيفة غير صحيح")
 
         job_title = USER_ROLES.get(job_code)
 
+        # التحقق من وجود المستخدم في Firestore
         user_ref = db.collection("users").document(email_clean)
-        
         if user_ref.get().exists:
             raise HTTPException(status_code=400, detail="هذا البريد مسجل بالفعل في قاعدة البيانات")
 
-        # تخزين البيانات الشخصية والصلاحيات
+        # حفظ في Firestore (نبقيه كما هو)
         user_data_to_save = {
             "uid": user.uid,
             "name": user.name.strip(),
@@ -87,37 +96,35 @@ async def register(user: UserRegister):
             "job_title": job_title,
             "allowed_branches": ["all"],
             "created_at": firestore.SERVER_TIMESTAMP,
-            
         }
-        
         user_ref.set(user_data_to_save)
+
         return {"status": "success", "message": f"تم تسجيل {job_title} في {company_name}"}
 
     except Exception as e:
         if isinstance(e, HTTPException): raise e
         raise HTTPException(status_code=500, detail=str(e))
 
+# ==========================================
+# 2. التحقق من المستخدم (يبقى كما هو)
+# ==========================================
 @router.post("/verify-user")
 async def verify_user(authorization: str = Header(None)):
-    """تأكيد الهوية عبر التوكن وجلب الصلاحيات مع التحقق من حالة الشركة"""
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="لم يتم إرسال توكن صالح")
-    
+
     try:
         token = authorization.split("Bearer ")[1]
-        # التحقق من التوكن عبر جوجل
         decoded_token = admin_auth.verify_id_token(token)
         email = decoded_token.get("email")
 
-        # جلب بيانات المستخدم من Firestore
         user_doc = db.collection("users").document(email).get()
         if not user_doc.exists:
             raise HTTPException(status_code=404, detail="بيانات المستخدم غير موجودة")
-            
+
         data = user_doc.to_dict()
         comp_code = data.get("company_code")
 
-        # التحقق من حالة الشركة لمنع الدخول إذا كان الاشتراك موقوفاً
         company_doc = db.collection("companies").document(comp_code).get()
         if not company_doc.exists:
             raise HTTPException(status_code=404, detail="الشركة التابع لها هذا الحساب غير موجودة")
@@ -136,22 +143,27 @@ async def verify_user(authorization: str = Header(None)):
             "job_title": data.get("job_title"),
         }
     except Exception as e:
-        if isinstance(e, HTTPException): raise e # إرسال رسالة الإيقاف إن وجدت
-        print(f"⚠️ خطأ في التحقق من التوكن: {e}") 
+        if isinstance(e, HTTPException): raise e
+        print(f"⚠️ خطأ في التحقق من التوكن: {e}")
         raise HTTPException(status_code=401, detail="انتهت صلاحية الجلسة، سجل دخولك مرة أخرى")
 
+# ==========================================
+# 3. التحقق من كود الاستعادة
+# ==========================================
 @router.post("/verify-reset")
-async def verify_reset(email: str = Body(..., embed=True), company_code: str = Body(..., embed=True), job_code: str = Body(..., embed=True)):
-    """التحقق من الأكواد قبل السماح بإرسال رابط الاستعادة"""
+async def verify_reset(
+    email: str = Body(..., embed=True),
+    company_code: str = Body(..., embed=True),
+    job_code: str = Body(..., embed=True)
+):
     try:
         user_doc = db.collection("users").document(email.strip().lower()).get()
         if not user_doc.exists:
             raise HTTPException(status_code=404, detail="البريد غير مسجل")
-            
+
         user_data = user_doc.to_dict()
-        if (user_data.get("company_code") == company_code.strip() and 
+        if (user_data.get("company_code") == company_code.strip() and
             user_data.get("job_code") == job_code.strip()):
-            
             link = admin_auth.generate_password_reset_link(email)
             return {"status": "success", "reset_link": link}
         else:
@@ -159,37 +171,34 @@ async def verify_reset(email: str = Body(..., embed=True), company_code: str = B
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# =====================================================================
-# مسارات إدارة الشركات (خاصة بصاحب البرنامج فقط - كود 99)
-# =====================================================================
-
+# ==========================================
+# 4. إدارة الشركات (تبقى كما هي)
+# ==========================================
 @router.post("/companies/add")
 async def add_new_company(company: CompanyModel, admin_job_code: str = Query(...)):
-    """تكويد شركة جديدة"""
     if admin_job_code != "99":
         raise HTTPException(status_code=403, detail="عذراً، هذه الصلاحية خاصة بصاحب البرنامج فقط!")
-        
+
     comp_code = company.code.strip()
     comp_name = company.name.strip()
-    
+
     comp_ref = db.collection("companies").document(comp_code)
     if comp_ref.get().exists:
         raise HTTPException(status_code=400, detail="كود هذه الشركة مسجل بالفعل في النظام")
-        
+
     comp_ref.set({
         "code": comp_code,
         "name": comp_name,
-        "is_active": True, # الشركة نشطة بشكل افتراضي عند الإضافة
+        "is_active": True,
         "created_at": firestore.SERVER_TIMESTAMP
     })
     return {"status": "success", "message": f"تم تكويد شركة [{comp_name}] بنجاح"}
 
 @router.get("/companies/all")
 async def get_all_companies(admin_job_code: str = Query(...)):
-    """جلب جميع الشركات مع حالتها"""
     if admin_job_code != "99":
         raise HTTPException(status_code=403, detail="غير مصرح لك بالوصول")
-        
+
     docs = db.collection("companies").order_by("code").stream()
     companies_list = []
     for doc in docs:
@@ -197,15 +206,18 @@ async def get_all_companies(admin_job_code: str = Query(...)):
     return companies_list
 
 @router.post("/companies/toggle")
-async def toggle_company_status(code: str = Body(..., embed=True), is_active: bool = Body(..., embed=True), admin_job_code: str = Body(..., embed=True)):
-    """تفعيل أو إيقاف اشتراك شركة"""
+async def toggle_company_status(
+    code: str = Body(..., embed=True),
+    is_active: bool = Body(..., embed=True),
+    admin_job_code: str = Body(..., embed=True)
+):
     if admin_job_code != "99":
         raise HTTPException(status_code=403, detail="غير مصرح لك بالوصول")
-        
+
     comp_ref = db.collection("companies").document(code.strip())
     if not comp_ref.get().exists:
         raise HTTPException(status_code=404, detail="الشركة غير موجودة")
-        
+
     comp_ref.update({"is_active": is_active})
     status_txt = "تفعيلها" if is_active else "إيقافها لعدم السداد"
     return {"status": "success", "message": f"تم تحديث حالة الشركة بنجاح و{status_txt}"}
@@ -217,33 +229,30 @@ async def update_company(
     new_name: str = Body(...),
     admin_job_code: str = Body(...)
 ):
-    """تعديل كود واسم الشركة"""
     try:
         if admin_job_code != "99":
             raise HTTPException(status_code=403, detail="غير مصرح لك بالوصول")
-        
+
         old_code = old_code.strip()
         new_code = new_code.strip()
         new_name = new_name.strip()
-        
+
         comp_ref = db.collection("companies").document(old_code)
         comp_doc = comp_ref.get()
         if not comp_doc.exists:
             raise HTTPException(status_code=404, detail="الشركة غير موجودة")
-        
-        # إذا تم تغيير الكود
+
         if old_code != new_code:
             new_ref = db.collection("companies").document(new_code)
             if new_ref.get().exists:
                 raise HTTPException(status_code=400, detail="الكود الجديد مستخدم بالفعل")
-            
+
             old_data = comp_doc.to_dict()
             old_data["code"] = new_code
             old_data["name"] = new_name
             new_ref.set(old_data)
             comp_ref.delete()
-            
-            # تحديث المستخدمين المرتبطين (بدون async for لتجنب المشاكل)
+
             users_ref = db.collection("users").where("company_code", "==", old_code).get()
             for user_doc in users_ref:
                 user_doc.reference.update({
@@ -255,10 +264,9 @@ async def update_company(
             users_ref = db.collection("users").where("company_code", "==", old_code).get()
             for user_doc in users_ref:
                 user_doc.reference.update({"company_name": new_name})
-        
-        # إرسال رد واضح
+
         return {"status": "success", "message": "تم تعديل بيانات الشركة"}
-    
+
     except HTTPException:
         raise
     except Exception as e:
@@ -266,45 +274,31 @@ async def update_company(
         raise HTTPException(status_code=500, detail=f"خطأ داخلي: {str(e)}")
 
 @router.delete("/companies/delete/{code}")
-async def delete_company(
-    code: str,
-    admin_job_code: str = Query(...)
-):
-    """حذف شركة بالكامل (بشرط ألا يكون لها مستخدمين)"""
+async def delete_company(code: str, admin_job_code: str = Query(...)):
     try:
         if admin_job_code != "99":
             raise HTTPException(status_code=403, detail="غير مصرح لك بالوصول")
-        
+
         code = code.strip()
         comp_ref = db.collection("companies").document(code)
         if not comp_ref.get().exists:
             raise HTTPException(status_code=404, detail="الشركة غير موجودة")
-        
+
         if code == "01":
             raise HTTPException(status_code=403, detail="لا يمكن حذف الشركة الافتراضية")
-        
-        # التحقق من وجود مستخدمين (بدون async for)
-        users_query = db.collection("users").where("company_code", "==", code).limit(1).get()
-        # if len(users_query) > 0:
-        #     raise HTTPException(status_code=400, detail="لا يمكن حذف الشركة لأن بها مستخدمين مسجلين")
-        
+
         comp_ref.delete()
         return {"status": "success", "message": "تم حذف الشركة"}
-    
+
     except HTTPException:
         raise
     except Exception as e:
         print(f"⚠️ خطأ في حذف الشركة: {e}")
         raise HTTPException(status_code=500, detail=f"خطأ داخلي: {str(e)}")
 
-# =====================================================================
-# مسار حفظ الصلاحيات (خاص بالخادم لتجاوز قواعد الأمان)
-# =====================================================================
-class PermissionsUpdateModel(BaseModel):
-    email: str
-    permissions: dict
-    allowed_branches: Optional[List[str]] = None
-
+# ==========================================
+# 5. تحديث الصلاحيات (يبقى كما هو)
+# ==========================================
 @router.post("/update-permissions")
 async def update_user_permissions(data: PermissionsUpdateModel):
     try:

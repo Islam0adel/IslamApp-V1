@@ -48,6 +48,8 @@ dependencies:
   printing: ^5.11.1  # بتساعد في تحويل وتصدير الـ PDF ومشاركته مع النظام
   # screenshot: ^1.3.0
 
+  web_socket_channel: ^2.4.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

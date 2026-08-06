@@ -258,4 +258,36 @@ class DailyService {
     localTx.sort((a, b) => (a['serial'] as int).compareTo(b['serial'] as int));
     return localTx.last['serial'] as int;
   }
+
+  // في daily_service.dart
+
+// دالة لجلب جميع الحركات من السيرفر (بدون تحديد فترة زمنية)
+Future<void> syncAllTransactions(String companyCode) async {
+  try {
+    // استخدم نطاق زمني واسع جداً لضمان جلب كل البيانات
+    final startDate = '2020-01-01';
+    final endDate = '2100-12-31';
+    
+    final response = await http.get(
+      Uri.parse('$baseUrl/transactions/list/$companyCode?start_date=$startDate&end_date=$endDate'),
+    );
+
+    if (response.statusCode == 200) {
+      List<dynamic> serverData = jsonDecode(response.body);
+      for (var item in serverData) {
+        // استخدام نفس مفتاح التخزين الموحد (branch_code + serial)
+        String bCode = item['branch_code']?.toString() ?? '1';
+        await _transactionBox.put("branch_${bCode}_${item['serial']}", item);
+      }
+      // بعد التخزين، نحدث الأرصدة المحلية فوراً
+      await getDailySummaryLocal(companyCode);
+      print("✅ تم مزامنة جميع الحركات من السيرفر بنجاح (عدد: ${serverData.length})");
+    } else {
+      throw 'فشل جلب البيانات من السيرفر';
+    }
+  } catch (e) {
+    print("❌ خطأ في مزامنة جميع الحركات: $e");
+    // لا نرمي استثناء حتى لا نوقف التطبيق، فقط نسجل الخطأ
+  }
+}
 }

@@ -117,66 +117,81 @@ class _DailyPageState extends State<DailyPage> {
   }
 
   void _loadInitialData() async {
-    setState(() => _isLoading = true);
-    try {
-      final Box dailyBox = Hive.box('daily_transactions_box');
-      int maxSerial = 0;
-      // حساب أقصى سيريال للفرع الحالي فقط (باستخدام branch_code)
-      for (var item in dailyBox.values) {
-        if (item is Map && item['company_code'] == widget.companyCode) {
-          // فلترة حسب كود الفرع إذا كان محدداً وليس "all"
-          if (widget.selectedBranchCode != null && widget.selectedBranchCode != "all") {
-            if (item['branch_code']?.toString() != widget.selectedBranchCode) continue;
-          }
-          int currentSerial = int.tryParse(item['serial']?.toString() ?? '0') ?? 0;
-          if (currentSerial > maxSerial) maxSerial = currentSerial;
-        }
-      }
-      int nextSerial = maxSerial + 1;
+  setState(() => _isLoading = true);
+  try {
+    final Box dailyBox = Hive.box('daily_transactions_box');
 
-      // جلب الأرصدة للفرع الحالي (تمرير كود الفرع)
-      // جلب الأرصدة للفرع الحالي (تمرير كود الفرع)
-final summary = await _dailyService.getDailySummaryLocal(widget.companyCode, branchCode: widget.selectedBranchCode ?? 'all');
-Hive.box('daily_transactions_box').put("${widget.companyCode}_balances", summary['balances']);
+    // ✅ التحقق من وجود بيانات محلية للشركة الحالية (أي حركة)
+    bool hasLocalData = dailyBox.values.any((tx) =>
+        tx is Map && tx['company_code'] == widget.companyCode);
 
-final Box codingBox = Hive.box('coding_box');
-List<Map<String, dynamic>> safesList = [];
-List<Map<String, dynamic>> typesList = [];
-
-if (!codingBox.containsKey("${widget.companyCode}_safes") || !codingBox.containsKey("${widget.companyCode}_types")) {
-  final safes = await _codingService.getCodingList(companyCode: widget.companyCode, category: "safes");
-  final types = await _codingService.getCodingList(companyCode: widget.companyCode, category: "types");
-  safesList = safes.map((e) => Map<String, dynamic>.from(e.toMap())).toList();
-  typesList = types.map((e) => Map<String, dynamic>.from(e.toMap())).toList();
-} else {
-  var localSafes = codingBox.get("${widget.companyCode}_safes");
-  safesList = (localSafes as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
-  var localTypes = codingBox.get("${widget.companyCode}_types");
-  typesList = (localTypes as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
-}
-
-// ✅ إضافة التصفية هنا (بعد جلب الأنواع)
-typesList = typesList.where((item) {
-  final name = item['name']?.toString() ?? '';
-  return !name.contains('دخول بضاعة') && !name.contains('دفعة');
-}).toList();
-
-setState(() {
-  _treasuryBalances = Map<String, double>.from(summary['balances'] ?? {});
-  _treasuries = safesList;
-  _categories = typesList;
-  if (widget.editItem == null) _currentSerial = nextSerial;
-  if (widget.editItem == null && _selectedTreasury == null && _treasuries.isNotEmpty) {
-    var defaultSafe = _treasuries.firstWhere((s) => s['code']?.toString() == "1", orElse: () => _treasuries.first);
-    if (defaultSafe.containsKey('name')) _selectedTreasury = defaultSafe['name'];
-  }
-        _isLoading = false;
-      });
-    } catch (e) {
-      setState(() => _isLoading = false);
-      print("خطأ في جلب البيانات الافتتاحية: $e");
+    // إذا كانت الذاكرة المحلية فارغة، نجلب جميع الحركات من السيرفر أولاً
+    if (!hasLocalData) {
+      print("📥 الذاكرة المحلية فارغة، جاري جلب جميع الحركات من السيرفر...");
+      await _dailyService.syncAllTransactions(widget.companyCode);
+      print("✅ تم جلب جميع الحركات وتخزينها محلياً");
     }
+
+    // الآن نستكمل حساب السيريال الأقصى (بعد التأكد من وجود البيانات)
+    int maxSerial = 0;
+    for (var item in dailyBox.values) {
+      if (item is Map && item['company_code'] == widget.companyCode) {
+        // فلترة حسب كود الفرع إذا كان محدداً وليس "all"
+        if (widget.selectedBranchCode != null && widget.selectedBranchCode != "all") {
+          if (item['branch_code']?.toString() != widget.selectedBranchCode) continue;
+        }
+        int currentSerial = int.tryParse(item['serial']?.toString() ?? '0') ?? 0;
+        if (currentSerial > maxSerial) maxSerial = currentSerial;
+      }
+    }
+    int nextSerial = maxSerial + 1;
+
+    // جلب الأرصدة للفرع الحالي (تمرير كود الفرع)
+    final summary = await _dailyService.getDailySummaryLocal(
+      widget.companyCode,
+      branchCode: widget.selectedBranchCode ?? 'all'
+    );
+    Hive.box('daily_transactions_box').put("${widget.companyCode}_balances", summary['balances']);
+
+    final Box codingBox = Hive.box('coding_box');
+    List<Map<String, dynamic>> safesList = [];
+    List<Map<String, dynamic>> typesList = [];
+
+    if (!codingBox.containsKey("${widget.companyCode}_safes") || !codingBox.containsKey("${widget.companyCode}_types")) {
+      final safes = await _codingService.getCodingList(companyCode: widget.companyCode, category: "safes");
+      final types = await _codingService.getCodingList(companyCode: widget.companyCode, category: "types");
+      safesList = safes.map((e) => Map<String, dynamic>.from(e.toMap())).toList();
+      typesList = types.map((e) => Map<String, dynamic>.from(e.toMap())).toList();
+    } else {
+      var localSafes = codingBox.get("${widget.companyCode}_safes");
+      safesList = (localSafes as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      var localTypes = codingBox.get("${widget.companyCode}_types");
+      typesList = (localTypes as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    }
+
+    // ✅ إضافة التصفية هنا (بعد جلب الأنواع)
+    typesList = typesList.where((item) {
+      final name = item['name']?.toString() ?? '';
+      return !name.contains('دخول بضاعة') && !name.contains('دفعة');
+    }).toList();
+
+    setState(() {
+      _treasuryBalances = Map<String, double>.from(summary['balances'] ?? {});
+      _treasuries = safesList;
+      _categories = typesList;
+      if (widget.editItem == null) _currentSerial = nextSerial;
+      if (widget.editItem == null && _selectedTreasury == null && _treasuries.isNotEmpty) {
+        var defaultSafe = _treasuries.firstWhere((s) => s['code']?.toString() == "1", orElse: () => _treasuries.first);
+        if (defaultSafe.containsKey('name')) _selectedTreasury = defaultSafe['name'];
+      }
+      _isLoading = false;
+    });
+  } catch (e) {
+    setState(() => _isLoading = false);
+    print("خطأ في جلب البيانات الافتتاحية: $e");
+    // يمكن عرض رسالة للمستخدم
   }
+}
 
   @override
   Widget build(BuildContext context) {
@@ -243,7 +258,7 @@ setState(() {
                 ),
               ),
               Text(
-                "الفرع: ${widget.branchName ?? _getBranchName(widget.selectedBranchCode)}",
+                "${widget.branchName ?? _getBranchName(widget.selectedBranchCode)}",
                 style: const TextStyle(
                   fontFamily: 'Cairo',
                   fontSize: 11,
@@ -688,7 +703,8 @@ setState(() {
         title: const Text("تنبيه قبل الاستيراد", style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold), textAlign: TextAlign.right),
         content: const Text(
           "يرجى التأكد من احتواء ملف الإكسيل على الأعمدة التالية في الصف الأول بأي ترتيب:\n"
-          " 🌟 ( المبلغ  -  البيان  -  التصنيف  -  التاريخ )\n\n"
+          " 🌟 ( المبلغ  -  البيان  -  التصنيف  -  التاريخ )\n"
+          " 💡 يمكن إضافة عمود اختياري باسم (الخزينة) لتحديد الخزينة لكل حركة.\n\n"
           "💡 النظام ذكي بما يكفي لتجاهل أي أعمدة إضافية أخرى بالملف والتعرف التلقائي على الحقول المطلوبة.",
           style: TextStyle(fontFamily: 'Cairo', fontSize: 14),
           textAlign: TextAlign.right,
@@ -720,6 +736,7 @@ setState(() {
         if (bytes == null) throw "تعذر قراءة بيانات الملف";
         var excel = excel_lib.Excel.decodeBytes(bytes);
 
+        // تعريف أسماء الخزائن الافتراضية بناءً على الكود
         String cashTreasuryName = "الخزينة الرئيسية";
         String visaTreasuryName = "فيزا";
         var cashTreasuryObj = _treasuries.firstWhere((t) => t['code']?.toString() == "1", orElse: () => {});
@@ -727,10 +744,14 @@ setState(() {
         var visaTreasuryObj = _treasuries.firstWhere((t) => t['code']?.toString() == "2", orElse: () => {});
         if (visaTreasuryObj.isNotEmpty && visaTreasuryObj.containsKey('name')) visaTreasuryName = visaTreasuryObj['name'];
 
+        // قائمة بأسماء الخزائن المتاحة (للتأكد من صحة المدخلات)
+        List<String> treasuryNames = _treasuries.map((t) => t['name']?.toString() ?? "").where((n) => n.isNotEmpty).toList();
+
         for (var table in excel.tables.keys) {
           var rows = excel.tables[table]!.rows;
           if (rows.isEmpty) continue;
-          int amountIdx = -1, statementIdx = -1, categoryIdx = -1, dateIdx = -1;
+          // فهرسة الأعمدة المطلوبة
+          int amountIdx = -1, statementIdx = -1, categoryIdx = -1, dateIdx = -1, treasuryIdx = -1;
           var headerRow = rows[0];
           for (int col = 0; col < headerRow.length; col++) {
             String headerVal = headerRow[col]?.value?.toString().trim() ?? "";
@@ -738,10 +759,14 @@ setState(() {
             if (headerVal == "البيان") statementIdx = col;
             if (headerVal == "التصنيف") categoryIdx = col;
             if (headerVal == "التاريخ") dateIdx = col;
+            if (headerVal == "الخزينة" || headerVal == "خزينة") treasuryIdx = col; // ✅ دعم عمود الخزينة
           }
+          // التأكد من وجود الأعمدة الأساسية
           if (amountIdx == -1 || statementIdx == -1 || categoryIdx == -1 || dateIdx == -1) {
             throw "الملف لا يحتوي على الأعمدة الأساسية المطلوبة: (المبلغ، البيان، التصنيف، التاريخ). يرجى مراجعة عناوين الأعمدة بالصف الأول.";
           }
+
+          // معالجة الصفوف
           for (int i = 1; i < rows.length; i++) {
             var row = rows[i];
             if (row.isEmpty || amountIdx >= row.length || row[amountIdx] == null || row[amountIdx]?.value == null) continue;
@@ -757,11 +782,29 @@ setState(() {
                 ? row[dateIdx]!.value.toString().trim()
                 : DateFormat('yyyy-MM-dd').format(DateTime.now());
             String formattedDate = rawDate.length >= 10 ? rawDate.substring(0, 10) : rawDate;
+
+            // ✅ تحديد الخزينة: إما من العمود المخصص أو تلقائياً حسب التصنيف
+            String targetTreasury;
+            if (treasuryIdx != -1 && treasuryIdx < row.length && row[treasuryIdx] != null && row[treasuryIdx]?.value != null) {
+              String treasuryFromExcel = row[treasuryIdx]!.value.toString().trim();
+              // إذا كانت القيمة موجودة في قائمة الخزائن، استخدمها، وإلا استخدم القيمة الافتراضية بناءً على التصنيف
+              if (treasuryNames.contains(treasuryFromExcel)) {
+                targetTreasury = treasuryFromExcel;
+              } else {
+                // إذا لم تكن الخزينة معروفة، نستخدم المنطق التلقائي القديم مع تحذير (يمكن إضافة تنبيه)
+                // لكننا سنكتفي باستخدام الافتراضي مع تجاهل القيمة غير المعروفة
+                targetTreasury = (categoryStr == "فيزا") ? visaTreasuryName : cashTreasuryName;
+              }
+            } else {
+              // الطريقة القديمة: حسب التصنيف
+              targetTreasury = (categoryStr == "فيزا") ? visaTreasuryName : cashTreasuryName;
+            }
+
+            // مطابقة التصنيف لتحديد النوع (وارد/صادر)
             var match = _categories.firstWhere((c) => c['name']?.toString().trim() == categoryStr, orElse: () => {});
             String calculatedType = match.isNotEmpty ? (match['type'] ?? "وارد") : "وارد";
-            String targetTreasury = cashTreasuryName;
-            if (categoryStr == "فيزا") targetTreasury = visaTreasuryName;
 
+            // حفظ الحركة
             await _dailyService.saveTransaction(
               companyCode: widget.companyCode,
               serial: 0,
