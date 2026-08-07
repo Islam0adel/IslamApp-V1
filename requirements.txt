@@ -1,5 +1,5 @@
 fastapi
-uvicorn
+uvicorn[standard]>=0.24.0
 firebase-admin
 pydantic
 google-cloud-firestore
@@ -9,3 +9,5 @@ python-dotenv
 sqlalchemy
 asyncpg==0.29.0
 psycopg2-binary
+websockets>=12.0
+wsproto>=1.2
