@@ -195,4 +195,38 @@ class SupplierService {
       return false;
     }
   }
+
+  // داخل class SupplierService، أضف هذه الدالة:
+
+// جلب جميع حركات الموردين من السيرفر وتخزينها في Hive
+Future<void> fetchAllSupplier(String companyCode) async {
+  try {
+    final response = await http.get(
+      Uri.parse('$baseUrl/supplier/list/$companyCode'),
+    );
+    if (response.statusCode == 200) {
+      List<dynamic> data = jsonDecode(response.body);
+      // تخزين كل سجل في مفتاح مركب (company_branch_date)
+      for (var item in data) {
+        String key = "${item['company_code']}_${item['branch_code']}_${item['date']}";
+        List<Map<String, dynamic>> currentList = [];
+        if (_supplierBox.containsKey(key)) {
+          final raw = _supplierBox.get(key);
+          if (raw is List) {
+            currentList = raw.map((e) => Map<String, dynamic>.from(e)).toList();
+          }
+        }
+        currentList.removeWhere((e) => e['doc_id'] == item['doc_id']);
+        currentList.add(Map<String, dynamic>.from(item));
+        await _supplierBox.put(key, currentList);
+      }
+      print("✅ تم جلب ${data.length} حركة مورد من السيرفر وتخزينها محلياً");
+    } else {
+      throw 'فشل جلب حركات الموردين من السيرفر';
+    }
+  } catch (e) {
+    print("❌ فشل جلب الموردين: $e");
+    rethrow;
+  }
+}
 }

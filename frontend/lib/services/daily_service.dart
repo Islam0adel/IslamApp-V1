@@ -74,6 +74,34 @@ class DailyService {
     }
   }
 
+  // داخل class DailyService، أضف هذه الدالة:
+
+// جلب جميع اليوميات من السيرفر (بدون تحديد نطاق تاريخ)
+Future<List<dynamic>> fetchAllTransactions(String companyCode) async {
+  try {
+    final response = await http.get(
+      Uri.parse('$baseUrl/transactions/list/$companyCode?start_date=2020-01-01&end_date=2100-12-31'),
+    );
+    if (response.statusCode == 200) {
+      List<dynamic> serverData = jsonDecode(response.body);
+      // تخزين في Hive بنفس المفاتيح المستخدمة (branch_code + serial)
+      for (var item in serverData) {
+        String bCode = item['branch_code']?.toString() ?? '1';
+        await _transactionBox.put("branch_${bCode}_${item['serial']}", item);
+      }
+      // تحديث الأرصدة
+      await getDailySummaryLocal(companyCode);
+      print("✅ تم جلب ${serverData.length} يومية من السيرفر وتخزينها محلياً");
+      return serverData;
+    } else {
+      throw 'فشل جلب اليوميات من السيرفر';
+    }
+  } catch (e) {
+    print("❌ فشل جلب جميع اليوميات: $e");
+    rethrow;
+  }
+}
+
   // 2. دالة حفظ أو تعديل حركة (ترسل للسيرفر وتحدث الـ Hive ذكياً)
   Future<Map<String, dynamic>> saveTransaction({
     required String companyCode,

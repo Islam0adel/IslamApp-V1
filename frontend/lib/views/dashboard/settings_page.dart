@@ -6,6 +6,9 @@ import '../../views/dashboard/admin_companies_screen.dart';
 // 1. استدعاء صفحة الصلاحيات الجديدة (تأكد من مسار الملف عندك)
 import '../../views/dashboard/permissions_page.dart'; 
 import '../../services/permissions_service.dart';
+import '../../views/dashboard/reset_page.dart';
+import '../../views/auth/forgot_password_screen.dart';
+
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key}); 
@@ -222,7 +225,12 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
                             _buildSettingRow(
                               icon: Icons.lock_reset_rounded,
                               title: 'تغيير كلمة المرور',
-                              onTap: () {},
+                              onTap: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(builder: (_) => const ForgotPasswordScreen()),
+                                  );
+                                },
                             ),
                             const Divider(color: Colors.white10, height: 20),
                             _buildSettingRow(
@@ -230,6 +238,19 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
                               title: 'تواصل مع الدعم الفني',
                               onTap: () {},
                             ),
+
+                            const Divider(color: Colors.white10, height: 20),
+                            _buildSettingRow(
+                              icon: Icons.restore_rounded,
+                              title: 'إعادة تعيين البيانات',
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(builder: (_) => const ResetPage()),
+                                );
+                              },
+                            ),
+                            const Divider(color: Colors.white10, height: 20),
                             
                             // زر إدارة الشركات محمي أيضاً لصاحب البرنامج (99)
                             if (_jobCode == '99') ...[

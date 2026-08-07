@@ -175,4 +175,40 @@ class InventoryService {
       return false;
     }
   }
+
+  // داخل class InventoryService، أضف هذه الدالة:
+
+// جلب جميع سجلات الجرد من السيرفر وتخزينها في Hive
+Future<void> fetchAllInventory(String companyCode) async {
+  try {
+    final response = await http.get(
+      Uri.parse('$baseUrl/inventory/list/$companyCode'),
+    );
+    if (response.statusCode == 200) {
+      List<dynamic> data = jsonDecode(response.body);
+      // تخزين كل سجل في مفتاح مركب (company_branch_store_date)
+      for (var item in data) {
+        String key = "${item['company_code']}_${item['branch_code']}_${item['store_code']}_${item['date']}";
+        // قراءة القائمة الحالية لهذا المفتاح
+        List<Map<String, dynamic>> currentList = [];
+        if (_inventoryBox.containsKey(key)) {
+          final raw = _inventoryBox.get(key);
+          if (raw is List) {
+            currentList = raw.map((e) => Map<String, dynamic>.from(e)).toList();
+          }
+        }
+        // إزالة أي عنصر له نفس doc_id ثم إضافة الجديد
+        currentList.removeWhere((e) => e['doc_id'] == item['doc_id']);
+        currentList.add(Map<String, dynamic>.from(item));
+        await _inventoryBox.put(key, currentList);
+      }
+      print("✅ تم جلب ${data.length} سجل جرد من السيرفر وتخزينها محلياً");
+    } else {
+      throw 'فشل جلب الجرد من السيرفر';
+    }
+  } catch (e) {
+    print("❌ فشل جلب الجرد: $e");
+    rethrow;
+  }
+}
 }

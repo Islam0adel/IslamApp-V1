@@ -62,6 +62,37 @@ class CodingService {
     }
   }
 
+  // داخل class CodingService، أضف هذه الدالة:
+
+// جلب جميع التكويدات من جميع الأقسام وتخزينها في Hive
+Future<void> fetchAllCoding(String companyCode) async {
+  try {
+    List<String> categories = ['safes', 'types', 'branches', 'stores', 'customers', 'payment_methods', 'items'];
+    for (String category in categories) {
+      final response = await http.get(
+        Uri.parse('$baseUrl/coding/list/$companyCode/$category'),
+      );
+      if (response.statusCode == 200) {
+        List<dynamic> data = jsonDecode(response.body);
+        // تحويل إلى قائمة من الخرائط
+        List<Map<String, dynamic>> list = data.map((e) => Map<String, dynamic>.from(e)).toList();
+        // ترتيب حسب الكود (كما هو متبع)
+        list.sort((a, b) {
+          int aCode = int.tryParse(a['code']?.toString() ?? '0') ?? 0;
+          int bCode = int.tryParse(b['code']?.toString() ?? '0') ?? 0;
+          return aCode.compareTo(bCode);
+        });
+        final String localKey = "${companyCode}_$category";
+        await _codingBox.put(localKey, list);
+        print("✅ تم جلب تكويدات [$category] وتخزينها محلياً (${list.length})");
+      }
+    }
+  } catch (e) {
+    print("❌ فشل جلب التكويدات: $e");
+    rethrow;
+  }
+}
+
 // ==========================================
 // 2. حفظ أو تحديث تكويد (نسخة معدلة لتجنب التكرار)
 // ==========================================

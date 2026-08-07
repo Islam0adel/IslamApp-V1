@@ -1,3 +1,4 @@
+// frontend\lib\views\auth\forgot_password_screen.dart
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart'; // هتحتاج تضيفها في pubspec.yaml لفتح الرابط
 import '../../views/widgets/glass_card.dart';
