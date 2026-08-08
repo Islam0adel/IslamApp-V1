@@ -1,13 +1,15 @@
+# backend/app/routes/auth.py
 from fastapi import APIRouter, HTTPException, Header, Body, Query, Depends
 from pydantic import BaseModel, EmailStr
-from app.core.firebase_setup import db  # نبقيه للتحقق من التوكن
+from app.core.firebase_setup import db  # ✅ كائن Firestore (للمستخدمين والصلاحيات)
 from google.cloud import firestore
 from firebase_admin import auth as admin_auth
 from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.database import get_db
-from app.core.models import Company, Branch
 from sqlalchemy import select
+from app.core.database import get_db
+from app.core.models import Company
+from app.core.schemas import CompanyModel
 
 router = APIRouter()
 
@@ -25,31 +27,11 @@ class UserRegister(BaseModel):
     company_code: str
     job_code: str
 
-class CompanyModel(BaseModel):
-    code: str
-    name: str
-
 class PermissionsUpdateModel(BaseModel):
     email: str
     permissions: dict
     allowed_branches: Optional[List[str]] = None
 
-# ========== إنشاء شركة افتراضية ==========
-def create_default_company():
-    try:
-        default_company_ref = db.collection("companies").document("01")
-        if not default_company_ref.get().exists:
-            default_company_ref.set({
-                "code": "01",
-                "name": "اسلام",
-                "is_active": True,
-                "created_at": firestore.SERVER_TIMESTAMP
-            })
-            print("✅ تم إنشاء الشركة الافتراضية: 01 - اسلام")
-    except Exception as e:
-        print(f"⚠️ خطأ في إنشاء الشركة الافتراضية: {e}")
-
-create_default_company()
 
 # ==========================================
 # 1. تسجيل مستخدم جديد
@@ -57,35 +39,37 @@ create_default_company()
 @router.post("/register")
 async def register(
     user: UserRegister,
-    db: AsyncSession = Depends(get_db)
+    session: AsyncSession = Depends(get_db)  # ✅ جلسة PostgreSQL
 ):
     try:
         email_clean = user.email.strip().lower()
         comp_code = user.company_code.strip()
         job_code = user.job_code.strip()
 
-        # التحقق من الشركة من Firestore
-        company_doc = db.collection("companies").document(comp_code).get()
-        if not company_doc.exists:
+        # ✅ التحقق من الشركة من Neon (PostgreSQL)
+        stmt = select(Company).where(Company.code == comp_code)
+        result = await session.execute(stmt)
+        company = result.scalar_one_or_none()
+
+        if not company:
             raise HTTPException(status_code=403, detail="كود الشركة غير صحيح أو غير مسجل في النظام")
 
-        company_data = company_doc.to_dict()
-        if not company_data.get("is_active", True):
+        if not company.is_active:
             raise HTTPException(status_code=403, detail="هذه الشركة موقوفة حالياً، يرجى مراجعة إدارة البرنامج")
 
-        company_name = company_data.get("name")
+        company_name = company.name
 
         if job_code not in USER_ROLES:
             raise HTTPException(status_code=403, detail="كود الوظيفة غير صحيح")
 
         job_title = USER_ROLES.get(job_code)
 
-        # التحقق من وجود المستخدم في Firestore
+        # ✅ التحقق من وجود المستخدم في Firestore
         user_ref = db.collection("users").document(email_clean)
         if user_ref.get().exists:
             raise HTTPException(status_code=400, detail="هذا البريد مسجل بالفعل في قاعدة البيانات")
 
-        # حفظ في Firestore (نبقيه كما هو)
+        # ✅ حفظ المستخدم في Firestore
         user_data_to_save = {
             "uid": user.uid,
             "name": user.name.strip(),
@@ -102,14 +86,19 @@ async def register(
         return {"status": "success", "message": f"تم تسجيل {job_title} في {company_name}"}
 
     except Exception as e:
-        if isinstance(e, HTTPException): raise e
+        if isinstance(e, HTTPException):
+            raise e
         raise HTTPException(status_code=500, detail=str(e))
 
+
 # ==========================================
-# 2. التحقق من المستخدم (يبقى كما هو)
+# 2. التحقق من المستخدم (تسجيل الدخول)
 # ==========================================
 @router.post("/verify-user")
-async def verify_user(authorization: str = Header(None)):
+async def verify_user(
+    authorization: str = Header(None),
+    session: AsyncSession = Depends(get_db)  # ✅ جلسة PostgreSQL
+):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="لم يتم إرسال توكن صالح")
 
@@ -118,6 +107,7 @@ async def verify_user(authorization: str = Header(None)):
         decoded_token = admin_auth.verify_id_token(token)
         email = decoded_token.get("email")
 
+        # ✅ قراءة بيانات المستخدم من Firestore
         user_doc = db.collection("users").document(email).get()
         if not user_doc.exists:
             raise HTTPException(status_code=404, detail="بيانات المستخدم غير موجودة")
@@ -125,12 +115,15 @@ async def verify_user(authorization: str = Header(None)):
         data = user_doc.to_dict()
         comp_code = data.get("company_code")
 
-        company_doc = db.collection("companies").document(comp_code).get()
-        if not company_doc.exists:
+        # ✅ التحقق من الشركة من Neon (PostgreSQL)
+        stmt = select(Company).where(Company.code == comp_code)
+        result = await session.execute(stmt)
+        company = result.scalar_one_or_none()
+
+        if not company:
             raise HTTPException(status_code=404, detail="الشركة التابع لها هذا الحساب غير موجودة")
 
-        company_data = company_doc.to_dict()
-        if not company_data.get("is_active", True):
+        if not company.is_active:
             raise HTTPException(status_code=403, detail="تم إيقاف صلاحية الوصول لهذه الشركة (يرجى سداد الاشتراك)")
 
         return {
@@ -138,17 +131,19 @@ async def verify_user(authorization: str = Header(None)):
             "name": data.get("name"),
             "email": data.get("email"),
             "company_code": data.get("company_code"),
-            "company_name": data.get("company_name"),
+            "company_name": company.name,  # ✅ من Neon
             "job_code": data.get("job_code"),
             "job_title": data.get("job_title"),
         }
     except Exception as e:
-        if isinstance(e, HTTPException): raise e
+        if isinstance(e, HTTPException):
+            raise e
         print(f"⚠️ خطأ في التحقق من التوكن: {e}")
         raise HTTPException(status_code=401, detail="انتهت صلاحية الجلسة، سجل دخولك مرة أخرى")
 
+
 # ==========================================
-# 3. التحقق من كود الاستعادة
+# 3. التحقق من كود الاستعادة (نسيت كلمة المرور)
 # ==========================================
 @router.post("/verify-reset")
 async def verify_reset(
@@ -171,63 +166,94 @@ async def verify_reset(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 # ==========================================
-# 4. إدارة الشركات (تبقى كما هي)
+# 4. إدارة الشركات (جميعها في Neon)
 # ==========================================
+
 @router.post("/companies/add")
-async def add_new_company(company: CompanyModel, admin_job_code: str = Query(...)):
+async def add_new_company(
+    company: CompanyModel,
+    admin_job_code: str = Query(...),
+    session: AsyncSession = Depends(get_db)
+):
     if admin_job_code != "99":
         raise HTTPException(status_code=403, detail="عذراً، هذه الصلاحية خاصة بصاحب البرنامج فقط!")
 
     comp_code = company.code.strip()
     comp_name = company.name.strip()
 
-    comp_ref = db.collection("companies").document(comp_code)
-    if comp_ref.get().exists:
+    # التحقق من عدم وجود الشركة في Neon
+    stmt = select(Company).where(Company.code == comp_code)
+    result = await session.execute(stmt)
+    if result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="كود هذه الشركة مسجل بالفعل في النظام")
 
-    comp_ref.set({
-        "code": comp_code,
-        "name": comp_name,
-        "is_active": True,
-        "created_at": firestore.SERVER_TIMESTAMP
-    })
+    new_company = Company(
+        code=comp_code,
+        name=comp_name,
+        is_active=True
+    )
+    session.add(new_company)
+    await session.commit()
+
     return {"status": "success", "message": f"تم تكويد شركة [{comp_name}] بنجاح"}
 
+
 @router.get("/companies/all")
-async def get_all_companies(admin_job_code: str = Query(...)):
+async def get_all_companies(
+    admin_job_code: str = Query(...),
+    session: AsyncSession = Depends(get_db)
+):
     if admin_job_code != "99":
         raise HTTPException(status_code=403, detail="غير مصرح لك بالوصول")
 
-    docs = db.collection("companies").order_by("code").stream()
-    companies_list = []
-    for doc in docs:
-        companies_list.append(doc.to_dict())
+    stmt = select(Company).order_by(Company.code)
+    result = await session.execute(stmt)
+    companies = result.scalars().all()
+
+    companies_list = [
+        {
+            "code": c.code,
+            "name": c.name,
+            "is_active": c.is_active,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+        }
+        for c in companies
+    ]
     return companies_list
+
 
 @router.post("/companies/toggle")
 async def toggle_company_status(
     code: str = Body(..., embed=True),
     is_active: bool = Body(..., embed=True),
-    admin_job_code: str = Body(..., embed=True)
+    admin_job_code: str = Body(..., embed=True),
+    session: AsyncSession = Depends(get_db)
 ):
     if admin_job_code != "99":
         raise HTTPException(status_code=403, detail="غير مصرح لك بالوصول")
 
-    comp_ref = db.collection("companies").document(code.strip())
-    if not comp_ref.get().exists:
+    stmt = select(Company).where(Company.code == code.strip())
+    result = await session.execute(stmt)
+    company = result.scalar_one_or_none()
+    if not company:
         raise HTTPException(status_code=404, detail="الشركة غير موجودة")
 
-    comp_ref.update({"is_active": is_active})
+    company.is_active = is_active
+    await session.commit()
+
     status_txt = "تفعيلها" if is_active else "إيقافها لعدم السداد"
     return {"status": "success", "message": f"تم تحديث حالة الشركة بنجاح و{status_txt}"}
+
 
 @router.put("/companies/update")
 async def update_company(
     old_code: str = Body(...),
     new_code: str = Body(...),
     new_name: str = Body(...),
-    admin_job_code: str = Body(...)
+    admin_job_code: str = Body(...),
+    session: AsyncSession = Depends(get_db)
 ):
     try:
         if admin_job_code != "99":
@@ -237,22 +263,31 @@ async def update_company(
         new_code = new_code.strip()
         new_name = new_name.strip()
 
-        comp_ref = db.collection("companies").document(old_code)
-        comp_doc = comp_ref.get()
-        if not comp_doc.exists:
+        # البحث عن الشركة القديمة
+        stmt = select(Company).where(Company.code == old_code)
+        result = await session.execute(stmt)
+        company = result.scalar_one_or_none()
+        if not company:
             raise HTTPException(status_code=404, detail="الشركة غير موجودة")
 
         if old_code != new_code:
-            new_ref = db.collection("companies").document(new_code)
-            if new_ref.get().exists:
+            # التحقق من عدم وجود شركة أخرى بنفس الكود الجديد
+            stmt2 = select(Company).where(Company.code == new_code)
+            result2 = await session.execute(stmt2)
+            if result2.scalar_one_or_none():
                 raise HTTPException(status_code=400, detail="الكود الجديد مستخدم بالفعل")
 
-            old_data = comp_doc.to_dict()
-            old_data["code"] = new_code
-            old_data["name"] = new_name
-            new_ref.set(old_data)
-            comp_ref.delete()
+            # حذف القديم وإضافة الجديد
+            await session.delete(company)
+            new_company = Company(
+                code=new_code,
+                name=new_name,
+                is_active=company.is_active,
+                created_at=company.created_at
+            )
+            session.add(new_company)
 
+            # تحديث company_code في Firestore للمستخدمين
             users_ref = db.collection("users").where("company_code", "==", old_code).get()
             for user_doc in users_ref:
                 user_doc.reference.update({
@@ -260,11 +295,14 @@ async def update_company(
                     "company_name": new_name
                 })
         else:
-            comp_ref.update({"name": new_name})
+            # تحديث الاسم فقط
+            company.name = new_name
+            # تحديث company_name في Firestore
             users_ref = db.collection("users").where("company_code", "==", old_code).get()
             for user_doc in users_ref:
                 user_doc.reference.update({"company_name": new_name})
 
+        await session.commit()
         return {"status": "success", "message": "تم تعديل بيانات الشركة"}
 
     except HTTPException:
@@ -273,21 +311,35 @@ async def update_company(
         print(f"⚠️ خطأ في تحديث الشركة: {e}")
         raise HTTPException(status_code=500, detail=f"خطأ داخلي: {str(e)}")
 
+
 @router.delete("/companies/delete/{code}")
-async def delete_company(code: str, admin_job_code: str = Query(...)):
+async def delete_company(
+    code: str,
+    admin_job_code: str = Query(...),
+    session: AsyncSession = Depends(get_db)
+):
     try:
         if admin_job_code != "99":
             raise HTTPException(status_code=403, detail="غير مصرح لك بالوصول")
 
         code = code.strip()
-        comp_ref = db.collection("companies").document(code)
-        if not comp_ref.get().exists:
-            raise HTTPException(status_code=404, detail="الشركة غير موجودة")
-
         if code == "01":
             raise HTTPException(status_code=403, detail="لا يمكن حذف الشركة الافتراضية")
 
-        comp_ref.delete()
+        stmt = select(Company).where(Company.code == code)
+        result = await session.execute(stmt)
+        company = result.scalar_one_or_none()
+        if not company:
+            raise HTTPException(status_code=404, detail="الشركة غير موجودة")
+
+        await session.delete(company)
+        await session.commit()
+
+        # حذف المستخدمين المرتبطين بالشركة من Firestore
+        users_ref = db.collection("users").where("company_code", "==", code).get()
+        for user_doc in users_ref:
+            user_doc.reference.delete()
+
         return {"status": "success", "message": "تم حذف الشركة"}
 
     except HTTPException:
@@ -296,8 +348,9 @@ async def delete_company(code: str, admin_job_code: str = Query(...)):
         print(f"⚠️ خطأ في حذف الشركة: {e}")
         raise HTTPException(status_code=500, detail=f"خطأ داخلي: {str(e)}")
 
+
 # ==========================================
-# 5. تحديث الصلاحيات (يبقى كما هو)
+# 5. تحديث الصلاحيات (يبقى في Firestore)
 # ==========================================
 @router.post("/update-permissions")
 async def update_user_permissions(data: PermissionsUpdateModel):
