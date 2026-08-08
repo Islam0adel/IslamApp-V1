@@ -76,221 +76,238 @@ class ExportService {
   }
 
   // تصدير PDF محسن مع إجماليات ودعم كامل للعربية
-  static Future<void> exportToPDF({
-    required List<Map<String, dynamic>> data,
-    required String title,
-    required List<String> headers,
-    required List<String> keys,
-    Map<String, dynamic>? summary, // إجماليات اختيارية { 'totalQuantity', 'totalWholesale', 'totalRetail' }
-    String? branchName,
-    String? storeName,
-    String? date,
-    String? serial,
-  }) async {
-    try {
-      final font = await _loadArabicFont();
+  // lib/services/export_service.dart
+// أضف هذا المعامل إلى دالة exportToPDF:
+static Future<void> exportToPDF({
+  required List<Map<String, dynamic>> data,
+  required String title,
+  required List<String> headers,
+  required List<String> keys,
+  Map<String, dynamic>? summary,
+  String? branchName,
+  String? storeName,
+  String? date,
+  String? serial,
+  double? totalAmount, // ✅ إضافة المعامل الجديد
+}) async {
+  try {
+    final font = await _loadArabicFont();
 
-      final pdf = pw.Document();
+    final pdf = pw.Document();
 
-      pdf.addPage(
-        pw.MultiPage(
-          pageFormat: PdfPageFormat.a4,
-          margin: pw.EdgeInsets.all(30),
-          build: (pw.Context context) {
-            return [
-              // ===== رأس الصفحة =====
-              pw.Directionality(
-                textDirection: pw.TextDirection.rtl,
-                child: pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.end,
-                  children: [
-                    // عنوان التقرير
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        margin: pw.EdgeInsets.all(30),
+        build: (pw.Context context) {
+          return [
+            // ===== رأس الصفحة ===== (نفس الكود)
+            pw.Directionality(
+              textDirection: pw.TextDirection.rtl,
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.end,
+                children: [
+                  pw.Text(
+                    title,
+                    style: pw.TextStyle(
+                      font: font,
+                      fontSize: 22,
+                      fontWeight: pw.FontWeight.bold,
+                      color: PdfColors.blue900,
+                    ),
+                    textDirection: pw.TextDirection.rtl,
+                  ),
+                  pw.SizedBox(height: 6),
+                  if (serial != null)
                     pw.Text(
-                      title,
-                      style: pw.TextStyle(
-                        font: font,
-                        fontSize: 22,
-                        fontWeight: pw.FontWeight.bold,
-                        color: PdfColors.blue900,
-                      ),
+                      'رقم الإذن: $serial',
+                      style: pw.TextStyle(font: font, fontSize: 12, color: PdfColors.grey700),
                       textDirection: pw.TextDirection.rtl,
                     ),
-                    pw.SizedBox(height: 6),
-
-                    // معلومات إضافية (رقم الإذن، التاريخ، الفرع، المخزن)
-                    if (serial != null)
-                      pw.Text(
-                        'رقم الإذن: $serial',
-                        style: pw.TextStyle(font: font, fontSize: 12, color: PdfColors.grey700),
-                        textDirection: pw.TextDirection.rtl,
-                      ),
-                    if (date != null)
-                      pw.Text(
-                        'التاريخ: $date',
-                        style: pw.TextStyle(font: font, fontSize: 12, color: PdfColors.grey700),
-                        textDirection: pw.TextDirection.rtl,
-                      ),
-                    if (branchName != null && branchName.isNotEmpty)
-                      pw.Text(
-                        'الفرع: $branchName',
-                        style: pw.TextStyle(font: font, fontSize: 12, color: PdfColors.grey700),
-                        textDirection: pw.TextDirection.rtl,
-                      ),
-                    if (storeName != null && storeName.isNotEmpty)
-                      pw.Text(
-                        'المخزن: $storeName',
-                        style: pw.TextStyle(font: font, fontSize: 12, color: PdfColors.grey700),
-                        textDirection: pw.TextDirection.rtl,
-                      ),
-                    pw.Divider(thickness: 1, color: PdfColors.blue200),
-                    pw.SizedBox(height: 10),
-                  ],
-                ),
+                  if (date != null)
+                    pw.Text(
+                      'التاريخ: $date',
+                      style: pw.TextStyle(font: font, fontSize: 12, color: PdfColors.grey700),
+                      textDirection: pw.TextDirection.rtl,
+                    ),
+                  if (branchName != null && branchName.isNotEmpty)
+                    pw.Text(
+                      'الفرع: $branchName',
+                      style: pw.TextStyle(font: font, fontSize: 12, color: PdfColors.grey700),
+                      textDirection: pw.TextDirection.rtl,
+                    ),
+                  if (storeName != null && storeName.isNotEmpty)
+                    pw.Text(
+                      'المخزن: $storeName',
+                      style: pw.TextStyle(font: font, fontSize: 12, color: PdfColors.grey700),
+                      textDirection: pw.TextDirection.rtl,
+                    ),
+                  pw.Divider(thickness: 1, color: PdfColors.blue200),
+                  pw.SizedBox(height: 10),
+                ],
               ),
+            ),
 
-              // ===== جدول البيانات =====
-              pw.Directionality(
-                textDirection: pw.TextDirection.rtl,
-                child: pw.Table(
-                  border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
-                  columnWidths: {
-                    for (int i = 0; i < headers.length; i++) i: pw.FlexColumnWidth(1),
-                  },
-                  children: [
-                    // رأس الجدول (خلفية زرقاء فاتحة)
-                    pw.TableRow(
-                      decoration: pw.BoxDecoration(color: PdfColors.blue100),
-                      children: headers.map((h) =>
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(8),
+            // ===== جدول البيانات ===== (نفس الكود)
+            pw.Directionality(
+              textDirection: pw.TextDirection.rtl,
+              child: pw.Table(
+                border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
+                columnWidths: {
+                  for (int i = 0; i < headers.length; i++) i: pw.FlexColumnWidth(1),
+                },
+                children: [
+                  // رأس الجدول
+                  pw.TableRow(
+                    decoration: pw.BoxDecoration(color: PdfColors.blue100),
+                    children: headers.map((h) =>
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(8),
+                        child: pw.Text(
+                          h,
+                          style: pw.TextStyle(
+                            font: font,
+                            fontWeight: pw.FontWeight.bold,
+                            fontSize: 12,
+                            color: PdfColors.blue800,
+                          ),
+                          textAlign: pw.TextAlign.center,
+                          textDirection: pw.TextDirection.rtl,
+                        ),
+                      )
+                    ).toList(),
+                  ),
+                  // صفوف البيانات
+                  ...data.map((row) {
+                    return pw.TableRow(
+                      children: keys.map((key) {
+                        var value = row[key]?.toString() ?? '';
+                        String displayValue = value;
+                        if (key.contains('سعر') || key.contains('قيمة') || key.contains('الإجمالي')) {
+                          final num = double.tryParse(value);
+                          if (num != null) {
+                            displayValue = num.toStringAsFixed(2);
+                          }
+                        }
+                        return pw.Padding(
+                          padding: const pw.EdgeInsets.all(6),
                           child: pw.Text(
-                            h,
+                            displayValue,
+                            style: pw.TextStyle(font: font, fontSize: 10),
+                            textAlign: pw.TextAlign.center,
+                            textDirection: pw.TextDirection.rtl,
+                          ),
+                        );
+                      }).toList(),
+                    );
+                  }),
+                  // صف الإجماليات (إذا وجد summary)
+                  if (summary != null && summary.isNotEmpty)
+                    pw.TableRow(
+                      decoration: pw.BoxDecoration(color: PdfColors.green50),
+                      children: headers.map((h) {
+                        String value = '';
+                        if (h.contains('الكمية') || h == 'الكمية') {
+                          value = summary['totalQuantity']?.toStringAsFixed(0) ?? '';
+                        } else if (h.contains('قيمة الجملة') || h == 'قيمة الجملة') {
+                          value = summary['totalWholesale']?.toStringAsFixed(2) ?? '';
+                        } else if (h.contains('قيمة البيع') || h == 'قيمة البيع') {
+                          value = summary['totalRetail']?.toStringAsFixed(2) ?? '';
+                        } else if (h.contains('الإجمالي') || h == 'الإجمالي') {
+                          value = 'الإجمالي';
+                        }
+                        return pw.Padding(
+                          padding: const pw.EdgeInsets.all(6),
+                          child: pw.Text(
+                            value,
                             style: pw.TextStyle(
                               font: font,
                               fontWeight: pw.FontWeight.bold,
-                              fontSize: 12,
-                              color: PdfColors.blue800,
+                              fontSize: 11,
+                              color: PdfColors.green800,
                             ),
                             textAlign: pw.TextAlign.center,
                             textDirection: pw.TextDirection.rtl,
                           ),
-                        )
-                      ).toList(),
+                        );
+                      }).toList(),
                     ),
+                ],
+              ),
+            ),
 
-                    // صفوف البيانات
-                    ...data.map((row) {
-                      return pw.TableRow(
-                        children: keys.map((key) {
-                          var value = row[key]?.toString() ?? '';
-                          // محاولة تنسيق الأرقام بفواصل عشرية
-                          String displayValue = value;
-                          if (key.contains('سعر') || key.contains('قيمة') || key.contains('الإجمالي')) {
-                            final num = double.tryParse(value);
-                            if (num != null) {
-                              displayValue = num.toStringAsFixed(2);
-                            }
-                          }
-                          return pw.Padding(
-                            padding: const pw.EdgeInsets.all(6),
-                            child: pw.Text(
-                              displayValue,
-                              style: pw.TextStyle(font: font, fontSize: 10),
-                              textAlign: pw.TextAlign.center,
-                              textDirection: pw.TextDirection.rtl,
-                            ),
-                          );
-                        }).toList(),
-                      );
-                    }),
-
-                    // ===== صف الإجماليات =====
-                    if (summary != null && summary.isNotEmpty)
-                      pw.TableRow(
-                        decoration: pw.BoxDecoration(color: PdfColors.green50),
-                        children: headers.map((h) {
-                          String value = '';
-                          if (h.contains('الكمية') || h == 'الكمية') {
-                            value = summary['totalQuantity']?.toStringAsFixed(0) ?? '';
-                          } else if (h.contains('قيمة الجملة') || h == 'قيمة الجملة') {
-                            value = summary['totalWholesale']?.toStringAsFixed(2) ?? '';
-                          } else if (h.contains('قيمة البيع') || h == 'قيمة البيع') {
-                            value = summary['totalRetail']?.toStringAsFixed(2) ?? '';
-                          } else if (h.contains('الإجمالي') || h == 'الإجمالي') {
-                            value = 'الإجمالي';
-                          }
-                          return pw.Padding(
-                            padding: const pw.EdgeInsets.all(6),
-                            child: pw.Text(
-                              value,
-                              style: pw.TextStyle(
-                                font: font,
-                                fontWeight: pw.FontWeight.bold,
-                                fontSize: 11,
-                                color: PdfColors.green800,
-                              ),
-                              textAlign: pw.TextAlign.center,
-                              textDirection: pw.TextDirection.rtl,
-                            ),
-                          );
-                        }).toList(),
+            // ===== تذييل الصفحة (مع إجمالي المبلغ) =====
+            pw.SizedBox(height: 20),
+            pw.Directionality(
+              textDirection: pw.TextDirection.rtl,
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.end,
+                children: [
+                  // ✅ عرض الإجمالي إذا تم تمريره
+                  if (totalAmount != null)
+                    pw.Padding(
+                      padding: const pw.EdgeInsets.only(bottom: 8),
+                      child: pw.Text(
+                        'إجمالي المبلغ: ${totalAmount.toStringAsFixed(2)}',
+                        style: pw.TextStyle(
+                          font: font,
+                          fontSize: 14,
+                          fontWeight: pw.FontWeight.bold,
+                          color: PdfColors.green700,
+                        ),
+                        textDirection: pw.TextDirection.rtl,
                       ),
-                  ],
-                ),
+                    ),
+                  pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      pw.Text(
+                        'تم التصدير بواسطة IslamApp V1.0',
+                        style: pw.TextStyle(font: font, fontSize: 10, color: PdfColors.grey600),
+                        textDirection: pw.TextDirection.rtl,
+                      ),
+                      pw.Text(
+                        'تاريخ التصدير: ${DateTime.now().toLocal().toString().split(' ')[0]}',
+                        style: pw.TextStyle(font: font, fontSize: 10, color: PdfColors.grey600),
+                        textDirection: pw.TextDirection.rtl,
+                      ),
+                    ],
+                  ),
+                ],
               ),
+            ),
+          ];
+        },
+      ),
+    );
 
-              // ===== تذييل الصفحة =====
-              pw.SizedBox(height: 20),
-              pw.Directionality(
-                textDirection: pw.TextDirection.rtl,
-                child: pw.Row(
-                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                  children: [
-                    pw.Text(
-                      'تم التصدير بواسطة IslamApp V1.0',
-                      style: pw.TextStyle(font: font, fontSize: 10, color: PdfColors.grey600),
-                      textDirection: pw.TextDirection.rtl,
-                    ),
-                    pw.Text(
-                      'تاريخ التصدير: ${DateTime.now().toLocal().toString().split(' ')[0]}',
-                      style: pw.TextStyle(font: font, fontSize: 10, color: PdfColors.grey600),
-                      textDirection: pw.TextDirection.rtl,
-                    ),
-                  ],
-                ),
-              ),
-            ];
-          },
-        ),
+    // حفظ الملف (نفس الكود)
+    String fileName = '${title.replaceAll(' ', '_')}_${DateTime.now().millisecondsSinceEpoch}.pdf';
+    if (identical(0, 0.0)) {
+      final bytes = await pdf.save();
+      final blob = html.Blob([bytes], 'application/pdf');
+      final url = html.Url.createObjectUrlFromBlob(blob);
+      final anchor = html.AnchorElement(href: url)..setAttribute('download', fileName)..style.display = 'none';
+      html.document.body?.append(anchor);
+      anchor.click();
+      anchor.remove();
+      html.Url.revokeObjectUrl(url);
+    } else {
+      String? selectedPath = await FilePicker.platform.saveFile(
+        dialogTitle: 'اختر مكان حفظ ملف PDF',
+        fileName: fileName,
+        type: FileType.custom,
+        allowedExtensions: ['pdf'],
       );
-
-      // حفظ الملف
-      String fileName = '${title.replaceAll(' ', '_')}_${DateTime.now().millisecondsSinceEpoch}.pdf';
-      if (identical(0, 0.0)) {
+      if (selectedPath != null) {
+        if (!selectedPath.endsWith('.pdf')) selectedPath += '.pdf';
+        final file = File(selectedPath);
         final bytes = await pdf.save();
-        final blob = html.Blob([bytes], 'application/pdf');
-        final url = html.Url.createObjectUrlFromBlob(blob);
-        final anchor = html.AnchorElement(href: url)..setAttribute('download', fileName)..style.display = 'none';
-        html.document.body?.append(anchor);
-        anchor.click();
-        anchor.remove();
-        html.Url.revokeObjectUrl(url);
-      } else {
-        String? selectedPath = await FilePicker.platform.saveFile(
-          dialogTitle: 'اختر مكان حفظ ملف PDF',
-          fileName: fileName,
-          type: FileType.custom,
-          allowedExtensions: ['pdf'],
-        );
-        if (selectedPath != null) {
-          if (!selectedPath.endsWith('.pdf')) selectedPath += '.pdf';
-          final file = File(selectedPath);
-          final bytes = await pdf.save();
-          await file.writeAsBytes(bytes);
-        }
+        await file.writeAsBytes(bytes);
       }
-    } catch (e) {
-      rethrow;
     }
+  } catch (e) {
+    rethrow;
   }
+}
 }

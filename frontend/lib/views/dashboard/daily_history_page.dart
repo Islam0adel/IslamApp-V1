@@ -9,6 +9,7 @@ import 'package:universal_html/html.dart' as html;
 import 'package:excel/excel.dart' as excel_lib;
 import 'package:hive_flutter/hive_flutter.dart';
 import '../../services/permissions_service.dart'; // ✅ استيراد خدمة الصلاحيات
+import '../../services/export_service.dart';
 
 class DailyHistoryPage extends StatefulWidget {
   final String companyCode;
@@ -36,8 +37,11 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
   List<Map<String, dynamic>> _historyData = [];
 
   bool _isLoading = false;
-  bool _isCategoryGrouped = false;
   bool _isInitializing = false;
+
+    // ✅ متغيرات الفلتر الجديدة
+  Set<String> _selectedCategories = {}; // التصنيفات المختارة للفلتر
+  // bool _isFilterApplied = false;
 
   @override
 void initState() {
@@ -102,37 +106,203 @@ void _fetchData() async {
 
   
 
-  // دالة لفرز وترتيب الحركات المفلترة ديناميكياً
-  List<Map<String, dynamic>> _getSortedData(List<Map<String, dynamic>> list) {
-    List<Map<String, dynamic>> sortedList = List.from(list);
-    
-    if (_isCategoryGrouped) {
-      sortedList.sort((a, b) {
-        int cmp = (a['category'] ?? '').compareTo(b['category'] ?? '');
-        if (cmp != 0) return cmp;
-        
-        // الترتيب بالتاريخ من الأقدم للأحدث في نفس التصنيف
-        String dateA = a['date'] ?? '';
-        String dateB = b['date'] ?? '';
-        int dateCmp = dateA.compareTo(dateB);
-        if (dateCmp != 0) return dateCmp;
-        
-        return (a['serial'] ?? 0).compareTo(b['serial'] ?? 0);
-      });
-    } else {
-      // 🌟 الترتيب الأساسي: بالتاريخ المكتوب (من الأقدم للأحدث)
-      sortedList.sort((a, b) {
-        String dateA = a['date'] ?? '';
-        String dateB = b['date'] ?? '';
-        int dateCmp = dateA.compareTo(dateB);
-        
-        // لو التاريخين متطابقين، نرتبهم برقم الإذن كخيار احتياطي
-        if (dateCmp != 0) return dateCmp;
-        return (a['serial'] ?? 0).compareTo(b['serial'] ?? 0);
-      });
-    }
-    return sortedList;
+    // دالة لفلترة وترتيب البيانات
+  List<Map<String, dynamic>> _applyFiltersAndSort(List<Map<String, dynamic>> list) {
+  List<Map<String, dynamic>> filteredList = List.from(list);
+
+  // 1️⃣ تطبيق فلتر التصنيفات
+  if (_selectedCategories.isNotEmpty) {
+    filteredList = filteredList.where((item) {
+      String category = item['category']?.toString() ?? '';
+      return _selectedCategories.contains(category);
+    }).toList();
   }
+
+  // 2️⃣ الترتيب الشرطي حسب وجود فلتر أم لا
+  if (_selectedCategories.isNotEmpty) {
+    // ✅ حالة وجود فلتر: الترتيب أبجدي حسب التصنيف، ثم التاريخ
+    filteredList.sort((a, b) {
+      // أولاً: الترتيب الأبجدي حسب اسم التصنيف (تصاعدي)
+      String catA = a['category']?.toString() ?? '';
+      String catB = b['category']?.toString() ?? '';
+      int catCmp = catA.compareTo(catB);
+      if (catCmp != 0) return catCmp;
+
+      // ثانياً: الترتيب حسب التاريخ (من الأقدم للأحدث)
+      String dateA = a['date'] ?? '';
+      String dateB = b['date'] ?? '';
+      return dateA.compareTo(dateB);
+    });
+  } else {
+    // ✅ حالة عدم وجود فلتر: ترتيب حسب التاريخ ثم رقم الإذن
+    filteredList.sort((a, b) {
+      String dateA = a['date'] ?? '';
+      String dateB = b['date'] ?? '';
+      int dateCmp = dateA.compareTo(dateB);
+      if (dateCmp != 0) return dateCmp;
+      return (a['serial'] ?? 0).compareTo(b['serial'] ?? 0);
+    });
+  }
+
+  return filteredList;
+}
+
+    // حساب إجمالي المبلغ للبيانات المعروضة
+  double _calculateTotal(List<Map<String, dynamic>> list) {
+    double total = 0.0;
+    for (var item in list) {
+      total += double.tryParse(item['amount']?.toString() ?? '0') ?? 0.0;
+    }
+    return total;
+  }
+
+    // عرض مربع حوار لاختيار التصنيفات
+  void _showFilterDialog(List<Map<String, dynamic>> currentData) {
+  // استخراج جميع التصنيفات الفريدة
+  Set<String> allCategories = {};
+  for (var item in currentData) {
+    String cat = item['category']?.toString() ?? '';
+    if (cat.isNotEmpty) allCategories.add(cat);
+  }
+
+  if (allCategories.isEmpty) {
+    _showSnackBar("لا توجد تصنيفات لعرضها في النطاق الزمني الحالي", Colors.orange);
+    return;
+  }
+
+  // نسخة مؤقتة للاختيارات داخل الحوار
+  Set<String> tempSelected = Set.from(_selectedCategories);
+
+  showDialog(
+    context: context,
+    builder: (context) {
+      return StatefulBuilder(
+        builder: (context, setStateDialog) {
+          return AlertDialog(
+            title: const Text(
+              'فلترة حسب التصنيف',
+              style: TextStyle(fontFamily: 'Cairo'),
+            ),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // أزرار تحديد الكل / إلغاء الكل
+                  Row(
+                    children: [
+                      TextButton(
+                        onPressed: () {
+                          setStateDialog(() {
+                            tempSelected = Set.from(allCategories);
+                          });
+                        },
+                        child: const Text('تحديد الكل', style: TextStyle(fontFamily: 'Cairo')),
+                      ),
+                      const SizedBox(width: 10),
+                      TextButton(
+                        onPressed: () {
+                          setStateDialog(() {
+                            tempSelected.clear();
+                          });
+                        },
+                        child: const Text('إلغاء الكل', style: TextStyle(fontFamily: 'Cairo')),
+                      ),
+                    ],
+                  ),
+                  const Divider(),
+                  // قائمة التصنيفات مع Checkboxes
+                  Expanded(
+                    child: ListView(
+                      shrinkWrap: true,
+                      children: allCategories.toList().map((category) {
+                        return CheckboxListTile(
+                          title: Text(category, style: const TextStyle(fontFamily: 'Cairo')),
+                          value: tempSelected.contains(category),
+                          onChanged: (bool? checked) {
+                            setStateDialog(() {
+                              if (checked == true) {
+                                tempSelected.add(category);
+                              } else {
+                                tempSelected.remove(category);
+                              }
+                            });
+                          },
+                          activeColor: Colors.cyanAccent,
+                          checkColor: Colors.black,
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('إلغاء', style: TextStyle(fontFamily: 'Cairo')),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  setState(() {
+                    _selectedCategories = Set.from(tempSelected);
+                  });
+                  Navigator.pop(context);
+                },
+                child: const Text('تطبيق', style: TextStyle(fontFamily: 'Cairo')),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+}
+
+Future<void> _exportToPDF(List<Map<String, dynamic>> currentData) async {
+  if (!PermissionsService().canExport) {
+    _showSnackBar("ليس لديك صلاحية للتصدير", Colors.orange);
+    return;
+  }
+
+  if (currentData.isEmpty) {
+    _showSnackBar("لا توجد بيانات لتصديرها", Colors.orange);
+    return;
+  }
+
+  try {
+    // حساب الإجمالي
+    double total = _calculateTotal(currentData);
+
+    // تجهيز العناوين والمفاتيح (نفس المستخدمة في Excel)
+    List<String> headers = ["رقم الإذن", "المبلغ", "البيان", "التصنيف", "التاريخ", "الفرع", "الموظف", "الخزينة"];
+    List<String> keys = ["serial", "amount", "statement", "category", "date", "branch_name", "employee", "treasury"];
+
+    // تحويل البيانات لتحل محل branch_code باسم الفرع
+    List<Map<String, dynamic>> exportData = currentData.map((row) {
+      return {
+        ...row,
+        "branch_name": _getBranchName(row['branch_code']?.toString()),
+        "treasury": _getTreasuryName(row['treasury']),
+      };
+    }).toList();
+
+    await ExportService.exportToPDF(
+      data: exportData,
+      title: "سجل الحركات",
+      headers: headers,
+      keys: keys,
+      totalAmount: total,
+      branchName: _getBranchName(widget.selectedBranchCode),
+      date: "من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}",
+      summary: null, // لا نحتاج summary هنا لأننا نمرر totalAmount
+    );
+
+    _showSnackBar("تم تصدير PDF بنجاح", Colors.green);
+  } catch (e) {
+    _showSnackBar("فشل التصدير: $e", Colors.red);
+  }
+}
 
   Future<void> _exportToExcel(List<Map<String, dynamic>> currentData) async {
   // ✅ التحقق من صلاحية التصدير
@@ -224,213 +394,275 @@ void _fetchData() async {
 }
 
   @override
-  Widget build(BuildContext context) {
-    // ✅ التحقق من صلاحية المعاينة (إذا لم تكن موجودة، نمنع الدخول)
-    if (!PermissionsService().canViewTransactions) {
-      return Scaffold(
-        extendBodyBehindAppBar: true,
-        appBar: AppBar(
-          title: const Text("سجل الحركات", style: TextStyle(fontFamily: 'Cairo', color: Colors.white)),
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-        ),
-        body: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [Colors.black, Colors.indigo.shade900, Colors.black],
-              begin: Alignment.topLeft, end: Alignment.bottomRight,
-            ),
-          ),
-          child: const Center(
-            child: Text(
-              "ليس لديك صلاحية لعرض سجل الحركات",
-              style: TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 16),
-            ),
+Widget build(BuildContext context) {
+  // ✅ التحقق من صلاحية المعاينة
+  if (!PermissionsService().canViewTransactions) {
+    return Scaffold(
+      extendBodyBehindAppBar: true,
+      appBar: AppBar(
+        title: const Text("سجل الحركات", style: TextStyle(fontFamily: 'Cairo', color: Colors.white)),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+      ),
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Colors.black, Colors.indigo.shade900, Colors.black],
+            begin: Alignment.topLeft, end: Alignment.bottomRight,
           ),
         ),
-      );
-    }
-
-    double screenWidth = MediaQuery.of(context).size.width;
-    bool isWebOrDesktop = screenWidth > 600;
-    final Box dailyBox = Hive.box('daily_transactions_box');
-
-    // 🌟 السحر هنا: التحكم في إيماءة وزر الرجوع الخاص بنظام الهاتف بالكامل
-    return PopScope(
-      canPop: false, // تعطيل الخروج التلقائي لمنع إغلاق التطبيق فجأة
-      onPopInvoked: (didPop) async {
-        if (didPop) return; // إذا تم الخروج بالفعل لا تفعل شيء
-        
-        if (context.mounted) {
-          Navigator.pop(context); // 🌟 تنفيذ نفس أمر الرجوع المعتمد داخل البرنامج
-        }
-      },
-      child: ValueListenableBuilder(
-        valueListenable: dailyBox.listenable(),
-        builder: (context, Box box, child) {
-          // 1. استخراج الحركات الفردية المحدثة وتصفيتها بحسب نطاق التاريخ المختار وكود الشركة ديناميكياً
-          List<Map<String, dynamic>> displayList = [];
-          String startStr = DateFormat('yyyy-MM-dd').format(_fromDate);
-          String endStr = DateFormat('yyyy-MM-dd').format(_toDate);
-
-          for (var item in box.values) {
-            if (item is Map && item['company_code'] == widget.companyCode) {
-
-            // 🌟 الإضافة السحرية: تجاهل حركات التحويل المخفية لكي لا تظهر نهائياً في الواجهة!
-            // if (item['category'] == 'transfer_hidden') continue; 
-              // 🌟 فلترة ذكية: تجاهل الحركات التي لا تنتمي للفرع المختار (إلا لو اختار الكل) بناءً على الكود
-            if (widget.selectedBranchCode != null && widget.selectedBranchCode != "all" && widget.selectedBranchCode != "") {
-              if (item['branch_code']?.toString() != widget.selectedBranchCode) continue;
-            }
-
-              String txDate = item['date']?.toString() ?? "";
-              if (txDate.compareTo(startStr) >= 0 && txDate.compareTo(endStr) <= 0) {
-                displayList.add(Map<String, dynamic>.from(item));
-              }
-            }
-          }
-
-          // 2. تطبيق الفرز والترتيب المطلق
-          displayList = _getSortedData(displayList);
-
-          return Scaffold(
-            extendBodyBehindAppBar: true,
-            appBar: AppBar(
-              title: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text(
-                    "سجل الحركات",
-                    style: TextStyle(fontFamily: 'Cairo', fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  // 🌟 توضيح الفرع الحالي المفلتر
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: Colors.cyanAccent.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(
-                      "${_getBranchName(widget.selectedBranchCode)}", // 🌟 التعديل هنا
-                      style: const TextStyle(fontFamily: 'Cairo', fontSize: 12, color: Colors.cyanAccent),
-                    ),
-                  ),
-                ],
-              ),
-              centerTitle: true,
-              backgroundColor: Colors.transparent,
-              elevation: 0,
-              toolbarHeight: 70, // متناسق مع ارتفاع صفحة اليومية
-
-              // 🌟 أزرار التحكم في أعلى اليسار
-              actions: [
-                // 1️⃣ زر التجميع والفلترة حسب التصنيف (✅ يظهر فقط إذا كانت صلاحية الفلترة موجودة)
-                if (PermissionsService().canFilter)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8.0),
-                    child: Tooltip(
-                      message: _isCategoryGrouped ? "إلغاء تجميع التصنيفات" : "تجميع حسب التصنيف",
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.12), // خلفية زجاجية خفيفة
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: _isCategoryGrouped ? Colors.orangeAccent.withOpacity(0.5) : Colors.cyanAccent.withOpacity(0.3),
-                          ),
-                        ),
-                        child: IconButton(
-                          icon: Icon(
-                            _isCategoryGrouped ? Icons.filter_alt : Icons.filter_alt_outlined,
-                            color: _isCategoryGrouped ? Colors.orangeAccent : Colors.cyanAccent,
-                            size: 22,
-                          ),
-                          onPressed: () {
-                            setState(() {
-                              _isCategoryGrouped = !_isCategoryGrouped;
-                            });
-                          },
-                        ),
-                      ),
-                    ),
-                  ),
-                const SizedBox(width: 8),
-
-                // 2️⃣ زر التصدير إلى إكسيل (✅ يظهر فقط إذا كانت صلاحية التصدير موجودة)
-                if (PermissionsService().canExport)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8.0),
-                    child: Tooltip(
-                      message: "تصدير البيانات المعروضة لإكسيل",
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.12), // خلفية زجاجية خفيفة
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.greenAccent.withOpacity(0.4)),
-                        ),
-                        child: IconButton(
-                          icon: const Icon(Icons.file_download, color: Colors.greenAccent, size: 22),
-                          onPressed: () {
-                            // نقوم بتمرير الـ displayList التي تحتوي على بيانات البحث الحالي فقط
-                            _exportToExcel(displayList);
-                          },
-                        ),
-                      ),
-                    ),
-                  ),
-                const SizedBox(width: 12), // مسافة جمالية عن حافة الشاشة اليسرى
-              ],
-            ),
-            body: Container(
-              width: double.infinity,
-              height: double.infinity,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Colors.black, Colors.indigo.shade900, Colors.black],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-              ),
-              child: SafeArea(
-                child: Center(
-                  child: Container(
-                    constraints: BoxConstraints(
-                      maxWidth: isWebOrDesktop ? 600 : double.infinity,
-                    ),
-                    child: Column(
-                      children: [
-                        _buildDateFilters(),
-                        _buildTableHeader(),
-                        Expanded(
-                          child: _isLoading
-                              ? const Center(
-                                  child: CircularProgressIndicator(
-                                      color: Colors.white))
-                              : displayList.isEmpty
-                                  ? const Center(
-                                      child: Text("لا توجد بيانات",
-                                          style: TextStyle(
-                                              color: Colors.white38,
-                                              fontFamily: 'Cairo',
-                                              fontSize: 14)))
-                                  : ListView.builder(
-                                      padding: const EdgeInsets.only(
-                                          bottom: 20, left: 5, right: 5),
-                                      itemCount: displayList.length,
-                                      itemBuilder: (context, index) =>
-                                          _buildDataRow(displayList[index]),
-                                    ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          );
-        },
+        child: const Center(
+          child: Text(
+            "ليس لديك صلاحية لعرض سجل الحركات",
+            style: TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 16),
+          ),
+        ),
       ),
     );
   }
+
+  double screenWidth = MediaQuery.of(context).size.width;
+  bool isWebOrDesktop = screenWidth > 600;
+  final Box dailyBox = Hive.box('daily_transactions_box');
+
+  return PopScope(
+    canPop: false,
+    onPopInvoked: (didPop) async {
+      if (didPop) return;
+      if (context.mounted) {
+        Navigator.pop(context);
+      }
+    },
+    child: ValueListenableBuilder(
+      valueListenable: dailyBox.listenable(),
+      builder: (context, Box box, child) {
+        // 1. استخراج الحركات حسب التاريخ والفرع
+        List<Map<String, dynamic>> displayList = [];
+        String startStr = DateFormat('yyyy-MM-dd').format(_fromDate);
+        String endStr = DateFormat('yyyy-MM-dd').format(_toDate);
+
+        for (var item in box.values) {
+          if (item is Map && item['company_code'] == widget.companyCode) {
+            if (widget.selectedBranchCode != null &&
+                widget.selectedBranchCode != "all" &&
+                widget.selectedBranchCode != "") {
+              if (item['branch_code']?.toString() != widget.selectedBranchCode) continue;
+            }
+            String txDate = item['date']?.toString() ?? "";
+            if (txDate.compareTo(startStr) >= 0 && txDate.compareTo(endStr) <= 0) {
+              displayList.add(Map<String, dynamic>.from(item));
+            }
+          }
+        }
+
+        // 2. تطبيق الفلتر والترتيب (أبجدي حسب التصنيف)
+        displayList = _applyFiltersAndSort(displayList);
+
+        return Scaffold(
+          extendBodyBehindAppBar: true,
+          appBar: AppBar(
+            title: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  "سجل الحركات",
+                  style: TextStyle(fontFamily: 'Cairo', fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.cyanAccent.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    _getBranchName(widget.selectedBranchCode),
+                    style: const TextStyle(fontFamily: 'Cairo', fontSize: 12, color: Colors.cyanAccent),
+                  ),
+                ),
+              ],
+            ),
+            centerTitle: true,
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            toolbarHeight: 70,
+            actions: [
+              
+
+              // 2️⃣ زر الفلتر المتقدم (اختيار تصنيفات متعددة)
+              if (PermissionsService().canFilter)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8.0),
+                  child: Tooltip(
+                    message: _selectedCategories.isNotEmpty
+                        ? "تصفية حسب ${_selectedCategories.length} تصنيف"
+                        : "فلترة التصنيفات",
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: _selectedCategories.isNotEmpty
+                            ? Colors.orange.withOpacity(0.2)
+                            : Colors.white.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: _selectedCategories.isNotEmpty
+                              ? Colors.orangeAccent.withOpacity(0.6)
+                              : Colors.purpleAccent.withOpacity(0.3),
+                        ),
+                      ),
+                      child: IconButton(
+                        icon: Icon(
+                          _selectedCategories.isNotEmpty
+                              ? Icons.filter_list
+                              : Icons.filter_list_outlined,
+                          color: _selectedCategories.isNotEmpty
+                              ? Colors.orangeAccent
+                              : Colors.purpleAccent,
+                          size: 22,
+                        ),
+                        onPressed: () {
+                          _showFilterDialog(displayList);
+                        },
+                      ),
+                    ),
+                  ),
+                ),
+              const SizedBox(width: 8),
+
+              // ✅ زر تصدير Excel
+  if (PermissionsService().canExport)
+    Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Tooltip(
+        message: "تصدير البيانات المعروضة لإكسيل",
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.greenAccent.withOpacity(0.4)),
+          ),
+          child: IconButton(
+            icon: const Icon(Icons.file_download, color: Colors.greenAccent, size: 22),
+            onPressed: () {
+              _exportToExcel(displayList);
+            },
+          ),
+        ),
+      ),
+    ),
+
+  const SizedBox(width: 4),
+
+  // ✅ زر تصدير PDF (جديد)
+  if (PermissionsService().canExport)
+    Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Tooltip(
+        message: "تصدير البيانات المعروضة PDF",
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.redAccent.withOpacity(0.4)),
+          ),
+          child: IconButton(
+            icon: const Icon(Icons.picture_as_pdf, color: Colors.redAccent, size: 22),
+            onPressed: () {
+              _exportToPDF(displayList);
+            },
+          ),
+        ),
+      ),
+    ),
+  const SizedBox(width: 12),
+],
+          ),
+          body: Container(
+            width: double.infinity,
+            height: double.infinity,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Colors.black, Colors.indigo.shade900, Colors.black],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+            ),
+            child: SafeArea(
+              child: Center(
+                child: Container(
+                  constraints: BoxConstraints(
+                    maxWidth: isWebOrDesktop ? 600 : double.infinity,
+                  ),
+                  child: Column(
+                    children: [
+                      _buildDateFilters(),
+                      _buildTableHeader(),
+                      Expanded(
+                        child: _isLoading
+                            ? const Center(
+                                child: CircularProgressIndicator(color: Colors.white))
+                            : displayList.isEmpty
+                                ? const Center(
+                                    child: Text(
+                                      "لا توجد بيانات",
+                                      style: TextStyle(
+                                        color: Colors.white38,
+                                        fontFamily: 'Cairo',
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                  )
+                                : ListView.builder(
+                                    padding: const EdgeInsets.only(
+                                        bottom: 20, left: 5, right: 5),
+                                    itemCount: displayList.length,
+                                    itemBuilder: (context, index) =>
+                                        _buildDataRow(displayList[index]),
+                                  ),
+                      ),
+                      // ✅ عرض إجمالي المبلغ
+                      // ✅ عرض إجمالي المبلغ (يظهر فقط عند وجود فلتر تصنيفات)
+if (displayList.isNotEmpty && _selectedCategories.isNotEmpty)
+  Container(
+    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+    margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    decoration: BoxDecoration(
+      color: Colors.white.withOpacity(0.08),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: Colors.cyanAccent.withOpacity(0.3)),
+    ),
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          'عدد الحركات: ${displayList.length}',
+          style: const TextStyle(
+            color: Colors.white70,
+            fontSize: 13,
+            fontFamily: 'Cairo',
+          ),
+        ),
+        Text(
+          'الإجمالي: ${_calculateTotal(displayList).toStringAsFixed(2)}',
+          style: const TextStyle(
+            color: Colors.cyanAccent,
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            fontFamily: 'Cairo',
+          ),
+        ),
+      ],
+    ),
+  ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    ),
+  );
+}
 
   Widget _buildDateFilters() {
     return Padding(
