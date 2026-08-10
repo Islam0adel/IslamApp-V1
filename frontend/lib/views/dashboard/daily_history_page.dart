@@ -69,8 +69,19 @@ Future<void> _initialize() async {
     }
   }
 
-  // بعد التأكد من وجود البيانات، نجلب الفترة المحددة
-  _fetchData();
+  // ✅ جلب التحديثات التزايدية من السيرفر
+int lastSerial = _dailyService.getLastLocalSerial(widget.companyCode);
+if (lastSerial > 0) {
+  print("📡 جاري جلب التحديثات من السيرفر منذ السيريال: $lastSerial");
+  await _dailyService.syncCacheFromServer(widget.companyCode, lastSerial + 1);
+} else {
+  // إذا لم يكن هناك أي بيانات محلية، نجلب الكل (موجود بالفعل في hasLocalData)
+  // لكننا نضمن جلب الكل إذا كان lastSerial == 0
+  await _dailyService.syncAllTransactions(widget.companyCode);
+}
+
+// بعد التحديث، نجلب البيانات المعروضة
+_fetchData();
 }
 
 void _fetchData() async {

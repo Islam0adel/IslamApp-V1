@@ -88,114 +88,137 @@ class _StockBalancePageState extends State<StockBalancePage> {
   // باقي الدوال كما هي (لم تتغير)
   // ================== المنطق الأساسي لحساب الرصيد ==================
   Future<void> _calculateBalances() async {
-    if (_selectedBranchCode == null || _selectedStoreCode == null) {
-      setState(() {
-        _itemsData = [];
-        _hasData = false;
-      });
-      return;
-    }
+  if (_selectedBranchCode == null || _selectedStoreCode == null) {
+    setState(() {
+      _itemsData = [];
+      _hasData = false;
+    });
+    return;
+  }
 
-    setState(() => _isLoading = true);
+  setState(() => _isLoading = true);
 
-    try {
-      final box = Hive.box('inventory_box');
-      List<InventoryModel> allInventories = [];
+  try {
+    final box = Hive.box('inventory_box');
+    List<InventoryModel> allInventories = [];
 
-      for (var key in box.keys) {
-        final raw = box.get(key);
-        if (raw is List) {
-          for (var item in raw) {
-            if (item['company_code'] == widget.companyCode &&
-                item['branch_code'] == _selectedBranchCode &&
-                item['store_code'] == _selectedStoreCode) {
-              final invDate = DateTime.tryParse(item['date'] ?? '');
-              if (invDate != null &&
-                  (invDate.isBefore(_selectedDate) ||
-                      invDate.isAtSameMomentAs(_selectedDate))) {
-                allInventories.add(InventoryModel.fromMap(
-                    Map<String, dynamic>.from(item)));
-              }
+    for (var key in box.keys) {
+      final raw = box.get(key);
+      if (raw is List) {
+        for (var item in raw) {
+          if (item['company_code'] == widget.companyCode &&
+              item['branch_code'] == _selectedBranchCode &&
+              item['store_code'] == _selectedStoreCode) {
+            final invDate = DateTime.tryParse(item['date'] ?? '');
+            if (invDate != null &&
+                (invDate.isBefore(_selectedDate) ||
+                    invDate.isAtSameMomentAs(_selectedDate))) {
+              allInventories.add(InventoryModel.fromMap(
+                  Map<String, dynamic>.from(item)));
             }
           }
         }
       }
-
-      allInventories.sort((a, b) => a.date.compareTo(b.date));
-
-      final codingBox = Hive.box('coding_box');
-      final itemsKey = '${widget.companyCode}_items';
-      List<Map<String, dynamic>> allItems = [];
-      if (codingBox.containsKey(itemsKey)) {
-        final raw = codingBox.get(itemsKey);
-        if (raw is List) {
-          allItems = raw.map((e) => Map<String, dynamic>.from(e)).toList();
-        }
-      }
-
-      Map<String, double> balances = {};
-      Map<String, Map<String, dynamic>> itemsMap = {};
-      for (var item in allItems) {
-        final code = item['code'].toString();
-        balances[code] = 0.0;
-        itemsMap[code] = item;
-      }
-
-      for (var inv in allInventories) {
-        if (inv.inventoryType == 'general') {
-          for (var key in balances.keys) {
-            balances[key] = 0.0;
-          }
-          for (var item in inv.items) {
-            balances[item.code] = item.quantity;
-          }
-        } else {
-          for (var item in inv.items) {
-            balances[item.code] = item.quantity;
-          }
-        }
-      }
-
-      balances.removeWhere((key, value) => value == 0.0);
-
-      List<Map<String, dynamic>> itemsData = [];
-      balances.forEach((code, quantity) {
-        final item = itemsMap[code] ?? {};
-        final wholesalePrice = double.tryParse(
-                item['wholesale_price']?.toString() ??
-                item['wholesalePrice']?.toString() ??
-                '0') ?? 0.0;
-        final sellingPrice = double.tryParse(
-                item['selling_price']?.toString() ??
-                item['sellingPrice']?.toString() ??
-                '0') ?? 0.0;
-
-        itemsData.add({
-          'code': code,
-          'name': item['name'] ?? 'غير معروف',
-          'quantity': quantity,
-          'wholesalePrice': wholesalePrice,
-          'sellingPrice': sellingPrice,
-          'totalWholesale': quantity * wholesalePrice,
-          'totalRetail': quantity * sellingPrice,
-        });
-      });
-
-      itemsData.sort((a, b) => a['code'].compareTo(b['code']));
-
-      setState(() {
-        _itemsData = itemsData;
-        _hasData = true;
-        _isLoading = false;
-      });
-    } catch (e) {
-      print('❌ خطأ في حساب الأرصدة: $e');
-      setState(() {
-        _isLoading = false;
-        _hasData = false;
-      });
     }
+
+    allInventories.sort((a, b) => a.date.compareTo(b.date));
+
+    final codingBox = Hive.box('coding_box');
+    final itemsKey = '${widget.companyCode}_items';
+    List<Map<String, dynamic>> allItems = [];
+    if (codingBox.containsKey(itemsKey)) {
+      final raw = codingBox.get(itemsKey);
+      if (raw is List) {
+        allItems = raw.map((e) => Map<String, dynamic>.from(e)).toList();
+      }
+    }
+
+    Map<String, double> balances = {};
+    Map<String, Map<String, dynamic>> itemsMap = {};
+    for (var item in allItems) {
+      final code = item['code'].toString();
+      balances[code] = 0.0;
+      itemsMap[code] = item;
+    }
+
+    // ===== حساب الرصيد من الجرد (inventory_box) =====
+    for (var inv in allInventories) {
+      if (inv.inventoryType == 'general') {
+        for (var key in balances.keys) {
+          balances[key] = 0.0;
+        }
+        for (var item in inv.items) {
+          balances[item.code] = item.quantity;
+        }
+      } else {
+        for (var item in inv.items) {
+          balances[item.code] = item.quantity;
+        }
+      }
+    }
+
+    // ===== إضافة كميات الموردين (من supplier_box) =====
+    final supplierBox = Hive.box('supplier_box');
+    for (var key in supplierBox.keys) {
+      final raw = supplierBox.get(key);
+      if (raw is List) {
+        for (var item in raw) {
+          if (item['company_code'] == widget.companyCode &&
+              item['branch_code'] == _selectedBranchCode &&
+              item['store_code'] == _selectedStoreCode &&
+              item['is_add_to_store'] == true) {
+            final items = item['items'] as List? ?? [];
+            for (var product in items) {
+              final code = product['code'].toString();
+              final quantity = (product['quantity'] as num?)?.toDouble() ?? 0.0;
+              // إضافة الكمية إلى الرصيد الحالي
+              balances[code] = (balances[code] ?? 0.0) + quantity;
+            }
+          }
+        }
+      }
+    }
+
+    balances.removeWhere((key, value) => value == 0.0);
+
+    List<Map<String, dynamic>> itemsData = [];
+    balances.forEach((code, quantity) {
+      final item = itemsMap[code] ?? {};
+      final wholesalePrice = double.tryParse(
+              item['wholesale_price']?.toString() ??
+              item['wholesalePrice']?.toString() ??
+              '0') ?? 0.0;
+      final sellingPrice = double.tryParse(
+              item['selling_price']?.toString() ??
+              item['sellingPrice']?.toString() ??
+              '0') ?? 0.0;
+
+      itemsData.add({
+        'code': code,
+        'name': item['name'] ?? 'غير معروف',
+        'quantity': quantity,
+        'wholesalePrice': wholesalePrice,
+        'sellingPrice': sellingPrice,
+        'totalWholesale': quantity * wholesalePrice,
+        'totalRetail': quantity * sellingPrice,
+      });
+    });
+
+    itemsData.sort((a, b) => a['code'].compareTo(b['code']));
+
+    setState(() {
+      _itemsData = itemsData;
+      _hasData = true;
+      _isLoading = false;
+    });
+  } catch (e) {
+    print('❌ خطأ في حساب الأرصدة: $e');
+    setState(() {
+      _isLoading = false;
+      _hasData = false;
+    });
   }
+}
 
   // ================== الإجماليات ==================
   double get totalQuantity =>

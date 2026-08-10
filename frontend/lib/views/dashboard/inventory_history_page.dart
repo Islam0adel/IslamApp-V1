@@ -45,11 +45,24 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
   InventoryModel? _selectedInventory;
   bool _showDetails = false;
 
-  @override
+  // أضف متغيراً لحفظ مرجع المستمع
+VoidCallback? _inventoryBoxListener;
+
+@override
 void initState() {
   super.initState();
-  Hive.box('inventory_box').listenable().addListener(_onInventoryBoxChanged);
+  // حفظ المرجع ثم الإضافة
+  _inventoryBoxListener = _onInventoryBoxChanged;
+  Hive.box('inventory_box').listenable().addListener(_inventoryBoxListener!);
   _loadData();
+}
+
+@override
+void dispose() {
+  if (_inventoryBoxListener != null) {
+    Hive.box('inventory_box').listenable().removeListener(_inventoryBoxListener!);
+  }
+  super.dispose();
 }
 
 void _onInventoryBoxChanged() {
@@ -67,37 +80,58 @@ void _onInventoryBoxChanged() {
   }
 
   Future<void> _loadData() async {
+  if (!mounted) return;
+
   setState(() => _isLoading = true);
   try {
     final box = Hive.box('inventory_box');
     List<InventoryModel> all = [];
     bool hasLocalData = false;
 
-    // 1️⃣ محاولة القراءة من Hive
+    // 1️⃣ التحقق من وجود أي بيانات محلية للشركة الحالية
     for (var key in box.keys) {
       final raw = box.get(key);
-      if (raw is List) {
+      if (raw is List && raw.isNotEmpty) {
         for (var item in raw) {
           if (item['company_code'] == widget.companyCode) {
-            all.add(InventoryModel.fromMap(item));
             hasLocalData = true;
+            break;
+          }
+        }
+      }
+      if (hasLocalData) break;
+    }
+
+    // 2️⃣ إذا كانت هناك بيانات محلية، نحاول قراءتها
+    if (hasLocalData) {
+      for (var key in box.keys) {
+        final raw = box.get(key);
+        if (raw is List) {
+          for (var item in raw) {
+            if (item['company_code'] == widget.companyCode) {
+              try {
+                all.add(InventoryModel.fromMap(item));
+              } catch (e) {
+                print('⚠️ فشل تحويل عنصر الجرد: $e');
+              }
+            }
           }
         }
       }
     }
 
-    // 2️⃣ إذا لم توجد بيانات محلية، جلب من السيرفر
-    if (!hasLocalData) {
-      print("📥 لا توجد جردات محلياً.. جاري الجلب من السيرفر");
+    // 3️⃣ إذا لم تكن هناك بيانات محلية أو كانت فارغة، نطلب من السيرفر
+    if (!hasLocalData || all.isEmpty) {
+      print("📥 جاري جلب الجردات من السيرفر...");
       try {
         final response = await http.get(
           Uri.parse('${ApiConstants.baseUrl}/inventory/list/${widget.companyCode}'),
         );
         if (response.statusCode == 200) {
           final List<dynamic> decoded = json.decode(response.body);
+          // ✅ حفظ البيانات في Hive بنفس المفتاح المستخدم في saveInventory
           for (var item in decoded) {
             final model = InventoryModel.fromMap(item);
-            // حفظ في Hive بنفس المفتاح المستخدم في saveInventory
             final String localKey = '${model.companyCode}_${model.branchCode}_${model.storeCode}_${model.date}';
             List<Map<String, dynamic>> list = [];
             if (box.containsKey(localKey)) {
@@ -106,13 +140,12 @@ void _onInventoryBoxChanged() {
                 list = raw.map((e) => Map<String, dynamic>.from(e)).toList();
               }
             }
-            // إزالة أي عنصر له نفس docId ثم إضافة الجديد
             list.removeWhere((e) => e['doc_id'] == model.docId);
             list.add(model.toMap());
             await box.put(localKey, list);
           }
-          // إعادة تحميل البيانات من Hive بعد الحفظ
-          all = [];
+          // إعادة قراءة البيانات من Hive بعد الحفظ
+          all.clear();
           for (var key in box.keys) {
             final raw = box.get(key);
             if (raw is List) {
@@ -130,7 +163,7 @@ void _onInventoryBoxChanged() {
       }
     }
 
-    // 3️⃣ تطبيق الفلاتر
+    // 4️⃣ تطبيق الفلاتر
     if (widget.selectedBranchCode != null &&
         widget.selectedBranchCode != 'all' &&
         widget.selectedBranchCode!.isNotEmpty) {
@@ -148,13 +181,15 @@ void _onInventoryBoxChanged() {
       return (b.serial ?? 0).compareTo(a.serial ?? 0);
     });
 
+    if (!mounted) return;
     setState(() {
       _inventories = all;
       _isLoading = false;
     });
   } catch (e) {
-    print('خطأ في تحميل الجردات: $e');
+    if (!mounted) return;
     setState(() => _isLoading = false);
+    print('❌ خطأ في تحميل الجردات: $e');
   }
 }
 
@@ -402,11 +437,24 @@ Future<void> _exportAllPDF() async {
               tooltip: 'تصدير جميع الجردات PDF',
             ),
           if (!_showDetails)
-            IconButton(
-              icon: const Icon(Icons.refresh, color: Colors.white),
-              onPressed: _loadData,
-              tooltip: 'تحديث',
-            ),
+            // استبدل زر التحديث في AppBar
+IconButton(
+  icon: const Icon(Icons.refresh, color: Colors.white),
+  onPressed: () async {
+    setState(() => _isLoading = true);
+    try {
+      // ✅ جلب جميع الجردات من السيرفر وتحديث Hive
+      await _inventoryService.fetchAllInventory(widget.companyCode);
+      // ✅ إعادة تحميل البيانات المعروضة
+      await _loadData();
+    } catch (e) {
+      _showSnackBar('فشل التحديث: $e', Colors.red);
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  },
+  tooltip: 'تحديث من السيرفر',
+)
         ],
       ),
       body: Container(

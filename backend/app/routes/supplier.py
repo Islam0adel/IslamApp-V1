@@ -8,11 +8,13 @@ from app.core.sync import manager
 from typing import Optional
 import datetime
 import json
+import logging
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # ==========================================
-# 1. حفظ حركة المورد
+# 1. حفظ حركة المورد (إضافة أو تحديث)
 # ==========================================
 @router.post("/save")
 async def save_supplier_transaction(
@@ -20,19 +22,34 @@ async def save_supplier_transaction(
     db: AsyncSession = Depends(get_db)
 ):
     try:
-        doc_id = data.doc_id or f"{data.company_code}_{data.branch_code}_{data.serial}_{datetime.datetime.now().timestamp()}"
-
-        items_json = [item.dict() for item in data.items]
-
-        # البحث عن سجل موجود
+        # ✅ التحقق من doc_id وتحويله إلى int
+        doc_id_int = None
         if data.doc_id:
-            stmt = select(SupplierRecord).where(SupplierRecord.id == data.doc_id)
+            try:
+                doc_id_int = int(data.doc_id)
+            except (ValueError, TypeError) as e:
+                raise HTTPException(status_code=400, detail=f"doc_id غير صالح: {data.doc_id}")
+
+        # ✅ تحويل الأصناف إلى JSON
+        try:
+            items_json = [item.dict() for item in data.items]
+        except Exception as e:
+            logger.error(f"خطأ في تحويل items إلى JSON: {e}")
+            raise HTTPException(status_code=400, detail="بيانات الأصناف غير صالحة")
+
+        # ✅ البحث عن السجل إذا كان doc_id موجوداً
+        if doc_id_int:
+            stmt = select(SupplierRecord).where(SupplierRecord.id == doc_id_int)
             result = await db.execute(stmt)
             existing = result.scalar_one_or_none()
+            if not existing:
+                raise HTTPException(status_code=404, detail=f"السجل غير موجود (id={doc_id_int})")
         else:
             existing = None
 
+        # ✅ إنشاء السجل أو تحديثه
         if existing:
+            # تحديث
             existing.branch_code = data.branch_code
             existing.store_code = data.store_code
             existing.serial = data.serial
@@ -47,7 +64,9 @@ async def save_supplier_transaction(
             existing.paid_amount = data.paid_amount
             existing.updated_at = datetime.datetime.utcnow()
             action = "update"
+            record = existing
         else:
+            # إضافة جديدة
             new_record = SupplierRecord(
                 company_code=data.company_code,
                 branch_code=data.branch_code,
@@ -65,41 +84,55 @@ async def save_supplier_transaction(
             )
             db.add(new_record)
             action = "insert"
+            record = new_record
 
-        await db.commit()
-        await db.refresh(new_record if not existing else existing)
+        # ✅ حفظ التغييرات في قاعدة البيانات
+        try:
+            await db.commit()
+            await db.refresh(record)
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"خطأ في حفظ قاعدة البيانات: {e}")
+            raise HTTPException(status_code=500, detail=f"فشل حفظ البيانات: {str(e)}")
 
-        record = existing or new_record
         record_id = str(record.id)
 
-        # بث التغيير
-        await manager.broadcast(data.company_code, {
-            "type": "supplier",
-            "action": action,
-            "data": {
-                "doc_id": record_id,
-                "company_code": record.company_code,
-                "branch_code": record.branch_code,
-                "store_code": record.store_code,
-                "serial": record.serial,
-                "date": record.date,
-                "supplier_name": record.supplier_name,
-                "payment_method": record.payment_method,
-                "treasury": record.treasury,
-                "is_add_to_store": record.is_add_to_store,
-                "employee": record.employee,
-                "items": record.items,
-                "total_amount": record.total_amount,
-                "paid_amount": record.paid_amount,
-                "updated_at": record.updated_at.isoformat() if record.updated_at else None,
-            }
-        })
+        # 🔄 بث التغيير عبر WebSocket
+        try:
+            await manager.broadcast(data.company_code, {
+                "type": "supplier",
+                "action": action,
+                "data": {
+                    "doc_id": record_id,
+                    "company_code": record.company_code,
+                    "branch_code": record.branch_code,
+                    "store_code": record.store_code,
+                    "serial": record.serial,
+                    "date": record.date,
+                    "supplier_name": record.supplier_name,
+                    "payment_method": record.payment_method,
+                    "treasury": record.treasury,
+                    "is_add_to_store": record.is_add_to_store,
+                    "employee": record.employee,
+                    "items": record.items,
+                    "total_amount": record.total_amount,
+                    "paid_amount": record.paid_amount,
+                    "updated_at": record.updated_at.isoformat() if record.updated_at else None,
+                }
+            })
+        except Exception as e:
+            logger.warning(f"فشل بث WebSocket: {e}")
 
         return {"status": "success", "doc_id": record_id}
 
+    except HTTPException:
+        raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"خطأ غير متوقع في save_supplier_transaction: {e}", exc_info=True)
+        # ✅ إرجاع تفاصيل الخطأ للمطور (مع إخفاء التفاصيل الحساسة في الإنتاج)
+        raise HTTPException(status_code=500, detail=f"خطأ داخلي: {str(e)}")
+
 
 # ==========================================
 # 2. جلب قائمة حركات الموردين
@@ -150,7 +183,9 @@ async def list_supplier_transactions(
         return results
 
     except Exception as e:
+        logger.error(f"خطأ في list_supplier_transactions: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
 
 # ==========================================
 # 3. حذف حركة مورد
@@ -162,23 +197,52 @@ async def delete_supplier_transaction(
     db: AsyncSession = Depends(get_db)
 ):
     try:
-        stmt = select(SupplierRecord).where(SupplierRecord.id == int(doc_id))
+        # تحويل doc_id إلى int
+        try:
+            doc_id_int = int(doc_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="doc_id غير صالح (يجب أن يكون رقماً)")
+
+        stmt = select(SupplierRecord).where(SupplierRecord.id == doc_id_int)
         result = await db.execute(stmt)
         existing = result.scalar_one_or_none()
         if not existing:
             raise HTTPException(status_code=404, detail="Supplier record not found")
 
+        # حفظ البيانات قبل الحذف
+        deleted_data = {
+            "doc_id": str(existing.id),
+            "company_code": existing.company_code,
+            "branch_code": existing.branch_code,
+            "store_code": existing.store_code,
+            "serial": existing.serial,
+            "date": existing.date,
+            "supplier_name": existing.supplier_name,
+            "payment_method": existing.payment_method,
+            "treasury": existing.treasury,
+            "is_add_to_store": existing.is_add_to_store,
+            "employee": existing.employee,
+            "items": existing.items,
+            "total_amount": existing.total_amount,
+            "paid_amount": existing.paid_amount,
+            "updated_at": existing.updated_at.isoformat() if existing.updated_at else None,
+        }
+
         await db.delete(existing)
         await db.commit()
 
+        # بث الحذف
         await manager.broadcast(company_code, {
             "type": "supplier",
             "action": "delete",
-            "data": {"doc_id": doc_id}
+            "data": deleted_data
         })
 
         return {"status": "success"}
 
+    except HTTPException:
+        raise
     except Exception as e:
         await db.rollback()
+        logger.error(f"خطأ في delete_supplier_transaction: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

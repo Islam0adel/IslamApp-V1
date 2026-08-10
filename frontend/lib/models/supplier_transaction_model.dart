@@ -14,6 +14,7 @@ class SupplierItem {
     required this.name,
     this.quantity = 0.0,
     this.price = 0.0,
+    
     this.type = 'وارد (دخول بضاعة)',
     this.discountRate = 0.0,
     this.discountAmount = 0.0,

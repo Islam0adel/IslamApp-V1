@@ -9,17 +9,20 @@ import '../../views/widgets/glass_card.dart';
 import '../../services/permissions_service.dart';
 import 'supplier_history_page.dart';
 import 'coding_page.dart';
+// import '../../models/coding_model.dart';
 
 class SupplierPage extends StatefulWidget {
   final String companyCode;
   final String? selectedBranchCode;
   final String? userName;
+  final SupplierTransactionModel? editItem; // ✅ إضافة معامل التعديل
 
   const SupplierPage({
     super.key,
     required this.companyCode,
     this.selectedBranchCode,
     this.userName,
+    this.editItem, // ✅ استقبال بيانات التعديل
   });
 
   @override
@@ -35,31 +38,30 @@ class _SupplierPageState extends State<SupplierPage> {
   String? _selectedStoreCode;
   String _selectedDate = DateFormat('yyyy-MM-dd').format(DateTime.now());
   String? _selectedSupplier;
-  String? _selectedPaymentMethod;
-  String? _selectedTreasury;
   bool _isAddToStore = false;
-  bool _isAddToDaily = false;
   int _currentSerial = 0;
   double _supplierBalance = 0.0;
+  String? _editDocId;
 
   // ===== قوائم المنسدلة =====
   List<Map<String, String>> _stores = [];
   List<Map<String, String>> _suppliers = [];
-  List<Map<String, String>> _paymentMethods = [];
-  List<Map<String, String>> _treasuries = [];
 
   // ===== الأصناف =====
   List<SupplierItem> _items = [];
   List<List<TextEditingController>> _controllers = [];
   List<List<FocusNode>> _focusNodes = [];
   final ScrollController _scrollController = ScrollController();
-  static const List<String> _fieldOrder = ['code', 'name', 'quantity', 'price', 'type', 'discountRate', 'discountAmount', 'total'];
+  static const List<String> _fieldOrder = ['code', 'name', 'quantity', 'price', 'discountRate', 'discountAmount', 'total'];
 
   // ===== الإجماليات =====
   double _totalAmount = 0.0;
-  double _paidAmount = 0.0;
   double _discountPercent = 0.0;
   double _discountAmount = 0.0;
+
+  // ===== متحكمات الخصم في الأسفل =====
+  final TextEditingController _discountPercentController = TextEditingController();
+  final TextEditingController _discountAmountController = TextEditingController();
 
   // ===== حالة الصفحة =====
   bool _isLoading = false;
@@ -70,7 +72,84 @@ class _SupplierPageState extends State<SupplierPage> {
     super.initState();
     _selectedBranchCode = widget.selectedBranchCode ?? 'all';
     _loadDropdowns();
-    _addEmptyRow();
+    _discountPercentController.addListener(_onDiscountPercentChanged);
+    _discountAmountController.addListener(_onDiscountAmountChanged);
+  }
+
+  // ===== دالة مساعدة لإعادة بناء المتحكمات =====
+  void _rebuildControllersAndFocus() {
+    for (var row in _controllers) for (var c in row) c.dispose();
+    for (var row in _focusNodes) for (var f in row) f.dispose();
+    _controllers.clear();
+    _focusNodes.clear();
+
+    for (int i = 0; i < _items.length; i++) {
+      final item = _items[i];
+      List<TextEditingController> rowControllers = [];
+      List<FocusNode> rowFocus = [];
+      for (int j = 0; j < _fieldOrder.length; j++) {
+        final field = _fieldOrder[j];
+        String initialValue = '';
+        switch (field) {
+          case 'code': initialValue = item.code; break;
+          case 'name': initialValue = item.name; break;
+          case 'quantity': initialValue = item.quantity.toString(); break;
+          case 'price': initialValue = item.price.toString(); break;
+          case 'discountRate': initialValue = item.discountRate.toString(); break;
+          case 'discountAmount': initialValue = item.discountAmount.toString(); break;
+          case 'total': initialValue = item.total.toString(); break;
+        }
+        rowControllers.add(TextEditingController(text: initialValue));
+        rowFocus.add(FocusNode());
+      }
+      _controllers.add(rowControllers);
+      _focusNodes.add(rowFocus);
+    }
+  }
+
+  // ===== ربط الخصم في الأسفل =====
+  void _onDiscountPercentChanged() {
+    if (_discountPercentController.text.isEmpty) return;
+    final val = double.tryParse(_discountPercentController.text);
+    if (val != null && val != _discountPercent) {
+      setState(() {
+        _discountPercent = val;
+        _discountAmount = _totalAmount * (_discountPercent / 100);
+        _discountAmountController.text = _discountAmount.toStringAsFixed(2);
+      });
+    }
+  }
+
+  void _onDiscountAmountChanged() {
+    if (_discountAmountController.text.isEmpty) return;
+    final val = double.tryParse(_discountAmountController.text);
+    if (val != null && val != _discountAmount) {
+      setState(() {
+        _discountAmount = val;
+        if (_totalAmount > 0) {
+          _discountPercent = (_discountAmount / _totalAmount) * 100;
+          _discountPercentController.text = _discountPercent.toStringAsFixed(1);
+        }
+      });
+    }
+  }
+
+  // ===== تحديث حقول الخصم بعد تغيير الإجمالي =====
+  void _updateDiscountFields() {
+    if (_discountAmount > 0) {
+      _discountAmountController.text = _discountAmount.toStringAsFixed(2);
+      if (_totalAmount > 0) {
+        _discountPercent = (_discountAmount / _totalAmount) * 100;
+        _discountPercentController.text = _discountPercent.toStringAsFixed(1);
+      }
+    } else if (_discountPercent > 0) {
+      _discountPercentController.text = _discountPercent.toStringAsFixed(1);
+      _discountAmount = _totalAmount * (_discountPercent / 100);
+      _discountAmountController.text = _discountAmount.toStringAsFixed(2);
+    } else {
+      _discountPercentController.text = '0';
+      _discountAmountController.text = '0.00';
+    }
   }
 
   // ===== جلب القوائم =====
@@ -91,28 +170,65 @@ class _SupplierPageState extends State<SupplierPage> {
           .toList()
         ..removeWhere((s) => s['code'] == null || s['code']!.isEmpty);
 
-      var paymentMethods = box.get('${widget.companyCode}_payment_methods') as List? ?? [];
-      _paymentMethods = paymentMethods
-          .map((e) => {'code': e['code'].toString(), 'name': e['name'].toString()})
-          .toList()
-        ..removeWhere((s) => s['code'] == null || s['code']!.isEmpty);
-
-      var treasuries = box.get('${widget.companyCode}_safes') as List? ?? [];
-      _treasuries = treasuries
-          .map((e) => {'code': e['code'].toString(), 'name': e['name'].toString()})
-          .toList()
-        ..removeWhere((s) => s['code'] == null || s['code']!.isEmpty);
-
-      if (_stores.isNotEmpty) _selectedStoreCode ??= _stores.first['code'];
-      if (_paymentMethods.isNotEmpty) _selectedPaymentMethod ??= _paymentMethods.first['name'];
-      if (_treasuries.isNotEmpty) _selectedTreasury ??= _treasuries.first['name'];
+      // ✅ إذا كان هناك editItem، لا نغيّر الـ store المحدد مسبقاً
+      if (_stores.isNotEmpty && _selectedStoreCode == null) {
+        _selectedStoreCode = _stores.first['code'];
+      }
 
       await _loadLastSerial();
+
+      // ✅ تحميل بيانات التعديل بعد جلب القوائم
+      if (widget.editItem != null) {
+        _loadEditData();
+      } else {
+        _addEmptyRow();
+      }
     } catch (e) {
       print('خطأ في تحميل القوائم: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  // ===== تحميل بيانات التعديل =====
+  void _loadEditData() {
+    final model = widget.editItem!;
+    setState(() {
+      _selectedSupplier = model.supplierName;
+      _selectedStoreCode = model.storeCode;
+      _selectedDate = model.date;
+      _currentSerial = model.serial;
+      _isAddToStore = model.isAddToStore;
+      _editDocId = model.docId; // تخزين docId
+
+      // تحويل الأصناف
+      _items = List.from(model.items);
+      // إضافة صف فارغ للإضافة
+      _items.add(SupplierItem(
+        code: '',
+        name: '',
+        quantity: 0.0,
+        price: 0.0,
+        type: 'وارد (دخول بضاعة)',
+        discountRate: 0.0,
+        discountAmount: 0.0,
+        total: 0.0,
+      ));
+
+      // إعادة بناء المتحكمات
+      _rebuildControllersAndFocus();
+
+      // حساب الإجماليات
+      _totalAmount = _items.fold(0.0, (sum, item) => sum + item.total);
+      _discountAmount = 0.0;
+      _discountPercent = 0.0;
+      _updateDiscountFields();
+
+      // تحميل رصيد المورد
+      if (_selectedSupplier != null && _selectedSupplier!.isNotEmpty) {
+        _loadSupplierBalance(_selectedSupplier!);
+      }
+    });
   }
 
   Future<void> _loadLastSerial() async {
@@ -131,9 +247,14 @@ class _SupplierPageState extends State<SupplierPage> {
           }
         }
       }
-      setState(() => _currentSerial = maxSerial + 1);
+      // ✅ إذا كان هناك editItem، نستخدم سيرياله، وإلا نأخذ التالي
+      if (widget.editItem == null) {
+        setState(() => _currentSerial = maxSerial + 1);
+      }
     } catch (e) {
-      setState(() => _currentSerial = 1);
+      if (widget.editItem == null) {
+        setState(() => _currentSerial = 1);
+      }
     }
   }
 
@@ -147,11 +268,17 @@ class _SupplierPageState extends State<SupplierPage> {
       _selectedBranchCode ?? 'all',
       supplierName,
     );
-    setState(() => _supplierBalance = balance);
+    setState(() => _supplierBalance = balance.abs());
   }
 
   // ===== إدارة الأصناف =====
   void _addEmptyRow() {
+    // منع إضافة صف فارغ إضافي إذا كان آخر صف فارغاً
+    if (_items.isNotEmpty) {
+      final last = _items.last;
+      if (last.code.isEmpty && last.quantity == 0.0 && last.price == 0.0) return;
+    }
+
     setState(() {
       _items.add(SupplierItem(
         code: '',
@@ -163,8 +290,14 @@ class _SupplierPageState extends State<SupplierPage> {
         discountAmount: 0.0,
         total: 0.0,
       ));
-      _controllers.add(List.generate(_fieldOrder.length, (_) => TextEditingController(text: '')));
-      _focusNodes.add(List.generate(_fieldOrder.length, (_) => FocusNode()));
+      List<TextEditingController> rowControllers = [];
+      List<FocusNode> rowFocus = [];
+      for (int j = 0; j < _fieldOrder.length; j++) {
+        rowControllers.add(TextEditingController(text: ''));
+        rowFocus.add(FocusNode());
+      }
+      _controllers.add(rowControllers);
+      _focusNodes.add(rowFocus);
     });
   }
 
@@ -172,6 +305,8 @@ class _SupplierPageState extends State<SupplierPage> {
     if (_items.length <= 1) return;
     setState(() {
       _items.removeAt(index);
+      for (var c in _controllers[index]) c.dispose();
+      for (var f in _focusNodes[index]) f.dispose();
       _controllers.removeAt(index);
       _focusNodes.removeAt(index);
     });
@@ -196,19 +331,42 @@ class _SupplierPageState extends State<SupplierPage> {
         case 'price':
           item.price = double.tryParse(value) ?? 0.0;
           break;
-        case 'type':
-          item.type = value;
-          break;
         case 'discountRate':
           item.discountRate = double.tryParse(value) ?? 0.0;
+          _updateItemDiscountAmount(rowIndex);
           break;
         case 'discountAmount':
           item.discountAmount = double.tryParse(value) ?? 0.0;
+          _updateItemDiscountRate(rowIndex);
           break;
       }
       _recalcItem(rowIndex);
       _recalcTotals();
     });
+  }
+
+  void _updateItemDiscountAmount(int index) {
+    final item = _items[index];
+    final totalBeforeDiscount = item.quantity * item.price;
+    if (totalBeforeDiscount > 0) {
+      item.discountAmount = totalBeforeDiscount * item.discountRate / 100;
+      final amountIndex = _fieldOrder.indexOf('discountAmount');
+      if (amountIndex != -1 && index < _controllers.length && amountIndex < _controllers[index].length) {
+        _controllers[index][amountIndex].text = item.discountAmount.toStringAsFixed(2);
+      }
+    }
+  }
+
+  void _updateItemDiscountRate(int index) {
+    final item = _items[index];
+    final totalBeforeDiscount = item.quantity * item.price;
+    if (totalBeforeDiscount > 0) {
+      item.discountRate = (item.discountAmount / totalBeforeDiscount) * 100;
+      final rateIndex = _fieldOrder.indexOf('discountRate');
+      if (rateIndex != -1 && index < _controllers.length && rateIndex < _controllers[index].length) {
+        _controllers[index][rateIndex].text = item.discountRate.toStringAsFixed(1);
+      }
+    }
   }
 
   void _recalcItem(int index) {
@@ -226,7 +384,7 @@ class _SupplierPageState extends State<SupplierPage> {
 
   void _recalcTotals() {
     _totalAmount = _items.fold(0.0, (sum, item) => sum + item.total);
-    _discountAmount = _totalAmount * (_discountPercent / 100);
+    _updateDiscountFields();
     setState(() {});
   }
 
@@ -242,7 +400,7 @@ class _SupplierPageState extends State<SupplierPage> {
         if (item['code'].toString() == code) {
           setState(() {
             _items[index].name = item['name'] ?? '';
-            _items[index].price = double.tryParse(item['selling_price']?.toString() ?? '0') ?? 0.0;
+            _items[index].price = double.tryParse(item['wholesale_price']?.toString() ?? '0') ?? 0.0;
             _controllers[index][1].text = _items[index].name;
             _controllers[index][3].text = _items[index].price.toString();
             _recalcItem(index);
@@ -259,9 +417,9 @@ class _SupplierPageState extends State<SupplierPage> {
         if (item.code == code) {
           setState(() {
             _items[index].name = item.name;
-            _items[index].price = item.sellingPrice;
+            _items[index].price = item.wholesalePrice;
             _controllers[index][1].text = item.name;
-            _controllers[index][3].text = item.sellingPrice.toString();
+            _controllers[index][3].text = item.wholesalePrice.toString();
             _recalcItem(index);
             _recalcTotals();
           });
@@ -309,6 +467,19 @@ class _SupplierPageState extends State<SupplierPage> {
     }
   }
 
+  // ===== اختيار التاريخ =====
+  Future<void> _pickDate() async {
+    DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: DateTime.parse(_selectedDate),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2101),
+    );
+    if (picked != null) {
+      setState(() => _selectedDate = DateFormat('yyyy-MM-dd').format(picked));
+    }
+  }
+
   // ===== الحفظ =====
   Future<void> _handleSave() async {
     if (!PermissionsService().canAddSupplierTransaction) {
@@ -324,14 +495,6 @@ class _SupplierPageState extends State<SupplierPage> {
       _showSnackBar('اختر مخزناً', Colors.orange);
       return;
     }
-    if (_selectedPaymentMethod == null || _selectedPaymentMethod!.isEmpty) {
-      _showSnackBar('اختر طريقة الدفع', Colors.orange);
-      return;
-    }
-    if (_selectedTreasury == null || _selectedTreasury!.isEmpty) {
-      _showSnackBar('اختر خزينة', Colors.orange);
-      return;
-    }
 
     final validItems = _items.where((i) => i.code.isNotEmpty && i.quantity > 0).toList();
     if (validItems.isEmpty) {
@@ -341,25 +504,31 @@ class _SupplierPageState extends State<SupplierPage> {
 
     setState(() => _isSaving = true);
     try {
+      final totalAfterDiscount = _totalAmount - _discountAmount;
+
+      // ✅ استخدام السيريال الموجود إذا كان تعديلاً
+      final serial = widget.editItem != null ? widget.editItem!.serial : _currentSerial;
+
       final model = SupplierTransactionModel(
         companyCode: widget.companyCode,
         branchCode: _selectedBranchCode ?? 'all',
         storeCode: _selectedStoreCode!,
-        serial: _currentSerial,
+        serial: serial,
         date: _selectedDate,
         supplierName: _selectedSupplier!,
-        paymentMethod: _selectedPaymentMethod!,
-        treasury: _selectedTreasury!,
+        paymentMethod: 'نقدي',
+        treasury: 'الخزينة الرئيسية',
         isAddToStore: _isAddToStore,
         employee: widget.userName ?? 'غير محدد',
         items: validItems,
-        totalAmount: _totalAmount - _discountAmount,
-        paidAmount: double.tryParse(_paidAmount.toStringAsFixed(2)) ?? 0.0,
+        totalAmount: totalAfterDiscount,
+        paidAmount: totalAfterDiscount,
+        docId: _editDocId,
       );
 
       final result = await _supplierService.saveSupplierTransaction(model);
       if (result['success'] == true) {
-        _showSnackBar('تم حفظ حركة المورد بنجاح', Colors.green);
+        _showSnackBar(widget.editItem != null ? 'تم تعديل حركة المورد بنجاح' : 'تم حفظ حركة المورد بنجاح', Colors.green);
         setState(() {
           _items.clear();
           _controllers.clear();
@@ -369,10 +538,14 @@ class _SupplierPageState extends State<SupplierPage> {
           _selectedSupplier = null;
           _supplierBalance = 0.0;
           _totalAmount = 0.0;
-          _paidAmount = 0.0;
           _discountPercent = 0.0;
           _discountAmount = 0.0;
+          _discountPercentController.text = '0';
+          _discountAmountController.text = '0.00';
         });
+        if (widget.editItem != null) {
+          Navigator.pop(context, true);
+        }
       } else {
         _showSnackBar('فشل الحفظ: ${result['error']}', Colors.red);
       }
@@ -383,7 +556,7 @@ class _SupplierPageState extends State<SupplierPage> {
     }
   }
 
-  // ===== بناء جدول الأصناف (مع مسطرة واحدة) =====
+  // ===== بناء جدول الأصناف =====
   Widget _buildItemsTable() {
     final bool isMobile = MediaQuery.of(context).size.width < 600;
 
@@ -422,13 +595,16 @@ class _SupplierPageState extends State<SupplierPage> {
             child: InkWell(
               onTap: _addEmptyRow,
               child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 6),
+                padding: const EdgeInsets.symmetric(vertical: 8),
                 decoration: BoxDecoration(
                   border: Border.all(color: Colors.white24, style: BorderStyle.solid),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: const Center(
-                  child: Text('+ إضافة صنف جديد', style: TextStyle(color: Colors.cyanAccent, fontFamily: 'Cairo', fontSize: 13)),
+                  child: Text(
+                    '+ إضافة صنف جديد',
+                    style: TextStyle(color: Colors.cyanAccent, fontFamily: 'Cairo', fontSize: 13),
+                  ),
                 ),
               ),
             ),
@@ -440,7 +616,10 @@ class _SupplierPageState extends State<SupplierPage> {
     if (isMobile) {
       return SingleChildScrollView(
         scrollDirection: Axis.horizontal,
-        child: buildTableContent(),
+        child: Container(
+          constraints: BoxConstraints(minWidth: MediaQuery.of(context).size.width * 1.6),
+          child: buildTableContent(),
+        ),
       );
     }
     return buildTableContent();
@@ -448,20 +627,18 @@ class _SupplierPageState extends State<SupplierPage> {
 
   // ===== عناوين الموبايل =====
   Widget _buildMobileHeaders() {
-    const double colWidth = 50.0;
-    const double nameColWidth = 65.0;
-    const double typeColWidth = 75.0;
+    const double colWidth = 58.0;
+    const double nameColWidth = 76.0;
     return Row(
       children: [
-        SizedBox(width: 28, child: const Text('#', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 8))),
-        SizedBox(width: colWidth, child: const Text('الكود', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 8))),
-        SizedBox(width: nameColWidth, child: const Text('الصنف', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 8))),
-        SizedBox(width: colWidth, child: const Text('الكمية', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 8))),
-        SizedBox(width: colWidth, child: const Text('السعر', textAlign: TextAlign.center, style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 8))),
-        SizedBox(width: typeColWidth, child: const Text('النوع', textAlign: TextAlign.center, style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 8))),
-        SizedBox(width: colWidth, child: const Text('خصم%', textAlign: TextAlign.center, style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 8))),
-        SizedBox(width: colWidth, child: const Text('مبلغ الخصم', textAlign: TextAlign.center, style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 8))),
-        SizedBox(width: colWidth, child: const Text('الإجمالي', textAlign: TextAlign.center, style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 8))),
+        SizedBox(width: 28, child: const Text('#', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 9))),
+        SizedBox(width: colWidth, child: const Text('الكود', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 9))),
+        SizedBox(width: nameColWidth, child: const Text('الصنف', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 9))),
+        SizedBox(width: colWidth, child: const Text('الكمية', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 9))),
+        SizedBox(width: colWidth, child: const Text('سعر الجملة', textAlign: TextAlign.center, style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 9))),
+        SizedBox(width: colWidth, child: const Text('خصم%', textAlign: TextAlign.center, style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 9))),
+        SizedBox(width: colWidth, child: const Text('مبلغ الخصم', textAlign: TextAlign.center, style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 9))),
+        SizedBox(width: colWidth, child: const Text('الإجمالي', textAlign: TextAlign.center, style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 9))),
         const SizedBox(width: 30),
       ],
     );
@@ -470,29 +647,27 @@ class _SupplierPageState extends State<SupplierPage> {
   // ===== صف الموبايل =====
   Widget _buildMobileRow(int idx) {
     final item = _items[idx];
-    const double colWidth = 50.0;
-    const double nameColWidth = 65.0;
-    const double typeColWidth = 100.0;
+    const double colWidth = 58.0;
+    const double nameColWidth = 76.0;
     return Row(
       children: [
-        SizedBox(width: 28, child: Text('${idx + 1}', textAlign: TextAlign.center, style: const TextStyle(color: Colors.white54, fontSize: 8))),
+        SizedBox(width: 28, child: Text('${idx + 1}', textAlign: TextAlign.center, style: const TextStyle(color: Colors.white54, fontSize: 9))),
         SizedBox(width: colWidth, child: _buildItemField(idx, 0)),
         SizedBox(width: nameColWidth, child: _buildItemField(idx, 1)),
         SizedBox(width: colWidth, child: _buildItemField(idx, 2)),
         SizedBox(width: colWidth, child: _buildItemField(idx, 3)),
-        SizedBox(width: typeColWidth, child: _buildItemTypeDropdown(idx)),
+        SizedBox(width: colWidth, child: _buildItemField(idx, 4)),
         SizedBox(width: colWidth, child: _buildItemField(idx, 5)),
-        SizedBox(width: colWidth, child: _buildItemField(idx, 6)),
         SizedBox(
           width: colWidth,
           child: Text(
             item.total.toStringAsFixed(2),
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.greenAccent, fontSize: 9, fontWeight: FontWeight.bold),
+            style: const TextStyle(color: Colors.greenAccent, fontSize: 10, fontWeight: FontWeight.bold),
           ),
         ),
         IconButton(
-          icon: const Icon(Icons.delete, color: Colors.red, size: 16),
+          icon: const Icon(Icons.delete, color: Colors.red, size: 18),
           onPressed: () => _removeRow(idx),
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints(),
@@ -509,8 +684,7 @@ class _SupplierPageState extends State<SupplierPage> {
         Expanded(flex: 1, child: Text('الكود', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 10))),
         Expanded(flex: 2, child: Text('الصنف', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 10))),
         Expanded(flex: 1, child: Text('الكمية', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 10))),
-        Expanded(flex: 1, child: Text('السعر', textAlign: TextAlign.center, style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 10))),
-        Expanded(flex: 1, child: Text('النوع', textAlign: TextAlign.center, style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 10))),
+        Expanded(flex: 1, child: Text('سعر الجملة', textAlign: TextAlign.center, style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 10))),
         Expanded(flex: 1, child: Text('خصم%', textAlign: TextAlign.center, style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 10))),
         Expanded(flex: 1, child: Text('مبلغ الخصم', textAlign: TextAlign.center, style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 10))),
         Expanded(flex: 1, child: Text('الإجمالي', textAlign: TextAlign.center, style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 10))),
@@ -529,9 +703,8 @@ class _SupplierPageState extends State<SupplierPage> {
         Expanded(flex: 2, child: _buildItemField(idx, 1)),
         Expanded(flex: 1, child: _buildItemField(idx, 2)),
         Expanded(flex: 1, child: _buildItemField(idx, 3)),
-        Expanded(flex: 1, child: _buildItemTypeDropdown(idx)),
+        Expanded(flex: 1, child: _buildItemField(idx, 4)),
         Expanded(flex: 1, child: _buildItemField(idx, 5)),
-        Expanded(flex: 1, child: _buildItemField(idx, 6)),
         Expanded(
           flex: 1,
           child: Text(
@@ -541,7 +714,7 @@ class _SupplierPageState extends State<SupplierPage> {
           ),
         ),
         IconButton(
-          icon: const Icon(Icons.delete, color: Colors.red, size: 18),
+          icon: const Icon(Icons.delete, color: Colors.red, size: 20),
           onPressed: () => _removeRow(idx),
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints(),
@@ -550,7 +723,7 @@ class _SupplierPageState extends State<SupplierPage> {
     );
   }
 
-  // ===== حقل الإدخال =====
+  // ===== حقل الإدخال (حجم مناسب) =====
   Widget _buildItemField(int rowIndex, int fieldIndex) {
     final field = _fieldOrder[fieldIndex];
     final keyboard = (field == 'quantity' || field == 'price' || field == 'discountRate' || field == 'discountAmount')
@@ -560,7 +733,7 @@ class _SupplierPageState extends State<SupplierPage> {
     if (field == 'total') {
       return TextFormField(
         controller: _controllers[rowIndex][fieldIndex],
-        style: const TextStyle(color: Colors.white70, fontSize: 11),
+        style: const TextStyle(color: Colors.white70, fontSize: 12),
         textAlign: TextAlign.center,
         readOnly: true,
         decoration: InputDecoration(
@@ -576,7 +749,7 @@ class _SupplierPageState extends State<SupplierPage> {
       child: TextFormField(
         controller: _controllers[rowIndex][fieldIndex],
         focusNode: _focusNodes[rowIndex][fieldIndex],
-        style: const TextStyle(color: Colors.white, fontSize: 11),
+        style: const TextStyle(color: Colors.white, fontSize: 12),
         textAlign: TextAlign.center,
         keyboardType: keyboard,
         textInputAction: (fieldIndex == _fieldOrder.length - 1) ? TextInputAction.done : TextInputAction.next,
@@ -593,57 +766,51 @@ class _SupplierPageState extends State<SupplierPage> {
     );
   }
 
-  // ===== Dropdown لنوع الصنف =====
-  Widget _buildItemTypeDropdown(int rowIndex) {
-    final types = ['وارد (دخول بضاعة)', 'صادر (دفعة)'];
-    return DropdownButtonFormField<String>(
-      value: _items[rowIndex].type,
-      dropdownColor: Colors.indigo.shade900,
-      style: const TextStyle(color: Colors.white, fontSize: 10),
-      isDense: true,
-      decoration: InputDecoration(
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
-        isDense: true,
-      ),
-      items: types.map((t) => DropdownMenuItem(
-        value: t,
-        child: Text(t, style: const TextStyle(fontSize: 9), overflow: TextOverflow.ellipsis),
-      )).toList(),
-      onChanged: (val) {
-        if (val != null) {
-          _updateItem(rowIndex, 4, val);
-        }
-      },
-    );
-  }
-
   // ===== دوال البناء المساعدة =====
-  Widget _buildDateField() {
-    return TextFormField(
-      initialValue: _selectedDate,
-      readOnly: true,
-      style: const TextStyle(color: Colors.white, fontSize: 13),
-      onTap: () async {
-        DateTime? picked = await showDatePicker(
-          context: context,
-          initialDate: DateTime.parse(_selectedDate),
-          firstDate: DateTime(2020),
-          lastDate: DateTime(2101),
-        );
-        if (picked != null) {
-          setState(() => _selectedDate = DateFormat('yyyy-MM-dd').format(picked));
-        }
-      },
-      decoration: InputDecoration(
-        labelText: 'التاريخ',
-        labelStyle: const TextStyle(color: Colors.white70, fontSize: 11),
-        prefixIcon: const Icon(Icons.calendar_today, color: Colors.amber, size: 18),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-        enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
-        focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.cyanAccent)),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-        isDense: true,
+  Widget _buildBalanceCard() {
+    if (_selectedSupplier == null || _selectedSupplier!.isEmpty || _supplierBalance == 0.0) {
+      return const SizedBox.shrink();
+    }
+    return GlassCard(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              Colors.greenAccent.withOpacity(0.15),
+              Colors.greenAccent.withOpacity(0.05),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.greenAccent.withOpacity(0.3)),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              'رصيد المورد',
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: 14,
+                fontFamily: 'Cairo',
+              ),
+            ),
+            Row(
+              children: [
+                const Icon(Icons.trending_up, color: Colors.greenAccent, size: 22),
+                const SizedBox(width: 6),
+                Text(
+                  _supplierBalance.toStringAsFixed(2),
+                  style: const TextStyle(
+                    color: Colors.greenAccent,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -674,7 +841,7 @@ class _SupplierPageState extends State<SupplierPage> {
           'إضافة للمخزن',
           style: TextStyle(
             color: _isAddToStore ? Colors.greenAccent : Colors.white54,
-            fontSize: 8,
+            fontSize: 10,
             fontFamily: 'Cairo',
           ),
         ),
@@ -682,29 +849,6 @@ class _SupplierPageState extends State<SupplierPage> {
           value: _isAddToStore,
           onChanged: (val) => setState(() => _isAddToStore = val),
           activeColor: Colors.greenAccent,
-          inactiveThumbColor: Colors.grey,
-          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        ),
-      ],
-    );
-  }
-
-  Widget _buildAddToDailyToggle() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          'إضافة للخزينة',
-          style: TextStyle(
-            color: _isAddToDaily ? Colors.cyanAccent : Colors.white54,
-            fontSize: 8,
-            fontFamily: 'Cairo',
-          ),
-        ),
-        Switch(
-          value: _isAddToDaily,
-          onChanged: (val) => setState(() => _isAddToDaily = val),
-          activeColor: Colors.cyanAccent,
           inactiveThumbColor: Colors.grey,
           materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
         ),
@@ -733,42 +877,6 @@ class _SupplierPageState extends State<SupplierPage> {
           if (val != null && val.isNotEmpty) _loadSupplierBalance(val);
         });
       },
-    );
-  }
-
-  Widget _buildPaymentMethodDropdown() {
-    return DropdownButtonFormField<String?>(
-      value: _selectedPaymentMethod,
-      dropdownColor: Colors.indigo.shade900,
-      style: const TextStyle(color: Colors.white, fontSize: 13),
-      decoration: InputDecoration(
-        labelText: 'طريقة الدفع',
-        labelStyle: const TextStyle(color: Colors.white70, fontSize: 11),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-        enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
-        isDense: true,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-      ),
-      items: _paymentMethods.map((p) => DropdownMenuItem(value: p['name'], child: Text(p['name'] ?? '', style: const TextStyle(fontSize: 12)))).toList(),
-      onChanged: (val) => setState(() => _selectedPaymentMethod = val),
-    );
-  }
-
-  Widget _buildTreasuryDropdown() {
-    return DropdownButtonFormField<String?>(
-      value: _selectedTreasury,
-      dropdownColor: Colors.indigo.shade900,
-      style: const TextStyle(color: Colors.white, fontSize: 13),
-      decoration: InputDecoration(
-        labelText: 'الخزينة',
-        labelStyle: const TextStyle(color: Colors.white70, fontSize: 11),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-        enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
-        isDense: true,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-      ),
-      items: _treasuries.map((t) => DropdownMenuItem(value: t['name'], child: Text(t['name'] ?? '', style: const TextStyle(fontSize: 12)))).toList(),
-      onChanged: (val) => setState(() => _selectedTreasury = val),
     );
   }
 
@@ -813,78 +921,71 @@ class _SupplierPageState extends State<SupplierPage> {
       child: Scaffold(
         extendBodyBehindAppBar: true,
         appBar: AppBar(
-          title: Column(
-            mainAxisSize: MainAxisSize.min,
+          title: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('حركة الموردين', style: TextStyle(fontFamily: 'Cairo', color: Colors.white, fontSize: 16)),
-              if (_currentSerial > 0)
-                Text('إذن رقم: $_currentSerial', style: const TextStyle(fontFamily: 'Cairo', fontSize: 14, color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
-              Text(
-                _getBranchName(_selectedBranchCode),
-                style: const TextStyle(fontFamily: 'Cairo', fontSize: 11, color: Colors.white60),
+              // الجهة اليسرى: رقم الإذن والفرع
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'حركة الموردين',
+                    style: TextStyle(fontFamily: 'Cairo', color: Colors.white, fontSize: 15),
+                  ),
+                  if (_currentSerial > 0)
+                    Text(
+                      'إذن رقم: $_currentSerial',
+                      style: const TextStyle(
+                        fontFamily: 'Cairo',
+                        fontSize: 13,
+                        color: Colors.cyanAccent,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  Text(
+                    _getBranchName(_selectedBranchCode),
+                    style: const TextStyle(
+                      fontFamily: 'Cairo',
+                      fontSize: 10,
+                      color: Colors.white60,
+                    ),
+                  ),
+                ],
+              ),
+              // الجهة اليمنى: التاريخ (قابل للنقر)
+              GestureDetector(
+                onTap: _pickDate,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.white24),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.calendar_today, color: Colors.amber, size: 16),
+                      const SizedBox(width: 6),
+                      Text(
+                        _selectedDate,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontFamily: 'Cairo',
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ],
           ),
           backgroundColor: Colors.transparent,
           elevation: 0,
-          centerTitle: true,
+          centerTitle: false,
           toolbarHeight: 80,
-          // ===== الرصيد في أعلى الصفحة (على اليمين) =====
-          actions: [
-            if (_selectedSupplier != null && _selectedSupplier!.isNotEmpty)
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: _supplierBalance > 0
-                        ? [Colors.greenAccent.withOpacity(0.25), Colors.greenAccent.withOpacity(0.08)]
-                        : [Colors.redAccent.withOpacity(0.25), Colors.redAccent.withOpacity(0.08)],
-                  ),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                    color: _supplierBalance > 0
-                        ? Colors.greenAccent.withOpacity(0.5)
-                        : Colors.redAccent.withOpacity(0.5),
-                    width: 1.5,
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      _supplierBalance > 0 ? Icons.trending_up : Icons.trending_down,
-                      size: 18,
-                      color: _supplierBalance > 0 ? Colors.greenAccent : Colors.redAccent,
-                    ),
-                    const SizedBox(width: 6),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Text(
-                          'رصيد المورد',
-                          style: TextStyle(
-                            color: Colors.white54,
-                            fontSize: 9,
-                            fontFamily: 'Cairo',
-                          ),
-                        ),
-                        Text(
-                          _supplierBalance.toStringAsFixed(2),
-                          style: TextStyle(
-                            color: _supplierBalance > 0 ? Colors.greenAccent : Colors.redAccent,
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(width: 4),
-                  ],
-                ),
-              ),
-            const SizedBox(width: 8),
-          ],
         ),
         body: Container(
           decoration: const BoxDecoration(
@@ -894,210 +995,190 @@ class _SupplierPageState extends State<SupplierPage> {
             child: (_isLoading || _isSaving)
                 ? const Center(child: CircularProgressIndicator(color: Colors.white))
                 : SingleChildScrollView(
-                    padding: const EdgeInsets.all(10),
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                     child: Column(
                       children: [
-                        // ===== صف واحد: المورد + التاريخ + المخزن + الأزرار =====
+                        // ===== رصيد المورد =====
+                        _buildBalanceCard(),
+                        const SizedBox(height: 6),
+
+                        // ===== بطاقة المورد والمخزن (مضغوطة) =====
                         GlassCard(
                           child: Container(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                                colors: [
-                                  Colors.white.withOpacity(0.05),
-                                  Colors.white.withOpacity(0.02),
-                                ],
-                              ),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            padding: const EdgeInsets.all(8),
-                            child: Column(
-                              children: [
-                                // الصف الأول: المورد (بدون الرصيد لأنه في الأعلى)
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      flex: 4,
-                                      child: _buildSupplierDropdown(),
-                                    ),
-                                    const SizedBox(width: 6),
-                                    IconButton(
-                                      icon: const Icon(Icons.add_circle, color: Colors.amber, size: 22),
-                                      onPressed: () {
-                                        Navigator.push(
-                                          context,
-                                          MaterialPageRoute(builder: (c) => CodingPage(companyCode: widget.companyCode)),
-                                        ).then((_) => _loadDropdowns());
-                                      },
-                                      tooltip: 'إضافة مورد',
-                                      padding: EdgeInsets.zero,
-                                      constraints: const BoxConstraints(),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 6),
-                                // الصف الثاني: التاريخ + المخزن + أزرار الإضافة
-                                Row(
-                                  children: [
-                                    Expanded(flex: isMobile ? 2 : 2, child: _buildDateField()),
-                                    const SizedBox(width: 6),
-                                    Expanded(flex: isMobile ? 2 : 2, child: _buildStoreDropdown()),
-                                    const SizedBox(width: 6),
-                                    Expanded(flex: 1, child: _buildAddToStoreToggle()),
-                                    const SizedBox(width: 4),
-                                    Expanded(flex: 1, child: _buildAddToDailyToggle()),
-                                  ],
-                                ),
-                              ],
-                            ),
+                            padding: const EdgeInsets.all(6),
+                            child: isMobile
+                                ? Column(
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            flex: 4,
+                                            child: _buildSupplierDropdown(),
+                                          ),
+                                          const SizedBox(width: 4),
+                                          IconButton(
+                                            icon: const Icon(Icons.add_circle, color: Colors.amber, size: 20),
+                                            onPressed: () {
+                                              Navigator.push(
+                                                context,
+                                                MaterialPageRoute(builder: (c) => CodingPage(companyCode: widget.companyCode)),
+                                              ).then((_) => _loadDropdowns());
+                                            },
+                                            tooltip: 'إضافة مورد',
+                                            padding: EdgeInsets.zero,
+                                            constraints: const BoxConstraints(),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            flex: 2,
+                                            child: _buildStoreDropdown(),
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Expanded(
+                                            flex: 1,
+                                            child: _buildAddToStoreToggle(),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  )
+                                : Row(
+                                    children: [
+                                      Expanded(
+                                        flex: 3,
+                                        child: _buildSupplierDropdown(),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      IconButton(
+                                        icon: const Icon(Icons.add_circle, color: Colors.amber, size: 20),
+                                        onPressed: () {
+                                          Navigator.push(
+                                            context,
+                                            MaterialPageRoute(builder: (c) => CodingPage(companyCode: widget.companyCode)),
+                                          ).then((_) => _loadDropdowns());
+                                        },
+                                        tooltip: 'إضافة مورد',
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        flex: 2,
+                                        child: _buildStoreDropdown(),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        flex: 1,
+                                        child: _buildAddToStoreToggle(),
+                                      ),
+                                    ],
+                                  ),
                           ),
                         ),
 
-                        const SizedBox(height: 8),
+                        const SizedBox(height: 6),
 
                         // ===== جدول الأصناف =====
                         GlassCard(
                           child: Container(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                                colors: [
-                                  Colors.white.withOpacity(0.05),
-                                  Colors.white.withOpacity(0.02),
-                                ],
-                              ),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            padding: const EdgeInsets.all(8),
+                            padding: const EdgeInsets.all(6),
                             child: _buildItemsTable(),
                           ),
                         ),
 
-                        const SizedBox(height: 8),
+                        const SizedBox(height: 6),
 
-                        // ===== الحقول السفلية (طرق الدفع والخزينة والمبالغ) =====
+                        // ===== الخصم والإجمالي (مع الربط التلقائي) =====
                         GlassCard(
                           child: Container(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                                colors: [
-                                  Colors.white.withOpacity(0.05),
-                                  Colors.white.withOpacity(0.02),
-                                ],
-                              ),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            padding: const EdgeInsets.all(8),
-                            child: Column(
+                            padding: const EdgeInsets.all(6),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Row(
-                                  children: [
-                                    Expanded(child: _buildPaymentMethodDropdown()),
-                                    const SizedBox(width: 6),
-                                    Expanded(child: _buildTreasuryDropdown()),
-                                  ],
-                                ),
-                                const SizedBox(height: 6),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: TextFormField(
-                                        initialValue: _discountPercent.toString(),
-                                        style: const TextStyle(color: Colors.white, fontSize: 12),
+                                // العمود الأيسر: نسبة الخصم ومبلغ الخصم
+                                Expanded(
+                                  flex: 2,
+                                  child: Column(
+                                    children: [
+                                      TextFormField(
+                                        controller: _discountPercentController,
+                                        style: const TextStyle(color: Colors.white, fontSize: 13),
                                         textAlign: TextAlign.center,
                                         keyboardType: TextInputType.number,
                                         decoration: InputDecoration(
                                           labelText: 'نسبة الخصم %',
-                                          labelStyle: const TextStyle(color: Colors.white70, fontSize: 10),
-                                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                                          contentPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+                                          labelStyle: const TextStyle(color: Colors.white70, fontSize: 11),
+                                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                                          contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
                                           isDense: true,
                                         ),
-                                        onChanged: (v) {
-                                          setState(() {
-                                            _discountPercent = double.tryParse(v) ?? 0.0;
-                                            _recalcTotals();
-                                          });
-                                        },
                                       ),
-                                    ),
-                                    const SizedBox(width: 6),
-                                    Expanded(
-                                      child: TextFormField(
-                                        initialValue: _discountAmount.toStringAsFixed(2),
-                                        style: const TextStyle(color: Colors.white, fontSize: 12),
+                                      const SizedBox(height: 6),
+                                      TextFormField(
+                                        controller: _discountAmountController,
+                                        style: const TextStyle(color: Colors.white, fontSize: 13),
                                         textAlign: TextAlign.center,
                                         keyboardType: TextInputType.number,
                                         decoration: InputDecoration(
                                           labelText: 'مبلغ الخصم',
-                                          labelStyle: const TextStyle(color: Colors.white70, fontSize: 10),
-                                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                                          contentPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+                                          labelStyle: const TextStyle(color: Colors.white70, fontSize: 11),
+                                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                                          contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
                                           isDense: true,
                                         ),
-                                        onChanged: (v) {
-                                          setState(() {
-                                            _discountAmount = double.tryParse(v) ?? 0.0;
-                                            _recalcTotals();
-                                          });
-                                        },
                                       ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
-                                const SizedBox(height: 6),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(vertical: 6),
-                                        decoration: BoxDecoration(
-                                          color: Colors.greenAccent.withOpacity(0.1),
-                                          borderRadius: BorderRadius.circular(10),
-                                          border: Border.all(color: Colors.greenAccent.withOpacity(0.3)),
-                                        ),
-                                        child: Text(
-                                          'الإجمالي: ${(_totalAmount - _discountAmount).toStringAsFixed(2)}',
-                                          textAlign: TextAlign.center,
-                                          style: const TextStyle(color: Colors.greenAccent, fontSize: 14, fontWeight: FontWeight.bold),
-                                        ),
+                                const SizedBox(width: 10),
+                                // العمود الأيمن: الإجمالي
+                                Expanded(
+                                  flex: 3,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+                                    decoration: BoxDecoration(
+                                      color: Colors.greenAccent.withOpacity(0.1),
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(color: Colors.greenAccent.withOpacity(0.3)),
+                                    ),
+                                    child: Center(
+                                      child: Column(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          const Text(
+                                            'الإجمالي بعد الخصم',
+                                            style: TextStyle(
+                                              color: Colors.white70,
+                                              fontSize: 13,
+                                              fontFamily: 'Cairo',
+                                            ),
+                                          ),
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            '${(_totalAmount - _discountAmount).toStringAsFixed(2)}',
+                                            style: const TextStyle(
+                                              color: Colors.greenAccent,
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
-                                    const SizedBox(width: 6),
-                                    Expanded(
-                                      child: TextFormField(
-                                        initialValue: _paidAmount.toString(),
-                                        style: const TextStyle(color: Colors.white, fontSize: 12),
-                                        textAlign: TextAlign.center,
-                                        keyboardType: TextInputType.number,
-                                        decoration: InputDecoration(
-                                          labelText: 'المدفوع',
-                                          labelStyle: const TextStyle(color: Colors.white70, fontSize: 10),
-                                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                                          contentPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-                                          isDense: true,
-                                        ),
-                                        onChanged: (v) {
-                                          setState(() {
-                                            _paidAmount = double.tryParse(v) ?? 0.0;
-                                          });
-                                        },
-                                      ),
-                                    ),
-                                  ],
+                                  ),
                                 ),
                               ],
                             ),
                           ),
                         ),
 
-                        const SizedBox(height: 8),
+                        const SizedBox(height: 6),
 
-                        // ===== أزرار الحفظ والمعاينة =====
+                        // ===== الأزرار =====
                         Row(
                           children: [
                             Expanded(
@@ -1111,7 +1192,7 @@ class _SupplierPageState extends State<SupplierPage> {
                                 ),
                                 child: Text(
                                   _isSaving ? 'جاري الحفظ...' : 'حفظ',
-                                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
                                 ),
                               ),
                             ),
@@ -1135,7 +1216,7 @@ class _SupplierPageState extends State<SupplierPage> {
                                   padding: const EdgeInsets.symmetric(vertical: 10),
                                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                                 ),
-                                child: const Text('معاينة', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                                child: const Text('معاينة', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
                               ),
                             ),
                           ],
@@ -1155,6 +1236,8 @@ class _SupplierPageState extends State<SupplierPage> {
     for (var row in _controllers) for (var c in row) c.dispose();
     for (var row in _focusNodes) for (var f in row) f.dispose();
     _scrollController.dispose();
+    _discountPercentController.dispose();
+    _discountAmountController.dispose();
     super.dispose();
   }
 }

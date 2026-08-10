@@ -15,7 +15,8 @@ import '../../models/coding_model.dart';
 import '../../services/permissions_service.dart';
 import '../../views/dashboard/inventory_page.dart'; // تأكد من المسار الصحيح
 import 'stock_balance_page.dart'; // تأكد من المسار الصحيح
-import '../../views/dashboard/supplier_page.dart';
+// import '../../views/dashboard/supplier_page.dart';
+import 'suppliers_dashboard_page.dart'; // ✅ استيراد الصفحة الجديدة
 
 class HomePage extends StatefulWidget {
   final String userName;
@@ -456,21 +457,26 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       );
     }
 
-    // 3. 🔥 حركة الموردين (جديد)
-    if (PermissionsService().canShowSuppliers) {
+    // 3. 🔥 المشتريات والموردين (يؤدي إلى لوحة تحكم الموردين)
+if (PermissionsService().canShowSuppliers) {
   menuItems.add(
-    _menuItem("حركة الموردين", Icons.local_shipping_rounded, Colors.lightBlueAccent, () {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (c) => SupplierPage(
-            companyCode: widget.companyCode,
-            selectedBranchCode: _selectedBranchCode,
-            userName: widget.userName,
+    _menuItem(
+      "المشتريات والموردين",
+      Icons.shopping_cart_rounded, // تغيير الأيقونة لأيقونة مشتريات
+      Colors.lightBlueAccent,
+      () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (c) => SuppliersDashboardPage(
+              companyCode: widget.companyCode,
+              selectedBranchCode: _selectedBranchCode,
+              userName: widget.userName,
+            ),
           ),
-        ),
-      );
-    }),
+        );
+      },
+    ),
   );
 }
 

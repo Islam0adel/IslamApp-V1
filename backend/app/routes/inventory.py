@@ -8,11 +8,13 @@ from app.core.sync import manager
 from typing import Optional
 import datetime
 import json
+import logging
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # ==========================================
-# 1. حفظ الجرد
+# 1. حفظ الجرد (إضافة أو تحديث)
 # ==========================================
 @router.post("/save")
 async def save_inventory(
@@ -20,21 +22,29 @@ async def save_inventory(
     db: AsyncSession = Depends(get_db)
 ):
     try:
-        doc_id = data.doc_id or f"{data.company_code}_{data.branch_code}_{data.store_code}_{data.date}_{datetime.datetime.now().timestamp()}"
+        # ✅ تحويل doc_id إلى int إذا وجد
+        doc_id_int = None
+        if data.doc_id:
+            try:
+                doc_id_int = int(data.doc_id)
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=400, detail="doc_id غير صالح (يجب أن يكون رقماً)")
 
         # تحويل الأصناف إلى JSON
         items_json = [item.dict() for item in data.items]
 
         # البحث عن سجل موجود
-        if data.doc_id:
-            stmt = select(InventoryRecord).where(InventoryRecord.id == data.doc_id)
+        if doc_id_int:
+            stmt = select(InventoryRecord).where(InventoryRecord.id == doc_id_int)
             result = await db.execute(stmt)
             existing = result.scalar_one_or_none()
+            if not existing:
+                raise HTTPException(status_code=404, detail=f"السجل غير موجود (id={doc_id_int})")
         else:
             existing = None
 
         if existing:
-            # تحديث
+            # ✅ تحديث السجل الموجود
             existing.branch_code = data.branch_code
             existing.store_code = data.store_code
             existing.date = data.date
@@ -45,8 +55,9 @@ async def save_inventory(
             existing.serial = data.serial
             existing.updated_at = datetime.datetime.utcnow()
             action = "update"
+            record = existing
         else:
-            # إضافة جديدة
+            # ✅ إضافة سجل جديد
             new_record = InventoryRecord(
                 company_code=data.company_code,
                 branch_code=data.branch_code,
@@ -60,14 +71,14 @@ async def save_inventory(
             )
             db.add(new_record)
             action = "insert"
+            record = new_record
 
         await db.commit()
-        await db.refresh(new_record if not existing else existing)
+        await db.refresh(record)
 
-        record = existing or new_record
         record_id = str(record.id)
 
-        # بث التغيير
+        # 🔄 بث التغيير عبر WebSocket
         await manager.broadcast(data.company_code, {
             "type": "inventory",
             "action": action,
@@ -88,9 +99,13 @@ async def save_inventory(
 
         return {"status": "success", "doc_id": record_id}
 
+    except HTTPException:
+        raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"خطأ في حفظ الجرد: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"خطأ داخلي: {str(e)}")
+
 
 # ==========================================
 # 2. جلب قائمة الجردات
@@ -134,7 +149,9 @@ async def list_inventory(
         return results
 
     except Exception as e:
+        logger.error(f"خطأ في list_inventory: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
 
 # ==========================================
 # 3. حذف جرد
@@ -146,23 +163,48 @@ async def delete_inventory(
     db: AsyncSession = Depends(get_db)
 ):
     try:
-        stmt = select(InventoryRecord).where(InventoryRecord.id == int(doc_id))
+        # تحويل doc_id إلى int
+        try:
+            doc_id_int = int(doc_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="doc_id غير صالح (يجب أن يكون رقماً)")
+
+        stmt = select(InventoryRecord).where(InventoryRecord.id == doc_id_int)
         result = await db.execute(stmt)
         existing = result.scalar_one_or_none()
         if not existing:
             raise HTTPException(status_code=404, detail="Inventory record not found")
 
+        # حفظ البيانات قبل الحذف
+        deleted_data = {
+            "doc_id": str(existing.id),
+            "company_code": existing.company_code,
+            "branch_code": existing.branch_code,
+            "store_code": existing.store_code,
+            "date": existing.date,
+            "inventory_type": existing.inventory_type,
+            "items": existing.items,
+            "total_wholesale": existing.total_wholesale,
+            "total_retail": existing.total_retail,
+            "serial": existing.serial,
+            "updated_at": existing.updated_at.isoformat() if existing.updated_at else None,
+        }
+
         await db.delete(existing)
         await db.commit()
 
+        # بث الحذف
         await manager.broadcast(company_code, {
             "type": "inventory",
             "action": "delete",
-            "data": {"doc_id": doc_id}
+            "data": deleted_data
         })
 
         return {"status": "success"}
 
+    except HTTPException:
+        raise
     except Exception as e:
         await db.rollback()
+        logger.error(f"خطأ في delete_inventory: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
