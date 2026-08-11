@@ -153,6 +153,51 @@ async def get_transactions(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# ==========================================
+# 7. جلب التحديثات التزايدية لليوميات
+# ==========================================
+@router.get("/changes/{company_code}")
+async def get_transactions_changes(
+    company_code: str,
+    since: str = Query(..., description="وقت آخر مزامنة بصيغة ISO 8601 (مثال: 2026-08-11T14:30:00)"),
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        # تحويل since إلى datetime
+        since_dt = datetime.datetime.fromisoformat(since)
+        
+        stmt = select(Transaction).where(
+            Transaction.company_code == company_code,
+            Transaction.updated_at >= since_dt
+        ).order_by(Transaction.updated_at)
+        
+        result = await db.execute(stmt)
+        docs = result.scalars().all()
+        
+        # تحويل النتائج إلى قواميس (نفس تنسيق /list)
+        results = []
+        for doc in docs:
+            results.append({
+                "id": doc.id,
+                "company_code": doc.company_code,
+                "branch_code": doc.branch_code,
+                "serial": doc.serial,
+                "treasury": doc.treasury,
+                "amount": doc.amount,
+                "statement": doc.statement,
+                "category": doc.category,
+                "date": doc.date,
+                "type": doc.type,
+                "employee": doc.employee,
+                "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
+            })
+        return results
+        
+    except ValueError:
+        raise HTTPException(status_code=400, detail="صيغة `since` غير صحيحة، استخدم ISO 8601")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ==========================================
 # 3. جلب التحديثات بدءاً من رقم إذن معين

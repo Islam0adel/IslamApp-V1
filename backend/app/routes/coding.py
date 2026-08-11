@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 from app.core.database import get_db
@@ -248,4 +248,49 @@ async def delete_code(
         raise
     except Exception as e:
         await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ==========================================
+# 4. جلب التحديثات التزايدية للتكويد (حسب القسم)
+# ==========================================
+@router.get("/changes/{company_code}")
+async def get_coding_changes(
+    company_code: str,
+    category: str = Query(..., description="القسم المطلوب (مثل items, safes, types)"),
+    since: str = Query(..., description="وقت آخر مزامنة بصيغة ISO 8601"),
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        since_dt = datetime.datetime.fromisoformat(since)
+        
+        stmt = select(CodingRecord).where(
+            CodingRecord.company_code == company_code,
+            CodingRecord.category == category,
+            CodingRecord.updated_at >= since_dt
+        ).order_by(CodingRecord.updated_at)
+        
+        result = await db.execute(stmt)
+        docs = result.scalars().all()
+        
+        # تحويل النتائج إلى قواميس (نفس تنسيق /list)
+        results = []
+        for doc in docs:
+            results.append({
+                "company_code": doc.company_code,
+                "category": doc.category,
+                "code": doc.code,
+                "name": doc.name,
+                "type": doc.type,
+                "barcode": doc.barcode,
+                "wholesale_price": doc.wholesale_price,
+                "selling_price": doc.selling_price,
+                "profit_margin": doc.profit_margin,
+                "profit_percent": doc.profit_percent,
+                "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
+            })
+        return results
+        
+    except ValueError:
+        raise HTTPException(status_code=400, detail="صيغة `since` غير صحيحة، استخدم ISO 8601")
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

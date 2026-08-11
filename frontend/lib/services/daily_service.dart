@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../core/constants.dart';
 
 class DailyService {
@@ -74,31 +75,67 @@ class DailyService {
     }
   }
 
-  // داخل class DailyService، أضف هذه الدالة:
+  // جلب جميع اليوميات من السيرفر (بدون تحديد نطاق تاريخ)
+  Future<List<dynamic>> fetchAllTransactions(String companyCode) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/transactions/list/$companyCode?start_date=2020-01-01&end_date=2100-12-31'),
+      );
+      if (response.statusCode == 200) {
+        List<dynamic> serverData = jsonDecode(response.body);
+        // تخزين في Hive بنفس المفاتيح المستخدمة (branch_code + serial)
+        for (var item in serverData) {
+          String bCode = item['branch_code']?.toString() ?? '1';
+          await _transactionBox.put("branch_${bCode}_${item['serial']}", item);
+        }
+        // تحديث الأرصدة
+        await getDailySummaryLocal(companyCode);
+        print("✅ تم جلب ${serverData.length} يومية من السيرفر وتخزينها محلياً");
+        return serverData;
+      } else {
+        throw 'فشل جلب اليوميات من السيرفر';
+      }
+    } catch (e) {
+      print("❌ فشل جلب جميع اليوميات: $e");
+      rethrow;
+    }
+  }
 
-// جلب جميع اليوميات من السيرفر (بدون تحديد نطاق تاريخ)
-Future<List<dynamic>> fetchAllTransactions(String companyCode) async {
+  // ✅ المزامنة التزايدية لليوميات (تجلب فقط التغييرات منذ آخر مزامنة)
+  // ✅ المزامنة التزايدية لليوميات
+Future<void> syncChangesFromServer(String companyCode, [String? lastSync]) async {
   try {
+    final prefs = await SharedPreferences.getInstance();
+    final lastSyncKey = '${ApiConstants.LAST_SYNC_DAILY}$companyCode';
+    
+    // إذا لم يُمرر lastSync، نقرأه من SharedPreferences
+    final lastSyncValue = lastSync ?? prefs.getString(lastSyncKey);
+
+    // إذا لم يكن هناك وقت سابق، نستدعي التحميل الكامل
+    if (lastSyncValue == null) {
+      await syncAllTransactions(companyCode);
+      await prefs.setString(lastSyncKey, DateTime.now().toIso8601String());
+      return;
+    }
+
     final response = await http.get(
-      Uri.parse('$baseUrl/transactions/list/$companyCode?start_date=2020-01-01&end_date=2100-12-31'),
+      Uri.parse('$baseUrl/transactions/changes/$companyCode?since=$lastSyncValue'),
     );
     if (response.statusCode == 200) {
-      List<dynamic> serverData = jsonDecode(response.body);
-      // تخزين في Hive بنفس المفاتيح المستخدمة (branch_code + serial)
-      for (var item in serverData) {
+      List<dynamic> changes = jsonDecode(response.body);
+      for (var item in changes) {
         String bCode = item['branch_code']?.toString() ?? '1';
         await _transactionBox.put("branch_${bCode}_${item['serial']}", item);
       }
       // تحديث الأرصدة
       await getDailySummaryLocal(companyCode);
-      print("✅ تم جلب ${serverData.length} يومية من السيرفر وتخزينها محلياً");
-      return serverData;
+      await prefs.setString(lastSyncKey, DateTime.now().toIso8601String());
+      print("✅ تم مزامنة ${changes.length} تحديث لليوميات");
     } else {
-      throw 'فشل جلب اليوميات من السيرفر';
+      print("⚠️ فشل المزامنة التزايدية لليوميات، كود: ${response.statusCode}");
     }
   } catch (e) {
-    print("❌ فشل جلب جميع اليوميات: $e");
-    rethrow;
+    print("❌ خطأ في المزامنة التزايدية لليوميات: $e");
   }
 }
 
@@ -287,35 +324,33 @@ Future<List<dynamic>> fetchAllTransactions(String companyCode) async {
     return localTx.last['serial'] as int;
   }
 
-  // في daily_service.dart
+  // 7. دالة لجلب جميع الحركات من السيرفر (بدون تحديد فترة زمنية) - تستخدم للتحميل الكامل
+  Future<void> syncAllTransactions(String companyCode) async {
+    try {
+      // استخدم نطاق زمني واسع جداً لضمان جلب كل البيانات
+      final startDate = '2020-01-01';
+      final endDate = '2100-12-31';
+      
+      final response = await http.get(
+        Uri.parse('$baseUrl/transactions/list/$companyCode?start_date=$startDate&end_date=$endDate'),
+      );
 
-// دالة لجلب جميع الحركات من السيرفر (بدون تحديد فترة زمنية)
-Future<void> syncAllTransactions(String companyCode) async {
-  try {
-    // استخدم نطاق زمني واسع جداً لضمان جلب كل البيانات
-    final startDate = '2020-01-01';
-    final endDate = '2100-12-31';
-    
-    final response = await http.get(
-      Uri.parse('$baseUrl/transactions/list/$companyCode?start_date=$startDate&end_date=$endDate'),
-    );
-
-    if (response.statusCode == 200) {
-      List<dynamic> serverData = jsonDecode(response.body);
-      for (var item in serverData) {
-        // استخدام نفس مفتاح التخزين الموحد (branch_code + serial)
-        String bCode = item['branch_code']?.toString() ?? '1';
-        await _transactionBox.put("branch_${bCode}_${item['serial']}", item);
+      if (response.statusCode == 200) {
+        List<dynamic> serverData = jsonDecode(response.body);
+        for (var item in serverData) {
+          // استخدام نفس مفتاح التخزين الموحد (branch_code + serial)
+          String bCode = item['branch_code']?.toString() ?? '1';
+          await _transactionBox.put("branch_${bCode}_${item['serial']}", item);
+        }
+        // بعد التخزين، نحدث الأرصدة المحلية فوراً
+        await getDailySummaryLocal(companyCode);
+        print("✅ تم مزامنة جميع الحركات من السيرفر بنجاح (عدد: ${serverData.length})");
+      } else {
+        throw 'فشل جلب البيانات من السيرفر';
       }
-      // بعد التخزين، نحدث الأرصدة المحلية فوراً
-      await getDailySummaryLocal(companyCode);
-      print("✅ تم مزامنة جميع الحركات من السيرفر بنجاح (عدد: ${serverData.length})");
-    } else {
-      throw 'فشل جلب البيانات من السيرفر';
+    } catch (e) {
+      print("❌ خطأ في مزامنة جميع الحركات: $e");
+      // لا نرمي استثناء حتى لا نوقف التطبيق، فقط نسجل الخطأ
     }
-  } catch (e) {
-    print("❌ خطأ في مزامنة جميع الحركات: $e");
-    // لا نرمي استثناء حتى لا نوقف التطبيق، فقط نسجل الخطأ
   }
-}
 }

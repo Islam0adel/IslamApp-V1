@@ -152,7 +152,47 @@ async def list_inventory(
         logger.error(f"خطأ في list_inventory: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-
+# ==========================================
+# 4. جلب التحديثات التزايدية للجرد
+# ==========================================
+@router.get("/changes/{company_code}")
+async def get_inventory_changes(
+    company_code: str,
+    since: str = Query(..., description="وقت آخر مزامنة بصيغة ISO 8601"),
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        since_dt = datetime.datetime.fromisoformat(since)
+        
+        stmt = select(InventoryRecord).where(
+            InventoryRecord.company_code == company_code,
+            InventoryRecord.updated_at >= since_dt
+        ).order_by(InventoryRecord.updated_at)
+        
+        result = await db.execute(stmt)
+        docs = result.scalars().all()
+        
+        results = []
+        for doc in docs:
+            results.append({
+                "doc_id": str(doc.id),
+                "company_code": doc.company_code,
+                "branch_code": doc.branch_code,
+                "store_code": doc.store_code,
+                "date": doc.date,
+                "inventory_type": doc.inventory_type,
+                "items": doc.items,
+                "total_wholesale": doc.total_wholesale,
+                "total_retail": doc.total_retail,
+                "serial": doc.serial,
+                "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
+            })
+        return results
+        
+    except ValueError:
+        raise HTTPException(status_code=400, detail="صيغة `since` غير صحيحة، استخدم ISO 8601")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 # ==========================================
 # 3. حذف جرد
 # ==========================================

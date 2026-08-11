@@ -1,6 +1,8 @@
+// lib/services/coding_service.dart
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/coding_model.dart';
 import '../core/constants.dart';
 
@@ -62,127 +64,200 @@ class CodingService {
     }
   }
 
-  // داخل class CodingService، أضف هذه الدالة:
+  // جلب جميع التكويدات من جميع الأقسام وتخزينها في Hive
+  Future<void> fetchAllCoding(String companyCode) async {
+    try {
+      List<String> categories = ['safes', 'types', 'branches', 'stores', 'customers', 'payment_methods', 'items'];
+      for (String category in categories) {
+        final response = await http.get(
+          Uri.parse('$baseUrl/coding/list/$companyCode/$category'),
+        );
+        if (response.statusCode == 200) {
+          List<dynamic> data = jsonDecode(response.body);
+          // تحويل إلى قائمة من الخرائط
+          List<Map<String, dynamic>> list = data.map((e) => Map<String, dynamic>.from(e)).toList();
+          // ترتيب حسب الكود (كما هو متبع)
+          list.sort((a, b) {
+            int aCode = int.tryParse(a['code']?.toString() ?? '0') ?? 0;
+            int bCode = int.tryParse(b['code']?.toString() ?? '0') ?? 0;
+            return aCode.compareTo(bCode);
+          });
+          final String localKey = "${companyCode}_$category";
+          await _codingBox.put(localKey, list);
+          print("✅ تم جلب تكويدات [$category] وتخزينها محلياً (${list.length})");
+        }
+      }
+    } catch (e) {
+      print("❌ فشل جلب التكويدات: $e");
+      rethrow;
+    }
+  }
 
-// جلب جميع التكويدات من جميع الأقسام وتخزينها في Hive
-Future<void> fetchAllCoding(String companyCode) async {
+  // ✅ المزامنة التزايدية للتكويد
+  // ملاحظة: التكويد يتغير بشكل أقل من البيانات الأخرى، لكن هذه الدالة تضمن تحديثه
+  // إذا حدثت تغييرات (إضافة/تعديل/حذف) على أي قسم من التكويد
+  // ✅ المزامنة التزايدية للتكويد
+Future<void> syncChangesFromServer(String companyCode, [String? lastSync]) async {
   try {
-    List<String> categories = ['safes', 'types', 'branches', 'stores', 'customers', 'payment_methods', 'items'];
+    final prefs = await SharedPreferences.getInstance();
+    final lastSyncKey = '${ApiConstants.LAST_SYNC_CODING}$companyCode';
+    
+    final lastSyncValue = lastSync ?? prefs.getString(lastSyncKey);
+
+    // التكويد يُجلب كاملاً أول مرة، ثم نستخدم التزايدي
+    if (lastSyncValue == null) {
+      await fetchAllCoding(companyCode);
+      await prefs.setString(lastSyncKey, DateTime.now().toIso8601String());
+      return;
+    }
+
+    List<String> categories = ['items', 'safes', 'types', 'branches', 'stores', 'suppliers', 'customers', 'payment_methods'];
+    
     for (String category in categories) {
       final response = await http.get(
-        Uri.parse('$baseUrl/coding/list/$companyCode/$category'),
+        Uri.parse('$baseUrl/coding/changes/$companyCode?category=$category&since=$lastSyncValue'),
       );
       if (response.statusCode == 200) {
-        List<dynamic> data = jsonDecode(response.body);
-        // تحويل إلى قائمة من الخرائط
-        List<Map<String, dynamic>> list = data.map((e) => Map<String, dynamic>.from(e)).toList();
-        // ترتيب حسب الكود (كما هو متبع)
-        list.sort((a, b) {
+        List<dynamic> changes = jsonDecode(response.body);
+        if (changes.isNotEmpty) {
+          final String localKey = "${companyCode}_$category";
+          List<Map<String, dynamic>> currentList = [];
+          if (_codingBox.containsKey(localKey)) {
+            final raw = _codingBox.get(localKey);
+            if (raw is List) {
+              currentList = raw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+            }
+          }
+          
+          for (var item in changes) {
+            final action = item['action'] ?? 'update';
+            final code = item['code']?.toString();
+            if (code == null) continue;
+            
+            if (action == 'delete') {
+              currentList.removeWhere((e) => e['code']?.toString() == code);
+            } else {
+              currentList.removeWhere((e) => e['code']?.toString() == code);
+              Map<String, dynamic> cleanItem = Map.from(item);
+              cleanItem.remove('action');
+              currentList.add(cleanItem);
+            }
+          }
+          
+          currentList.sort((a, b) {
+            int aCode = int.tryParse(a['code']?.toString() ?? '0') ?? 0;
+            int bCode = int.tryParse(b['code']?.toString() ?? '0') ?? 0;
+            return aCode.compareTo(bCode);
+          });
+          
+          if (currentList.isNotEmpty) {
+            await _codingBox.put(localKey, currentList);
+          } else {
+            await _codingBox.delete(localKey);
+          }
+          print("✅ تم تحديث تكويدات [$category] (${changes.length} تغيير)");
+        }
+      } else {
+        print("⚠️ فشل المزامنة التزايدية للتكويد [$category]، كود: ${response.statusCode}");
+      }
+    }
+    
+    await prefs.setString(lastSyncKey, DateTime.now().toIso8601String());
+  } catch (e) {
+    print("❌ خطأ في المزامنة التزايدية للتكويد: $e");
+  }
+}
+
+  // ==========================================
+  // 2. حفظ أو تحديث تكويد (نسخة معدلة لتجنب التكرار)
+  // ==========================================
+  Future<Map<String, dynamic>> saveCode({
+    required String companyCode,
+    required String category,
+    required CodingModel model,
+  }) async {
+    try {
+      // تجهيز البيانات للإرسال للسيرفر
+      final Map<String, dynamic> bodyData = model.toMap();
+      bodyData['company_code'] = companyCode;
+      bodyData['category'] = category;
+
+      // إرسال طلب الحفظ للسيرفر
+      final response = await http.post(
+        Uri.parse("$baseUrl/coding/save"),
+        headers: {"Content-Type": "application/json"},
+        body: json.encode(bodyData),
+      );
+
+      if (response.statusCode == 200) {
+        // فك تشفير رد السيرفر لمعرفة النتيجة والكود الجديد
+        final Map<String, dynamic> result = json.decode(response.body);
+        final String newCode = result['code'] ?? model.code;
+        final String action = result['action'] ?? 'update';
+
+        // ---------- التعديل الجذري هنا ----------
+        final String localKey = "${companyCode}_$category";
+        
+        // 1. قراءة القائمة الحالية من Hive
+        List<Map<String, dynamic>> currentList = [];
+        if (_codingBox.containsKey(localKey)) {
+          final dynamic rawData = _codingBox.get(localKey);
+          if (rawData is List) {
+            // تحويل آمن
+            currentList = rawData
+                .map((item) => Map<String, dynamic>.from(item as Map))
+                .toList();
+          }
+        }
+
+        // 2. بناء العنصر الجديد (مع الكود الجديد)
+        Map<String, dynamic> newItem = model.toMap();
+        newItem['code'] = newCode;
+        newItem['company_code'] = companyCode;
+        newItem['category'] = category;
+
+        // 3. البحث عن العنصر القديم (إن وجد) وتحديثه
+        int existingIndex = currentList.indexWhere(
+          (item) => item['code']?.toString() == newCode.toString()
+        );
+        if (existingIndex != -1) {
+          currentList[existingIndex] = newItem;
+        } else {
+          currentList.add(newItem);
+        }
+
+        // 4. إزالة أي تكرارات (نفس آلية الرادار)
+        final Map<String, Map<String, dynamic>> uniqueItems = {};
+        for (var item in currentList) {
+          String code = item['code']?.toString() ?? '';
+          if (code.isNotEmpty) {
+            uniqueItems[code] = item;
+          }
+        }
+        currentList = uniqueItems.values.toList();
+
+        // 5. ترتيب تصاعدي حسب الكود (كأرقام)
+        currentList.sort((a, b) {
           int aCode = int.tryParse(a['code']?.toString() ?? '0') ?? 0;
           int bCode = int.tryParse(b['code']?.toString() ?? '0') ?? 0;
           return aCode.compareTo(bCode);
         });
-        final String localKey = "${companyCode}_$category";
-        await _codingBox.put(localKey, list);
-        print("✅ تم جلب تكويدات [$category] وتخزينها محلياً (${list.length})");
+
+        // 6. حفظ القائمة النهائية في Hive
+        await _codingBox.put(localKey, currentList);
+
+        return {
+          'success': true,
+          'code': newCode,
+          'action': action,
+        };
       }
-    }
-  } catch (e) {
-    print("❌ فشل جلب التكويدات: $e");
-    rethrow;
-  }
-}
-
-// ==========================================
-// 2. حفظ أو تحديث تكويد (نسخة معدلة لتجنب التكرار)
-// ==========================================
-Future<Map<String, dynamic>> saveCode({
-  required String companyCode,
-  required String category,
-  required CodingModel model,
-}) async {
-  try {
-    // تجهيز البيانات للإرسال للسيرفر
-    final Map<String, dynamic> bodyData = model.toMap();
-    bodyData['company_code'] = companyCode;
-    bodyData['category'] = category;
-
-    // إرسال طلب الحفظ للسيرفر
-    final response = await http.post(
-      Uri.parse("$baseUrl/coding/save"),
-      headers: {"Content-Type": "application/json"},
-      body: json.encode(bodyData),
-    );
-
-    if (response.statusCode == 200) {
-      // فك تشفير رد السيرفر لمعرفة النتيجة والكود الجديد
-      final Map<String, dynamic> result = json.decode(response.body);
-      final String newCode = result['code'] ?? model.code;
-      final String action = result['action'] ?? 'update';
-
-      // ---------- التعديل الجذري هنا ----------
-      final String localKey = "${companyCode}_$category";
       
-      // 1. قراءة القائمة الحالية من Hive
-      List<Map<String, dynamic>> currentList = [];
-      if (_codingBox.containsKey(localKey)) {
-        final dynamic rawData = _codingBox.get(localKey);
-        if (rawData is List) {
-          // تحويل آمن
-          currentList = rawData
-              .map((item) => Map<String, dynamic>.from(item as Map))
-              .toList();
-        }
-      }
-
-      // 2. بناء العنصر الجديد (مع الكود الجديد)
-      Map<String, dynamic> newItem = model.toMap();
-      newItem['code'] = newCode;
-      newItem['company_code'] = companyCode;
-      newItem['category'] = category;
-
-      // 3. البحث عن العنصر القديم (إن وجد) وتحديثه
-      int existingIndex = currentList.indexWhere(
-        (item) => item['code']?.toString() == newCode.toString()
-      );
-      if (existingIndex != -1) {
-        currentList[existingIndex] = newItem;
-      } else {
-        currentList.add(newItem);
-      }
-
-      // 4. إزالة أي تكرارات (نفس آلية الرادار)
-      final Map<String, Map<String, dynamic>> uniqueItems = {};
-      for (var item in currentList) {
-        String code = item['code']?.toString() ?? '';
-        if (code.isNotEmpty) {
-          uniqueItems[code] = item;
-        }
-      }
-      currentList = uniqueItems.values.toList();
-
-      // 5. ترتيب تصاعدي حسب الكود (كأرقام)
-      currentList.sort((a, b) {
-        int aCode = int.tryParse(a['code']?.toString() ?? '0') ?? 0;
-        int bCode = int.tryParse(b['code']?.toString() ?? '0') ?? 0;
-        return aCode.compareTo(bCode);
-      });
-
-      // 6. حفظ القائمة النهائية في Hive
-      await _codingBox.put(localKey, currentList);
-
-      return {
-        'success': true,
-        'code': newCode,
-        'action': action,
-      };
+      return {'success': false, 'error': 'فشل الحفظ من السيرفر. كود الخطأ: ${response.statusCode}'};
+    } catch (e) {
+      return {'success': false, 'error': e.toString()};
     }
-    
-    return {'success': false, 'error': 'فشل الحفظ من السيرفر. كود الخطأ: ${response.statusCode}'};
-  } catch (e) {
-    return {'success': false, 'error': e.toString()};
   }
-}
 
   // ==========================================
   // 3. حذف تكويد

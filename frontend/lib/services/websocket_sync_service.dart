@@ -16,6 +16,7 @@ class WebSocketSyncService {
   final Box _codingBox = Hive.box('coding_box');
   final Box _inventoryBox = Hive.box('inventory_box');
   final Box _supplierBox = Hive.box('supplier_box');
+  final Box _settlementBox = Hive.box('supplier_settlement_box'); // ✅ صندوق التسويات (جاهز للاستخدام المستقبلي)
 
   // ========== الاتصال بالـ WebSocket ==========
   void connect(String companyCode) {
@@ -77,6 +78,10 @@ class WebSocketSyncService {
         case 'supplier':
           // ✅ معالجة رسائل الموردين باستخدام دالة خاصة
           _updateSupplierBox(payload, action);
+          break;
+        case 'settlement':
+          // ✅ معالجة رسائل التسويات (جاهز للاستخدام المستقبلي)
+          _updateSettlementBox(payload, action);
           break;
         default:
           print("⚠️ نوع غير معروف: $type");
@@ -220,6 +225,43 @@ class WebSocketSyncService {
       await _supplierBox.delete(key);
     }
     print("🔄 تم تحديث المورد [$docId] في Hive");
+  }
+
+  // ========== تحديث صندوق التسويات (معالجة خاصة - جاهز للاستخدام المستقبلي) ==========
+  Future<void> _updateSettlementBox(Map<String, dynamic> payload, String action) async {
+    final docId = payload['doc_id'];
+    if (docId == null) {
+      print("⚠️ لا يوجد doc_id في رسالة التسوية");
+      return;
+    }
+
+    final companyCode = payload['company_code'] ?? '';
+    final branchCode = payload['branch_code'] ?? '';
+    final date = payload['date'] ?? '';
+
+    final String key = "${companyCode}_${branchCode}_$date";
+    List<Map<String, dynamic>> list = [];
+
+    if (_settlementBox.containsKey(key)) {
+      final raw = _settlementBox.get(key);
+      if (raw is List) {
+        list = raw.map((e) => Map<String, dynamic>.from(e)).toList();
+      }
+    }
+
+    if (action == 'insert' || action == 'update') {
+      list.removeWhere((item) => item['doc_id'] == docId);
+      list.add(payload);
+    } else if (action == 'delete') {
+      list.removeWhere((item) => item['doc_id'] == docId);
+    }
+
+    if (list.isNotEmpty) {
+      await _settlementBox.put(key, list);
+    } else {
+      await _settlementBox.delete(key);
+    }
+    print("🔄 تم تحديث التسوية [$docId] في Hive");
   }
 
   // ========== إعادة الاتصال التلقائي ==========

@@ -1,10 +1,8 @@
-import 'dart:async';
-import 'dart:convert'; // ✅ لإستخدام jsonDecode
+import 'dart:async'; 
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart'; 
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_flutter/hive_flutter.dart'; 
-import 'package:http/http.dart' as http; // ✅ لإجراء طلبات HTTP
 // import 'package:cloud_firestore/cloud_firestore.dart'; // 🌟 استيراد الفايربيز (يبقى للتوافق مع الكود القديم)
 import 'core/theme.dart';
 import 'views/auth/login_screen.dart';
@@ -13,13 +11,15 @@ import 'views/dashboard/home_page.dart';
 import 'views/auth/forgot_password_screen.dart';
 import 'firebase_options.dart'; 
 import 'services/global_sync_service.dart'; // 🌟 استيراد ملف الخدمة (الذي يحتوي على WebSocket الآن)
-import 'services/daily_service.dart'; // ✅ استيراد خدمة اليوميات للتحميل التلقائي
-// import 'services/coding_service.dart'; // ✅ استيراد خدمة التكويد للتحميل التلقائي
-import 'core/constants.dart'; // ✅ استيراد ApiConstants للـ baseUrl
-// 🌟 المتغيرات العالمية للرادار المركزي (تم إلغاؤها لاستخدام WebSocket)
-// لكن نتركها مؤقتاً للتوافق
+// ✅ استيراد الخدمات المطلوبة للمزامنة التزايدية
+import 'services/daily_service.dart';
 import 'services/supplier_service.dart';
 import 'services/inventory_service.dart';
+
+import 'services/coding_service.dart';
+
+// 🌟 المتغيرات العالمية للرادار المركزي (تم إلغاؤها لاستخدام WebSocket)
+// لكن نتركها مؤقتاً للتوافق
 StreamSubscription? globalSyncSubscription;
 StreamSubscription? codingSyncSubscription;
 StreamSubscription? inventorySyncSubscription;
@@ -27,90 +27,75 @@ StreamSubscription? supplierSyncSubscription;
 
 final GlobalSyncService _syncService = GlobalSyncService(); // 🌟 الآن يستخدم WebSocket داخلياً
 
-// ✅ دالة التحميل التلقائي لجميع البيانات الأساسية عند أول تشغيل
-// داخل main.dart، استبدل دالة _syncAllData بما يلي:
 
+// ✅ دالة المزامنة التزايدية لجميع أنواع البيانات
 Future<void> _syncAllData(String companyCode) async {
   try {
-    // 1. تحميل اليوميات (إذا لم تكن موجودة محلياً)
-    final dailyBox = Hive.box('daily_transactions_box');
-    bool hasDailyData = dailyBox.values.any((tx) => tx['company_code'] == companyCode);
-    if (!hasDailyData) {
+    final prefs = await SharedPreferences.getInstance();
+
+    // 1️⃣ اليوميات (Daily Transactions)
+    final dailyKey = 'last_sync_daily_$companyCode';
+    final dailyLastSync = prefs.getString(dailyKey);
+    if (dailyLastSync == null) {
+      // جهاز جديد → تحميل كل البيانات
       await DailyService().syncAllTransactions(companyCode);
-      print("✅ تم تحميل اليوميات تلقائياً");
+      print("✅ تم تحميل اليوميات بالكامل (جهاز جديد)");
     } else {
-      print("✅ اليوميات موجودة بالفعل في الذاكرة المحلية");
+      // جهاز موجود → مزامنة تزايدية
+      await DailyService().syncChangesFromServer(companyCode);
+      print("✅ تم تحديث اليوميات من آخر مزامنة");
     }
+    // تحديث آخر وقت مزامنة
+    await prefs.setString(dailyKey, DateTime.now().toIso8601String());
 
-    // 2. تحميل التكويدات (لكل قسم على حدة)
+    // 2️⃣ التكويد (Coding) – لا يتغير كثيراً، نحمله مرة واحدة
     final codingBox = Hive.box('coding_box');
+    bool hasCodingData = false;
     List<String> categories = ['items', 'safes', 'types', 'branches', 'stores', 'suppliers', 'customers', 'payment_methods'];
-    
     for (String cat in categories) {
-      final key = "${companyCode}_$cat";
-      bool hasData = false;
-      if (codingBox.containsKey(key)) {
-        final data = codingBox.get(key);
+      if (codingBox.containsKey("${companyCode}_$cat")) {
+        final data = codingBox.get("${companyCode}_$cat");
         if (data is List && data.isNotEmpty) {
-          hasData = true;
+          hasCodingData = true;
+          break;
         }
-      }
-      if (!hasData) {
-        // جلب هذا القسم فقط من السيرفر
-        try {
-          final response = await http.get(
-            Uri.parse('${ApiConstants.baseUrl}/coding/list/$companyCode/$cat'),
-          );
-          if (response.statusCode == 200) {
-            List<dynamic> data = jsonDecode(response.body);
-            List<Map<String, dynamic>> list = data.map((e) => Map<String, dynamic>.from(e)).toList();
-            // ترتيب حسب الكود
-            list.sort((a, b) {
-              int aCode = int.tryParse(a['code']?.toString() ?? '0') ?? 0;
-              int bCode = int.tryParse(b['code']?.toString() ?? '0') ?? 0;
-              return aCode.compareTo(bCode);
-            });
-            await codingBox.put(key, list);
-            print("✅ تم تحميل تكويدات [$cat] وتخزينها محلياً (${list.length})");
-          } else {
-            print("⚠️ فشل جلب تكويدات [$cat]، كود الاستجابة: ${response.statusCode}");
-          }
-        } catch (e) {
-          print("❌ خطأ في جلب تكويدات [$cat]: $e");
-        }
-      } else {
-        print("✅ تكويدات [$cat] موجودة بالفعل في الذاكرة المحلية");
       }
     }
+    if (!hasCodingData) {
+      await CodingService().fetchAllCoding(companyCode);
+      print("✅ تم تحميل التكويدات بالكامل (جهاز جديد)");
+    }
 
-    // 3. تحميل الموردين
-final supplierBox = Hive.box('supplier_box');
-bool hasSupplierData = false;
-for (var key in supplierBox.keys) {
-  final raw = supplierBox.get(key);
-  if (raw is List && raw.any((item) => item['company_code'] == companyCode)) {
-    hasSupplierData = true;
-    break;
-  }
-}
-if (!hasSupplierData) {
-  await SupplierService().fetchAllSupplier(companyCode);
-  print("✅ تم تحميل الموردين تلقائياً");
-} else {
-  print("✅ الموردين موجودة بالفعل في الذاكرة المحلية");
-}
+    // 3️⃣ الموردين (Suppliers)
+    final supplierKey = 'last_sync_supplier_$companyCode';
+    final supplierLastSync = prefs.getString(supplierKey);
+    if (supplierLastSync == null) {
+      await SupplierService().fetchAllSupplier(companyCode);
+      print("✅ تم تحميل الموردين بالكامل (جهاز جديد)");
+    } else {
+      await SupplierService().syncChangesFromServer(companyCode);
+      print("✅ تم تحديث الموردين من آخر مزامنة");
+    }
+    await prefs.setString(supplierKey, DateTime.now().toIso8601String());
 
-// 4. تحميل الجرد
-final inventoryBox = Hive.box('inventory_box');
-bool hasInventoryData = inventoryBox.values.any((inv) => inv['company_code'] == companyCode);
-if (!hasInventoryData) {
-  await InventoryService().fetchAllInventory(companyCode);
-  print("✅ تم تحميل الجرد تلقائياً");
-} else {
-  print("✅ الجرد موجود بالفعل في الذاكرة المحلية");
-}
+    // 4️⃣ الجرد (Inventory)
+    final inventoryKey = 'last_sync_inventory_$companyCode';
+    final inventoryLastSync = prefs.getString(inventoryKey);
+    if (inventoryLastSync == null) {
+      await InventoryService().fetchAllInventory(companyCode);
+      print("✅ تم تحميل الجرد بالكامل (جهاز جديد)");
+    } else {
+      await InventoryService().syncChangesFromServer(companyCode);
+      print("✅ تم تحديث الجرد من آخر مزامنة");
+    }
+    await prefs.setString(inventoryKey, DateTime.now().toIso8601String());
+
+    // 🔄 تحديث الأرصدة (بعد مزامنة اليوميات)
+    await DailyService().getDailySummaryLocal(companyCode);
+    print("✅ تم تحديث الأرصدة المحلية");
+
   } catch (e) {
-    print("⚠️ خطأ في التحميل التلقائي: $e");
+    print("⚠️ خطأ في المزامنة التزايدية: $e");
   }
 }
 
@@ -206,12 +191,14 @@ void main() async {
   await Hive.openBox('coding_box'); 
   await Hive.openBox('inventory_box');
   await Hive.openBox('supplier_box');
+  await Hive.openBox('supplier_settlement_box'); // ✅ صندوق التسويات
 
   // 🌟 سطر مؤقت: قم بإلغاء التعليق عنه لمسح كل البيانات المحلية وتصفيرها تماماً، ثم قفل السطر بعد أول تشغيل
   // Hive.box('daily_transactions_box').clear();
   // Hive.box('coding_box').clear();
   // Hive.box('inventory_box').clear();
   // Hive.box('supplier_box').clear();
+  // Hive.box('supplier_settlement_box').clear();
   
   // 4. قراءة حالة الدخول من الذاكرة المحلية (SharedPreferences مخصصة لبيانات الحساب فقط)
   final prefs = await SharedPreferences.getInstance();
@@ -220,27 +207,28 @@ void main() async {
   final String? companyName = prefs.getString('company_name');
   final String? companyCode = prefs.getString('company_code');
 
-  Widget initialScreen;
-if (rememberMe && userName != null && companyCode != null) {
-  // 🌟 تفعيل الرادار اللحظي فوراً لو المستخدم مسجل دخول بالفعل لتحديث البيانات بالخلفية
-  initializeGlobalListener(companyCode);
-  
-  // ✅ تحميل جميع البيانات الأساسية (مع الانتظار حتى اكتمال التحميل)
-  await _syncAllData(companyCode);
-  
-  // تحميل صلاحيات المستخدم (تم إلغاء التعليق لتأكيد التحميل)
-  // await PermissionsService().loadPermissions();
-  
-  initialScreen = HomePage(
-    userName: userName,
-    companyName: companyName ?? 'شركتي',
-    companyCode: companyCode,
-  );
-} else {
-  initialScreen = const LoginScreen();
-}
 
-runApp(IslamApp(initialScreen: initialScreen));
+  
+  Widget initialScreen;
+  if (rememberMe && userName != null && companyCode != null) {
+    // 🌟 تفعيل الرادار اللحظي فوراً لو المستخدم مسجل دخول بالفعل لتحديث البيانات بالخلفية
+    initializeGlobalListener(companyCode);
+    
+    // ✅ المزامنة التزايدية في الخلفية (لا تمنع عرض الصفحة)
+    _syncAllData(companyCode);
+    
+    // بعد تحميل بيانات المستخدم
+    // await PermissionsService().loadPermissions();
+    initialScreen = HomePage(
+      userName: userName,
+      companyName: companyName ?? 'شركتي',
+      companyCode: companyCode,
+    );
+  } else {
+    initialScreen = const LoginScreen();
+  }
+  
+  runApp(IslamApp(initialScreen: initialScreen));
 }
 
 

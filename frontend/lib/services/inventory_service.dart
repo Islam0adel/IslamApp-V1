@@ -2,6 +2,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/inventory_model.dart';
 import '../core/constants.dart';
 import '../services/coding_service.dart';
@@ -176,39 +177,81 @@ class InventoryService {
     }
   }
 
-  // داخل class InventoryService، أضف هذه الدالة:
+  // جلب جميع سجلات الجرد من السيرفر وتخزينها في Hive
+  Future<void> fetchAllInventory(String companyCode) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/inventory/list/$companyCode'),
+      );
+      if (response.statusCode == 200) {
+        List<dynamic> data = jsonDecode(response.body);
+        // تخزين كل سجل في مفتاح مركب (company_branch_store_date)
+        for (var item in data) {
+          String key = "${item['company_code']}_${item['branch_code']}_${item['store_code']}_${item['date']}";
+          // قراءة القائمة الحالية لهذا المفتاح
+          List<Map<String, dynamic>> currentList = [];
+          if (_inventoryBox.containsKey(key)) {
+            final raw = _inventoryBox.get(key);
+            if (raw is List) {
+              currentList = raw.map((e) => Map<String, dynamic>.from(e)).toList();
+            }
+          }
+          // إزالة أي عنصر له نفس doc_id ثم إضافة الجديد
+          currentList.removeWhere((e) => e['doc_id'] == item['doc_id']);
+          currentList.add(Map<String, dynamic>.from(item));
+          await _inventoryBox.put(key, currentList);
+        }
+        print("✅ تم جلب ${data.length} سجل جرد من السيرفر وتخزينها محلياً");
+      } else {
+        throw 'فشل جلب الجرد من السيرفر';
+      }
+    } catch (e) {
+      print("❌ فشل جلب الجرد: $e");
+      rethrow;
+    }
+  }
 
-// جلب جميع سجلات الجرد من السيرفر وتخزينها في Hive
-Future<void> fetchAllInventory(String companyCode) async {
+  // ✅ المزامنة التزايدية للجرد (تجلب فقط التغييرات منذ آخر مزامنة)
+  // ✅ المزامنة التزايدية للجرد
+Future<void> syncChangesFromServer(String companyCode, [String? lastSync]) async {
   try {
+    final prefs = await SharedPreferences.getInstance();
+    final lastSyncKey = '${ApiConstants.LAST_SYNC_INVENTORY}$companyCode';
+    
+    final lastSyncValue = lastSync ?? prefs.getString(lastSyncKey);
+
+    if (lastSyncValue == null) {
+      await fetchAllInventory(companyCode);
+      await prefs.setString(lastSyncKey, DateTime.now().toIso8601String());
+      return;
+    }
+
     final response = await http.get(
-      Uri.parse('$baseUrl/inventory/list/$companyCode'),
+      Uri.parse('$baseUrl/inventory/changes/$companyCode?since=$lastSyncValue'),
     );
     if (response.statusCode == 200) {
-      List<dynamic> data = jsonDecode(response.body);
-      // تخزين كل سجل في مفتاح مركب (company_branch_store_date)
-      for (var item in data) {
-        String key = "${item['company_code']}_${item['branch_code']}_${item['store_code']}_${item['date']}";
-        // قراءة القائمة الحالية لهذا المفتاح
-        List<Map<String, dynamic>> currentList = [];
+      List<dynamic> changes = jsonDecode(response.body);
+      for (var item in changes) {
+        final map = Map<String, dynamic>.from(item);
+        String key = "${map['company_code']}_${map['branch_code']}_${map['store_code']}_${map['date']}";
+        List<Map<String, dynamic>> list = [];
         if (_inventoryBox.containsKey(key)) {
           final raw = _inventoryBox.get(key);
           if (raw is List) {
-            currentList = raw.map((e) => Map<String, dynamic>.from(e)).toList();
+            list = raw.map((e) => Map<String, dynamic>.from(e)).toList();
           }
         }
-        // إزالة أي عنصر له نفس doc_id ثم إضافة الجديد
-        currentList.removeWhere((e) => e['doc_id'] == item['doc_id']);
-        currentList.add(Map<String, dynamic>.from(item));
-        await _inventoryBox.put(key, currentList);
+        list.removeWhere((e) => e['doc_id'] == map['doc_id']);
+        list.add(map);
+        await _inventoryBox.put(key, list);
       }
-      print("✅ تم جلب ${data.length} سجل جرد من السيرفر وتخزينها محلياً");
+      await prefs.setString(lastSyncKey, DateTime.now().toIso8601String());
+      print("✅ تم مزامنة ${changes.length} تحديث للجرد");
     } else {
-      throw 'فشل جلب الجرد من السيرفر';
+      print("⚠️ فشل المزامنة التزايدية للجرد، كود: ${response.statusCode}");
     }
   } catch (e) {
-    print("❌ فشل جلب الجرد: $e");
-    rethrow;
+    print("❌ خطأ في المزامنة التزايدية للجرد: $e");
   }
 }
 }

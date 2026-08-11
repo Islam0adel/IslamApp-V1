@@ -59,6 +59,8 @@ class _SupplierHistoryPageState extends State<SupplierHistoryPage> {
     // 1. تحميل القوائم أولاً
     await _loadDropdowns();
 
+    // ✅ جلب التحديثات التزايدية للموردين
+  await _supplierService.syncChangesFromServer(widget.companyCode);
     // 2. التحقق من وجود بيانات محلية للشركة الحالية
     final box = Hive.box('supplier_box');
     bool hasLocalData = false;
@@ -167,8 +169,9 @@ class _SupplierHistoryPageState extends State<SupplierHistoryPage> {
     return found['name'] ?? code;
   }
 
+  // ✅ تغيير تنسيق الأرقام إلى اللغة الإنجليزية
   String _formatCurrency(double amount) {
-    return NumberFormat('#,##0.00', 'ar_EG').format(amount);
+    return NumberFormat('#,##0.00', 'en_US').format(amount);
   }
 
   void _showTransactionDetails(SupplierTransactionModel model) {
@@ -185,21 +188,19 @@ class _SupplierHistoryPageState extends State<SupplierHistoryPage> {
     });
   }
 
-  // داخل _SupplierHistoryPageState
-void _editTransaction(SupplierTransactionModel model) {
-  // ✅ تمرير البيانات إلى صفحة التعديل
-  Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (c) => SupplierPage(
-        companyCode: widget.companyCode,
-        selectedBranchCode: widget.selectedBranchCode,
-        userName: null, // يمكن تمريره إذا كان متاحاً
-        editItem: model, // ✅ تمرير الفاتورة المراد تعديلها
+  void _editTransaction(SupplierTransactionModel model) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (c) => SupplierPage(
+          companyCode: widget.companyCode,
+          selectedBranchCode: widget.selectedBranchCode,
+          userName: null,
+          editItem: model,
+        ),
       ),
-    ),
-  ).then((_) => _loadData());
-}
+    ).then((_) => _loadData());
+  }
 
   void _confirmDelete(SupplierTransactionModel model) {
     showDialog(
@@ -259,7 +260,7 @@ void _editTransaction(SupplierTransactionModel model) {
 
       await ExportService.exportToExcel(
         data,
-        'حركات_الموردين_${DateFormat('yyyy-MM-dd').format(DateTime.now())}',
+        'المشتريات${DateFormat('yyyy-MM-dd').format(DateTime.now())}',
         ['رقم الإذن', 'التاريخ', 'المورد', 'المخزن', 'الإجمالي', 'عدد الأصناف', 'إضافة للمخزن'],
         ['رقم الإذن', 'التاريخ', 'المورد', 'المخزن', 'الإجمالي', 'عدد الأصناف', 'إضافة للمخزن'],
       );
@@ -287,7 +288,7 @@ void _editTransaction(SupplierTransactionModel model) {
 
       await ExportService.exportToPDF(
         data: data,
-        title: 'تقرير حركات الموردين',
+        title: 'تقرير المشتريات',
         headers: ['رقم الإذن', 'التاريخ', 'المورد', 'المخزن', 'الإجمالي', 'عدد الأصناف', 'إضافة للمخزن'],
         keys: ['رقم الإذن', 'التاريخ', 'المورد', 'المخزن', 'الإجمالي', 'عدد الأصناف', 'إضافة للمخزن'],
       );
@@ -374,7 +375,7 @@ void _editTransaction(SupplierTransactionModel model) {
     if (!PermissionsService().canViewSupplierHistory) {
       return Scaffold(
         appBar: AppBar(
-          title: const Text('معاينة حركات الموردين', style: TextStyle(color: Colors.white)),
+          title: const Text('معاينة المشتريات', style: TextStyle(color: Colors.white)),
           backgroundColor: Colors.transparent,
           elevation: 0,
         ),
@@ -388,7 +389,7 @@ void _editTransaction(SupplierTransactionModel model) {
           ),
           child: const Center(
             child: Text(
-              'ليس لديك صلاحية لعرض حركات الموردين',
+              'ليس لديك صلاحية لعرض المشتريات',
               style: TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 16),
             ),
           ),
@@ -399,7 +400,7 @@ void _editTransaction(SupplierTransactionModel model) {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          _showDetails ? 'تفاصيل الحركة' : 'معاينة حركات الموردين',
+          _showDetails ? 'تفاصيل الحركة' : 'معاينة المشتريات',
           style: const TextStyle(color: Colors.white),
         ),
         backgroundColor: Colors.transparent,
@@ -422,24 +423,21 @@ void _editTransaction(SupplierTransactionModel model) {
               tooltip: 'تصدير PDF',
             ),
           if (!_showDetails)
-            // استبدل زر التحديث الحالي بهذا
-IconButton(
-  icon: const Icon(Icons.refresh, color: Colors.white),
-  onPressed: () async {
-    setState(() => _isLoading = true);
-    try {
-      // ✅ جلب جميع بيانات الموردين من السيرفر وتحديث Hive
-      await _supplierService.fetchAllSupplier(widget.companyCode);
-      // ✅ إعادة تحميل البيانات المعروضة
-      await _loadData();
-    } catch (e) {
-      _showSnackBar('فشل التحديث: $e', Colors.red);
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
-  },
-  tooltip: 'تحديث من السيرفر',
-)
+            IconButton(
+              icon: const Icon(Icons.refresh, color: Colors.white),
+              onPressed: () async {
+                setState(() => _isLoading = true);
+                try {
+                  await _supplierService.fetchAllSupplier(widget.companyCode);
+                  await _loadData();
+                } catch (e) {
+                  _showSnackBar('فشل التحديث: $e', Colors.red);
+                } finally {
+                  if (mounted) setState(() => _isLoading = false);
+                }
+              },
+              tooltip: 'تحديث من السيرفر',
+            )
         ],
       ),
       body: Container(
@@ -463,186 +461,172 @@ IconButton(
 
   // ================== عرض القائمة ==================
 
-  // داخل supplier_history_page.dart
+  Widget _buildListView() {
+    final bool isMobile = MediaQuery.of(context).size.width < 600;
 
-// استبدال `_buildListView()` بالكامل باستخدام ValueListenableBuilder
-Widget _buildListView() {
-  final bool isMobile = MediaQuery.of(context).size.width < 600;
-
-  return Column(
-    children: [
-      // فلاتر (كما هي)
-      GlassCard(
-        child: Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: isMobile
-              ? SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
+    return Column(
+      children: [
+        GlassCard(
+          child: Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: isMobile
+                ? SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        SizedBox(width: 130, child: _buildSupplierFilter()),
+                        const SizedBox(width: 6),
+                        SizedBox(width: 130, child: _buildStoreFilter()),
+                        const SizedBox(width: 6),
+                        SizedBox(width: 110, child: _buildDatePicker(label: 'من', date: _fromDate, onChanged: (d) { setState(() => _fromDate = d!); _loadData(); })),
+                        const SizedBox(width: 6),
+                        SizedBox(width: 110, child: _buildDatePicker(label: 'إلى', date: _toDate, onChanged: (d) { setState(() => _toDate = d!); _loadData(); })),
+                        IconButton(icon: const Icon(Icons.clear, color: Colors.white70, size: 18), onPressed: () { setState(() { _selectedSupplierCode = 'all'; _filterStore = 'all'; _fromDate = DateTime.now().subtract(const Duration(days: 30)); _toDate = DateTime.now(); }); _loadData(); }, padding: EdgeInsets.zero, constraints: const BoxConstraints()),
+                      ],
+                    ),
+                  )
+                : Row(
                     children: [
-                      SizedBox(width: 130, child: _buildSupplierFilter()),
-                      const SizedBox(width: 6),
-                      SizedBox(width: 130, child: _buildStoreFilter()),
-                      const SizedBox(width: 6),
-                      SizedBox(width: 110, child: _buildDatePicker(label: 'من', date: _fromDate, onChanged: (d) { setState(() => _fromDate = d!); _loadData(); })),
-                      const SizedBox(width: 6),
-                      SizedBox(width: 110, child: _buildDatePicker(label: 'إلى', date: _toDate, onChanged: (d) { setState(() => _toDate = d!); _loadData(); })),
-                      IconButton(icon: const Icon(Icons.clear, color: Colors.white70, size: 18), onPressed: () { setState(() { _selectedSupplierCode = 'all'; _filterStore = 'all'; _fromDate = DateTime.now().subtract(const Duration(days: 30)); _toDate = DateTime.now(); }); _loadData(); }, padding: EdgeInsets.zero, constraints: const BoxConstraints()),
+                      Expanded(child: _buildSupplierFilter()),
+                      const SizedBox(width: 12),
+                      Expanded(child: _buildStoreFilter()),
+                      const SizedBox(width: 8),
+                      Expanded(child: _buildDatePicker(label: 'من', date: _fromDate, onChanged: (d) { setState(() => _fromDate = d!); _loadData(); })),
+                      const SizedBox(width: 8),
+                      Expanded(child: _buildDatePicker(label: 'إلى', date: _toDate, onChanged: (d) { setState(() => _toDate = d!); _loadData(); })),
+                      IconButton(icon: const Icon(Icons.clear, color: Colors.white70), onPressed: () { setState(() { _selectedSupplierCode = 'all'; _filterStore = 'all'; _fromDate = DateTime.now().subtract(const Duration(days: 30)); _toDate = DateTime.now(); }); _loadData(); }),
                     ],
                   ),
-                )
-              : Row(
-                  children: [
-                    Expanded(child: _buildSupplierFilter()),
-                    const SizedBox(width: 12),
-                    Expanded(child: _buildStoreFilter()),
-                    const SizedBox(width: 8),
-                    Expanded(child: _buildDatePicker(label: 'من', date: _fromDate, onChanged: (d) { setState(() => _fromDate = d!); _loadData(); })),
-                    const SizedBox(width: 8),
-                    Expanded(child: _buildDatePicker(label: 'إلى', date: _toDate, onChanged: (d) { setState(() => _toDate = d!); _loadData(); })),
-                    IconButton(icon: const Icon(Icons.clear, color: Colors.white70), onPressed: () { setState(() { _selectedSupplierCode = 'all'; _filterStore = 'all'; _fromDate = DateTime.now().subtract(const Duration(days: 30)); _toDate = DateTime.now(); }); _loadData(); }),
-                  ],
-                ),
+          ),
         ),
-      ),
-      const SizedBox(height: 6),
+        const SizedBox(height: 6),
 
-      // ✅ استخدام ValueListenableBuilder لمراقبة التغييرات
-      Expanded(
-        child: ValueListenableBuilder(
-          valueListenable: Hive.box('supplier_box').listenable(),
-          builder: (context, Box box, child) {
-            // إذا كانت البيانات قيد التحميل، نعرض مؤشر التحميل
-            if (_isLoading) {
-              return const Center(child: CircularProgressIndicator(color: Colors.white));
-            }
+        Expanded(
+          child: ValueListenableBuilder(
+            valueListenable: Hive.box('supplier_box').listenable(),
+            builder: (context, Box box, child) {
+              if (_isLoading) {
+                return const Center(child: CircularProgressIndicator(color: Colors.white));
+              }
 
-            // جلب البيانات من Hive وتطبيق الفلاتر
-            final filteredTransactions = _getFilteredTransactions(box);
-            if (filteredTransactions.isEmpty) {
-              return const Center(child: Text('لا توجد حركات', style: TextStyle(color: Colors.white70)));
-            }
-            return ListView.builder(
-              itemCount: filteredTransactions.length,
-              itemBuilder: (c, i) {
-                final t = filteredTransactions[i];
-                return Card(
-                  color: Colors.white.withOpacity(0.05),
-                  margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(10),
-                    onTap: () => _showTransactionDetails(t),
-                    child: Padding(
-                      padding: const EdgeInsets.all(10.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              CircleAvatar(
-                                radius: 16,
-                                backgroundColor: Colors.cyanAccent.withOpacity(0.15),
-                                child: Text('${t.serial}', style: const TextStyle(color: Colors.cyanAccent, fontSize: 10, fontWeight: FontWeight.bold)),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(t.supplierName, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
-                                    Text('التاريخ: ${t.date}', style: const TextStyle(color: Colors.white60, fontSize: 11)),
-                                  ],
+              final filteredTransactions = _getFilteredTransactions(box);
+              if (filteredTransactions.isEmpty) {
+                return const Center(child: Text('لا توجد مشتريات', style: TextStyle(color: Colors.white70)));
+              }
+              return ListView.builder(
+                itemCount: filteredTransactions.length,
+                itemBuilder: (c, i) {
+                  final t = filteredTransactions[i];
+                  return Card(
+                    color: Colors.white.withOpacity(0.05),
+                    margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(10),
+                      onTap: () => _showTransactionDetails(t),
+                      child: Padding(
+                        padding: const EdgeInsets.all(10.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                CircleAvatar(
+                                  radius: 16,
+                                  backgroundColor: Colors.cyanAccent.withOpacity(0.15),
+                                  child: Text('${t.serial}', style: const TextStyle(color: Colors.cyanAccent, fontSize: 10, fontWeight: FontWeight.bold)),
                                 ),
-                              ),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: t.isAddToStore ? Colors.greenAccent.withOpacity(0.15) : Colors.grey.withOpacity(0.15),
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(color: t.isAddToStore ? Colors.greenAccent.withOpacity(0.3) : Colors.grey.withOpacity(0.3)),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(t.supplierName, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+                                      Text('التاريخ: ${t.date}', style: const TextStyle(color: Colors.white60, fontSize: 11)),
+                                    ],
+                                  ),
                                 ),
-                                child: Text(t.isAddToStore ? 'مضاف للمخزن' : 'بدون إضافة', style: TextStyle(color: t.isAddToStore ? Colors.greenAccent : Colors.grey, fontSize: 8, fontWeight: FontWeight.bold)),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 6),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceAround,
-                            children: [
-                              _buildInfoChip('المخزن', _getStoreName(t.storeCode), Colors.blueAccent, false),
-                              _buildInfoChip('الإجمالي', _formatCurrency(t.totalAmount), Colors.greenAccent, false),
-                              _buildInfoChip('الأصناف', t.items.length.toString(), Colors.orange, false),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: [
-                              if (PermissionsService().canEditSupplierTransaction)
-                                IconButton(icon: const Icon(Icons.edit, color: Colors.orange, size: 18), onPressed: () => _editTransaction(t), padding: EdgeInsets.zero, constraints: const BoxConstraints()),
-                              if (PermissionsService().canDeleteSupplierTransaction)
-                                IconButton(icon: const Icon(Icons.delete, color: Colors.red, size: 18), onPressed: () => _confirmDelete(t), padding: EdgeInsets.zero, constraints: const BoxConstraints()),
-                              IconButton(icon: const Icon(Icons.arrow_forward_ios, color: Colors.cyanAccent, size: 16), onPressed: () => _showTransactionDetails(t), padding: EdgeInsets.zero, constraints: const BoxConstraints()),
-                            ],
-                          ),
-                        ],
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: t.isAddToStore ? Colors.greenAccent.withOpacity(0.15) : Colors.grey.withOpacity(0.15),
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(color: t.isAddToStore ? Colors.greenAccent.withOpacity(0.3) : Colors.grey.withOpacity(0.3)),
+                                  ),
+                                  child: Text(t.isAddToStore ? 'مضاف للمخزن' : 'بدون إضافة', style: TextStyle(color: t.isAddToStore ? Colors.greenAccent : Colors.grey, fontSize: 8, fontWeight: FontWeight.bold)),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceAround,
+                              children: [
+                                _buildInfoChip('المخزن', _getStoreName(t.storeCode), Colors.blueAccent, false),
+                                _buildInfoChip('الإجمالي', _formatCurrency(t.totalAmount), Colors.greenAccent, false),
+                                _buildInfoChip('الأصناف', t.items.length.toString(), Colors.orange, false),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                if (PermissionsService().canEditSupplierTransaction)
+                                  IconButton(icon: const Icon(Icons.edit, color: Colors.orange, size: 18), onPressed: () => _editTransaction(t), padding: EdgeInsets.zero, constraints: const BoxConstraints()),
+                                if (PermissionsService().canDeleteSupplierTransaction)
+                                  IconButton(icon: const Icon(Icons.delete, color: Colors.red, size: 18), onPressed: () => _confirmDelete(t), padding: EdgeInsets.zero, constraints: const BoxConstraints()),
+                                IconButton(icon: const Icon(Icons.arrow_forward_ios, color: Colors.cyanAccent, size: 16), onPressed: () => _showTransactionDetails(t), padding: EdgeInsets.zero, constraints: const BoxConstraints()),
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                );
-              },
-            );
-          },
+                  );
+                },
+              );
+            },
+          ),
         ),
-      ),
-    ],
-  );
-}
-
-// دالة مساعدة لجلب البيانات المفلترة من Hive (تُستخدم داخل ValueListenableBuilder)
-List<SupplierTransactionModel> _getFilteredTransactions(Box box) {
-  // تحويل الكود إلى اسم المورد
-  String? supplierName;
-  if (_selectedSupplierCode != null && _selectedSupplierCode != 'all') {
-    final found = _suppliers.firstWhere((s) => s['code'] == _selectedSupplierCode);
-    supplierName = found['name'];
+      ],
+    );
   }
 
-  List<SupplierTransactionModel> all = [];
-  for (var key in box.keys) {
-    final raw = box.get(key);
-    if (raw is List) {
-      for (var item in raw) {
-        final map = _toMapString(item);
-        if (map['company_code'] == widget.companyCode) {
-          // فلترة حسب الفرع
-          if (widget.selectedBranchCode != null && map['branch_code'] != widget.selectedBranchCode) continue;
-          // فلترة حسب المورد
-          if (supplierName != null && map['supplier_name'] != supplierName) continue;
-          // فلترة حسب التاريخ
-          final dateStr = map['date']?.toString() ?? '';
-          if (dateStr.compareTo(DateFormat('yyyy-MM-dd').format(_fromDate)) < 0) continue;
-          if (dateStr.compareTo(DateFormat('yyyy-MM-dd').format(_toDate)) > 0) continue;
-          // فلترة حسب المخزن
-          if (_filterStore != null && _filterStore != 'all' && map['store_code'] != _filterStore) continue;
-          all.add(SupplierTransactionModel.fromMap(map));
+  List<SupplierTransactionModel> _getFilteredTransactions(Box box) {
+    String? supplierName;
+    if (_selectedSupplierCode != null && _selectedSupplierCode != 'all') {
+      final found = _suppliers.firstWhere((s) => s['code'] == _selectedSupplierCode);
+      supplierName = found['name'];
+    }
+
+    List<SupplierTransactionModel> all = [];
+    for (var key in box.keys) {
+      final raw = box.get(key);
+      if (raw is List) {
+        for (var item in raw) {
+          final map = _toMapString(item);
+          if (map['company_code'] == widget.companyCode) {
+            if (widget.selectedBranchCode != null && map['branch_code'] != widget.selectedBranchCode) continue;
+            if (supplierName != null && map['supplier_name'] != supplierName) continue;
+            final dateStr = map['date']?.toString() ?? '';
+            if (dateStr.compareTo(DateFormat('yyyy-MM-dd').format(_fromDate)) < 0) continue;
+            if (dateStr.compareTo(DateFormat('yyyy-MM-dd').format(_toDate)) > 0) continue;
+            if (_filterStore != null && _filterStore != 'all' && map['store_code'] != _filterStore) continue;
+            all.add(SupplierTransactionModel.fromMap(map));
+          }
         }
       }
     }
+    all.sort((a, b) => b.date.compareTo(a.date));
+    return all;
   }
-  all.sort((a, b) => b.date.compareTo(a.date));
-  return all;
-}
 
-// دالة مساعدة لتحويل LinkedMap إلى Map<String, dynamic> (نفس المستخدمة في supplier_service)
-Map<String, dynamic> _toMapString(dynamic obj) {
-  if (obj is Map<String, dynamic>) return obj;
-  if (obj is Map) {
-    return Map<String, dynamic>.from(obj.map((key, value) => MapEntry(key.toString(), value)));
+  Map<String, dynamic> _toMapString(dynamic obj) {
+    if (obj is Map<String, dynamic>) return obj;
+    if (obj is Map) {
+      return Map<String, dynamic>.from(obj.map((key, value) => MapEntry(key.toString(), value)));
+    }
+    return {};
   }
-  return {};
-}
 
   Widget _buildInfoChip(String label, String value, Color color, bool isMobile) {
     return Container(
@@ -862,7 +846,7 @@ Map<String, dynamic> _toMapString(dynamic obj) {
           ),
           const SizedBox(height: 12),
 
-          // جدول الأصناف
+          // ✅ جدول الأصناف مع مسطرة أفقية واحدة للموبايل
           GlassCard(
             child: Padding(
               padding: const EdgeInsets.all(12),
@@ -882,15 +866,75 @@ Map<String, dynamic> _toMapString(dynamic obj) {
                     child: isMobile
                         ? SingleChildScrollView(
                             scrollDirection: Axis.horizontal,
-                            child: Row(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const SizedBox(width: 4),
-                                ..._buildMobileHeaders(),
-                                const SizedBox(width: 4),
+                                // ✅ عناوين الأعمدة (مرة واحدة فقط في الأعلى)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white10,
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      SizedBox(width: 30, child: const Text('#', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 8))),
+                                      const SizedBox(width: 4),
+                                      SizedBox(width: 55, child: const Text('الكود', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 8))),
+                                      const SizedBox(width: 4),
+                                      SizedBox(width: 70, child: const Text('الصنف', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 8))),
+                                      const SizedBox(width: 4),
+                                      SizedBox(width: 55, child: const Text('الكمية', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 8))),
+                                      const SizedBox(width: 4),
+                                      SizedBox(width: 55, child: const Text('السعر', textAlign: TextAlign.center, style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 8))),
+                                      const SizedBox(width: 4),
+                                      SizedBox(width: 55, child: const Text('الخصم%', textAlign: TextAlign.center, style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 8))),
+                                      const SizedBox(width: 4),
+                                      SizedBox(width: 55, child: const Text('مبلغ الخصم', textAlign: TextAlign.center, style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 8))),
+                                      const SizedBox(width: 4),
+                                      SizedBox(width: 55, child: const Text('الإجمالي', textAlign: TextAlign.center, style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 8))),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+
+                                // ✅ صفوف البيانات (بدون SingleChildScrollView لكل صف)
+                                ...t.items.asMap().entries.map((entry) {
+                                  int idx = entry.key;
+                                  final item = entry.value;
+                                  return Container(
+                                    padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                                    decoration: BoxDecoration(
+                                      border: Border(
+                                        bottom: BorderSide(color: Colors.white.withOpacity(0.05), width: 0.5),
+                                      ),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        SizedBox(width: 30, child: Text('${idx + 1}', style: TextStyle(color: Colors.white54, fontSize: 8), textAlign: TextAlign.center)),
+                                        const SizedBox(width: 4),
+                                        SizedBox(width: 55, child: Text(item.code, style: TextStyle(color: Colors.white70, fontSize: 8), textAlign: TextAlign.center)),
+                                        const SizedBox(width: 4),
+                                        SizedBox(width: 70, child: Text(item.name, style: TextStyle(color: Colors.white, fontSize: 9), textAlign: TextAlign.center)),
+                                        const SizedBox(width: 4),
+                                        SizedBox(width: 55, child: Text(item.quantity.toStringAsFixed(0), style: TextStyle(color: Colors.white70, fontSize: 8), textAlign: TextAlign.center)),
+                                        const SizedBox(width: 4),
+                                        SizedBox(width: 55, child: Text(_formatCurrency(item.price), style: TextStyle(color: Colors.greenAccent, fontSize: 8), textAlign: TextAlign.center)),
+                                        const SizedBox(width: 4),
+                                        SizedBox(width: 55, child: Text(item.discountRate.toStringAsFixed(1), style: TextStyle(color: Colors.amber, fontSize: 8), textAlign: TextAlign.center)),
+                                        const SizedBox(width: 4),
+                                        SizedBox(width: 55, child: Text(_formatCurrency(item.discountAmount), style: TextStyle(color: Colors.amber, fontSize: 8), textAlign: TextAlign.center)),
+                                        const SizedBox(width: 4),
+                                        SizedBox(width: 55, child: Text(_formatCurrency(item.total), style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 8), textAlign: TextAlign.center)),
+                                      ],
+                                    ),
+                                  );
+                                }).toList(),
                               ],
                             ),
                           )
                         : Row(
+                            // ✅ سطح المكتب (بدون تغيير)
                             children: [
                               Expanded(flex: 0, child: const Text('#', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 9))),
                               Expanded(flex: 1, child: const Text('الكود', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 9))),
@@ -905,48 +949,29 @@ Map<String, dynamic> _toMapString(dynamic obj) {
                   ),
                   const SizedBox(height: 4),
 
-                  // صفوف البيانات
-                  isMobile
-                      ? ListView.separated(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          itemCount: t.items.length,
-                          separatorBuilder: (_, __) => const Divider(color: Colors.white10, height: 1),
-                          itemBuilder: (ctx, idx) {
-                            final item = t.items[idx];
-                            return SingleChildScrollView(
-                              scrollDirection: Axis.horizontal,
-                              child: Row(
-                                children: [
-                                  const SizedBox(width: 4),
-                                  ..._buildMobileRow(idx, item),
-                                  const SizedBox(width: 4),
-                                ],
-                              ),
-                            );
-                          },
-                        )
-                      : ListView.separated(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          itemCount: t.items.length,
-                          separatorBuilder: (_, __) => const Divider(color: Colors.white10, height: 1),
-                          itemBuilder: (ctx, idx) {
-                            final item = t.items[idx];
-                            return Row(
-                              children: [
-                                Expanded(flex: 0, child: Text('${idx + 1}', textAlign: TextAlign.center, style: const TextStyle(color: Colors.white54, fontSize: 9))),
-                                Expanded(flex: 1, child: Text(item.code, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70, fontSize: 9))),
-                                Expanded(flex: 2, child: Text(item.name, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 10))),
-                                Expanded(flex: 1, child: Text(item.quantity.toStringAsFixed(0), textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70, fontSize: 9))),
-                                Expanded(flex: 1, child: Text(_formatCurrency(item.price), textAlign: TextAlign.center, style: const TextStyle(color: Colors.greenAccent, fontSize: 9))),
-                                Expanded(flex: 1, child: Text(item.discountRate.toStringAsFixed(1), textAlign: TextAlign.center, style: const TextStyle(color: Colors.amber, fontSize: 9))),
-                                Expanded(flex: 1, child: Text(_formatCurrency(item.discountAmount), textAlign: TextAlign.center, style: const TextStyle(color: Colors.amber, fontSize: 9))),
-                                Expanded(flex: 1, child: Text(_formatCurrency(item.total), textAlign: TextAlign.center, style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 9))),
-                              ],
-                            );
-                          },
-                        ),
+                  // صفوف البيانات (سطح المكتب)
+                  if (!isMobile)
+                    ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: t.items.length,
+                      separatorBuilder: (_, __) => const Divider(color: Colors.white10, height: 1),
+                      itemBuilder: (ctx, idx) {
+                        final item = t.items[idx];
+                        return Row(
+                          children: [
+                            Expanded(flex: 0, child: Text('${idx + 1}', textAlign: TextAlign.center, style: const TextStyle(color: Colors.white54, fontSize: 9))),
+                            Expanded(flex: 1, child: Text(item.code, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70, fontSize: 9))),
+                            Expanded(flex: 2, child: Text(item.name, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 10))),
+                            Expanded(flex: 1, child: Text(item.quantity.toStringAsFixed(0), textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70, fontSize: 9))),
+                            Expanded(flex: 1, child: Text(_formatCurrency(item.price), textAlign: TextAlign.center, style: const TextStyle(color: Colors.greenAccent, fontSize: 9))),
+                            Expanded(flex: 1, child: Text(item.discountRate.toStringAsFixed(1), textAlign: TextAlign.center, style: const TextStyle(color: Colors.amber, fontSize: 9))),
+                            Expanded(flex: 1, child: Text(_formatCurrency(item.discountAmount), textAlign: TextAlign.center, style: const TextStyle(color: Colors.amber, fontSize: 9))),
+                            Expanded(flex: 1, child: Text(_formatCurrency(item.total), textAlign: TextAlign.center, style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 9))),
+                          ],
+                        );
+                      },
+                    ),
                 ],
               ),
             ),

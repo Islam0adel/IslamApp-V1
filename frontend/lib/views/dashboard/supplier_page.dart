@@ -58,6 +58,7 @@ class _SupplierPageState extends State<SupplierPage> {
   double _totalAmount = 0.0;
   double _discountPercent = 0.0;
   double _discountAmount = 0.0;
+  double _expectedBalance = 0.0; // ✅ الرصيد المتوقع (يتغير لحظياً)
 
   // ===== متحكمات الخصم في الأسفل =====
   final TextEditingController _discountPercentController = TextEditingController();
@@ -259,17 +260,23 @@ class _SupplierPageState extends State<SupplierPage> {
   }
 
   Future<void> _loadSupplierBalance(String supplierName) async {
-    if (supplierName.isEmpty) {
-      setState(() => _supplierBalance = 0.0);
-      return;
-    }
-    final balance = await _supplierService.getSupplierBalance(
-      widget.companyCode,
-      _selectedBranchCode ?? 'all',
-      supplierName,
-    );
-    setState(() => _supplierBalance = balance.abs());
+  if (supplierName.isEmpty) {
+    setState(() {
+      _supplierBalance = 0.0;
+      _expectedBalance = 0.0;
+    });
+    return;
   }
+  final balance = await _supplierService.getSupplierBalance(
+    widget.companyCode,
+    _selectedBranchCode ?? 'all',
+    supplierName,
+  );
+  setState(() {
+    _supplierBalance = balance.abs();
+    _expectedBalance = _supplierBalance; // ✅ في البداية يساوي الرصيد السابق
+  });
+}
 
   // ===== إدارة الأصناف =====
   void _addEmptyRow() {
@@ -383,10 +390,12 @@ class _SupplierPageState extends State<SupplierPage> {
   }
 
   void _recalcTotals() {
-    _totalAmount = _items.fold(0.0, (sum, item) => sum + item.total);
-    _updateDiscountFields();
-    setState(() {});
-  }
+  _totalAmount = _items.fold(0.0, (sum, item) => sum + item.total);
+  _updateDiscountFields();
+  // ✅ حساب الرصيد المتوقع = الرصيد السابق + صافي الفاتورة الحالية
+  _expectedBalance = _supplierBalance + (_totalAmount - _discountAmount);
+  setState(() {});
+}
 
   void _autoFillItem(int index) async {
     final code = _items[index].code;
@@ -482,79 +491,86 @@ class _SupplierPageState extends State<SupplierPage> {
 
   // ===== الحفظ =====
   Future<void> _handleSave() async {
-    if (!PermissionsService().canAddSupplierTransaction) {
-      _showSnackBar('ليس لديك صلاحية للحفظ', Colors.orange);
-      return;
-    }
-
-    if (_selectedSupplier == null || _selectedSupplier!.isEmpty) {
-      _showSnackBar('اختر مورداً', Colors.orange);
-      return;
-    }
-    if (_selectedStoreCode == null || _selectedStoreCode!.isEmpty) {
-      _showSnackBar('اختر مخزناً', Colors.orange);
-      return;
-    }
-
-    final validItems = _items.where((i) => i.code.isNotEmpty && i.quantity > 0).toList();
-    if (validItems.isEmpty) {
-      _showSnackBar('أضف صنفاً واحداً على الأقل', Colors.orange);
-      return;
-    }
-
-    setState(() => _isSaving = true);
-    try {
-      final totalAfterDiscount = _totalAmount - _discountAmount;
-
-      // ✅ استخدام السيريال الموجود إذا كان تعديلاً
-      final serial = widget.editItem != null ? widget.editItem!.serial : _currentSerial;
-
-      final model = SupplierTransactionModel(
-        companyCode: widget.companyCode,
-        branchCode: _selectedBranchCode ?? 'all',
-        storeCode: _selectedStoreCode!,
-        serial: serial,
-        date: _selectedDate,
-        supplierName: _selectedSupplier!,
-        paymentMethod: 'نقدي',
-        treasury: 'الخزينة الرئيسية',
-        isAddToStore: _isAddToStore,
-        employee: widget.userName ?? 'غير محدد',
-        items: validItems,
-        totalAmount: totalAfterDiscount,
-        paidAmount: totalAfterDiscount,
-        docId: _editDocId,
-      );
-
-      final result = await _supplierService.saveSupplierTransaction(model);
-      if (result['success'] == true) {
-        _showSnackBar(widget.editItem != null ? 'تم تعديل حركة المورد بنجاح' : 'تم حفظ حركة المورد بنجاح', Colors.green);
-        setState(() {
-          _items.clear();
-          _controllers.clear();
-          _focusNodes.clear();
-          _addEmptyRow();
-          _loadLastSerial();
-          _selectedSupplier = null;
-          _supplierBalance = 0.0;
-          _totalAmount = 0.0;
-          _discountPercent = 0.0;
-          _discountAmount = 0.0;
-          _discountPercentController.text = '0';
-          _discountAmountController.text = '0.00';
-        });
-        if (widget.editItem != null) {
-          Navigator.pop(context, true);
-        }
-      } else {
-        _showSnackBar('فشل الحفظ: ${result['error']}', Colors.red);
-      }
-    } catch (e) {
-      _showSnackBar('خطأ: $e', Colors.red);
-    } finally {
-      setState(() => _isSaving = false);
-    }
+  if (!PermissionsService().canAddSupplierTransaction) {
+    _showSnackBar('ليس لديك صلاحية للحفظ', Colors.orange);
+    return;
   }
+
+  if (_selectedSupplier == null || _selectedSupplier!.isEmpty) {
+    _showSnackBar('اختر مورداً', Colors.orange);
+    return;
+  }
+  if (_selectedStoreCode == null || _selectedStoreCode!.isEmpty) {
+    _showSnackBar('اختر مخزناً', Colors.orange);
+    return;
+  }
+
+  final validItems = _items.where((i) => i.code.isNotEmpty && i.quantity > 0).toList();
+  if (validItems.isEmpty) {
+    _showSnackBar('أضف صنفاً واحداً على الأقل', Colors.orange);
+    return;
+  }
+
+  setState(() => _isSaving = true);
+  try {
+    final totalAfterDiscount = _totalAmount - _discountAmount;
+
+    final serial = widget.editItem != null ? widget.editItem!.serial : _currentSerial;
+
+    final model = SupplierTransactionModel(
+      companyCode: widget.companyCode,
+      branchCode: _selectedBranchCode ?? 'all',
+      storeCode: _selectedStoreCode!,
+      serial: serial,
+      date: _selectedDate,
+      supplierName: _selectedSupplier!,
+      paymentMethod: 'نقدي',
+      treasury: 'الخزينة الرئيسية',
+      isAddToStore: _isAddToStore,
+      employee: widget.userName ?? 'غير محدد',
+      items: validItems,
+      totalAmount: totalAfterDiscount,
+      paidAmount: totalAfterDiscount,
+      docId: _editDocId,
+    );
+
+    final result = await _supplierService.saveSupplierTransaction(model);
+    if (result['success'] == true) {
+      _showSnackBar(widget.editItem != null ? 'تم تعديل حركة المورد بنجاح' : 'تم حفظ حركة المورد بنجاح', Colors.green);
+
+      // ✅ تحديث الرصيد الفعلي للمورد الحالي (تثبيت الرصيد)
+      if (_selectedSupplier != null && _selectedSupplier!.isNotEmpty) {
+        await _loadSupplierBalance(_selectedSupplier!);
+      }
+
+      // ✅ تنظيف الحقول مع الاحتفاظ بالمورد المحدد
+      setState(() {
+        _items.clear();
+        _controllers.clear();
+        _focusNodes.clear();
+        _addEmptyRow();
+        _loadLastSerial();
+        _totalAmount = 0.0;
+        _discountPercent = 0.0;
+        _discountAmount = 0.0;
+        _discountPercentController.text = '0';
+        _discountAmountController.text = '0.00';
+        _editDocId = null;
+        // لا نمسح _selectedSupplier ولا _supplierBalance ولا _expectedBalance
+      });
+
+      if (widget.editItem != null) {
+        Navigator.pop(context, true);
+      }
+    } else {
+      _showSnackBar('فشل الحفظ: ${result['error']}', Colors.red);
+    }
+  } catch (e) {
+    _showSnackBar('خطأ: $e', Colors.red);
+  } finally {
+    setState(() => _isSaving = false);
+  }
+}
 
   // ===== بناء جدول الأصناف =====
   Widget _buildItemsTable() {
@@ -768,52 +784,53 @@ class _SupplierPageState extends State<SupplierPage> {
 
   // ===== دوال البناء المساعدة =====
   Widget _buildBalanceCard() {
-    if (_selectedSupplier == null || _selectedSupplier!.isEmpty || _supplierBalance == 0.0) {
-      return const SizedBox.shrink();
-    }
-    return GlassCard(
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              Colors.greenAccent.withOpacity(0.15),
-              Colors.greenAccent.withOpacity(0.05),
-            ],
-          ),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: Colors.greenAccent.withOpacity(0.3)),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text(
-              'رصيد المورد',
-              style: TextStyle(
-                color: Colors.white70,
-                fontSize: 14,
-                fontFamily: 'Cairo',
-              ),
-            ),
-            Row(
-              children: [
-                const Icon(Icons.trending_up, color: Colors.greenAccent, size: 22),
-                const SizedBox(width: 6),
-                Text(
-                  _supplierBalance.toStringAsFixed(2),
-                  style: const TextStyle(
-                    color: Colors.greenAccent,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
+  if (_selectedSupplier == null || _selectedSupplier!.isEmpty) {
+    return const SizedBox.shrink();
+  }
+  // ✅ استخدم _expectedBalance بدلاً من _supplierBalance
+  return GlassCard(
+    child: Container(
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Colors.greenAccent.withOpacity(0.15),
+            Colors.greenAccent.withOpacity(0.05),
           ],
         ),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.greenAccent.withOpacity(0.3)),
       ),
-    );
-  }
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          const Text(
+            'الرصيد',
+            style: TextStyle(
+              color: Colors.white70,
+              fontSize: 14,
+              fontFamily: 'Cairo',
+            ),
+          ),
+          Row(
+            children: [
+              const Icon(Icons.trending_up, color: Colors.greenAccent, size: 22),
+              const SizedBox(width: 6),
+              Text(
+                _expectedBalance.toStringAsFixed(2), // ✅ الرصيد المتغير لحظياً
+                style: const TextStyle(
+                  color: Colors.greenAccent,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    ),
+  );
+}
 
   Widget _buildStoreDropdown() {
     return DropdownButtonFormField<String?>(
@@ -896,7 +913,7 @@ class _SupplierPageState extends State<SupplierPage> {
     if (!PermissionsService().canShowSuppliers) {
       return Scaffold(
         appBar: AppBar(
-          title: const Text('حركة الموردين', style: TextStyle(color: Colors.white)),
+          title: const Text('المشتريات', style: TextStyle(color: Colors.white)),
           backgroundColor: Colors.transparent,
         ),
         body: Container(
@@ -905,7 +922,7 @@ class _SupplierPageState extends State<SupplierPage> {
           ),
           child: const Center(
             child: Text(
-              'ليس لديك صلاحية لعرض حركة الموردين',
+              'ليس لديك صلاحية لعرض المشتريات',
               style: TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 16),
             ),
           ),
@@ -930,7 +947,7 @@ class _SupplierPageState extends State<SupplierPage> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const Text(
-                    'حركة الموردين',
+                    'المشتريات',
                     style: TextStyle(fontFamily: 'Cairo', color: Colors.white, fontSize: 15),
                   ),
                   if (_currentSerial > 0)

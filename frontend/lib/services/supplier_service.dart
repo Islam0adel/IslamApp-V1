@@ -2,6 +2,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/supplier_transaction_model.dart';
 import '../core/constants.dart';
 
@@ -194,5 +195,49 @@ Map<String, dynamic> _toMapString(dynamic obj) {
     return Map<String, dynamic>.from(obj.map((key, value) => MapEntry(key.toString(), value)));
   }
   return {};
+}
+
+  // ✅ المزامنة التزايدية للموردين (تجلب فقط التغييرات منذ آخر مزامنة)
+  // ✅ المزامنة التزايدية للموردين
+Future<void> syncChangesFromServer(String companyCode, [String? lastSync]) async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final lastSyncKey = '${ApiConstants.LAST_SYNC_SUPPLIER}$companyCode';
+    
+    final lastSyncValue = lastSync ?? prefs.getString(lastSyncKey);
+
+    if (lastSyncValue == null) {
+      await fetchAllSupplier(companyCode);
+      await prefs.setString(lastSyncKey, DateTime.now().toIso8601String());
+      return;
+    }
+
+    final response = await http.get(
+      Uri.parse('$baseUrl/supplier/changes/$companyCode?since=$lastSyncValue'),
+    );
+    if (response.statusCode == 200) {
+      List<dynamic> changes = jsonDecode(response.body);
+      for (var item in changes) {
+        final Map<String, dynamic> map = _toMapString(item);
+        String key = "${map['company_code']}_${map['branch_code']}_${map['date']}";
+        List<Map<String, dynamic>> list = [];
+        if (_supplierBox.containsKey(key)) {
+          final raw = _supplierBox.get(key);
+          if (raw is List) {
+            list = raw.map((e) => _toMapString(e)).toList();
+          }
+        }
+        list.removeWhere((e) => e['doc_id'] == map['doc_id']);
+        list.add(map);
+        await _supplierBox.put(key, list);
+      }
+      await prefs.setString(lastSyncKey, DateTime.now().toIso8601String());
+      print("✅ تم مزامنة ${changes.length} تحديث للموردين");
+    } else {
+      print("⚠️ فشل المزامنة التزايدية للموردين، كود: ${response.statusCode}");
+    }
+  } catch (e) {
+    print("❌ خطأ في المزامنة التزايدية للموردين: $e");
+  }
 }
 }

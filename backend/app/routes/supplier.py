@@ -186,7 +186,51 @@ async def list_supplier_transactions(
         logger.error(f"خطأ في list_supplier_transactions: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-
+# ==========================================
+# 4. جلب التحديثات التزايدية للموردين
+# ==========================================
+@router.get("/changes/{company_code}")
+async def get_supplier_changes(
+    company_code: str,
+    since: str = Query(..., description="وقت آخر مزامنة بصيغة ISO 8601"),
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        since_dt = datetime.datetime.fromisoformat(since)
+        
+        stmt = select(SupplierRecord).where(
+            SupplierRecord.company_code == company_code,
+            SupplierRecord.updated_at >= since_dt
+        ).order_by(SupplierRecord.updated_at)
+        
+        result = await db.execute(stmt)
+        docs = result.scalars().all()
+        
+        results = []
+        for doc in docs:
+            results.append({
+                "doc_id": str(doc.id),
+                "company_code": doc.company_code,
+                "branch_code": doc.branch_code,
+                "store_code": doc.store_code,
+                "serial": doc.serial,
+                "date": doc.date,
+                "supplier_name": doc.supplier_name,
+                "payment_method": doc.payment_method,
+                "treasury": doc.treasury,
+                "is_add_to_store": doc.is_add_to_store,
+                "employee": doc.employee,
+                "items": doc.items,
+                "total_amount": doc.total_amount,
+                "paid_amount": doc.paid_amount,
+                "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
+            })
+        return results
+        
+    except ValueError:
+        raise HTTPException(status_code=400, detail="صيغة `since` غير صحيحة، استخدم ISO 8601")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 # ==========================================
 # 3. حذف حركة مورد
 # ==========================================

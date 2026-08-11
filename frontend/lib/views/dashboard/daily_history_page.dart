@@ -53,11 +53,16 @@ Future<void> _initialize() async {
   if (_isInitializing) return;
   _isInitializing = true;
 
-  // التحقق من وجود بيانات محلية للشركة الحالية
+  // ✅ جلب التحديثات التزايدية
+  await _dailyService.syncChangesFromServer(widget.companyCode);
+  
+  // التحقق من وجود بيانات محلية
   final Box dailyBox = Hive.box('daily_transactions_box');
   bool hasLocalData = dailyBox.values.any((tx) => tx is Map && tx['company_code'] == widget.companyCode);
 
   if (!hasLocalData) {
+    // ✅ التحقق قبل setState
+    if (!mounted) return;
     setState(() => _isLoading = true);
     try {
       await _dailyService.syncAllTransactions(widget.companyCode);
@@ -65,26 +70,31 @@ Future<void> _initialize() async {
     } catch (e) {
       print("⚠️ فشل المزامنة الأولية في الهيستوري: $e");
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      // ✅ التحقق قبل setState
+      if (!mounted) return;
+      setState(() => _isLoading = false);
     }
   }
 
   // ✅ جلب التحديثات التزايدية من السيرفر
-int lastSerial = _dailyService.getLastLocalSerial(widget.companyCode);
-if (lastSerial > 0) {
-  print("📡 جاري جلب التحديثات من السيرفر منذ السيريال: $lastSerial");
-  await _dailyService.syncCacheFromServer(widget.companyCode, lastSerial + 1);
-} else {
-  // إذا لم يكن هناك أي بيانات محلية، نجلب الكل (موجود بالفعل في hasLocalData)
-  // لكننا نضمن جلب الكل إذا كان lastSerial == 0
-  await _dailyService.syncAllTransactions(widget.companyCode);
-}
+  int lastSerial = _dailyService.getLastLocalSerial(widget.companyCode);
+  if (lastSerial > 0) {
+    print("📡 جاري جلب التحديثات من السيرفر منذ السيريال: $lastSerial");
+    await _dailyService.syncCacheFromServer(widget.companyCode, lastSerial + 1);
+  } else {
+    await _dailyService.syncAllTransactions(widget.companyCode);
+  }
 
-// بعد التحديث، نجلب البيانات المعروضة
-_fetchData();
+  // ✅ التحقق قبل _fetchData
+  if (!mounted) return;
+  _fetchData();
+  _isInitializing = false;
 }
 
 void _fetchData() async {
+  // ✅ منع التنفيذ إذا كان الـ Widget غير موجود
+  if (!mounted) return;
+  
   setState(() => _isLoading = true);
   try {
     final data = await _dailyService.getTransactionsHistory(
@@ -94,11 +104,15 @@ void _fetchData() async {
       branchCode: widget.selectedBranchCode,
     );
 
+    // ✅ التحقق قبل تحديث الحالة
+    if (!mounted) return;
     setState(() {
       _historyData = data.map<Map<String, dynamic>>((item) => Map<String, dynamic>.from(item)).toList();
       _isLoading = false;
     });
   } catch (e) {
+    // ✅ التحقق قبل تحديث الحالة في حالة الخطأ
+    if (!mounted) return;
     setState(() => _isLoading = false);
     print("خطأ في جلب التاريخ: $e");
   }
