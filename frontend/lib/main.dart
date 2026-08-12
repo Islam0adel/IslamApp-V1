@@ -48,7 +48,7 @@ Future<void> syncAllDataIfNeeded(String companyCode) async {
       await DailyService().syncChangesFromServer(companyCode, dailyLastSync);
       print("✅ تم تحديث اليوميات تزايديًا");
     }
-    await prefs.setString(dailyKey, DateTime.now().toIso8601String());
+    await prefs.setString(dailyKey, DateTime.now().toUtc().toIso8601String());
 
     // 2️⃣ التكويد (نحمله كاملاً إذا لم يكن موجوداً في Hive)
     final codingBox = Hive.box('coding_box');
@@ -78,7 +78,7 @@ Future<void> syncAllDataIfNeeded(String companyCode) async {
       await SupplierService().syncChangesFromServer(companyCode, supplierLastSync);
       print("✅ تم تحديث الموردين تزايديًا");
     }
-    await prefs.setString(supplierKey, DateTime.now().toIso8601String());
+    await prefs.setString(supplierKey, DateTime.now().toUtc().toIso8601String());
 
     // 4️⃣ الجرد
     final inventoryKey = 'last_sync_inventory_$companyCode';
@@ -90,7 +90,7 @@ Future<void> syncAllDataIfNeeded(String companyCode) async {
       await InventoryService().syncChangesFromServer(companyCode, inventoryLastSync);
       print("✅ تم تحديث الجرد تزايديًا");
     }
-    await prefs.setString(inventoryKey, DateTime.now().toIso8601String());
+    await prefs.setString(inventoryKey, DateTime.now().toUtc().toIso8601String());
 
     // تحديث الأرصدة
     await DailyService().getDailySummaryLocal(companyCode);
