@@ -117,9 +117,15 @@ class _DailyPageState extends State<DailyPage> {
   }
 
   void _loadInitialData() async {
+  // ✅ منع التنفيذ إذا كان الـ Widget غير موجود
+  if (!mounted) return;
+  
   setState(() => _isLoading = true);
   try {
     final Box dailyBox = Hive.box('daily_transactions_box');
+
+    // ✅ مزامنة التحديثات التزايدية من السيرفر (لتحديث الأرصدة)
+    await _dailyService.syncChangesFromServer(widget.companyCode);
 
     // ✅ التحقق من وجود بيانات محلية للشركة الحالية (أي حركة)
     bool hasLocalData = dailyBox.values.any((tx) =>
@@ -175,6 +181,7 @@ class _DailyPageState extends State<DailyPage> {
       return !name.contains('دخول بضاعة') && !name.contains('دفعة');
     }).toList();
 
+    if (!mounted) return;
     setState(() {
       _treasuryBalances = Map<String, double>.from(summary['balances'] ?? {});
       _treasuries = safesList;
@@ -187,6 +194,7 @@ class _DailyPageState extends State<DailyPage> {
       _isLoading = false;
     });
   } catch (e) {
+    if (!mounted) return;
     setState(() => _isLoading = false);
     print("خطأ في جلب البيانات الافتتاحية: $e");
     // يمكن عرض رسالة للمستخدم
