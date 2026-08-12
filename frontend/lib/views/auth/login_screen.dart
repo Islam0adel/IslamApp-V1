@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../services/api_service.dart';
 import '../dashboard/home_page.dart';
+import '../../main.dart'; // ✅ استيراد syncAllData و initializeGlobalListener
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -82,6 +83,11 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
       await prefs.setString('job_code', result['job_code']); // حفظ كود الوظيفة
       await prefs.setString('job_title', result['job_title']); // حفظ مسمى الوظيفة
       await prefs.setString('user_email', _emailController.text.trim());
+
+      // ✅ تشغيل المزامنة التزايدية فوراً (مع الحفاظ على مؤشر التحميل)
+      initializeGlobalListener(result['company_code']);
+      await syncAllData(result['company_code']);
+
       if (mounted) {
         Navigator.pushReplacement(
           context,
@@ -106,6 +112,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
       SnackBar(content: Text(msg, textAlign: TextAlign.center), backgroundColor: color),
     );
   }
+  
   @override
   Widget build(BuildContext context) {
     return Scaffold(

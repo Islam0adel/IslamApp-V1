@@ -40,6 +40,7 @@ class _DailyPageState extends State<DailyPage> with WidgetsBindingObserver { // 
   final _dateController = TextEditingController();
 
   bool _isLoading = false;
+  bool _isUpdating = false; // ✅ متغير علم لمنع التحديث المتكرر
 
   Map<String, double> _treasuryBalances = {};
 
@@ -61,8 +62,8 @@ class _DailyPageState extends State<DailyPage> with WidgetsBindingObserver { // 
     
     // ✅ إضافة مستمع لتغييرات الصندوق
     _boxListener = () {
-      // عند تغيير أي بيانات في الصندوق، نعيد حساب الأرصدة إذا كانت الصفحة مرئية
-      if (mounted) {
+      // منع التحديث إذا كان التطبيق في حالة تحديث بالفعل
+      if (!_isUpdating && mounted) {
         _loadInitialData();
       }
     };
@@ -154,9 +155,10 @@ class _DailyPageState extends State<DailyPage> with WidgetsBindingObserver { // 
   }
 
   void _loadInitialData() async {
-    // ✅ منع التنفيذ إذا كان الـ Widget غير موجود
-    if (!mounted) return;
+    // ✅ منع التنفيذ إذا كان الـ Widget غير موجود أو قيد التحديث
+    if (!mounted || _isUpdating) return;
     
+    _isUpdating = true;
     setState(() => _isLoading = true);
     try {
       final Box dailyBox = Hive.box('daily_transactions_box');
@@ -216,7 +218,10 @@ class _DailyPageState extends State<DailyPage> with WidgetsBindingObserver { // 
         return !name.contains('دخول بضاعة') && !name.contains('دفعة');
       }).toList();
 
-      if (!mounted) return;
+      if (!mounted) {
+        _isUpdating = false;
+        return;
+      }
       setState(() {
         _treasuryBalances = Map<String, double>.from(summary['balances'] ?? {});
         _treasuries = safesList;
@@ -227,12 +232,18 @@ class _DailyPageState extends State<DailyPage> with WidgetsBindingObserver { // 
           if (defaultSafe.containsKey('name')) _selectedTreasury = defaultSafe['name'];
         }
         _isLoading = false;
+        _isUpdating = false;
       });
     } catch (e) {
-      if (!mounted) return;
-      setState(() => _isLoading = false);
+      if (!mounted) {
+        _isUpdating = false;
+        return;
+      }
+      setState(() {
+        _isLoading = false;
+        _isUpdating = false;
+      });
       print("خطأ في جلب البيانات الافتتاحية: $e");
-      // يمكن عرض رسالة للمستخدم
     }
   }
 

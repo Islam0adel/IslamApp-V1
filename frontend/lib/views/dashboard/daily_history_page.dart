@@ -46,13 +46,14 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
 
   // ✅ مستمع للتغييرات في صندوق اليوميات
   VoidCallback? _boxListener;
+  bool _isUpdating = false; // ✅ متغير علم لمنع التحديث المتكرر
 
   @override
   void initState() {
     super.initState();
     // ✅ إضافة مستمع لتغييرات الصندوق لإعادة تحميل البيانات تلقائياً
     _boxListener = () {
-      if (mounted) {
+      if (!_isUpdating && mounted) {
         _fetchData();
       }
     };
@@ -107,9 +108,10 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
   }
 
   void _fetchData() async {
-    // ✅ منع التنفيذ إذا كان الـ Widget غير موجود
-    if (!mounted) return;
+    // ✅ منع التنفيذ إذا كان الـ Widget غير موجود أو قيد التحديث
+    if (!mounted || _isUpdating) return;
     
+    _isUpdating = true;
     setState(() => _isLoading = true);
     try {
       final data = await _dailyService.getTransactionsHistory(
@@ -120,15 +122,25 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
       );
 
       // ✅ التحقق قبل تحديث الحالة
-      if (!mounted) return;
+      if (!mounted) {
+        _isUpdating = false;
+        return;
+      }
       setState(() {
         _historyData = data.map<Map<String, dynamic>>((item) => Map<String, dynamic>.from(item)).toList();
         _isLoading = false;
+        _isUpdating = false;
       });
     } catch (e) {
       // ✅ التحقق قبل تحديث الحالة في حالة الخطأ
-      if (!mounted) return;
-      setState(() => _isLoading = false);
+      if (!mounted) {
+        _isUpdating = false;
+        return;
+      }
+      setState(() {
+        _isLoading = false;
+        _isUpdating = false;
+      });
       print("خطأ في جلب التاريخ: $e");
     }
   }
