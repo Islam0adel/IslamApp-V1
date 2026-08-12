@@ -28,6 +28,7 @@ bool _isSyncing = false;
 // ✅ دالة المزامنة الذكية: تعتمد على lastSync لتحديد إذا كان الجهاز جديداً
 // إذا كان lastSync == null → تحميل كامل، وإلا → تزايدي
 Future<void> syncAllDataIfNeeded(String companyCode) async {
+  // منع التزامن المتكرر
   if (_isSyncing) {
     print("⚠️ مزامنة قيد التنفيذ، تم تجاهل الطلب");
     return;
@@ -39,16 +40,25 @@ Future<void> syncAllDataIfNeeded(String companyCode) async {
     // 1️⃣ اليوميات
     final dailyKey = 'last_sync_daily_$companyCode';
     final dailyLastSync = prefs.getString(dailyKey);
-    if (dailyLastSync == null) {
-      // لا يوجد وقت مزامنة سابق → تحميل كامل
+    print("🔍 dailyLastSync قبل المزامنة: $dailyLastSync");
+
+    // التحقق من وجود بيانات في Hive كحالة استثنائية (جهاز جديد)
+    final Box dailyBox = Hive.box('daily_transactions_box');
+    bool hasLocalData = dailyBox.values.any((tx) => tx is Map && tx['company_code'] == companyCode);
+
+    if (dailyLastSync == null || !hasLocalData) {
+      // لا يوجد last_sync أو Hive فارغة → تحميل كامل
+      print("📥 تحميل كامل (${dailyLastSync == null ? 'لا يوجد last_sync' : 'Hive فارغة'})");
       await DailyService().syncAllTransactions(companyCode);
-      print("✅ تم تحميل اليوميات بالكامل (أول تشغيل)");
     } else {
-      // يوجد وقت مزامنة → مزامنة تزايدية
+      // مزامنة تزايدية
+      print("📡 مزامنة تزايدية منذ: $dailyLastSync (UTC)");
       await DailyService().syncChangesFromServer(companyCode, dailyLastSync);
-      print("✅ تم تحديث اليوميات تزايديًا");
     }
-    await prefs.setString(dailyKey, DateTime.now().toUtc().toIso8601String());
+    // حفظ وقت المزامنة بصيغة UTC
+    final newSyncTime = DateTime.now().toUtc().toIso8601String();
+    await prefs.setString(dailyKey, newSyncTime);
+    print("✅ تم تحديث dailyLastSync إلى: $newSyncTime (UTC)");
 
     // 2️⃣ التكويد (نحمله كاملاً إذا لم يكن موجوداً في Hive)
     final codingBox = Hive.box('coding_box');
@@ -71,7 +81,7 @@ Future<void> syncAllDataIfNeeded(String companyCode) async {
     // 3️⃣ الموردين
     final supplierKey = 'last_sync_supplier_$companyCode';
     final supplierLastSync = prefs.getString(supplierKey);
-    if (supplierLastSync == null) {
+    if (supplierLastSync == null || !hasLocalData) {
       await SupplierService().fetchAllSupplier(companyCode);
       print("✅ تم تحميل الموردين بالكامل (أول تشغيل)");
     } else {
@@ -83,7 +93,7 @@ Future<void> syncAllDataIfNeeded(String companyCode) async {
     // 4️⃣ الجرد
     final inventoryKey = 'last_sync_inventory_$companyCode';
     final inventoryLastSync = prefs.getString(inventoryKey);
-    if (inventoryLastSync == null) {
+    if (inventoryLastSync == null || !hasLocalData) {
       await InventoryService().fetchAllInventory(companyCode);
       print("✅ تم تحميل الجرد بالكامل (أول تشغيل)");
     } else {
@@ -105,6 +115,7 @@ Future<void> syncAllDataIfNeeded(String companyCode) async {
 
 // 🌟 دالة تشغيل WebSocket وتعيين المزامنة التلقائية
 void initializeGlobalListener(String companyCode) {
+  // إلغاء الاشتراكات السابقة
   globalSyncSubscription?.cancel(); 
   codingSyncSubscription?.cancel();
   inventorySyncSubscription?.cancel();
@@ -112,14 +123,12 @@ void initializeGlobalListener(String companyCode) {
 
   print("🌐 بدء WebSocket للشركة: $companyCode");
 
-  // عند إعادة الاتصال، قم بتشغيل المزامنة التزايدية تلقائيًا
+  // ✅ تعيين callback لاستدعاء المزامنة عند اتصال WebSocket
+  // نستخدم `_isSyncing` لمنع التكرار، وسيتم استدعاء `syncAllDataIfNeeded`
   _syncService.onWebSocketConnected = () {
     print("🔄 WebSocket متصل، جاري تحديث البيانات...");
-    syncAllDataIfNeeded(companyCode).then((_) {
-      print("✅ تم تحديث البيانات بعد إعادة الاتصال");
-    }).catchError((e) {
-      print("⚠️ فشل تحديث البيانات بعد إعادة الاتصال: $e");
-    });
+    // نستخدم `Future.microtask` لتجنب التعارض مع المزامنة الجارية
+    Future.microtask(() => syncAllDataIfNeeded(companyCode));
   };
 
   _syncService.startSync(companyCode);
@@ -154,7 +163,8 @@ void main() async {
   if (rememberMe && userName != null && companyCode != null) {
     // تشغيل المزامنة في الخلفية (لا تمنع عرض الصفحة)
     initializeGlobalListener(companyCode);
-    syncAllDataIfNeeded(companyCode); // تزايدي/كامل حسب الحاجة
+    // نستخدم Future.microtask لتأخير المزامنة قليلاً حتى تظهر الصفحة
+    Future.microtask(() => syncAllDataIfNeeded(companyCode));
 
     initialScreen = HomePage(
       userName: userName,

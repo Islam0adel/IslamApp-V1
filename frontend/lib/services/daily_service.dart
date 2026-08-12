@@ -102,8 +102,7 @@ class DailyService {
   }
 
   // ✅ المزامنة التزايدية لليوميات (تجلب فقط التغييرات منذ آخر مزامنة)
-  // ✅ المزامنة التزايدية لليوميات
-// ✅ المزامنة التزايدية لليوميات (مع دعم lastSync وحل مشكلة التوقيت UTC)
+ // ✅ المزامنة التزايدية لليوميات (مع دعم lastSync وحل مشكلة التوقيت UTC)
 Future<void> syncChangesFromServer(String companyCode, [String? lastSync]) async {
   try {
     final prefs = await SharedPreferences.getInstance();
