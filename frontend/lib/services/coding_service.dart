@@ -98,75 +98,100 @@ class CodingService {
   // إذا حدثت تغييرات (إضافة/تعديل/حذف) على أي قسم من التكويد
   // ✅ المزامنة التزايدية للتكويد
 Future<void> syncChangesFromServer(String companyCode, [String? lastSync]) async {
-  try {
     final prefs = await SharedPreferences.getInstance();
     final lastSyncKey = '${ApiConstants.LAST_SYNC_CODING}$companyCode';
-    
     final lastSyncValue = lastSync ?? prefs.getString(lastSyncKey);
 
-    // التكويد يُجلب كاملاً أول مرة، ثم نستخدم التزايدي
     if (lastSyncValue == null) {
+      print('📥 لا يوجد lastSync للتكويد، جاري التحميل الكامل...');
       await fetchAllCoding(companyCode);
-      await prefs.setString(lastSyncKey, DateTime.now().toIso8601String());
+      await prefs.setString(lastSyncKey, DateTime.now().toUtc().toIso8601String());
       return;
     }
 
-    List<String> categories = ['items', 'safes', 'types', 'branches', 'stores', 'suppliers', 'customers', 'payment_methods'];
-    
-    for (String category in categories) {
-      final response = await http.get(
-        Uri.parse('$baseUrl/coding/changes/$companyCode?category=$category&since=$lastSyncValue'),
-      );
-      if (response.statusCode == 200) {
-        List<dynamic> changes = jsonDecode(response.body);
-        if (changes.isNotEmpty) {
-          final String localKey = "${companyCode}_$category";
-          List<Map<String, dynamic>> currentList = [];
-          if (_codingBox.containsKey(localKey)) {
-            final raw = _codingBox.get(localKey);
-            if (raw is List) {
-              currentList = raw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
-            }
-          }
-          
-          for (var item in changes) {
-            final action = item['action'] ?? 'update';
-            final code = item['code']?.toString();
-            if (code == null) continue;
-            
-            if (action == 'delete') {
-              currentList.removeWhere((e) => e['code']?.toString() == code);
-            } else {
-              currentList.removeWhere((e) => e['code']?.toString() == code);
-              Map<String, dynamic> cleanItem = Map.from(item);
-              cleanItem.remove('action');
-              currentList.add(cleanItem);
-            }
-          }
-          
-          currentList.sort((a, b) {
-            int aCode = int.tryParse(a['code']?.toString() ?? '0') ?? 0;
-            int bCode = int.tryParse(b['code']?.toString() ?? '0') ?? 0;
-            return aCode.compareTo(bCode);
-          });
-          
-          if (currentList.isNotEmpty) {
-            await _codingBox.put(localKey, currentList);
-          } else {
-            await _codingBox.delete(localKey);
-          }
-          print("✅ تم تحديث تكويدات [$category] (${changes.length} تغيير)");
+    try {
+      final syncStartedAt = DateTime.now().toUtc();
+      final categories = [
+        'items',
+        'safes',
+        'types',
+        'branches',
+        'stores',
+        'suppliers',
+        'customers',
+        'payment_methods',
+      ];
+
+      for (final category in categories) {
+        final response = await http.get(
+          Uri.parse(
+            '$baseUrl/coding/changes/$companyCode?category=$category&since=$lastSyncValue',
+          ),
+        );
+
+        if (response.statusCode != 200) {
+          throw Exception(
+            'فشل مزامنة التكويد [$category]. HTTP ${response.statusCode}: ${response.body}',
+          );
         }
-      } else {
-        print("⚠️ فشل المزامنة التزايدية للتكويد [$category]، كود: ${response.statusCode}");
+
+        final List<dynamic> changes = jsonDecode(response.body);
+        if (changes.isEmpty) continue;
+
+        final localKey = '${companyCode}_$category';
+        List<Map<String, dynamic>> currentList = [];
+
+        if (_codingBox.containsKey(localKey)) {
+          final raw = _codingBox.get(localKey);
+          if (raw is List) {
+            currentList = raw
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList();
+          }
+        }
+
+        for (final item in changes) {
+          if (item is! Map) continue;
+
+          final map = Map<String, dynamic>.from(item);
+          final action = map['action']?.toString() ?? 'update';
+          final code = map['code']?.toString();
+          if (code == null || code.isEmpty) continue;
+
+          currentList.removeWhere(
+            (e) => e['code']?.toString() == code,
+          );
+
+          if (action != 'delete') {
+            map.remove('action');
+            currentList.add(map);
+          }
+        }
+
+        currentList.sort((a, b) {
+          final aCode = int.tryParse(a['code']?.toString() ?? '0') ?? 0;
+          final bCode = int.tryParse(b['code']?.toString() ?? '0') ?? 0;
+          return aCode.compareTo(bCode);
+        });
+
+        if (currentList.isEmpty) {
+          await _codingBox.delete(localKey);
+        } else {
+          await _codingBox.put(localKey, currentList);
+        }
+
+        print('✅ تم تحديث تكويد [$category] (${changes.length} تغيير)');
       }
+
+      await prefs.setString(lastSyncKey, syncStartedAt.toIso8601String());
+      print('✅ اكتملت مزامنة التكويد');
+    } catch (e) {
+      print('❌ فشل مزامنة التكويد: $e');
+      // لا نغير lastSync إذا فشل أي قسم.
+      rethrow;
     }
-    
-    await prefs.setString(lastSyncKey, DateTime.now().toIso8601String());
-  } catch (e) {
-    print("❌ خطأ في المزامنة التزايدية للتكويد: $e");
   }
-}
 
   // ==========================================
   // 2. حفظ أو تحديث تكويد (نسخة معدلة لتجنب التكرار)

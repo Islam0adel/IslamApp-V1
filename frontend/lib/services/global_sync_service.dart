@@ -1,72 +1,191 @@
 // lib/services/global_sync_service.dart
-import 'dart:async';
-import 'package:cloud_firestore/cloud_firestore.dart';
+
 import 'package:hive_flutter/hive_flutter.dart';
-// import 'package:shared_preferences/shared_preferences.dart';
-// import 'daily_service.dart';
-import 'websocket_sync_service.dart'; // ✅ استيراد الخدمة الجديدة
+import 'websocket_sync_service.dart';
 
+/// مدير اتصال WebSocket فقط.
+///
+/// Firebase يظل مسؤولاً عن Authentication / Users / Permissions كما هو.
+/// المزامنة هنا خاصة ببيانات التطبيق المخزنة في Hive.
 class GlobalSyncService {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  
-  // ✅ إضافة خدمة WebSocket
-  final WebSocketSyncService _wsService = WebSocketSyncService();
-  
-  // ✅ متغير لتحديد وضع المزامنة (true = WebSocket, false = Firestore)
-  bool useWebSocket = true; // يمكنك تغييره حسب البيئة أو التفضيل
-  
-  // ✅ تعيين callback للاتصال (تم التعديل: استخدام setter)
-  set onWebSocketConnected(void Function()? callback) {
-  _wsService.onConnected = callback;
-}
+  // ============================================================
+  // WebSocket Service
+  // ============================================================
 
-  Box get _dailyBox => Hive.box('daily_transactions_box');
-  Box get _codingBox => Hive.box('coding_box');
-  Box get _inventoryBox => Hive.box('inventory_box');
-  Box get _supplierBox => Hive.box('supplier_box');
+  final WebSocketSyncService _wsService =
+      WebSocketSyncService();
 
-  StreamSubscription<QuerySnapshot>? _codingSubscription;
-  StreamSubscription<QuerySnapshot>? _inventorySubscription;
-  StreamSubscription<QuerySnapshot>? _supplierSubscription;
+  // ============================================================
+  // إعدادات
+  // ============================================================
 
-  // ========== دالة بدء المزامنة (يتم استدعاؤها من main.dart) ==========
+  bool useWebSocket = true;
+
+  String? _currentCompanyCode;
+
+  // ============================================================
+  // Callback
+  // ============================================================
+
+  /// يتم استدعاؤه عند فتح WebSocket أو إعادة الاتصال.
+  ///
+  /// مهم:
+  /// GlobalSyncService لا ينفذ المزامنة بنفسه.
+  /// main.dart هو المسؤول عن:
+  ///
+  /// syncAllDataIfNeeded(companyCode)
+  void Function()? onWebSocketConnected;
+
+  // ============================================================
+  // Hive Boxes
+  // ============================================================
+
+  /// موجودة للتوافق مع أي كود قديم يعتمد عليها.
+  Box get dailyBox =>
+      Hive.box('daily_transactions_box');
+
+  Box get codingBox =>
+      Hive.box('coding_box');
+
+  Box get inventoryBox =>
+      Hive.box('inventory_box');
+
+  Box get supplierBox =>
+      Hive.box('supplier_box');
+
+  // ============================================================
+  // بدء المزامنة / WebSocket
+  // ============================================================
+
   void startSync(String companyCode) {
-  if (useWebSocket) {
-    print("🌐 استخدام WebSocket للمزامنة");
-    _wsService.connect(companyCode);  // ✅ بدون baseUrl
-  } else {
-      print("🔥 استخدام Firestore للمزامنة (Legacy Mode)");
-      // استدعاء الدوال القديمة
-      _startFirestoreListeners(companyCode);
-    }
-  }
+    // ----------------------------------------------------------
+    // منع تشغيل اتصال مكرر لنفس الشركة
+    // ----------------------------------------------------------
 
-  // ========== إيقاف المزامنة ==========
-  void stopSync() {
-    if (useWebSocket) {
+    if (useWebSocket &&
+        _currentCompanyCode == companyCode &&
+        _wsService.isConnected) {
+      print(
+        "✅ WebSocket شغال بالفعل للشركة: $companyCode",
+      );
+      return;
+    }
+
+    // ----------------------------------------------------------
+    // لو الشركة تغيرت
+    // ----------------------------------------------------------
+
+    if (_currentCompanyCode != null &&
+        _currentCompanyCode != companyCode) {
+      print(
+        "🔄 تغيير الشركة من $_currentCompanyCode إلى $companyCode",
+      );
+
       _wsService.disconnect();
-    } else {
-      _codingSubscription?.cancel();
-      _inventorySubscription?.cancel();
-      _supplierSubscription?.cancel();
     }
+
+    _currentCompanyCode = companyCode;
+
+    // ----------------------------------------------------------
+    // WebSocket Mode
+    // ----------------------------------------------------------
+
+    if (useWebSocket) {
+      print(
+        "🌐 بدء مدير WebSocket للشركة: $companyCode",
+      );
+
+      // --------------------------------------------------------
+      // عند نجاح الاتصال أو إعادة الاتصال
+      // --------------------------------------------------------
+
+      _wsService.onConnected = () {
+        print(
+          "✅ WebSocket اتصل/عاد الاتصال",
+        );
+
+        // ------------------------------------------------------
+        // لا تعمل Sync هنا مباشرة.
+        //
+        // main.dart هو المسؤول الوحيد عن Sync.
+        // ------------------------------------------------------
+
+        final callback = onWebSocketConnected;
+
+        if (callback != null) {
+          print(
+            "🔄 إبلاغ Sync Manager بأن WebSocket اتصل...",
+          );
+
+          callback();
+        }
+      };
+
+      // --------------------------------------------------------
+      // فتح WebSocket
+      // --------------------------------------------------------
+
+      _wsService.connect(companyCode);
+
+      return;
+    }
+
+    // ----------------------------------------------------------
+    // Legacy Firestore Mode
+    // ----------------------------------------------------------
+
+    print(
+      "🔥 استخدام Firestore للمزامنة (Legacy Mode)",
+    );
+
+    _startFirestoreListeners(companyCode);
   }
 
-  // ========== دوال Firestore القديمة (محفوظة للرجوع) ==========
-  void _startFirestoreListeners(String companyCode) {
-    // ... الكود القديم (startGlobalListener, startCodingListener, إلخ)
-    // نتركه كما هو ولكن نضعه هنا
-    // (محذوف للاختصار لكنه موجود في الملف الأصلي)
+  // ============================================================
+  // إيقاف المزامنة
+  // ============================================================
+
+  void stopSync() {
+    print("🔌 إيقاف Global Sync Service");
+
+    _wsService.disconnect();
+
+    _currentCompanyCode = null;
   }
 
-  // ========== دوال WebSocket العامة ==========
-  bool get isConnected => useWebSocket ? _wsService.isConnected : false;
+  // ============================================================
+  // Legacy Firestore
+  // ============================================================
 
-  // ========== الدوال القديمة (تبقى كما هي للتوافق) ==========
-  Future<Stream<QuerySnapshot>> startGlobalListener(String companyCode) async {
-    // ... الكود القديم
-    return _firestore.collection('transactions').doc(companyCode).collection('daily_records').snapshots();
+  /// متروكة فقط للتوافق مع الكود القديم.
+  ///
+  /// النظام الحالي يعتمد على:
+  /// WebSocket + HTTP incremental sync
+  void _startFirestoreListeners(
+    String companyCode,
+  ) {
+    print(
+      "ℹ️ Firestore Legacy Mode غير مستخدم حاليًا "
+      "للشركة: $companyCode",
+    );
   }
 
-  // ... باقي الدوال القديمة كما هي
+  // ============================================================
+  // حالة الاتصال
+  // ============================================================
+
+  bool get isConnected {
+    if (!useWebSocket) {
+      return false;
+    }
+
+    return _wsService.isConnected;
+  }
+
+  // ============================================================
+  // الشركة الحالية
+  // ============================================================
+
+  String? get currentCompanyCode =>
+      _currentCompanyCode;
 }

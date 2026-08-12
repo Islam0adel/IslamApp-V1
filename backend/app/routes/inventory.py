@@ -158,27 +158,49 @@ async def list_inventory(
 @router.get("/changes/{company_code}")
 async def get_inventory_changes(
     company_code: str,
-    since: str = Query(..., description="وقت آخر مزامنة بصيغة ISO 8601"),
+    since: str = Query(
+        ...,
+        description="وقت آخر مزامنة بصيغة ISO 8601، مثال: 2026-08-11T14:30:00Z"
+    ),
     db: AsyncSession = Depends(get_db)
 ):
     try:
-        # ✅ تحويل since إلى UTC (نفس منطق transactions)
-        since_dt = datetime.datetime.fromisoformat(since)
-        if since_dt.tzinfo is None:
-            since_dt = since_dt.replace(tzinfo=datetime.timezone.utc)
-        else:
-            since_dt = since_dt.astimezone(datetime.timezone.utc)
-        since_dt_naive = since_dt.replace(tzinfo=None)
+        # ------------------------------------------
+        # 1) تحويل since إلى datetime
+        # ------------------------------------------
+        since_dt = datetime.datetime.fromisoformat(
+            since.replace("Z", "+00:00")
+        )
 
-        stmt = select(InventoryRecord).where(
-            InventoryRecord.company_code == company_code,
-            InventoryRecord.updated_at >= since_dt_naive
-        ).order_by(InventoryRecord.updated_at)
+        # ------------------------------------------
+        # 2) توحيد التوقيت إلى UTC
+        #    ثم إزالة timezone لأن updated_at
+        #    من نوع TIMESTAMP WITHOUT TIME ZONE
+        # ------------------------------------------
+        if since_dt.tzinfo is not None:
+            since_dt = since_dt.astimezone(datetime.timezone.utc)
+            since_dt = since_dt.replace(tzinfo=None)
+
+        # ------------------------------------------
+        # 3) جلب التحديثات فقط منذ آخر مزامنة
+        # ------------------------------------------
+        stmt = (
+            select(InventoryRecord)
+            .where(
+                InventoryRecord.company_code == company_code,
+                InventoryRecord.updated_at >= since_dt
+            )
+            .order_by(InventoryRecord.updated_at)
+        )
 
         result = await db.execute(stmt)
         docs = result.scalars().all()
 
+        # ------------------------------------------
+        # 4) تحويل النتائج
+        # ------------------------------------------
         results = []
+
         for doc in docs:
             results.append({
                 "doc_id": str(doc.id),
@@ -191,15 +213,26 @@ async def get_inventory_changes(
                 "total_wholesale": doc.total_wholesale,
                 "total_retail": doc.total_retail,
                 "serial": doc.serial,
-                "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
+                "updated_at": (
+                    doc.updated_at.isoformat()
+                    if doc.updated_at
+                    else None
+                ),
             })
+
         return results
 
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"صيغة `since` غير صحيحة: {str(e)}")
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="صيغة `since` غير صحيحة، استخدم ISO 8601"
+        )
+
     except Exception as e:
-        print(f"❌ خطأ في get_inventory_changes: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
 # ==========================================
 # 3. حذف جرد
 # ==========================================

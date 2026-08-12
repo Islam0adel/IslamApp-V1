@@ -103,63 +103,80 @@ class DailyService {
 
   // ✅ المزامنة التزايدية لليوميات (تجلب فقط التغييرات منذ آخر مزامنة)
  // ✅ المزامنة التزايدية لليوميات (مع دعم lastSync وحل مشكلة التوقيت UTC)
+// lib/services/daily_service.dart
+// ✅ المزامنة التزايدية لليوميات (مع حل مؤقت لطرح 5 دقائق)
 Future<void> syncChangesFromServer(String companyCode, [String? lastSync]) async {
-  try {
     final prefs = await SharedPreferences.getInstance();
     final lastSyncKey = '${ApiConstants.LAST_SYNC_DAILY}$companyCode';
-    
-    // إذا لم يُمرر lastSync، نقرأه من SharedPreferences
     final lastSyncValue = lastSync ?? prefs.getString(lastSyncKey);
 
-    // إذا لم يكن هناك وقت سابق، نستدعي التحميل الكامل
     if (lastSyncValue == null) {
-      print("📥 لا يوجد وقت مزامنة سابق، جاري التحميل الكامل...");
+      print('📥 لا يوجد lastSync لليوميات، جاري التحميل الكامل...');
       await syncAllTransactions(companyCode);
-      // ✅ تخزين وقت المزامنة بصيغة UTC
       await prefs.setString(lastSyncKey, DateTime.now().toUtc().toIso8601String());
       return;
     }
 
-    // ✅ طباعة قيمة lastSync للتأكد من صحتها
-    print("📡 جاري جلب التحديثات منذ: $lastSyncValue (UTC)");
+    try {
+      // نأخذ وقت بداية المزامنة، وليس وقت نهايتها، حتى لا نفقد
+      // أي تغيير حدث أثناء تنفيذ الطلب.
+      final syncStartedAt = DateTime.now().toUtc();
+      DateTime sinceDt = DateTime.parse(lastSyncValue).toUtc();
 
-    final response = await http.get(
-      Uri.parse('$baseUrl/transactions/changes/$companyCode?since=$lastSyncValue'),
-    );
-    
-    if (response.statusCode == 200) {
-      List<dynamic> changes = jsonDecode(response.body);
-      
-      // ✅ طباعة عدد التغييرات المستلمة للمساعدة في التصحيح
-      if (changes.isEmpty) {
-        print("ℹ️ لا توجد تغييرات جديدة منذ آخر مزامنة");
-      } else {
-        print("📦 عدد التغييرات المستلمة: ${changes.length}");
-        for (var item in changes) {
-          String bCode = item['branch_code']?.toString() ?? '1';
-          String key = "branch_${bCode}_${item['serial']}";
-          // ✅ تحديث Hive بالمفتاح الصحيح
-          await _transactionBox.put(key, item);
-          print("  ✅ تم تحديث: $key");
+      // هامش بسيط لتغطية فروق التوقيت بين العميل والخادم.
+      sinceDt = sinceDt.subtract(const Duration(minutes: 5));
+      final effectiveSince = sinceDt.toIso8601String();
+
+      print('📡 يوميات: جلب التغييرات منذ $effectiveSince');
+
+      final response = await http.get(
+        Uri.parse('$baseUrl/transactions/changes/$companyCode?since=$effectiveSince'),
+      );
+
+      if (response.statusCode != 200) {
+        throw Exception(
+          'فشل مزامنة اليوميات. HTTP ${response.statusCode}: ${response.body}',
+        );
+      }
+
+      final List<dynamic> changes = jsonDecode(response.body);
+
+      for (final item in changes) {
+        if (item is! Map) continue;
+
+        final map = Map<String, dynamic>.from(item);
+        final action = map['action']?.toString() ?? 'update';
+        final branchCode = map['branch_code']?.toString() ?? '1';
+        final serial = map['serial']?.toString();
+
+        if (serial == null) {
+          throw Exception('تحديث يومية بدون serial');
+        }
+
+        final key = 'branch_${branchCode}_$serial';
+
+        if (action == 'delete') {
+          await _transactionBox.delete(key);
+        } else {
+          // remove action حتى لا تدخل كحقل في البيانات المحلية لو أرسله السيرفر.
+          map.remove('action');
+          await _transactionBox.put(key, map);
         }
       }
-      
-      // تحديث الأرصدة
+
       await getDailySummaryLocal(companyCode);
-      
-      // ✅ تخزين وقت المزامنة بصيغة UTC
-      final nowUtc = DateTime.now().toUtc().toIso8601String();
-      await prefs.setString(lastSyncKey, nowUtc);
-      print("✅ تم تحديث وقت المزامنة إلى: $nowUtc (UTC)");
-      print("✅ تم مزامنة ${changes.length} تحديث لليوميات");
-    } else {
-      print("⚠️ فشل المزامنة التزايدية لليوميات، كود: ${response.statusCode}");
-      print("⚠️ الرد: ${response.body}");
+
+      // نحفظ وقت بداية المزامنة فقط بعد نجاح تطبيق كل التحديثات.
+      // أي تغيير حصل أثناء المزامنة سيظهر في المرة التالية.
+      await prefs.setString(lastSyncKey, syncStartedAt.toIso8601String());
+
+      print('✅ تمت مزامنة ${changes.length} تحديث لليوميات');
+    } catch (e) {
+      print('❌ فشل مزامنة اليوميات: $e');
+      // مهم: لا نحدث lastSync عند الفشل.
+      rethrow;
     }
-  } catch (e) {
-    print("❌ خطأ في المزامنة التزايدية لليوميات: $e");
   }
-}
 
   // 2. دالة حفظ أو تعديل حركة (ترسل للسيرفر وتحدث الـ Hive ذكياً)
   Future<Map<String, dynamic>> saveTransaction({
@@ -372,7 +389,7 @@ Future<void> syncChangesFromServer(String companyCode, [String? lastSync]) async
       }
     } catch (e) {
       print("❌ خطأ في مزامنة جميع الحركات: $e");
-      // لا نرمي استثناء حتى لا نوقف التطبيق، فقط نسجل الخطأ
+      rethrow;
     }
   }
 }

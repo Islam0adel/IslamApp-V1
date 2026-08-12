@@ -256,24 +256,54 @@ async def delete_code(
 @router.get("/changes/{company_code}")
 async def get_coding_changes(
     company_code: str,
-    category: str = Query(..., description="القسم المطلوب (مثل items, safes, types)"),
-    since: str = Query(..., description="وقت آخر مزامنة بصيغة ISO 8601"),
+    category: str = Query(
+        ...,
+        description="القسم المطلوب (مثل items, safes, types)"
+    ),
+    since: str = Query(
+        ...,
+        description="وقت آخر مزامنة بصيغة ISO 8601، مثال: 2026-08-11T14:30:00Z"
+    ),
     db: AsyncSession = Depends(get_db)
 ):
     try:
-        since_dt = datetime.datetime.fromisoformat(since)
-        
-        stmt = select(CodingRecord).where(
-            CodingRecord.company_code == company_code,
-            CodingRecord.category == category,
-            CodingRecord.updated_at >= since_dt
-        ).order_by(CodingRecord.updated_at)
-        
+        # ------------------------------------------
+        # 1) تحويل since إلى datetime
+        # ------------------------------------------
+        since_dt = datetime.datetime.fromisoformat(
+            since.replace("Z", "+00:00")
+        )
+
+        # ------------------------------------------
+        # 2) توحيد التوقيت إلى UTC
+        #    ثم إزالة timezone لأن updated_at
+        #    من نوع TIMESTAMP WITHOUT TIME ZONE
+        # ------------------------------------------
+        if since_dt.tzinfo is not None:
+            since_dt = since_dt.astimezone(datetime.timezone.utc)
+            since_dt = since_dt.replace(tzinfo=None)
+
+        # ------------------------------------------
+        # 3) جلب التحديثات الخاصة بالقسم فقط
+        # ------------------------------------------
+        stmt = (
+            select(CodingRecord)
+            .where(
+                CodingRecord.company_code == company_code,
+                CodingRecord.category == category,
+                CodingRecord.updated_at >= since_dt
+            )
+            .order_by(CodingRecord.updated_at)
+        )
+
         result = await db.execute(stmt)
         docs = result.scalars().all()
-        
-        # تحويل النتائج إلى قواميس (نفس تنسيق /list)
+
+        # ------------------------------------------
+        # 4) تحويل النتائج إلى قواميس
+        # ------------------------------------------
         results = []
+
         for doc in docs:
             results.append({
                 "company_code": doc.company_code,
@@ -286,11 +316,23 @@ async def get_coding_changes(
                 "selling_price": doc.selling_price,
                 "profit_margin": doc.profit_margin,
                 "profit_percent": doc.profit_percent,
-                "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
+                "updated_at": (
+                    doc.updated_at.isoformat()
+                    if doc.updated_at
+                    else None
+                ),
             })
+
         return results
-        
+
     except ValueError:
-        raise HTTPException(status_code=400, detail="صيغة `since` غير صحيحة، استخدم ISO 8601")
+        raise HTTPException(
+            status_code=400,
+            detail="صيغة `since` غير صحيحة، استخدم ISO 8601"
+        )
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )

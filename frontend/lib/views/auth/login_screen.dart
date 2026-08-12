@@ -84,12 +84,13 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
       await prefs.setString('job_title', result['job_title']); // حفظ مسمى الوظيفة
       await prefs.setString('user_email', _emailController.text.trim());
 
-      // ✅ تشغيل المزامنة التزايدية (أو الكاملة إذا كان الجهاز جديداً)
-      // يتم استدعاء initializeGlobalListener لتشغيل WebSocket أولاً
-      initializeGlobalListener(result['company_code']);
-      
-      // ثم تشغيل المزامنة (ستقرر تلقائياً إذا كانت تزايدية أم كاملة)
-      await syncAllDataIfNeeded(result['company_code']);
+    // تشغيل WebSocket فقط.
+// أول مزامنة ستبدأ من مدير المزامنة المركزي.
+initializeGlobalListener(result['company_code']);
+
+// تنفيذ مزامنة واحدة فقط.
+// لو WebSocket اتصل قبلها، _isSyncing يمنع التكرار.
+await syncAllDataIfNeeded(result['company_code']);
 
       if (mounted) {
         Navigator.pushReplacement(

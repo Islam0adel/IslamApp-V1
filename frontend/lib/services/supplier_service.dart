@@ -200,26 +200,46 @@ Map<String, dynamic> _toMapString(dynamic obj) {
   // ✅ المزامنة التزايدية للموردين (تجلب فقط التغييرات منذ آخر مزامنة)
   // ✅ المزامنة التزايدية للموردين
 Future<void> syncChangesFromServer(String companyCode, [String? lastSync]) async {
-  try {
     final prefs = await SharedPreferences.getInstance();
     final lastSyncKey = '${ApiConstants.LAST_SYNC_SUPPLIER}$companyCode';
-    
     final lastSyncValue = lastSync ?? prefs.getString(lastSyncKey);
 
     if (lastSyncValue == null) {
+      print('📥 لا يوجد lastSync للموردين، جاري التحميل الكامل...');
       await fetchAllSupplier(companyCode);
-      await prefs.setString(lastSyncKey, DateTime.now().toIso8601String());
+      await prefs.setString(lastSyncKey, DateTime.now().toUtc().toIso8601String());
       return;
     }
 
-    final response = await http.get(
-      Uri.parse('$baseUrl/supplier/changes/$companyCode?since=$lastSyncValue'),
-    );
-    if (response.statusCode == 200) {
-      List<dynamic> changes = jsonDecode(response.body);
-      for (var item in changes) {
-        final Map<String, dynamic> map = _toMapString(item);
-        String key = "${map['company_code']}_${map['branch_code']}_${map['date']}";
+    try {
+      final syncStartedAt = DateTime.now().toUtc();
+
+      final response = await http.get(
+        Uri.parse('$baseUrl/supplier/changes/$companyCode?since=$lastSyncValue'),
+      );
+
+      if (response.statusCode != 200) {
+        throw Exception(
+          'فشل مزامنة الموردين. HTTP ${response.statusCode}: ${response.body}',
+        );
+      }
+
+      final List<dynamic> changes = jsonDecode(response.body);
+
+      for (final item in changes) {
+        if (item is! Map) continue;
+
+        final map = _toMapString(item);
+        final action = map['action']?.toString() ?? 'update';
+        final docId = map['doc_id']?.toString();
+
+        if (docId == null || docId.isEmpty) {
+          throw Exception('تحديث مورد بدون doc_id');
+        }
+
+        final key =
+            '${map['company_code']}_${map['branch_code']}_${map['date']}';
+
         List<Map<String, dynamic>> list = [];
         if (_supplierBox.containsKey(key)) {
           final raw = _supplierBox.get(key);
@@ -227,17 +247,27 @@ Future<void> syncChangesFromServer(String companyCode, [String? lastSync]) async
             list = raw.map((e) => _toMapString(e)).toList();
           }
         }
-        list.removeWhere((e) => e['doc_id'] == map['doc_id']);
-        list.add(map);
-        await _supplierBox.put(key, list);
+
+        list.removeWhere((e) => e['doc_id']?.toString() == docId);
+
+        if (action != 'delete') {
+          map.remove('action');
+          list.add(map);
+        }
+
+        if (list.isEmpty) {
+          await _supplierBox.delete(key);
+        } else {
+          await _supplierBox.put(key, list);
+        }
       }
-      await prefs.setString(lastSyncKey, DateTime.now().toIso8601String());
-      print("✅ تم مزامنة ${changes.length} تحديث للموردين");
-    } else {
-      print("⚠️ فشل المزامنة التزايدية للموردين، كود: ${response.statusCode}");
+
+      await prefs.setString(lastSyncKey, syncStartedAt.toIso8601String());
+      print('✅ تمت مزامنة ${changes.length} تحديث للموردين');
+    } catch (e) {
+      print('❌ فشل مزامنة الموردين: $e');
+      // لا نغير lastSync عند الفشل.
+      rethrow;
     }
-  } catch (e) {
-    print("❌ خطأ في المزامنة التزايدية للموردين: $e");
   }
-}
 }

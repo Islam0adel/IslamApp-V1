@@ -214,44 +214,77 @@ class InventoryService {
   // ✅ المزامنة التزايدية للجرد (تجلب فقط التغييرات منذ آخر مزامنة)
   // ✅ المزامنة التزايدية للجرد
 Future<void> syncChangesFromServer(String companyCode, [String? lastSync]) async {
-  try {
     final prefs = await SharedPreferences.getInstance();
     final lastSyncKey = '${ApiConstants.LAST_SYNC_INVENTORY}$companyCode';
-    
     final lastSyncValue = lastSync ?? prefs.getString(lastSyncKey);
 
     if (lastSyncValue == null) {
+      print('📥 لا يوجد lastSync للجرد، جاري التحميل الكامل...');
       await fetchAllInventory(companyCode);
-      await prefs.setString(lastSyncKey, DateTime.now().toIso8601String());
+      await prefs.setString(lastSyncKey, DateTime.now().toUtc().toIso8601String());
       return;
     }
 
-    final response = await http.get(
-      Uri.parse('$baseUrl/inventory/changes/$companyCode?since=$lastSyncValue'),
-    );
-    if (response.statusCode == 200) {
-      List<dynamic> changes = jsonDecode(response.body);
-      for (var item in changes) {
+    try {
+      final syncStartedAt = DateTime.now().toUtc();
+
+      final response = await http.get(
+        Uri.parse('$baseUrl/inventory/changes/$companyCode?since=$lastSyncValue'),
+      );
+
+      if (response.statusCode != 200) {
+        throw Exception(
+          'فشل مزامنة الجرد. HTTP ${response.statusCode}: ${response.body}',
+        );
+      }
+
+      final List<dynamic> changes = jsonDecode(response.body);
+
+      for (final item in changes) {
+        if (item is! Map) continue;
+
         final map = Map<String, dynamic>.from(item);
-        String key = "${map['company_code']}_${map['branch_code']}_${map['store_code']}_${map['date']}";
+        final action = map['action']?.toString() ?? 'update';
+        final docId = map['doc_id']?.toString();
+
+        if (docId == null || docId.isEmpty) {
+          throw Exception('تحديث جرد بدون doc_id');
+        }
+
+        final key =
+            '${map['company_code']}_${map['branch_code']}_${map['store_code']}_${map['date']}';
+
         List<Map<String, dynamic>> list = [];
         if (_inventoryBox.containsKey(key)) {
           final raw = _inventoryBox.get(key);
           if (raw is List) {
-            list = raw.map((e) => Map<String, dynamic>.from(e)).toList();
+            list = raw
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList();
           }
         }
-        list.removeWhere((e) => e['doc_id'] == map['doc_id']);
-        list.add(map);
-        await _inventoryBox.put(key, list);
+
+        list.removeWhere((e) => e['doc_id']?.toString() == docId);
+
+        if (action != 'delete') {
+          map.remove('action');
+          list.add(map);
+        }
+
+        if (list.isEmpty) {
+          await _inventoryBox.delete(key);
+        } else {
+          await _inventoryBox.put(key, list);
+        }
       }
-      await prefs.setString(lastSyncKey, DateTime.now().toIso8601String());
-      print("✅ تم مزامنة ${changes.length} تحديث للجرد");
-    } else {
-      print("⚠️ فشل المزامنة التزايدية للجرد، كود: ${response.statusCode}");
+
+      await prefs.setString(lastSyncKey, syncStartedAt.toIso8601String());
+      print('✅ تمت مزامنة ${changes.length} تحديث للجرد');
+    } catch (e) {
+      print('❌ فشل مزامنة الجرد: $e');
+      // لا نغير lastSync عند الفشل.
+      rethrow;
     }
-  } catch (e) {
-    print("❌ خطأ في المزامنة التزايدية للجرد: $e");
   }
-}
 }
