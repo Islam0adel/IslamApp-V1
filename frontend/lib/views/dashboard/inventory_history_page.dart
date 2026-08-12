@@ -75,8 +75,6 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
     // 1. تحميل القوائم أولاً
     await _loadDropdowns();
 
-    // 2. ✅ جلب التحديثات التزايدية للجرد (مرة واحدة عند فتح الصفحة)
-    await _inventoryService.syncChangesFromServer(widget.companyCode);
 
     // 3. تحميل البيانات المعروضة
     await _loadData();

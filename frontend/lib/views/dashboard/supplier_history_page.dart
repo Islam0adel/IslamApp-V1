@@ -59,8 +59,6 @@ class _SupplierHistoryPageState extends State<SupplierHistoryPage> {
     // 1. تحميل القوائم أولاً
     await _loadDropdowns();
 
-    // ✅ جلب التحديثات التزايدية للموردين
-  await _supplierService.syncChangesFromServer(widget.companyCode);
     // 2. التحقق من وجود بيانات محلية للشركة الحالية
     final box = Hive.box('supplier_box');
     bool hasLocalData = false;

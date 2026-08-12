@@ -124,8 +124,7 @@ class _DailyPageState extends State<DailyPage> {
   try {
     final Box dailyBox = Hive.box('daily_transactions_box');
 
-    // ✅ مزامنة التحديثات التزايدية من السيرفر (لتحديث الأرصدة)
-    await _dailyService.syncChangesFromServer(widget.companyCode);
+
 
     // ✅ التحقق من وجود بيانات محلية للشركة الحالية (أي حركة)
     bool hasLocalData = dailyBox.values.any((tx) =>

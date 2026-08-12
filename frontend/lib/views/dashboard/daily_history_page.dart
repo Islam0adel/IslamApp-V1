@@ -53,8 +53,6 @@ Future<void> _initialize() async {
   if (_isInitializing) return;
   _isInitializing = true;
 
-  // ✅ جلب التحديثات التزايدية
-  await _dailyService.syncChangesFromServer(widget.companyCode);
   
   // التحقق من وجود بيانات محلية
   final Box dailyBox = Hive.box('daily_transactions_box');
@@ -80,7 +78,6 @@ Future<void> _initialize() async {
   int lastSerial = _dailyService.getLastLocalSerial(widget.companyCode);
   if (lastSerial > 0) {
     print("📡 جاري جلب التحديثات من السيرفر منذ السيريال: $lastSerial");
-    await _dailyService.syncCacheFromServer(widget.companyCode, lastSerial + 1);
   } else {
     await _dailyService.syncAllTransactions(widget.companyCode);
   }
