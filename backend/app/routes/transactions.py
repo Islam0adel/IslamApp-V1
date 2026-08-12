@@ -7,6 +7,7 @@ from app.core.models import Transaction
 from app.core.schemas import TransactionModel
 from app.core.sync import manager
 import datetime
+from typing import Optional
 
 router = APIRouter()
 
@@ -50,10 +51,12 @@ async def save_transaction(
             tx.date = data.date
             tx.type = data.type
             tx.employee = data.employee
+            # ✅ تعيين updated_at يدوياً للتأكد من تحديثه
             tx.updated_at = datetime.datetime.utcnow()
             action = "update"
         else:
-            # إضافة جديدة
+            # ✅ إضافة جديدة مع تعيين updated_at صراحة
+            now_utc = datetime.datetime.utcnow()
             tx = Transaction(
                 company_code=data.company_code,
                 branch_code=data.branch_code,
@@ -65,6 +68,7 @@ async def save_transaction(
                 date=data.date,
                 type=data.type,
                 employee=data.employee,
+                updated_at=now_utc,  # ✅ تعيين updated_at عند الإضافة
             )
             db.add(tx)
             action = "insert"
@@ -153,6 +157,7 @@ async def get_transactions(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 # ==========================================
 # 7. جلب التحديثات التزايدية لليوميات
 # ==========================================
@@ -163,17 +168,30 @@ async def get_transactions_changes(
     db: AsyncSession = Depends(get_db)
 ):
     try:
-        # تحويل since إلى datetime
+        # ✅ تحويل since إلى datetime مع التعامل مع التوقيت المحلي (بدون معلومات المنطقة الزمنية)
+        # نفترض أن since يأتي بتوقيت UTC (لأن العميل سيخزن UTC بعد التعديل)
+        # إذا كان without timezone، نعتبره UTC
         since_dt = datetime.datetime.fromisoformat(since)
-        
+        if since_dt.tzinfo is None:
+            # إذا لم يكن هناك معلومات منطقة، نعتبره UTC
+            since_dt = since_dt.replace(tzinfo=datetime.timezone.utc)
+        else:
+            # إذا كان به معلومات منطقة، نحوله إلى UTC
+            since_dt = since_dt.astimezone(datetime.timezone.utc)
+
+        # نزيل معلومات المنطقة للتخزين في قاعدة البيانات (لأن updated_at هو naive UTC)
+        since_dt_naive = since_dt.replace(tzinfo=None)
+
+        print(f"📡 جلب التغييرات للشركة {company_code} منذ: {since_dt_naive} (UTC)")
+
         stmt = select(Transaction).where(
             Transaction.company_code == company_code,
-            Transaction.updated_at >= since_dt
+            Transaction.updated_at >= since_dt_naive
         ).order_by(Transaction.updated_at)
-        
+
         result = await db.execute(stmt)
         docs = result.scalars().all()
-        
+
         # تحويل النتائج إلى قواميس (نفس تنسيق /list)
         results = []
         for doc in docs:
@@ -191,10 +209,12 @@ async def get_transactions_changes(
                 "employee": doc.employee,
                 "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
             })
+
+        print(f"✅ تم إرجاع {len(results)} تغيير")
         return results
-        
-    except ValueError:
-        raise HTTPException(status_code=400, detail="صيغة `since` غير صحيحة، استخدم ISO 8601")
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"صيغة `since` غير صحيحة: {str(e)}. استخدم ISO 8601 (مثال: 2026-08-11T14:30:00)")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

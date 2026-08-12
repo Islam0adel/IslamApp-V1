@@ -103,6 +103,7 @@ class DailyService {
 
   // ✅ المزامنة التزايدية لليوميات (تجلب فقط التغييرات منذ آخر مزامنة)
   // ✅ المزامنة التزايدية لليوميات
+// ✅ المزامنة التزايدية لليوميات (مع دعم lastSync وحل مشكلة التوقيت UTC)
 Future<void> syncChangesFromServer(String companyCode, [String? lastSync]) async {
   try {
     final prefs = await SharedPreferences.getInstance();
@@ -113,26 +114,48 @@ Future<void> syncChangesFromServer(String companyCode, [String? lastSync]) async
 
     // إذا لم يكن هناك وقت سابق، نستدعي التحميل الكامل
     if (lastSyncValue == null) {
+      print("📥 لا يوجد وقت مزامنة سابق، جاري التحميل الكامل...");
       await syncAllTransactions(companyCode);
-      await prefs.setString(lastSyncKey, DateTime.now().toIso8601String());
+      // ✅ تخزين وقت المزامنة بصيغة UTC
+      await prefs.setString(lastSyncKey, DateTime.now().toUtc().toIso8601String());
       return;
     }
+
+    // ✅ طباعة قيمة lastSync للتأكد من صحتها
+    print("📡 جاري جلب التحديثات منذ: $lastSyncValue (UTC)");
 
     final response = await http.get(
       Uri.parse('$baseUrl/transactions/changes/$companyCode?since=$lastSyncValue'),
     );
+    
     if (response.statusCode == 200) {
       List<dynamic> changes = jsonDecode(response.body);
-      for (var item in changes) {
-        String bCode = item['branch_code']?.toString() ?? '1';
-        await _transactionBox.put("branch_${bCode}_${item['serial']}", item);
+      
+      // ✅ طباعة عدد التغييرات المستلمة للمساعدة في التصحيح
+      if (changes.isEmpty) {
+        print("ℹ️ لا توجد تغييرات جديدة منذ آخر مزامنة");
+      } else {
+        print("📦 عدد التغييرات المستلمة: ${changes.length}");
+        for (var item in changes) {
+          String bCode = item['branch_code']?.toString() ?? '1';
+          String key = "branch_${bCode}_${item['serial']}";
+          // ✅ تحديث Hive بالمفتاح الصحيح
+          await _transactionBox.put(key, item);
+          print("  ✅ تم تحديث: $key");
+        }
       }
+      
       // تحديث الأرصدة
       await getDailySummaryLocal(companyCode);
-      await prefs.setString(lastSyncKey, DateTime.now().toIso8601String());
+      
+      // ✅ تخزين وقت المزامنة بصيغة UTC
+      final nowUtc = DateTime.now().toUtc().toIso8601String();
+      await prefs.setString(lastSyncKey, nowUtc);
+      print("✅ تم تحديث وقت المزامنة إلى: $nowUtc (UTC)");
       print("✅ تم مزامنة ${changes.length} تحديث لليوميات");
     } else {
       print("⚠️ فشل المزامنة التزايدية لليوميات، كود: ${response.statusCode}");
+      print("⚠️ الرد: ${response.body}");
     }
   } catch (e) {
     print("❌ خطأ في المزامنة التزايدية لليوميات: $e");

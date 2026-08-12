@@ -3,7 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../services/api_service.dart';
 import '../dashboard/home_page.dart';
-import '../../main.dart'; // ✅ استيراد syncAllData و initializeGlobalListener
+import '../../main.dart'; // ✅ استيراد syncAllDataIfNeeded و initializeGlobalListener
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -84,9 +84,12 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
       await prefs.setString('job_title', result['job_title']); // حفظ مسمى الوظيفة
       await prefs.setString('user_email', _emailController.text.trim());
 
-      // ✅ تشغيل المزامنة التزايدية فوراً (مع الحفاظ على مؤشر التحميل)
+      // ✅ تشغيل المزامنة التزايدية (أو الكاملة إذا كان الجهاز جديداً)
+      // يتم استدعاء initializeGlobalListener لتشغيل WebSocket أولاً
       initializeGlobalListener(result['company_code']);
-      await syncAllDataIfNeeded(result['company_code']); // تزايدي/كامل حسب الحاجة
+      
+      // ثم تشغيل المزامنة (ستقرر تلقائياً إذا كانت تزايدية أم كاملة)
+      await syncAllDataIfNeeded(result['company_code']);
 
       if (mounted) {
         Navigator.pushReplacement(
