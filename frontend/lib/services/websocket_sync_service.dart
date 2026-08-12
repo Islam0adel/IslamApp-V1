@@ -11,17 +11,20 @@ class WebSocketSyncService {
   String? _baseUrl;
   bool _isConnected = false;
   
-  // ✅ إضافة callback لاستدعائه عند الاتصال (بما في ذلك إعادة الاتصال)
-  void Function()? onConnected; // تم التعديل: استخدام void Function() بدلاً من VoidCallback
+  // ✅ Callback يُستدعى عند نجاح الاتصال (بما في ذلك إعادة الاتصال)
+  // هذا هو المكان المناسب لاستدعاء المزامنة التزايدية لجلب التغييرات الفائتة
+  void Function()? onConnected;
 
   // صناديق Hive
   final Box _dailyBox = Hive.box('daily_transactions_box');
   final Box _codingBox = Hive.box('coding_box');
   final Box _inventoryBox = Hive.box('inventory_box');
   final Box _supplierBox = Hive.box('supplier_box');
-  final Box _settlementBox = Hive.box('supplier_settlement_box'); // ✅ صندوق التسويات (جاهز للاستخدام المستقبلي)
+  final Box _settlementBox = Hive.box('supplier_settlement_box'); // ✅ صندوق التسويات
 
-  // ========== الاتصال بالـ WebSocket ==========
+  // ============================================================
+  // 1. الاتصال بالـ WebSocket
+  // ============================================================
   void connect(String companyCode) {
     _companyCode = companyCode;
     _baseUrl = ApiConstants.baseUrl;
@@ -48,15 +51,53 @@ class WebSocketSyncService {
       );
 
       print("✅ تم الاتصال بـ WebSocket بنجاح");
-      // ✅ استدعاء الـ callback عند نجاح الاتصال
-      onConnected?.call();
+      
+      // 🔥 استدعاء الـ callback عند نجاح الاتصال (لجلب التغييرات الفائتة)
+      // هذا يضمن أن أي تحديثات حدثت أثناء الانقطاع سيتم جلبها فوراً
+      if (onConnected != null) {
+        print("🔄 استدعاء onConnected لجلب التغييرات الفائتة...");
+        onConnected!();
+      }
     } catch (e) {
       print("❌ فشل الاتصال بـ WebSocket: $e");
       _reconnect();
     }
   }
 
-  // ========== معالجة الرسائل الواردة ==========
+  // ============================================================
+  // 2. إعادة الاتصال التلقائي
+  // ============================================================
+  void _reconnect() {
+    if (_companyCode == null || _baseUrl == null) return;
+    Future.delayed(const Duration(seconds: 5), () {
+      if (!_isConnected) {
+        print("🔄 محاولة إعادة الاتصال بـ WebSocket...");
+        // 🔥 عند إعادة الاتصال، سيتم استدعاء onConnected مرة أخرى تلقائياً
+        // لأن connect() ستستدعيه عند نجاح الاتصال
+        connect(_companyCode!);
+      }
+    });
+  }
+
+  // ============================================================
+  // 3. قطع الاتصال
+  // ============================================================
+  void disconnect() {
+    _channel?.sink.close();
+    _isConnected = false;
+    _companyCode = null;
+    _baseUrl = null;
+    print("🔌 تم قطع اتصال WebSocket");
+  }
+
+  // ============================================================
+  // 4. حالة الاتصال
+  // ============================================================
+  bool get isConnected => _isConnected;
+
+  // ============================================================
+  // 5. معالجة الرسائل الواردة (WebSocket)
+  // ============================================================
   void _handleMessage(dynamic message) {
     try {
       final data = jsonDecode(message);
@@ -81,11 +122,9 @@ class WebSocketSyncService {
           _updateInventoryBox(payload, action);
           break;
         case 'supplier':
-          // ✅ معالجة رسائل الموردين باستخدام دالة خاصة
           _updateSupplierBox(payload, action);
           break;
         case 'settlement':
-          // ✅ معالجة رسائل التسويات (جاهز للاستخدام المستقبلي)
           _updateSettlementBox(payload, action);
           break;
         default:
@@ -96,7 +135,11 @@ class WebSocketSyncService {
     }
   }
 
-  // ========== تحديث صندوق عام (لليوميات) ==========
+  // ============================================================
+  // 6. دوال تحديث صناديق Hive (يتم استدعاؤها من _handleMessage)
+  // ============================================================
+
+  // 6.1 تحديث صندوق اليوميات
   void _updateBox(Box box, Map<String, dynamic> payload, String action) {
     final branchCode = payload['branch_code']?.toString() ?? '1';
     final serial = payload['serial']?.toString();
@@ -115,7 +158,7 @@ class WebSocketSyncService {
     }
   }
 
-  // ========== تحديث صندوق التكويد (معالجة خاصة) ==========
+  // 6.2 تحديث صندوق التكويد
   void _updateCodingBox(Map<String, dynamic> payload, String action) {
     final companyCode = payload['company_code'];
     final category = payload['category'];
@@ -153,7 +196,7 @@ class WebSocketSyncService {
     print("🔄 تم تحديث التكويد [$category]، الكود [$code]");
   }
 
-  // ========== تحديث صندوق الجرد (معالجة خاصة) ==========
+  // 6.3 تحديث صندوق الجرد
   void _updateInventoryBox(Map<String, dynamic> payload, String action) {
     final docId = payload['doc_id'];
 
@@ -192,7 +235,7 @@ class WebSocketSyncService {
     print("🔄 تم تحديث الجرد [$docId]");
   }
 
-  // ========== تحديث صندوق الموردين (معالجة خاصة) ==========
+  // 6.4 تحديث صندوق الموردين
   Future<void> _updateSupplierBox(Map<String, dynamic> payload, String action) async {
     final docId = payload['doc_id'];
     if (docId == null) {
@@ -204,7 +247,6 @@ class WebSocketSyncService {
     final branchCode = payload['branch_code'] ?? '';
     final date = payload['date'] ?? '';
 
-    // المفتاح المستخدم في تخزين الموردين (نفس المنطق المستخدم في supplier_service)
     final String key = "${companyCode}_${branchCode}_$date";
     List<Map<String, dynamic>> list = [];
 
@@ -216,9 +258,7 @@ class WebSocketSyncService {
     }
 
     if (action == 'insert' || action == 'update') {
-      // إزالة السجل القديم إذا وجد
       list.removeWhere((item) => item['doc_id'] == docId);
-      // إضافة السجل الجديد
       list.add(payload);
     } else if (action == 'delete') {
       list.removeWhere((item) => item['doc_id'] == docId);
@@ -232,7 +272,7 @@ class WebSocketSyncService {
     print("🔄 تم تحديث المورد [$docId] في Hive");
   }
 
-  // ========== تحديث صندوق التسويات (معالجة خاصة - جاهز للاستخدام المستقبلي) ==========
+  // 6.5 تحديث صندوق التسويات (جاهز للاستخدام المستقبلي)
   Future<void> _updateSettlementBox(Map<String, dynamic> payload, String action) async {
     final docId = payload['doc_id'];
     if (docId == null) {
@@ -268,27 +308,4 @@ class WebSocketSyncService {
     }
     print("🔄 تم تحديث التسوية [$docId] في Hive");
   }
-
-  // ========== إعادة الاتصال التلقائي ==========
-  void _reconnect() {
-    if (_companyCode == null || _baseUrl == null) return;
-    Future.delayed(const Duration(seconds: 5), () {
-      if (!_isConnected) {
-        print("🔄 محاولة إعادة الاتصال بـ WebSocket...");
-        connect(_companyCode!);
-      }
-    });
-  }
-
-  // ========== قطع الاتصال ==========
-  void disconnect() {
-    _channel?.sink.close();
-    _isConnected = false;
-    _companyCode = null;
-    _baseUrl = null;
-    print("🔌 تم قطع اتصال WebSocket");
-  }
-
-  // ========== حالة الاتصال ==========
-  bool get isConnected => _isConnected;
 }

@@ -17,8 +17,8 @@ class GlobalSyncService {
   
   // ✅ تعيين callback للاتصال (تم التعديل: استخدام setter)
   set onWebSocketConnected(void Function()? callback) {
-    _wsService.onConnected = callback;
-  }
+  _wsService.onConnected = callback;
+}
 
   Box get _dailyBox => Hive.box('daily_transactions_box');
   Box get _codingBox => Hive.box('coding_box');

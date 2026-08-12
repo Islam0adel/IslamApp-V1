@@ -86,7 +86,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
 
       // ✅ تشغيل المزامنة التزايدية فوراً (مع الحفاظ على مؤشر التحميل)
       initializeGlobalListener(result['company_code']);
-      await syncAllData(result['company_code']);
+      await syncAllDataIfNeeded(result['company_code']); // تزايدي/كامل حسب الحاجة
 
       if (mounted) {
         Navigator.pushReplacement(

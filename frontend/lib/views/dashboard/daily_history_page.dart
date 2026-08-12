@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:shared_preferences/shared_preferences.dart'; // ✅ إضافة الاستيراد
+// import 'package:shared_preferences/shared_preferences.dart'; // ✅ إضافة الاستيراد
 import '../../views/widgets/glass_card.dart';
 import '../../services/daily_service.dart';
 import 'daily_page.dart';
@@ -12,7 +12,7 @@ import 'package:excel/excel.dart' as excel_lib;
 import 'package:hive_flutter/hive_flutter.dart';
 import '../../services/permissions_service.dart'; // ✅ استيراد خدمة الصلاحيات
 import '../../services/export_service.dart';
-import '../../core/constants.dart'; // ✅ استيراد الثوابت لـ LAST_SYNC_DAILY
+// import '../../core/constants.dart'; // ✅ استيراد الثوابت لـ LAST_SYNC_DAILY
 
 class DailyHistoryPage extends StatefulWidget {
   final String companyCode;
@@ -50,10 +50,13 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
   VoidCallback? _boxListener;
   bool _isUpdating = false; // ✅ متغير علم لمنع التحديث المتكرر
 
+
+
   @override
   void initState() {
     super.initState();
     // ✅ إضافة مستمع لتغييرات الصندوق لإعادة تحميل البيانات تلقائياً
+    // عند تغيير Hive (بسبب WebSocket أو المزامنة الخلفية)، يتم تحديث الصفحة فوراً
     _boxListener = () {
       if (!_isUpdating && mounted) {
         _fetchData();
@@ -75,27 +78,26 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
     if (_isInitializing) return;
     _isInitializing = true;
 
-    // التحقق من وجود بيانات محلية
+    // ✅ قراءة البيانات من Hive مباشرة (بدون مزامنة)
+    // المزامنة تتم مركزياً في main.dart (عند بدء التشغيل، تسجيل الدخول، أو إعادة اتصال WebSocket)
+    // هذا يضمن:
+    // 1. سرعة عرض الصفحة (لا انتظار لتحميل البيانات)
+    // 2. عدم تكرار استدعاءات المزامنة من عدة صفحات
+    // 3. تحديث تلقائي عند تغيير Hive عبر المستمع (_boxListener)
+    
     final Box dailyBox = Hive.box('daily_transactions_box');
     bool hasLocalData = dailyBox.values.any((tx) => tx is Map && tx['company_code'] == widget.companyCode);
 
+    // ✅ إذا لم تكن هناك بيانات محلية، نعرض رسالة "لا توجد بيانات" بدلاً من تحميلها
+    // (سيتم تحميل البيانات من main.dart في الخلفية)
     if (!hasLocalData) {
-      // ✅ التحقق قبل setState
-      if (!mounted) return;
-      setState(() => _isLoading = true);
-      try {
-        await _dailyService.syncAllTransactions(widget.companyCode);
-        print("✅ تمت المزامنة الأولية بنجاح في الهيستوري");
-      } catch (e) {
-        print("⚠️ فشل المزامنة الأولية في الهيستوري: $e");
-      } finally {
-        // ✅ التحقق قبل setState
-        if (!mounted) return;
-        setState(() => _isLoading = false);
-      }
+      print("ℹ️ لا توجد بيانات محلية في الهيستوري، سيتم تحميلها من main.dart");
     }
 
-    // ✅ جلب التحديثات التزايدية من السيرفر باستخدام وقت آخر مزامنة بدلاً من serial
+    // ✅ جلب التحديثات التزايدية من السيرفر باستخدام وقت آخر مزامنة
+    // ملاحظة: هذا الكود تم تعليقه لأنه يتم تنفيذه في main.dart
+    // لكننا نتركه للتوافق مع الكود القديم وللتذكير بالآلية
+    /*
     final prefs = await SharedPreferences.getInstance();
     final lastSyncKey = '${ApiConstants.LAST_SYNC_DAILY}${widget.companyCode}';
     final lastSyncTime = prefs.getString(lastSyncKey);
@@ -103,16 +105,21 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
     if (lastSyncTime != null) {
       print("📡 جاري جلب التحديثات من السيرفر منذ آخر مزامنة: $lastSyncTime");
       await _dailyService.syncChangesFromServer(widget.companyCode, lastSyncTime);
+      await prefs.setString(lastSyncKey, DateTime.now().toIso8601String());
     } else {
-      // أول مزامنة للجهاز → جلب كل البيانات
       print("📥 لا يوجد وقت مزامنة سابق، جاري جلب كل البيانات من السيرفر");
       await _dailyService.syncAllTransactions(widget.companyCode);
-      // حفظ وقت المزامنة الحالي
       await prefs.setString(lastSyncKey, DateTime.now().toIso8601String());
     }
+    */
 
     // ✅ التحقق قبل _fetchData
-    if (!mounted) return;
+    if (!mounted) {
+      _isInitializing = false;
+      return;
+    }
+    
+    // ✅ عرض البيانات المخزنة محلياً فوراً (بدون انتظار)
     _fetchData();
     _isInitializing = false;
   }
