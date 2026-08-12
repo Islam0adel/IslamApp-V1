@@ -177,14 +177,14 @@ class _DailyPageState extends State<DailyPage> with WidgetsBindingObserver { // 
       if (!hasLocalData || lastSyncTime == null) {
         // جهاز جديد أو لا توجد بيانات → تحميل كل البيانات (مرة واحدة فقط)
         print("📥 الذاكرة المحلية فارغة أو لا يوجد وقت مزامنة، جاري تحميل كل البيانات...");
-        await _dailyService.syncAllTransactions(widget.companyCode);
+        // await _dailyService.syncAllTransactions(widget.companyCode);
         // حفظ وقت المزامنة
         await prefs.setString(lastSyncKey, DateTime.now().toIso8601String());
         print("✅ تم تحميل كل البيانات وتخزينها محلياً");
       } else {
         // جهاز موجود → مزامنة تزايدية فقط
         print("📡 جاري جلب التحديثات التزايدية منذ: $lastSyncTime");
-        await _dailyService.syncChangesFromServer(widget.companyCode, lastSyncTime);
+        // await _dailyService.syncChangesFromServer(widget.companyCode, lastSyncTime);
         // تحديث وقت المزامنة
         await prefs.setString(lastSyncKey, DateTime.now().toIso8601String());
         print("✅ تم تحديث البيانات من آخر مزامنة");

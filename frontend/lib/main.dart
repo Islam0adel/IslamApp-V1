@@ -25,7 +25,8 @@ final GlobalSyncService _syncService = GlobalSyncService();
 
 bool _isSyncing = false;
 
-// ✅ دالة المزامنة الذكية: تحميل كامل إذا كانت Hive فارغة، وإلا تزايدي
+// ✅ دالة المزامنة الذكية: تعتمد على lastSync لتحديد إذا كان الجهاز جديداً
+// إذا كان lastSync == null → تحميل كامل، وإلا → تزايدي
 Future<void> syncAllDataIfNeeded(String companyCode) async {
   if (_isSyncing) {
     print("⚠️ مزامنة قيد التنفيذ، تم تجاهل الطلب");
@@ -34,33 +35,32 @@ Future<void> syncAllDataIfNeeded(String companyCode) async {
   _isSyncing = true;
   try {
     final prefs = await SharedPreferences.getInstance();
-    final Box dailyBox = Hive.box('daily_transactions_box');
-    
-    // تحقق من وجود بيانات محلية
-    bool hasLocalData = dailyBox.values.any((tx) => tx is Map && tx['company_code'] == companyCode);
 
     // 1️⃣ اليوميات
     final dailyKey = 'last_sync_daily_$companyCode';
     final dailyLastSync = prefs.getString(dailyKey);
-    if (!hasLocalData || dailyLastSync == null) {
-      // لا توجد بيانات → تحميل كامل
+    if (dailyLastSync == null) {
+      // لا يوجد وقت مزامنة سابق → تحميل كامل
       await DailyService().syncAllTransactions(companyCode);
       print("✅ تم تحميل اليوميات بالكامل (أول تشغيل)");
     } else {
-      // بيانات موجودة → مزامنة تزايدية
-      await DailyService().syncChangesFromServer(companyCode);
+      // يوجد وقت مزامنة → مزامنة تزايدية
+      await DailyService().syncChangesFromServer(companyCode, dailyLastSync);
       print("✅ تم تحديث اليوميات تزايديًا");
     }
     await prefs.setString(dailyKey, DateTime.now().toIso8601String());
 
-    // 2️⃣ التكويد
+    // 2️⃣ التكويد (نحمله كاملاً إذا لم يكن موجوداً في Hive)
     final codingBox = Hive.box('coding_box');
     bool hasCodingData = false;
     List<String> categories = ['items', 'safes', 'types', 'branches', 'stores', 'suppliers', 'customers', 'payment_methods'];
     for (String cat in categories) {
       if (codingBox.containsKey("${companyCode}_$cat")) {
         final data = codingBox.get("${companyCode}_$cat");
-        if (data is List && data.isNotEmpty) { hasCodingData = true; break; }
+        if (data is List && data.isNotEmpty) {
+          hasCodingData = true;
+          break;
+        }
       }
     }
     if (!hasCodingData) {
@@ -71,11 +71,11 @@ Future<void> syncAllDataIfNeeded(String companyCode) async {
     // 3️⃣ الموردين
     final supplierKey = 'last_sync_supplier_$companyCode';
     final supplierLastSync = prefs.getString(supplierKey);
-    if (!hasLocalData || supplierLastSync == null) {
+    if (supplierLastSync == null) {
       await SupplierService().fetchAllSupplier(companyCode);
       print("✅ تم تحميل الموردين بالكامل (أول تشغيل)");
     } else {
-      await SupplierService().syncChangesFromServer(companyCode);
+      await SupplierService().syncChangesFromServer(companyCode, supplierLastSync);
       print("✅ تم تحديث الموردين تزايديًا");
     }
     await prefs.setString(supplierKey, DateTime.now().toIso8601String());
@@ -83,11 +83,11 @@ Future<void> syncAllDataIfNeeded(String companyCode) async {
     // 4️⃣ الجرد
     final inventoryKey = 'last_sync_inventory_$companyCode';
     final inventoryLastSync = prefs.getString(inventoryKey);
-    if (!hasLocalData || inventoryLastSync == null) {
+    if (inventoryLastSync == null) {
       await InventoryService().fetchAllInventory(companyCode);
       print("✅ تم تحميل الجرد بالكامل (أول تشغيل)");
     } else {
-      await InventoryService().syncChangesFromServer(companyCode);
+      await InventoryService().syncChangesFromServer(companyCode, inventoryLastSync);
       print("✅ تم تحديث الجرد تزايديًا");
     }
     await prefs.setString(inventoryKey, DateTime.now().toIso8601String());
