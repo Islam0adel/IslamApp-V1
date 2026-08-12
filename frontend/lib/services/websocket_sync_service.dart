@@ -10,6 +10,9 @@ class WebSocketSyncService {
   String? _companyCode;
   String? _baseUrl;
   bool _isConnected = false;
+  
+  // ✅ إضافة callback لاستدعائه عند الاتصال (بما في ذلك إعادة الاتصال)
+  void Function()? onConnected; // تم التعديل: استخدام void Function() بدلاً من VoidCallback
 
   // صناديق Hive
   final Box _dailyBox = Hive.box('daily_transactions_box');
@@ -45,6 +48,8 @@ class WebSocketSyncService {
       );
 
       print("✅ تم الاتصال بـ WebSocket بنجاح");
+      // ✅ استدعاء الـ callback عند نجاح الاتصال
+      onConnected?.call();
     } catch (e) {
       print("❌ فشل الاتصال بـ WebSocket: $e");
       _reconnect();

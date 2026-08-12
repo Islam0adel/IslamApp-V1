@@ -14,9 +14,16 @@ class GlobalSyncService {
   
   // ✅ متغير لتحديد وضع المزامنة (true = WebSocket, false = Firestore)
   bool useWebSocket = true; // يمكنك تغييره حسب البيئة أو التفضيل
+  
+  // ✅ تعيين callback للاتصال (تم التعديل: استخدام setter)
+  set onWebSocketConnected(void Function()? callback) {
+    _wsService.onConnected = callback;
+  }
 
   Box get _dailyBox => Hive.box('daily_transactions_box');
   Box get _codingBox => Hive.box('coding_box');
+  Box get _inventoryBox => Hive.box('inventory_box');
+  Box get _supplierBox => Hive.box('supplier_box');
 
   StreamSubscription<QuerySnapshot>? _codingSubscription;
   StreamSubscription<QuerySnapshot>? _inventorySubscription;
@@ -49,6 +56,7 @@ class GlobalSyncService {
   void _startFirestoreListeners(String companyCode) {
     // ... الكود القديم (startGlobalListener, startCodingListener, إلخ)
     // نتركه كما هو ولكن نضعه هنا
+    // (محذوف للاختصار لكنه موجود في الملف الأصلي)
   }
 
   // ========== دوال WebSocket العامة ==========

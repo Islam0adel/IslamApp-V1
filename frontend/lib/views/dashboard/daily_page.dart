@@ -31,7 +31,7 @@ class DailyPage extends StatefulWidget {
   State<DailyPage> createState() => _DailyPageState();
 }
 
-class _DailyPageState extends State<DailyPage> {
+class _DailyPageState extends State<DailyPage> with WidgetsBindingObserver { // ✅ إضافة WidgetsBindingObserver للاستماع لعودة التطبيق
   final DailyService _dailyService = DailyService();
   final CodingService _codingService = CodingService();
 
@@ -50,10 +50,24 @@ class _DailyPageState extends State<DailyPage> {
   List<Map<String, dynamic>> _treasuries = [];
   List<Map<String, dynamic>> _categories = [];
 
+  // ✅ مستمع للتغييرات في صندوق اليوميات (للتحديث التلقائي للأرصدة)
+  VoidCallback? _boxListener;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this); // ✅ إضافة المراقب
     _amountController.addListener(() => setState(() {}));
+    
+    // ✅ إضافة مستمع لتغييرات الصندوق
+    _boxListener = () {
+      // عند تغيير أي بيانات في الصندوق، نعيد حساب الأرصدة إذا كانت الصفحة مرئية
+      if (mounted) {
+        _loadInitialData();
+      }
+    };
+    Hive.box('daily_transactions_box').listenable().addListener(_boxListener!);
+    
     _loadInitialData();
 
     if (widget.editItem != null) {
@@ -72,6 +86,29 @@ class _DailyPageState extends State<DailyPage> {
       _amountController.clear();
       _statementController.clear();
       _dateController.text = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _amountController.removeListener(() => setState(() {}));
+    if (_boxListener != null) {
+      Hive.box('daily_transactions_box').listenable().removeListener(_boxListener!);
+    }
+    _amountController.dispose();
+    _statementController.dispose();
+    _dateController.dispose();
+    super.dispose();
+  }
+
+  // ✅ عند عودة التطبيق إلى المقدمة، نحدث الأرصدة
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      if (mounted) {
+        _loadInitialData();
+      }
     }
   }
 
@@ -117,88 +154,87 @@ class _DailyPageState extends State<DailyPage> {
   }
 
   void _loadInitialData() async {
-  // ✅ منع التنفيذ إذا كان الـ Widget غير موجود
-  if (!mounted) return;
-  
-  setState(() => _isLoading = true);
-  try {
-    final Box dailyBox = Hive.box('daily_transactions_box');
+    // ✅ منع التنفيذ إذا كان الـ Widget غير موجود
+    if (!mounted) return;
+    
+    setState(() => _isLoading = true);
+    try {
+      final Box dailyBox = Hive.box('daily_transactions_box');
 
+      // ✅ التحقق من وجود بيانات محلية للشركة الحالية (أي حركة)
+      bool hasLocalData = dailyBox.values.any((tx) =>
+          tx is Map && tx['company_code'] == widget.companyCode);
 
+      // إذا كانت الذاكرة المحلية فارغة، نجلب جميع الحركات من السيرفر أولاً
+      if (!hasLocalData) {
+        print("📥 الذاكرة المحلية فارغة، جاري جلب جميع الحركات من السيرفر...");
+        await _dailyService.syncAllTransactions(widget.companyCode);
+        print("✅ تم جلب جميع الحركات وتخزينها محلياً");
+      }
 
-    // ✅ التحقق من وجود بيانات محلية للشركة الحالية (أي حركة)
-    bool hasLocalData = dailyBox.values.any((tx) =>
-        tx is Map && tx['company_code'] == widget.companyCode);
-
-    // إذا كانت الذاكرة المحلية فارغة، نجلب جميع الحركات من السيرفر أولاً
-    if (!hasLocalData) {
-      print("📥 الذاكرة المحلية فارغة، جاري جلب جميع الحركات من السيرفر...");
-      await _dailyService.syncAllTransactions(widget.companyCode);
-      print("✅ تم جلب جميع الحركات وتخزينها محلياً");
-    }
-
-    // الآن نستكمل حساب السيريال الأقصى (بعد التأكد من وجود البيانات)
-    int maxSerial = 0;
-    for (var item in dailyBox.values) {
-      if (item is Map && item['company_code'] == widget.companyCode) {
-        // فلترة حسب كود الفرع إذا كان محدداً وليس "all"
-        if (widget.selectedBranchCode != null && widget.selectedBranchCode != "all") {
-          if (item['branch_code']?.toString() != widget.selectedBranchCode) continue;
+      // الآن نستكمل حساب السيريال الأقصى (بعد التأكد من وجود البيانات)
+      int maxSerial = 0;
+      for (var item in dailyBox.values) {
+        if (item is Map && item['company_code'] == widget.companyCode) {
+          // فلترة حسب كود الفرع إذا كان محدداً وليس "all"
+          if (widget.selectedBranchCode != null && widget.selectedBranchCode != "all") {
+            if (item['branch_code']?.toString() != widget.selectedBranchCode) continue;
+          }
+          int currentSerial = int.tryParse(item['serial']?.toString() ?? '0') ?? 0;
+          if (currentSerial > maxSerial) maxSerial = currentSerial;
         }
-        int currentSerial = int.tryParse(item['serial']?.toString() ?? '0') ?? 0;
-        if (currentSerial > maxSerial) maxSerial = currentSerial;
       }
-    }
-    int nextSerial = maxSerial + 1;
+      int nextSerial = maxSerial + 1;
 
-    // جلب الأرصدة للفرع الحالي (تمرير كود الفرع)
-    final summary = await _dailyService.getDailySummaryLocal(
-      widget.companyCode,
-      branchCode: widget.selectedBranchCode ?? 'all'
-    );
-    Hive.box('daily_transactions_box').put("${widget.companyCode}_balances", summary['balances']);
+      // جلب الأرصدة للفرع الحالي (تمرير كود الفرع)
+      final summary = await _dailyService.getDailySummaryLocal(
+        widget.companyCode,
+        branchCode: widget.selectedBranchCode ?? 'all'
+      );
+      // ✅ تخزين الأرصدة في Hive (سيؤدي إلى تحديث ValueListenableBuilder)
+      await Hive.box('daily_transactions_box').put("${widget.companyCode}_balances", summary['balances']);
 
-    final Box codingBox = Hive.box('coding_box');
-    List<Map<String, dynamic>> safesList = [];
-    List<Map<String, dynamic>> typesList = [];
+      final Box codingBox = Hive.box('coding_box');
+      List<Map<String, dynamic>> safesList = [];
+      List<Map<String, dynamic>> typesList = [];
 
-    if (!codingBox.containsKey("${widget.companyCode}_safes") || !codingBox.containsKey("${widget.companyCode}_types")) {
-      final safes = await _codingService.getCodingList(companyCode: widget.companyCode, category: "safes");
-      final types = await _codingService.getCodingList(companyCode: widget.companyCode, category: "types");
-      safesList = safes.map((e) => Map<String, dynamic>.from(e.toMap())).toList();
-      typesList = types.map((e) => Map<String, dynamic>.from(e.toMap())).toList();
-    } else {
-      var localSafes = codingBox.get("${widget.companyCode}_safes");
-      safesList = (localSafes as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
-      var localTypes = codingBox.get("${widget.companyCode}_types");
-      typesList = (localTypes as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
-    }
-
-    // ✅ إضافة التصفية هنا (بعد جلب الأنواع)
-    typesList = typesList.where((item) {
-      final name = item['name']?.toString() ?? '';
-      return !name.contains('دخول بضاعة') && !name.contains('دفعة');
-    }).toList();
-
-    if (!mounted) return;
-    setState(() {
-      _treasuryBalances = Map<String, double>.from(summary['balances'] ?? {});
-      _treasuries = safesList;
-      _categories = typesList;
-      if (widget.editItem == null) _currentSerial = nextSerial;
-      if (widget.editItem == null && _selectedTreasury == null && _treasuries.isNotEmpty) {
-        var defaultSafe = _treasuries.firstWhere((s) => s['code']?.toString() == "1", orElse: () => _treasuries.first);
-        if (defaultSafe.containsKey('name')) _selectedTreasury = defaultSafe['name'];
+      if (!codingBox.containsKey("${widget.companyCode}_safes") || !codingBox.containsKey("${widget.companyCode}_types")) {
+        final safes = await _codingService.getCodingList(companyCode: widget.companyCode, category: "safes");
+        final types = await _codingService.getCodingList(companyCode: widget.companyCode, category: "types");
+        safesList = safes.map((e) => Map<String, dynamic>.from(e.toMap())).toList();
+        typesList = types.map((e) => Map<String, dynamic>.from(e.toMap())).toList();
+      } else {
+        var localSafes = codingBox.get("${widget.companyCode}_safes");
+        safesList = (localSafes as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        var localTypes = codingBox.get("${widget.companyCode}_types");
+        typesList = (localTypes as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
       }
-      _isLoading = false;
-    });
-  } catch (e) {
-    if (!mounted) return;
-    setState(() => _isLoading = false);
-    print("خطأ في جلب البيانات الافتتاحية: $e");
-    // يمكن عرض رسالة للمستخدم
+
+      // ✅ إضافة التصفية هنا (بعد جلب الأنواع)
+      typesList = typesList.where((item) {
+        final name = item['name']?.toString() ?? '';
+        return !name.contains('دخول بضاعة') && !name.contains('دفعة');
+      }).toList();
+
+      if (!mounted) return;
+      setState(() {
+        _treasuryBalances = Map<String, double>.from(summary['balances'] ?? {});
+        _treasuries = safesList;
+        _categories = typesList;
+        if (widget.editItem == null) _currentSerial = nextSerial;
+        if (widget.editItem == null && _selectedTreasury == null && _treasuries.isNotEmpty) {
+          var defaultSafe = _treasuries.firstWhere((s) => s['code']?.toString() == "1", orElse: () => _treasuries.first);
+          if (defaultSafe.containsKey('name')) _selectedTreasury = defaultSafe['name'];
+        }
+        _isLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      print("خطأ في جلب البيانات الافتتاحية: $e");
+      // يمكن عرض رسالة للمستخدم
+    }
   }
-}
 
   @override
   Widget build(BuildContext context) {
@@ -336,6 +372,7 @@ class _DailyPageState extends State<DailyPage> {
                                     rawBalances.forEach((key, value) {
                                       safeBalances[key.toString()] = double.tryParse(value.toString()) ?? 0.0;
                                     });
+                                    // ✅ تحديث المتغير المحلي عند تغير الأرصدة
                                     _treasuryBalances = safeBalances;
                                   }
                                   return _buildDynamicBalancesGrid();
@@ -359,85 +396,85 @@ class _DailyPageState extends State<DailyPage> {
   }
 
   Widget _buildDynamicBalancesGrid() {
-  if (_treasuries.isEmpty) return const SizedBox.shrink();
+    if (_treasuries.isEmpty) return const SizedBox.shrink();
 
-  return LayoutBuilder(
-    builder: (context, constraints) {
-      double availableWidth = constraints.maxWidth;
-      if (availableWidth <= 0) return const SizedBox.shrink();
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        double availableWidth = constraints.maxWidth;
+        if (availableWidth <= 0) return const SizedBox.shrink();
 
-      double screenWidth = MediaQuery.of(context).size.width;
-      int columnsCount = screenWidth > 500 ? 3 : 2;
-      double spacing = 10.0;
+        double screenWidth = MediaQuery.of(context).size.width;
+        int columnsCount = screenWidth > 500 ? 3 : 2;
+        double spacing = 10.0;
 
-      // حساب عرض البطاقة بناءً على العرض المتاح والمسافات بينها
-      double cardWidth = (availableWidth - (spacing * (columnsCount - 1))) / columnsCount;
-      cardWidth = cardWidth.clamp(80.0, double.infinity); // لمنع القيم الصغيرة جداً
+        // حساب عرض البطاقة بناءً على العرض المتاح والمسافات بينها
+        double cardWidth = (availableWidth - (spacing * (columnsCount - 1))) / columnsCount;
+        cardWidth = cardWidth.clamp(80.0, double.infinity); // لمنع القيم الصغيرة جداً
 
-      return Wrap(
-        spacing: spacing,
-        runSpacing: 10,
-        alignment: WrapAlignment.center, // 🎯 توسيط الصف الأخير
-        children: _treasuries.map((treasury) {
-          String treasuryName = treasury['name'] ?? "خزينة غير معرفة";
-          double liveBalance = _getLiveBalanceForTreasury(treasuryName);
+        return Wrap(
+          spacing: spacing,
+          runSpacing: 10,
+          alignment: WrapAlignment.center, // 🎯 توسيط الصف الأخير
+          children: _treasuries.map((treasury) {
+            String treasuryName = treasury['name'] ?? "خزينة غير معرفة";
+            double liveBalance = _getLiveBalanceForTreasury(treasuryName);
 
-          return SizedBox(
-            width: cardWidth,
-            child: AspectRatio(
-              aspectRatio: screenWidth > 500 ? 2.1 : 1.7, // نفس النسبة السابقة
-              child: GlassCard(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Expanded(
-                        flex: 4,
-                        child: Center(
-                          child: Text(
-                            treasuryName,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 14,
-                              fontFamily: 'Cairo',
-                              fontWeight: FontWeight.bold,
-                              height: 0.8,
+            return SizedBox(
+              width: cardWidth,
+              child: AspectRatio(
+                aspectRatio: screenWidth > 500 ? 2.1 : 1.7, // نفس النسبة السابقة
+                child: GlassCard(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          flex: 4,
+                          child: Center(
+                            child: Text(
+                              treasuryName,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                                fontFamily: 'Cairo',
+                                fontWeight: FontWeight.bold,
+                                height: 0.8,
+                              ),
+                              textAlign: TextAlign.center,
                             ),
-                            textAlign: TextAlign.center,
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 4),
-                      Expanded(
-                        flex: 5,
-                        child: Center(
-                          child: FittedBox(
-                            fit: BoxFit.scaleDown,
-                            child: Text(
-                              liveBalance.toStringAsFixed(2),
-                              style: const TextStyle(
-                                color: Colors.greenAccent,
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                fontFamily: 'Cairo',
+                        const SizedBox(height: 4),
+                        Expanded(
+                          flex: 5,
+                          child: Center(
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                liveBalance.toStringAsFixed(2),
+                                style: const TextStyle(
+                                  color: Colors.greenAccent,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  fontFamily: 'Cairo',
+                                ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-          );
-        }).toList(),
-      );
-    },
-  );
-}
+            );
+          }).toList(),
+        );
+      },
+    );
+  }
 
   Widget _buildInputForm() {
     // ✅ صلاحية الإضافة تتحكم في تمكين/تعطيل الحقول
@@ -564,6 +601,7 @@ class _DailyPageState extends State<DailyPage> {
           _showSnackBar("تم الحفظ بنجاح وتحديث الذاكرة المحلية والشبكية التراكمية", Colors.green);
           _amountController.clear();
           _statementController.clear();
+          // ✅ إعادة تحميل البيانات لتحديث الأرصدة فوراً
           _loadInitialData();
         }
       }
@@ -650,6 +688,7 @@ class _DailyPageState extends State<DailyPage> {
                   ),
                 ),
               ).then((value) {
+                // ✅ عند العودة من صفحة التاريخ، نعيد تحميل البيانات والأرصدة
                 _loadInitialData();
               });
             },
@@ -684,6 +723,7 @@ class _DailyPageState extends State<DailyPage> {
                   ),
                 ),
               ).then((value) {
+                // ✅ عند العودة من صفحة التحويل، نعيد تحميل البيانات والأرصدة
                 _loadInitialData();
               });
             },
@@ -827,6 +867,7 @@ class _DailyPageState extends State<DailyPage> {
           }
         }
         _showSnackBar("تم الاستيراد المباشر والمزامنة بنجاح محلياً وسحابياً", Colors.green);
+        // ✅ إعادة تحميل البيانات والأرصدة بعد الاستيراد
         _loadInitialData();
       } catch (e) {
         _showSnackBar("خطأ في الاستيراد: $e", Colors.red);

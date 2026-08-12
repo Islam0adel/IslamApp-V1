@@ -27,9 +27,18 @@ StreamSubscription? supplierSyncSubscription;
 
 final GlobalSyncService _syncService = GlobalSyncService(); // 🌟 الآن يستخدم WebSocket داخلياً
 
+// ✅ متغير لمنع تشغيل المزامنة أكثر من مرة في نفس الوقت
+bool _isSyncing = false;
 
-// ✅ دالة المزامنة التزايدية لجميع أنواع البيانات
-Future<void> _syncAllData(String companyCode) async {
+// ✅ دالة المزامنة التزايدية لجميع أنواع البيانات (تم تعديلها لإضافة قفل)
+// أصبحت دالة عامة ليتم استدعاؤها من login_screen
+Future<void> syncAllData(String companyCode) async {
+  // منع التزامن المتكرر
+  if (_isSyncing) {
+    print("⚠️ مزامنة قيد التنفيذ بالفعل، تم تجاهل الطلب");
+    return;
+  }
+  _isSyncing = true;
   try {
     final prefs = await SharedPreferences.getInstance();
 
@@ -96,6 +105,8 @@ Future<void> _syncAllData(String companyCode) async {
 
   } catch (e) {
     print("⚠️ خطأ في المزامنة التزايدية: $e");
+  } finally {
+    _isSyncing = false;
   }
 }
 
@@ -109,6 +120,14 @@ void initializeGlobalListener(String companyCode) async {
   
   // ✅ استخدام WebSocket للمزامنة بدلاً من Firestore Listeners
   print("🌐 بدء المزامنة عبر WebSocket للشركة: $companyCode");
+  
+  // ✅ تعيين callback لإعادة المزامنة عند اتصال WebSocket
+  _syncService.onWebSocketConnected = () {
+    print("🔄 WebSocket متصل، جاري تحديث البيانات التزايدية...");
+    // استدعاء المزامنة التزايدية للحصول على أي تحديثات فاتت أثناء الانقطاع
+    syncAllData(companyCode);
+  };
+  
   _syncService.startSync(companyCode); // استخدام WebSocketSyncService
   
   // ملاحظة: لم نعد بحاجة إلى مستمعات Firestore، كل شيء يتم عبر WebSocket
@@ -215,7 +234,7 @@ void main() async {
     initializeGlobalListener(companyCode);
     
     // ✅ المزامنة التزايدية في الخلفية (لا تمنع عرض الصفحة)
-    _syncAllData(companyCode);
+    syncAllData(companyCode);
     
     // بعد تحميل بيانات المستخدم
     // await PermissionsService().loadPermissions();
