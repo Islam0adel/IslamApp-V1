@@ -10,6 +10,8 @@ import 'daily_history_page.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'treasury_transfer_page.dart';
 import '../../services/permissions_service.dart'; // ✅ استيراد خدمة الصلاحيات
+import 'package:shared_preferences/shared_preferences.dart';
+import '../../core/constants.dart';
 
 class DailyPage extends StatefulWidget {
   final String companyCode;
@@ -155,97 +157,111 @@ class _DailyPageState extends State<DailyPage> with WidgetsBindingObserver { // 
   }
 
   void _loadInitialData() async {
-    // ✅ منع التنفيذ إذا كان الـ Widget غير موجود أو قيد التحديث
-    if (!mounted || _isUpdating) return;
-    
-    _isUpdating = true;
-    setState(() => _isLoading = true);
-    try {
-      final Box dailyBox = Hive.box('daily_transactions_box');
+  // ✅ منع التنفيذ إذا كان الـ Widget غير موجود أو قيد التحديث
+  if (!mounted || _isUpdating) return;
+  
+  _isUpdating = true;
+  setState(() => _isLoading = true);
+  try {
+    final Box dailyBox = Hive.box('daily_transactions_box');
 
-      // ✅ التحقق من وجود بيانات محلية للشركة الحالية (أي حركة)
-      bool hasLocalData = dailyBox.values.any((tx) =>
-          tx is Map && tx['company_code'] == widget.companyCode);
+    // ✅ التحقق من وجود بيانات محلية للشركة الحالية (أي حركة)
+    bool hasLocalData = dailyBox.values.any((tx) =>
+        tx is Map && tx['company_code'] == widget.companyCode);
 
-      // إذا كانت الذاكرة المحلية فارغة، نجلب جميع الحركات من السيرفر أولاً
-      if (!hasLocalData) {
-        print("📥 الذاكرة المحلية فارغة، جاري جلب جميع الحركات من السيرفر...");
-        await _dailyService.syncAllTransactions(widget.companyCode);
-        print("✅ تم جلب جميع الحركات وتخزينها محلياً");
-      }
-
-      // الآن نستكمل حساب السيريال الأقصى (بعد التأكد من وجود البيانات)
-      int maxSerial = 0;
-      for (var item in dailyBox.values) {
-        if (item is Map && item['company_code'] == widget.companyCode) {
-          // فلترة حسب كود الفرع إذا كان محدداً وليس "all"
-          if (widget.selectedBranchCode != null && widget.selectedBranchCode != "all") {
-            if (item['branch_code']?.toString() != widget.selectedBranchCode) continue;
-          }
-          int currentSerial = int.tryParse(item['serial']?.toString() ?? '0') ?? 0;
-          if (currentSerial > maxSerial) maxSerial = currentSerial;
-        }
-      }
-      int nextSerial = maxSerial + 1;
-
-      // جلب الأرصدة للفرع الحالي (تمرير كود الفرع)
-      final summary = await _dailyService.getDailySummaryLocal(
-        widget.companyCode,
-        branchCode: widget.selectedBranchCode ?? 'all'
-      );
-      // ✅ تخزين الأرصدة في Hive (سيؤدي إلى تحديث ValueListenableBuilder)
-      await Hive.box('daily_transactions_box').put("${widget.companyCode}_balances", summary['balances']);
-
-      final Box codingBox = Hive.box('coding_box');
-      List<Map<String, dynamic>> safesList = [];
-      List<Map<String, dynamic>> typesList = [];
-
-      if (!codingBox.containsKey("${widget.companyCode}_safes") || !codingBox.containsKey("${widget.companyCode}_types")) {
-        final safes = await _codingService.getCodingList(companyCode: widget.companyCode, category: "safes");
-        final types = await _codingService.getCodingList(companyCode: widget.companyCode, category: "types");
-        safesList = safes.map((e) => Map<String, dynamic>.from(e.toMap())).toList();
-        typesList = types.map((e) => Map<String, dynamic>.from(e.toMap())).toList();
+    // إذا كانت الذاكرة المحلية فارغة، نجلب جميع الحركات من السيرفر أولاً
+    if (!hasLocalData) {
+      print("📥 الذاكرة المحلية فارغة، جاري جلب جميع الحركات من السيرفر...");
+      await _dailyService.syncAllTransactions(widget.companyCode);
+      print("✅ تم جلب جميع الحركات وتخزينها محلياً");
+    } else {
+      // ✅ حتى لو كانت هناك بيانات، نتحقق من وجود تحديثات جديدة عبر المزامنة التزايدية
+      final prefs = await SharedPreferences.getInstance();
+      final lastSyncKey = '${ApiConstants.LAST_SYNC_DAILY}${widget.companyCode}';
+      final lastSyncTime = prefs.getString(lastSyncKey);
+      if (lastSyncTime != null) {
+        print("📡 جاري جلب التحديثات التزايدية للصفحة الرئيسية منذ: $lastSyncTime");
+        await _dailyService.syncChangesFromServer(widget.companyCode, lastSyncTime);
       } else {
-        var localSafes = codingBox.get("${widget.companyCode}_safes");
-        safesList = (localSafes as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
-        var localTypes = codingBox.get("${widget.companyCode}_types");
-        typesList = (localTypes as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        // لا يوجد وقت مزامنة → جلب كل البيانات
+        print("📥 لا يوجد وقت مزامنة سابق، جاري جلب كل البيانات من السيرفر");
+        await _dailyService.syncAllTransactions(widget.companyCode);
+        await prefs.setString(lastSyncKey, DateTime.now().toIso8601String());
       }
-
-      // ✅ إضافة التصفية هنا (بعد جلب الأنواع)
-      typesList = typesList.where((item) {
-        final name = item['name']?.toString() ?? '';
-        return !name.contains('دخول بضاعة') && !name.contains('دفعة');
-      }).toList();
-
-      if (!mounted) {
-        _isUpdating = false;
-        return;
-      }
-      setState(() {
-        _treasuryBalances = Map<String, double>.from(summary['balances'] ?? {});
-        _treasuries = safesList;
-        _categories = typesList;
-        if (widget.editItem == null) _currentSerial = nextSerial;
-        if (widget.editItem == null && _selectedTreasury == null && _treasuries.isNotEmpty) {
-          var defaultSafe = _treasuries.firstWhere((s) => s['code']?.toString() == "1", orElse: () => _treasuries.first);
-          if (defaultSafe.containsKey('name')) _selectedTreasury = defaultSafe['name'];
-        }
-        _isLoading = false;
-        _isUpdating = false;
-      });
-    } catch (e) {
-      if (!mounted) {
-        _isUpdating = false;
-        return;
-      }
-      setState(() {
-        _isLoading = false;
-        _isUpdating = false;
-      });
-      print("خطأ في جلب البيانات الافتتاحية: $e");
     }
+
+    // الآن نستكمل حساب السيريال الأقصى (بعد التأكد من وجود البيانات)
+    int maxSerial = 0;
+    for (var item in dailyBox.values) {
+      if (item is Map && item['company_code'] == widget.companyCode) {
+        // فلترة حسب كود الفرع إذا كان محدداً وليس "all"
+        if (widget.selectedBranchCode != null && widget.selectedBranchCode != "all") {
+          if (item['branch_code']?.toString() != widget.selectedBranchCode) continue;
+        }
+        int currentSerial = int.tryParse(item['serial']?.toString() ?? '0') ?? 0;
+        if (currentSerial > maxSerial) maxSerial = currentSerial;
+      }
+    }
+    int nextSerial = maxSerial + 1;
+
+    // جلب الأرصدة للفرع الحالي (تمرير كود الفرع)
+    final summary = await _dailyService.getDailySummaryLocal(
+      widget.companyCode,
+      branchCode: widget.selectedBranchCode ?? 'all'
+    );
+    // ✅ تخزين الأرصدة في Hive (سيؤدي إلى تحديث ValueListenableBuilder)
+    await Hive.box('daily_transactions_box').put("${widget.companyCode}_balances", summary['balances']);
+
+    final Box codingBox = Hive.box('coding_box');
+    List<Map<String, dynamic>> safesList = [];
+    List<Map<String, dynamic>> typesList = [];
+
+    if (!codingBox.containsKey("${widget.companyCode}_safes") || !codingBox.containsKey("${widget.companyCode}_types")) {
+      final safes = await _codingService.getCodingList(companyCode: widget.companyCode, category: "safes");
+      final types = await _codingService.getCodingList(companyCode: widget.companyCode, category: "types");
+      safesList = safes.map((e) => Map<String, dynamic>.from(e.toMap())).toList();
+      typesList = types.map((e) => Map<String, dynamic>.from(e.toMap())).toList();
+    } else {
+      var localSafes = codingBox.get("${widget.companyCode}_safes");
+      safesList = (localSafes as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      var localTypes = codingBox.get("${widget.companyCode}_types");
+      typesList = (localTypes as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    }
+
+    // ✅ إضافة التصفية هنا (بعد جلب الأنواع)
+    typesList = typesList.where((item) {
+      final name = item['name']?.toString() ?? '';
+      return !name.contains('دخول بضاعة') && !name.contains('دفعة');
+    }).toList();
+
+    if (!mounted) {
+      _isUpdating = false;
+      return;
+    }
+    setState(() {
+      _treasuryBalances = Map<String, double>.from(summary['balances'] ?? {});
+      _treasuries = safesList;
+      _categories = typesList;
+      if (widget.editItem == null) _currentSerial = nextSerial;
+      if (widget.editItem == null && _selectedTreasury == null && _treasuries.isNotEmpty) {
+        var defaultSafe = _treasuries.firstWhere((s) => s['code']?.toString() == "1", orElse: () => _treasuries.first);
+        if (defaultSafe.containsKey('name')) _selectedTreasury = defaultSafe['name'];
+      }
+      _isLoading = false;
+      _isUpdating = false;
+    });
+  } catch (e) {
+    if (!mounted) {
+      _isUpdating = false;
+      return;
+    }
+    setState(() {
+      _isLoading = false;
+      _isUpdating = false;
+    });
+    print("خطأ في جلب البيانات الافتتاحية: $e");
   }
+}
 
   @override
   Widget build(BuildContext context) {

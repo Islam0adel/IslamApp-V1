@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart'; // ✅ إضافة الاستيراد
 import '../../views/widgets/glass_card.dart';
 import '../../services/daily_service.dart';
 import 'daily_page.dart';
@@ -11,6 +12,7 @@ import 'package:excel/excel.dart' as excel_lib;
 import 'package:hive_flutter/hive_flutter.dart';
 import '../../services/permissions_service.dart'; // ✅ استيراد خدمة الصلاحيات
 import '../../services/export_service.dart';
+import '../../core/constants.dart'; // ✅ استيراد الثوابت لـ LAST_SYNC_DAILY
 
 class DailyHistoryPage extends StatefulWidget {
   final String companyCode;
@@ -93,12 +95,20 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
       }
     }
 
-    // ✅ جلب التحديثات التزايدية من السيرفر
-    int lastSerial = _dailyService.getLastLocalSerial(widget.companyCode);
-    if (lastSerial > 0) {
-      print("📡 جاري جلب التحديثات من السيرفر منذ السيريال: $lastSerial");
+    // ✅ جلب التحديثات التزايدية من السيرفر باستخدام وقت آخر مزامنة بدلاً من serial
+    final prefs = await SharedPreferences.getInstance();
+    final lastSyncKey = '${ApiConstants.LAST_SYNC_DAILY}${widget.companyCode}';
+    final lastSyncTime = prefs.getString(lastSyncKey);
+    
+    if (lastSyncTime != null) {
+      print("📡 جاري جلب التحديثات من السيرفر منذ آخر مزامنة: $lastSyncTime");
+      await _dailyService.syncChangesFromServer(widget.companyCode, lastSyncTime);
     } else {
+      // أول مزامنة للجهاز → جلب كل البيانات
+      print("📥 لا يوجد وقت مزامنة سابق، جاري جلب كل البيانات من السيرفر");
       await _dailyService.syncAllTransactions(widget.companyCode);
+      // حفظ وقت المزامنة الحالي
+      await prefs.setString(lastSyncKey, DateTime.now().toIso8601String());
     }
 
     // ✅ التحقق قبل _fetchData
