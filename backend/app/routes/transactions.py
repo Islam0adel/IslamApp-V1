@@ -168,9 +168,8 @@ async def get_transactions_changes(
     db: AsyncSession = Depends(get_db)
 ):
     try:
-        # ✅ تحويل since إلى datetime مع التعامل مع التوقيت المحلي (بدون معلومات المنطقة الزمنية)
-        # نفترض أن since يأتي بتوقيت UTC (لأن العميل سيخزن UTC بعد التعديل)
-        # إذا كان without timezone، نعتبره UTC
+        # ✅ تحويل since إلى datetime مع التعامل مع التوقيت المحلي
+        # نفترض أن since يأتي بتوقيت UTC (لأن العميل يخزن UTC)
         since_dt = datetime.datetime.fromisoformat(since)
         if since_dt.tzinfo is None:
             # إذا لم يكن هناك معلومات منطقة، نعتبره UTC
@@ -216,6 +215,7 @@ async def get_transactions_changes(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"صيغة `since` غير صحيحة: {str(e)}. استخدم ISO 8601 (مثال: 2026-08-11T14:30:00)")
     except Exception as e:
+        print(f"❌ خطأ في get_transactions_changes: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

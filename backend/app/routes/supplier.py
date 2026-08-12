@@ -196,16 +196,22 @@ async def get_supplier_changes(
     db: AsyncSession = Depends(get_db)
 ):
     try:
+        # ✅ تحويل since إلى UTC (نفس منطق transactions)
         since_dt = datetime.datetime.fromisoformat(since)
-        
+        if since_dt.tzinfo is None:
+            since_dt = since_dt.replace(tzinfo=datetime.timezone.utc)
+        else:
+            since_dt = since_dt.astimezone(datetime.timezone.utc)
+        since_dt_naive = since_dt.replace(tzinfo=None)
+
         stmt = select(SupplierRecord).where(
             SupplierRecord.company_code == company_code,
-            SupplierRecord.updated_at >= since_dt
+            SupplierRecord.updated_at >= since_dt_naive
         ).order_by(SupplierRecord.updated_at)
-        
+
         result = await db.execute(stmt)
         docs = result.scalars().all()
-        
+
         results = []
         for doc in docs:
             results.append({
@@ -226,10 +232,11 @@ async def get_supplier_changes(
                 "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
             })
         return results
-        
-    except ValueError:
-        raise HTTPException(status_code=400, detail="صيغة `since` غير صحيحة، استخدم ISO 8601")
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"صيغة `since` غير صحيحة: {str(e)}")
     except Exception as e:
+        print(f"❌ خطأ في get_supplier_changes: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 # ==========================================
 # 3. حذف حركة مورد
