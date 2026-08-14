@@ -9,6 +9,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'daily_service.dart';
 import '../core/constants.dart';
 
+
 class WebSocketSyncService {
   // ============================================================
   // WebSocket
@@ -25,9 +26,11 @@ class WebSocketSyncService {
   bool _reconnectScheduled = false;
 
   // يفرق بين:
-  // 1) قطع اتصال حصل فعليًا من البرنامج
+  // 1) disconnect يدوي من البرنامج
   // 2) انقطاع طبيعي يحتاج reconnect
   bool _manualDisconnect = false;
+
+  Timer? _dailySummaryTimer;
 
   // ============================================================
   // Callback
@@ -36,8 +39,9 @@ class WebSocketSyncService {
   /// يتم استدعاؤها عند فتح WebSocket أو إعادة فتحه.
   ///
   /// لا يتم تنفيذ Sync هنا.
-  /// main.dart هو المسؤول عن تشغيل syncAllDataIfNeeded().
+  /// main.dart هو المسؤول عن syncAllDataIfNeeded().
   void Function()? onConnected;
+
 
   // ============================================================
   // Hive Boxes
@@ -58,13 +62,14 @@ class WebSocketSyncService {
   final Box _settlementBox =
       Hive.box('supplier_settlement_box');
 
+
   // ============================================================
   // 1. الاتصال
   // ============================================================
 
   void connect(String companyCode) {
     // ----------------------------------------------------------
-    // منع فتح اتصال جديد لو الاتصال الحالي شغال
+    // منع فتح اتصال جديد لو الحالي شغال
     // ----------------------------------------------------------
 
     if (_isConnected) {
@@ -74,8 +79,9 @@ class WebSocketSyncService {
       return;
     }
 
+
     // ----------------------------------------------------------
-    // هذه محاولة اتصال جديدة، لذلك ليست disconnect يدوي
+    // محاولة اتصال جديدة
     // ----------------------------------------------------------
 
     _manualDisconnect = false;
@@ -83,23 +89,36 @@ class WebSocketSyncService {
     _companyCode = companyCode;
     _baseUrl = ApiConstants.baseUrl;
 
-    final url =
+
+    final String url =
         '${ApiConstants.baseUrl}/sync/ws/$companyCode';
 
-    final wsUrl = url
-        .replaceFirst('http://', 'ws://')
-        .replaceFirst('https://', 'wss://');
+
+    final String wsUrl = url
+        .replaceFirst(
+          'http://',
+          'ws://',
+        )
+        .replaceFirst(
+          'https://',
+          'wss://',
+        );
+
 
     print(
       "🔌 محاولة الاتصال بـ WebSocket: $wsUrl",
     );
 
+
     try {
-      _channel = WebSocketChannel.connect(
+      _channel =
+          WebSocketChannel.connect(
         Uri.parse(wsUrl),
       );
 
+
       _isConnected = true;
+
 
       _channel!.stream.listen(
         (message) {
@@ -120,8 +139,9 @@ class WebSocketSyncService {
           _scheduleReconnect();
         },
 
+
         // ------------------------------------------------------
-        // Connection Closed
+        // Done
         // ------------------------------------------------------
 
         onDone: () {
@@ -133,15 +153,18 @@ class WebSocketSyncService {
 
           _channel = null;
 
-          // لو إحنا اللي قطعناه يدويًا
-          // لا تعمل reconnect.
+
+          // لو disconnect يدوي
+          // لا تعمل reconnect
           if (_manualDisconnect) {
             print(
-              "ℹ️ الاتصال تم قطعه يدويًا، لن يتم إعادة الاتصال",
+              "ℹ️ الاتصال تم قطعه يدويًا، "
+              "لن يتم إعادة الاتصال",
             );
 
             return;
           }
+
 
           _scheduleReconnect();
         },
@@ -149,15 +172,19 @@ class WebSocketSyncService {
         cancelOnError: true,
       );
 
+
       print(
         "✅ تم فتح قناة WebSocket",
       );
+
 
       // --------------------------------------------------------
       // إبلاغ Global Sync
       // --------------------------------------------------------
 
-      final callback = onConnected;
+      final callback =
+          onConnected;
+
 
       if (callback != null) {
         print(
@@ -177,13 +204,14 @@ class WebSocketSyncService {
     }
   }
 
+
   // ============================================================
-  // 2. جدولة إعادة الاتصال
+  // 2. إعادة الاتصال
   // ============================================================
 
   void _scheduleReconnect() {
     // ----------------------------------------------------------
-    // لا يوجد شركة
+    // لا توجد شركة
     // ----------------------------------------------------------
 
     if (_companyCode == null ||
@@ -191,171 +219,228 @@ class WebSocketSyncService {
       return;
     }
 
+
     // ----------------------------------------------------------
-    // الاتصال مفصول يدويًا
+    // قطع يدوي
     // ----------------------------------------------------------
 
     if (_manualDisconnect) {
       return;
     }
 
+
     // ----------------------------------------------------------
-    // يوجد بالفعل reconnect مجدول
+    // يوجد reconnect مجدول
     // ----------------------------------------------------------
 
     if (_reconnectScheduled) {
       return;
     }
 
+
     _reconnectScheduled = true;
+
 
     print(
       "⏳ سيتم إعادة الاتصال بـ WebSocket بعد 5 ثوانٍ...",
     );
 
+
     Future.delayed(
       const Duration(seconds: 5),
       () {
-        // انتهى موعد الجدولة
         _reconnectScheduled = false;
 
+
         // ------------------------------------------------------
-        // لو الاتصال رجع بالفعل
+        // لو رجع الاتصال
         // ------------------------------------------------------
 
         if (_isConnected) {
           return;
         }
 
+
         // ------------------------------------------------------
-        // لو تم فصل الاتصال يدويًا أثناء الانتظار
+        // لو تم disconnect يدوي أثناء الانتظار
         // ------------------------------------------------------
 
         if (_manualDisconnect) {
           return;
         }
 
-        // ------------------------------------------------------
-        // تأكد من وجود الشركة
-        // ------------------------------------------------------
 
-        final companyCode = _companyCode;
+        final companyCode =
+            _companyCode;
+
 
         if (companyCode == null) {
           return;
         }
 
+
         print(
           "🔄 محاولة إعادة الاتصال بـ WebSocket...",
         );
+
 
         connect(companyCode);
       },
     );
   }
 
+
   // ============================================================
-  // 3. قطع الاتصال يدويًا
+  // 3. قطع الاتصال
   // ============================================================
 
   void disconnect() {
+    _dailySummaryTimer?.cancel();
+_dailySummaryTimer = null;
     print(
       "🔌 طلب قطع اتصال WebSocket",
     );
 
+
     // ----------------------------------------------------------
-    // إعلام النظام أن القطع يدوي
+    // disconnect يدوي
     // ----------------------------------------------------------
 
     _manualDisconnect = true;
 
+
     // ----------------------------------------------------------
-    // إلغاء أي reconnect مستقبلي
+    // إلغاء reconnect
     // ----------------------------------------------------------
 
     _reconnectScheduled = false;
 
     _isConnected = false;
 
+
     // ----------------------------------------------------------
-    // إغلاق الـChannel
+    // إغلاق Channel
     // ----------------------------------------------------------
 
     try {
       _channel?.sink.close();
     } catch (_) {}
 
+
     _channel = null;
 
+
     // ----------------------------------------------------------
-    // تنظيف بيانات الاتصال
+    // تنظيف الحالة
     // ----------------------------------------------------------
 
     _companyCode = null;
     _baseUrl = null;
+
 
     print(
       "🔌 تم قطع اتصال WebSocket",
     );
   }
 
+
   // ============================================================
   // 4. حالة الاتصال
   // ============================================================
 
-  bool get isConnected => _isConnected;
+  bool get isConnected =>
+      _isConnected;
+
 
   // ============================================================
   // 5. معالجة الرسائل
   // ============================================================
 
-  void _handleMessage(dynamic message) {
+  void _handleMessage(
+    dynamic message,
+  ) {
     try {
-      final data = jsonDecode(message);
+      final dynamic decoded =
+          jsonDecode(message);
 
-      final type = data['type'];
-      final action = data['action'];
-      final payload = data['data'];
 
-      print(
-        "📩 استقبال رسالة: type=$type, action=$action",
+      if (decoded is! Map) {
+        print(
+          "⚠️ رسالة WebSocket غير صحيحة",
+        );
+        return;
+      }
+
+
+      final Map<String, dynamic> data =
+          Map<String, dynamic>.from(
+        decoded,
       );
 
-      if (payload is! Map) {
+
+      final String type =
+          data['type']
+                  ?.toString() ??
+              '';
+
+
+      final String action =
+          data['action']
+                  ?.toString() ??
+              'update';
+
+
+      final dynamic rawPayload =
+          data['data'];
+
+
+      print(
+        "📩 استقبال رسالة: "
+        "type=$type, action=$action",
+      );
+
+
+      if (rawPayload is! Map) {
         print(
           "⚠️ بيانات الرسالة غير صحيحة",
         );
         return;
       }
 
-      final Map<String, dynamic> safePayload =
-          Map<String, dynamic>.from(payload);
+
+      final Map<String, dynamic>
+          payload =
+          Map<String, dynamic>.from(
+        rawPayload,
+      );
+
+
+      // --------------------------------------------------------
+      // لو is_deleted=true اعتبرها delete حتى لو
+      // action لم يصل بالشكل المتوقع.
+      // --------------------------------------------------------
+
+      final bool isDelete =
+          action == 'delete' ||
+          payload['is_deleted'] == true;
+
 
       switch (type) {
+
         // ======================================================
         // اليومية
         // ======================================================
 
         case 'transaction':
-          _updateBox(
-            _dailyBox,
-            safePayload,
-            action?.toString() ?? 'update',
-          );
+  unawaited(
+    _updateTransactionBox(
+      payload,
+      isDelete ? 'delete' : action,
+    ),
+  );
 
-          // مهم:
-          // لا نعيد حساب الرصيد لكل رسالة إذا كانت هناك
-          // تحديثات متتالية بسرعة.
-          //
-          // لكن نحافظ على السلوك الحالي.
-          if (_companyCode != null) {
-            unawaited(
-              DailyService()
-                  .getDailySummaryLocal(_companyCode!),
-            );
-          }
+  break;
 
-          break;
 
         // ======================================================
         // التكويد
@@ -363,10 +448,14 @@ class WebSocketSyncService {
 
         case 'coding':
           _updateCodingBox(
-            safePayload,
-            action?.toString() ?? 'update',
+            payload,
+            isDelete
+                ? 'delete'
+                : action,
           );
+
           break;
+
 
         // ======================================================
         // الجرد
@@ -374,10 +463,14 @@ class WebSocketSyncService {
 
         case 'inventory':
           _updateInventoryBox(
-            safePayload,
-            action?.toString() ?? 'update',
+            payload,
+            isDelete
+                ? 'delete'
+                : action,
           );
+
           break;
+
 
         // ======================================================
         // الموردين
@@ -386,11 +479,15 @@ class WebSocketSyncService {
         case 'supplier':
           unawaited(
             _updateSupplierBox(
-              safePayload,
-              action?.toString() ?? 'update',
+              payload,
+              isDelete
+                  ? 'delete'
+                  : action,
             ),
           );
+
           break;
+
 
         // ======================================================
         // التسويات
@@ -399,11 +496,15 @@ class WebSocketSyncService {
         case 'settlement':
           unawaited(
             _updateSettlementBox(
-              safePayload,
-              action?.toString() ?? 'update',
+              payload,
+              isDelete
+                  ? 'delete'
+                  : action,
             ),
           );
+
           break;
+
 
         default:
           print(
@@ -417,53 +518,93 @@ class WebSocketSyncService {
     }
   }
 
+
   // ============================================================
-  // 6. تحديث اليوميات
+  // 6. تحديث اليومية
   // ============================================================
 
-  void _updateBox(
-    Box box,
-    Map<String, dynamic> payload,
-    String action,
-  ) {
-    final branchCode =
-        payload['branch_code']?.toString() ?? '1';
+  Future<void> _updateTransactionBox(
+  Map<String, dynamic> payload,
+  String action,
+) async {
+  final String branchCode =
+      payload['branch_code']?.toString() ?? '1';
 
-    final serial =
-        payload['serial']?.toString();
+  final String? serial =
+      payload['serial']?.toString();
 
-    if (serial == null) {
-      print(
-        "⚠️ لا يوجد serial في رسالة اليومية",
-      );
-      return;
-    }
-
-    final id =
-        "branch_${branchCode}_$serial";
-
-    if (action == 'insert' ||
-        action == 'update') {
-      unawaited(
-        box.put(
-          id,
-          payload,
-        ),
-      );
-
-      print(
-        "✅ تم تحديث [$id] في Hive",
-      );
-    } else if (action == 'delete') {
-      unawaited(
-        box.delete(id),
-      );
-
-      print(
-        "🗑️ تم حذف [$id] من Hive",
-      );
-    }
+  if (serial == null || serial.isEmpty) {
+    print("⚠️ لا يوجد serial في رسالة اليومية");
+    return;
   }
+
+  final String id =
+      "branch_${branchCode}_$serial";
+
+  try {
+    if (action == 'delete') {
+      await _dailyBox.delete(id);
+
+      print(
+        "🗑️ تم حذف اليومية [$id] من Hive",
+      );
+    } else {
+      payload['is_deleted'] = false;
+
+      await _dailyBox.put(
+        id,
+        payload,
+      );
+
+      print(
+        "✅ تم تحديث اليومية [$id] في Hive",
+      );
+    }
+
+    // تحديث الرصيد بعد اكتمال تعديل Hive فعليًا
+    _scheduleDailySummaryRefresh();
+  } catch (e) {
+    print(
+      "❌ خطأ في تحديث اليومية [$id]: $e",
+    );
+  }
+}
+
+
+  // ============================================================
+  // تحديث أرصدة اليومية
+  //
+  // حماية من عدم وجود companyCode
+  // ============================================================
+
+
+void _scheduleDailySummaryRefresh() {
+  _dailySummaryTimer?.cancel();
+
+  _dailySummaryTimer = Timer(
+    const Duration(milliseconds: 150),
+    () async {
+      final companyCode = _companyCode;
+
+      if (companyCode == null) {
+        return;
+      }
+
+      try {
+        await DailyService().getDailySummaryLocal(
+          companyCode,
+        );
+
+        print("✅ تم تحديث أرصدة اليومية بعد WebSocket");
+      } catch (e) {
+        print(
+          "❌ خطأ في تحديث أرصدة اليومية: $e",
+        );
+      }
+    },
+  );
+}
+
 
   // ============================================================
   // 7. تحديث التكويد
@@ -473,14 +614,17 @@ class WebSocketSyncService {
     Map<String, dynamic> payload,
     String action,
   ) {
-    final companyCode =
+    final dynamic companyCode =
         payload['company_code'];
 
-    final category =
+
+    final dynamic category =
         payload['category'];
 
-    final code =
+
+    final dynamic code =
         payload['code'];
+
 
     if (companyCode == null ||
         category == null ||
@@ -491,59 +635,114 @@ class WebSocketSyncService {
       return;
     }
 
+
     final String key =
         "${companyCode}_$category";
 
-    List<Map<String, dynamic>> list = [];
+
+    List<Map<String, dynamic>>
+        list = [];
+
 
     if (_codingBox.containsKey(key)) {
-      final raw = _codingBox.get(key);
+      final raw =
+          _codingBox.get(key);
+
 
       if (raw is List) {
         list = raw
             .whereType<Map>()
             .map(
               (e) =>
-                  Map<String, dynamic>.from(e),
+                  Map<String, dynamic>
+                      .from(e),
+            )
+            .where(
+              (e) =>
+                  e['is_deleted'] !=
+                  true,
             )
             .toList();
       }
     }
 
-    if (action == 'insert' ||
-        action == 'update') {
-      list.removeWhere(
-        (item) =>
-            item['code']?.toString() ==
-            code.toString(),
+
+    // ----------------------------------------------------------
+    // إزالة النسخة القديمة
+    // ----------------------------------------------------------
+
+    list.removeWhere(
+      (item) =>
+          item['code']?.toString() ==
+          code.toString(),
+    );
+
+
+    // ----------------------------------------------------------
+    // DELETE
+    // ----------------------------------------------------------
+
+    if (action == 'delete') {
+      if (list.isEmpty) {
+        unawaited(
+          _codingBox.delete(key),
+        );
+      } else {
+        unawaited(
+          _codingBox.put(
+            key,
+            list,
+          ),
+        );
+      }
+
+
+      print(
+        "🗑️ تم حذف التكويد "
+        "[$category/$code] من Hive",
       );
 
-      list.add(payload);
-    } else if (action == 'delete') {
-      list.removeWhere(
-        (item) =>
-            item['code']?.toString() ==
-            code.toString(),
-      );
+      return;
     }
+
+
+    // ----------------------------------------------------------
+    // INSERT / UPDATE
+    // ----------------------------------------------------------
+
+    payload['is_deleted'] =
+        false;
+
+
+    list.add(
+      payload,
+    );
+
 
     list.sort(
       (a, b) {
         final int aCode =
             int.tryParse(
-                  a['code']?.toString() ?? '0',
+                  a['code']?.toString() ??
+                      '0',
                 ) ??
                 0;
+
 
         final int bCode =
             int.tryParse(
-                  b['code']?.toString() ?? '0',
+                  b['code']?.toString() ??
+                      '0',
                 ) ??
                 0;
 
-        return aCode.compareTo(bCode);
+
+        return aCode.compareTo(
+          bCode,
+        );
       },
     );
+
 
     unawaited(
       _codingBox.put(
@@ -552,10 +751,13 @@ class WebSocketSyncService {
       ),
     );
 
+
     print(
-      "🔄 تم تحديث التكويد [$category]، الكود [$code]",
+      "✅ تم تحديث التكويد "
+      "[$category/$code]",
     );
   }
+
 
   // ============================================================
   // 8. تحديث الجرد
@@ -565,82 +767,138 @@ class WebSocketSyncService {
     Map<String, dynamic> payload,
     String action,
   ) {
-    final docId =
-        payload['doc_id'];
+    final String? docId =
+        payload['doc_id']?.toString();
 
-    if (docId == null) {
+
+    if (docId == null ||
+        docId.isEmpty) {
       print(
         "⚠️ لا يوجد doc_id في رسالة الجرد",
       );
       return;
     }
 
-    final companyCode =
-        payload['company_code'] ?? '';
 
-    final branchCode =
-        payload['branch_code'] ?? '';
+    final String companyCode =
+        payload['company_code']
+                ?.toString() ??
+            '';
 
-    final storeCode =
-        payload['store_code'] ?? '';
 
-    final date =
-        payload['date'] ?? '';
+    final String branchCode =
+        payload['branch_code']
+                ?.toString() ??
+            '';
+
+
+    final String storeCode =
+        payload['store_code']
+                ?.toString() ??
+            '';
+
+
+    final String date =
+        payload['date']
+                ?.toString() ??
+            '';
+
 
     final String key =
         "${companyCode}_${branchCode}_${storeCode}_$date";
 
-    List<Map<String, dynamic>> list = [];
+
+    List<Map<String, dynamic>>
+        list = [];
+
 
     if (_inventoryBox.containsKey(key)) {
       final raw =
           _inventoryBox.get(key);
+
 
       if (raw is List) {
         list = raw
             .whereType<Map>()
             .map(
               (e) =>
-                  Map<String, dynamic>.from(e),
+                  Map<String, dynamic>
+                      .from(e),
+            )
+            .where(
+              (e) =>
+                  e['is_deleted'] !=
+                  true,
             )
             .toList();
       }
     }
 
-    if (action == 'insert' ||
-        action == 'update') {
-      list.removeWhere(
-        (item) =>
-            item['doc_id']?.toString() ==
-            docId.toString(),
+
+    // ----------------------------------------------------------
+    // إزالة النسخة القديمة
+    // ----------------------------------------------------------
+
+    list.removeWhere(
+      (item) =>
+          item['doc_id']?.toString() ==
+          docId,
+    );
+
+
+    // ----------------------------------------------------------
+    // DELETE
+    // ----------------------------------------------------------
+
+    if (action == 'delete') {
+      if (list.isEmpty) {
+        unawaited(
+          _inventoryBox.delete(key),
+        );
+      } else {
+        unawaited(
+          _inventoryBox.put(
+            key,
+            list,
+          ),
+        );
+      }
+
+
+      print(
+        "🗑️ تم حذف الجرد [$docId] من Hive",
       );
 
-      list.add(payload);
-    } else if (action == 'delete') {
-      list.removeWhere(
-        (item) =>
-            item['doc_id']?.toString() ==
-            docId.toString(),
-      );
+      return;
     }
 
-    if (list.isNotEmpty) {
-      unawaited(
-        _inventoryBox.put(
-          key,
-          list,
-        ),
-      );
-    } else {
-      unawaited(
-        _inventoryBox.delete(key),
-      );
-    }
+
+    // ----------------------------------------------------------
+    // INSERT / UPDATE
+    // ----------------------------------------------------------
+
+    payload['is_deleted'] =
+        false;
+
+
+    list.add(
+      payload,
+    );
+
+
+    unawaited(
+      _inventoryBox.put(
+        key,
+        list,
+      ),
+    );
+
 
     print(
-      "🔄 تم تحديث الجرد [$docId]",
+      "✅ تم تحديث الجرد [$docId] في Hive",
     );
   }
+
 
   // ============================================================
   // 9. تحديث الموردين
@@ -650,151 +908,261 @@ class WebSocketSyncService {
     Map<String, dynamic> payload,
     String action,
   ) async {
-    final docId =
-        payload['doc_id'];
+    final String? docId =
+        payload['doc_id']?.toString();
 
-    if (docId == null) {
+
+    if (docId == null ||
+        docId.isEmpty) {
       print(
         "⚠️ لا يوجد doc_id في رسالة المورد",
       );
       return;
     }
 
-    final companyCode =
-        payload['company_code'] ?? '';
 
-    final branchCode =
-        payload['branch_code'] ?? '';
+    final String companyCode =
+        payload['company_code']
+                ?.toString() ??
+            '';
 
-    final date =
-        payload['date'] ?? '';
+
+    final String branchCode =
+        payload['branch_code']
+                ?.toString() ??
+            '';
+
+
+    final String date =
+        payload['date']
+                ?.toString() ??
+            '';
+
 
     final String key =
         "${companyCode}_${branchCode}_$date";
 
-    List<Map<String, dynamic>> list = [];
+
+    List<Map<String, dynamic>>
+        list = [];
+
 
     if (_supplierBox.containsKey(key)) {
       final raw =
           _supplierBox.get(key);
+
 
       if (raw is List) {
         list = raw
             .whereType<Map>()
             .map(
               (e) =>
-                  Map<String, dynamic>.from(e),
+                  Map<String, dynamic>
+                      .from(e),
+            )
+            .where(
+              (e) =>
+                  e['is_deleted'] !=
+                  true,
             )
             .toList();
       }
     }
 
-    if (action == 'insert' ||
-        action == 'update') {
-      list.removeWhere(
-        (item) =>
-            item['doc_id']?.toString() ==
-            docId.toString(),
+
+    // ----------------------------------------------------------
+    // إزالة النسخة القديمة
+    // ----------------------------------------------------------
+
+    list.removeWhere(
+      (item) =>
+          item['doc_id']?.toString() ==
+          docId,
+    );
+
+
+    // ----------------------------------------------------------
+    // DELETE
+    // ----------------------------------------------------------
+
+    if (action == 'delete') {
+      if (list.isEmpty) {
+        await _supplierBox.delete(
+          key,
+        );
+      } else {
+        await _supplierBox.put(
+          key,
+          list,
+        );
+      }
+
+
+      print(
+        "🗑️ تم حذف المورد [$docId] من Hive",
       );
 
-      list.add(payload);
-    } else if (action == 'delete') {
-      list.removeWhere(
-        (item) =>
-            item['doc_id']?.toString() ==
-            docId.toString(),
-      );
+      return;
     }
 
-    if (list.isNotEmpty) {
+
+    // ----------------------------------------------------------
+    // INSERT / UPDATE
+    // ----------------------------------------------------------
+
+    payload['is_deleted'] =
+        false;
+
+
+    list.add(
+      payload,
+    );
+
+
+    if (list.isEmpty) {
+      await _supplierBox.delete(
+        key,
+      );
+    } else {
       await _supplierBox.put(
         key,
         list,
       );
-    } else {
-      await _supplierBox.delete(key);
     }
 
+
     print(
-      "🔄 تم تحديث المورد [$docId] في Hive",
+      "✅ تم تحديث المورد [$docId] في Hive",
     );
   }
 
+
   // ============================================================
   // 10. تحديث التسويات
+  //
+  // حاليًا احتفظنا بها كما هي للتوافق.
   // ============================================================
 
   Future<void> _updateSettlementBox(
     Map<String, dynamic> payload,
     String action,
   ) async {
-    final docId =
-        payload['doc_id'];
+    final String? docId =
+        payload['doc_id']?.toString();
 
-    if (docId == null) {
+
+    if (docId == null ||
+        docId.isEmpty) {
       print(
         "⚠️ لا يوجد doc_id في رسالة التسوية",
       );
       return;
     }
 
-    final companyCode =
-        payload['company_code'] ?? '';
 
-    final branchCode =
-        payload['branch_code'] ?? '';
+    final String companyCode =
+        payload['company_code']
+                ?.toString() ??
+            '';
 
-    final date =
-        payload['date'] ?? '';
+
+    final String branchCode =
+        payload['branch_code']
+                ?.toString() ??
+            '';
+
+
+    final String date =
+        payload['date']
+                ?.toString() ??
+            '';
+
 
     final String key =
         "${companyCode}_${branchCode}_$date";
 
-    List<Map<String, dynamic>> list = [];
+
+    List<Map<String, dynamic>>
+        list = [];
+
 
     if (_settlementBox.containsKey(key)) {
       final raw =
           _settlementBox.get(key);
+
 
       if (raw is List) {
         list = raw
             .whereType<Map>()
             .map(
               (e) =>
-                  Map<String, dynamic>.from(e),
+                  Map<String, dynamic>
+                      .from(e),
+            )
+            .where(
+              (e) =>
+                  e['is_deleted'] !=
+                  true,
             )
             .toList();
       }
     }
 
-    if (action == 'insert' ||
-        action == 'update') {
-      list.removeWhere(
-        (item) =>
-            item['doc_id']?.toString() ==
-            docId.toString(),
+
+    // إزالة النسخة القديمة
+    list.removeWhere(
+      (item) =>
+          item['doc_id']?.toString() ==
+          docId,
+    );
+
+
+    // DELETE
+    if (action == 'delete') {
+      if (list.isEmpty) {
+        await _settlementBox.delete(
+          key,
+        );
+      } else {
+        await _settlementBox.put(
+          key,
+          list,
+        );
+      }
+
+
+      print(
+        "🗑️ تم حذف التسوية [$docId] من Hive",
       );
 
-      list.add(payload);
-    } else if (action == 'delete') {
-      list.removeWhere(
-        (item) =>
-            item['doc_id']?.toString() ==
-            docId.toString(),
-      );
+      return;
     }
 
-    if (list.isNotEmpty) {
+
+    // INSERT / UPDATE
+    payload['is_deleted'] =
+        false;
+
+
+    list.add(
+      payload,
+    );
+
+
+    if (list.isEmpty) {
+      await _settlementBox.delete(
+        key,
+      );
+    } else {
       await _settlementBox.put(
         key,
         list,
       );
-    } else {
-      await _settlementBox.delete(key);
     }
 
+
     print(
-      "🔄 تم تحديث التسوية [$docId] في Hive",
+      "✅ تم تحديث التسوية [$docId] في Hive",
     );
   }
 }

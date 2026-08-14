@@ -85,12 +85,11 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
       await prefs.setString('user_email', _emailController.text.trim());
 
     // تشغيل WebSocket فقط.
-// أول مزامنة ستبدأ من مدير المزامنة المركزي.
-initializeGlobalListener(result['company_code']);
-
-// تنفيذ مزامنة واحدة فقط.
-// لو WebSocket اتصل قبلها، _isSyncing يمنع التكرار.
-await syncAllDataIfNeeded(result['company_code']);
+// تشغيل WebSocket.
+// عند نجاح الاتصال، Global Sync سيشغل المزامنة المركزية مرة واحدة.
+initializeGlobalListener(
+  result['company_code'],
+);
 
       if (mounted) {
         Navigator.pushReplacement(

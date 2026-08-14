@@ -53,47 +53,23 @@ class _SupplierHistoryPageState extends State<SupplierHistoryPage> {
   }
 
   Future<void> _initialize() async {
-    if (_isInitializing) return;
-    _isInitializing = true;
+  if (_isInitializing) return;
 
-    // 1. تحميل القوائم أولاً
-    await _loadDropdowns();
+  _isInitializing = true;
 
-    // 2. التحقق من وجود بيانات محلية للشركة الحالية
-    final box = Hive.box('supplier_box');
-    bool hasLocalData = false;
-    for (var key in box.keys) {
-      final raw = box.get(key);
-      if (raw is List) {
-        for (var item in raw) {
-          if (item['company_code'] == widget.companyCode) {
-            hasLocalData = true;
-            break;
-          }
-        }
-      }
-      if (hasLocalData) break;
-    }
+  // تحميل القوائم من Hive
+  await _loadDropdowns();
 
-    // 3. إذا لم توجد بيانات محلية، نجلب من السيرفر
-    if (!hasLocalData) {
-      setState(() => _isLoading = true);
-      try {
-        await _supplierService.fetchAllSupplier(widget.companyCode);
-        print('✅ تم جلب جميع حركات الموردين من السيرفر');
-      } catch (e) {
-        print('⚠️ فشل جلب حركات الموردين من السيرفر: $e');
-      }
-    }
+  // تحميل البيانات المحلية فقط
+  await _loadData();
 
-    // 4. تحميل البيانات المعروضة
-    await _loadData();
-
+  if (mounted) {
     setState(() {
       _isLoading = false;
       _isInitializing = false;
     });
   }
+}
 
   Future<void> _loadDropdowns() async {
     final box = Hive.box('coding_box');
@@ -134,16 +110,7 @@ class _SupplierHistoryPageState extends State<SupplierHistoryPage> {
         endDate: DateFormat('yyyy-MM-dd').format(_toDate),
       );
 
-      // إذا كانت النتيجة فارغة، جلب جميع البيانات بدون فلترة تاريخية
-      if (transactions.isEmpty) {
-        transactions = await _supplierService.getSupplierTransactions(
-          companyCode: widget.companyCode,
-          branchCode: widget.selectedBranchCode,
-          supplierName: supplierName,
-          startDate: null,
-          endDate: null,
-        );
-      }
+      
 
       // فلترة المخزن
       List<SupplierTransactionModel> filtered = transactions;
@@ -424,16 +391,25 @@ class _SupplierHistoryPageState extends State<SupplierHistoryPage> {
             IconButton(
               icon: const Icon(Icons.refresh, color: Colors.white),
               onPressed: () async {
-                setState(() => _isLoading = true);
-                try {
-                  await _supplierService.fetchAllSupplier(widget.companyCode);
-                  await _loadData();
-                } catch (e) {
-                  _showSnackBar('فشل التحديث: $e', Colors.red);
-                } finally {
-                  if (mounted) setState(() => _isLoading = false);
-                }
-              },
+  setState(() => _isLoading = true);
+
+  try {
+    await _supplierService.syncChangesFromServer(
+      widget.companyCode,
+    );
+
+    await _loadData();
+  } catch (e) {
+    _showSnackBar(
+      'فشل التحديث: $e',
+      Colors.red,
+    );
+  } finally {
+    if (mounted) {
+      setState(() => _isLoading = false);
+    }
+  }
+},
               tooltip: 'تحديث من السيرفر',
             )
         ],
@@ -602,7 +578,8 @@ class _SupplierHistoryPageState extends State<SupplierHistoryPage> {
       if (raw is List) {
         for (var item in raw) {
           final map = _toMapString(item);
-          if (map['company_code'] == widget.companyCode) {
+
+if (map['company_code'] == widget.companyCode) {
             if (widget.selectedBranchCode != null && map['branch_code'] != widget.selectedBranchCode) continue;
             if (supplierName != null && map['supplier_name'] != supplierName) continue;
             final dateStr = map['date']?.toString() ?? '';

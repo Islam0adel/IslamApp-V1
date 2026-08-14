@@ -1,55 +1,148 @@
+# backend/app/routes/supplier.py
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
+
 from app.core.database import get_db
 from app.core.models import SupplierRecord
 from app.core.schemas import SupplierTransactionModel
 from app.core.sync import manager
+
 from typing import Optional
 import datetime
-import json
 import logging
+
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# ==========================================
-# 1. حفظ حركة المورد (إضافة أو تحديث)
-# ==========================================
+
+# ============================================================
+# Helper
+# ============================================================
+
+def serialize_supplier(
+    doc: SupplierRecord,
+    action: str | None = None,
+):
+    data = {
+        "doc_id": str(doc.id),
+        "company_code": doc.company_code,
+        "branch_code": doc.branch_code,
+        "store_code": doc.store_code,
+        "serial": doc.serial,
+        "date": doc.date,
+        "supplier_name": doc.supplier_name,
+        "payment_method": doc.payment_method,
+        "treasury": doc.treasury,
+        "is_add_to_store": doc.is_add_to_store,
+        "employee": doc.employee,
+        "items": doc.items,
+        "total_amount": doc.total_amount,
+        "paid_amount": doc.paid_amount,
+        "updated_at": (
+            doc.updated_at.isoformat()
+            if doc.updated_at
+            else None
+        ),
+        "is_deleted": bool(doc.is_deleted),
+    }
+
+    if action is not None:
+        data["action"] = action
+
+    return data
+
+
+# ============================================================
+# 1. حفظ حركة المورد
+#    إضافة أو تحديث
+# ============================================================
+
 @router.post("/save")
 async def save_supplier_transaction(
     data: SupplierTransactionModel,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     try:
-        # ✅ التحقق من doc_id وتحويله إلى int
+        # ------------------------------------------------------
+        # التحقق من doc_id
+        # ------------------------------------------------------
+
         doc_id_int = None
+
         if data.doc_id:
             try:
                 doc_id_int = int(data.doc_id)
-            except (ValueError, TypeError) as e:
-                raise HTTPException(status_code=400, detail=f"doc_id غير صالح: {data.doc_id}")
+            except (ValueError, TypeError):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"doc_id غير صالح: {data.doc_id}"
+                    ),
+                )
 
-        # ✅ تحويل الأصناف إلى JSON
+        # ------------------------------------------------------
+        # تحويل الأصناف إلى JSON
+        # ------------------------------------------------------
+
         try:
-            items_json = [item.dict() for item in data.items]
+            items_json = [
+                item.model_dump()
+                if hasattr(item, "model_dump")
+                else item.dict()
+                for item in data.items
+            ]
         except Exception as e:
-            logger.error(f"خطأ في تحويل items إلى JSON: {e}")
-            raise HTTPException(status_code=400, detail="بيانات الأصناف غير صالحة")
+            logger.error(
+                f"خطأ في تحويل items إلى JSON: {e}"
+            )
 
-        # ✅ البحث عن السجل إذا كان doc_id موجوداً
+            raise HTTPException(
+                status_code=400,
+                detail="بيانات الأصناف غير صالحة",
+            )
+
+        # ------------------------------------------------------
+        # البحث عن السجل
+        # ------------------------------------------------------
+
         if doc_id_int:
-            stmt = select(SupplierRecord).where(SupplierRecord.id == doc_id_int)
+
+            stmt = (
+                select(SupplierRecord)
+                .where(
+                    SupplierRecord.id
+                    == doc_id_int,
+
+                    SupplierRecord.company_code
+                    == data.company_code,
+                )
+            )
+
             result = await db.execute(stmt)
+
             existing = result.scalar_one_or_none()
+
             if not existing:
-                raise HTTPException(status_code=404, detail=f"السجل غير موجود (id={doc_id_int})")
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        f"السجل غير موجود "
+                        f"(id={doc_id_int})"
+                    ),
+                )
+
         else:
             existing = None
 
-        # ✅ إنشاء السجل أو تحديثه
+        # ------------------------------------------------------
+        # تحديث سجل موجود
+        # ------------------------------------------------------
+
         if existing:
-            # تحديث
+
             existing.branch_code = data.branch_code
             existing.store_code = data.store_code
             existing.serial = data.serial
@@ -62,11 +155,32 @@ async def save_supplier_transaction(
             existing.items = items_json
             existing.total_amount = data.total_amount
             existing.paid_amount = data.paid_amount
-            existing.updated_at = datetime.datetime.utcnow()
-            action = "update"
+
+            existing.updated_at = (
+                datetime.datetime.utcnow()
+            )
+
+            # لو السجل كان محذوفًا وتم حفظه مرة أخرى
+            was_deleted = bool(
+                existing.is_deleted
+            )
+
+            existing.is_deleted = False
+
+            action = (
+                "insert"
+                if was_deleted
+                else "update"
+            )
+
             record = existing
+
+        # ------------------------------------------------------
+        # إضافة جديدة
+        # ------------------------------------------------------
+
         else:
-            # إضافة جديدة
+
             new_record = SupplierRecord(
                 company_code=data.company_code,
                 branch_code=data.branch_code,
@@ -81,62 +195,94 @@ async def save_supplier_transaction(
                 items=items_json,
                 total_amount=data.total_amount,
                 paid_amount=data.paid_amount,
+                updated_at=datetime.datetime.utcnow(),
+                is_deleted=False,
             )
+
             db.add(new_record)
+
             action = "insert"
+
             record = new_record
 
-        # ✅ حفظ التغييرات في قاعدة البيانات
+        # ------------------------------------------------------
+        # حفظ
+        # ------------------------------------------------------
+
         try:
             await db.commit()
             await db.refresh(record)
+
         except Exception as e:
             await db.rollback()
-            logger.error(f"خطأ في حفظ قاعدة البيانات: {e}")
-            raise HTTPException(status_code=500, detail=f"فشل حفظ البيانات: {str(e)}")
 
-        record_id = str(record.id)
+            logger.error(
+                f"خطأ في حفظ قاعدة البيانات: {e}",
+                exc_info=True,
+            )
 
-        # 🔄 بث التغيير عبر WebSocket
+            raise HTTPException(
+                status_code=500,
+                detail=f"فشل حفظ البيانات: {str(e)}",
+            )
+
+        # ------------------------------------------------------
+        # WebSocket
+        # ------------------------------------------------------
+
         try:
-            await manager.broadcast(data.company_code, {
-                "type": "supplier",
-                "action": action,
-                "data": {
-                    "doc_id": record_id,
-                    "company_code": record.company_code,
-                    "branch_code": record.branch_code,
-                    "store_code": record.store_code,
-                    "serial": record.serial,
-                    "date": record.date,
-                    "supplier_name": record.supplier_name,
-                    "payment_method": record.payment_method,
-                    "treasury": record.treasury,
-                    "is_add_to_store": record.is_add_to_store,
-                    "employee": record.employee,
-                    "items": record.items,
-                    "total_amount": record.total_amount,
-                    "paid_amount": record.paid_amount,
-                    "updated_at": record.updated_at.isoformat() if record.updated_at else None,
-                }
-            })
-        except Exception as e:
-            logger.warning(f"فشل بث WebSocket: {e}")
+            await manager.broadcast(
+                data.company_code,
+                {
+                    "type": "supplier",
+                    "action": action,
+                    "data": serialize_supplier(
+                        record,
+                        action=action,
+                    ),
+                },
+            )
 
-        return {"status": "success", "doc_id": record_id}
+        except Exception as e:
+            logger.warning(
+                f"فشل بث WebSocket: {e}"
+            )
+
+        # ------------------------------------------------------
+        # Response
+        # ------------------------------------------------------
+
+        return {
+            "status": "success",
+            "doc_id": str(record.id),
+            "action": action,
+        }
 
     except HTTPException:
         raise
+
     except Exception as e:
         await db.rollback()
-        logger.error(f"خطأ غير متوقع في save_supplier_transaction: {e}", exc_info=True)
-        # ✅ إرجاع تفاصيل الخطأ للمطور (مع إخفاء التفاصيل الحساسة في الإنتاج)
-        raise HTTPException(status_code=500, detail=f"خطأ داخلي: {str(e)}")
+
+        logger.error(
+            "خطأ غير متوقع في "
+            "save_supplier_transaction: "
+            f"{e}",
+            exc_info=True,
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"خطأ داخلي: {str(e)}",
+        )
 
 
-# ==========================================
+# ============================================================
 # 2. جلب قائمة حركات الموردين
-# ==========================================
+#
+# المحذوف لا يظهر
+# ============================================================
+
 @router.get("/list/{company_code}")
 async def list_supplier_transactions(
     company_code: str,
@@ -144,189 +290,325 @@ async def list_supplier_transactions(
     supplier_name: Optional[str] = Query(None),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     try:
-        stmt = select(SupplierRecord).where(SupplierRecord.company_code == company_code)
-        if branch_code:
-            stmt = stmt.where(SupplierRecord.branch_code == branch_code)
-        if supplier_name:
-            stmt = stmt.where(SupplierRecord.supplier_name == supplier_name)
-        if start_date:
-            stmt = stmt.where(SupplierRecord.date >= start_date)
-        if end_date:
-            stmt = stmt.where(SupplierRecord.date <= end_date)
+        stmt = (
+            select(SupplierRecord)
+            .where(
+                SupplierRecord.company_code
+                == company_code,
 
-        stmt = stmt.order_by(desc(SupplierRecord.date), desc(SupplierRecord.serial))
+                SupplierRecord.is_deleted.is_(False),
+            )
+        )
+
+        if branch_code:
+            stmt = stmt.where(
+                SupplierRecord.branch_code
+                == branch_code
+            )
+
+        if supplier_name:
+            stmt = stmt.where(
+                SupplierRecord.supplier_name
+                == supplier_name
+            )
+
+        if start_date:
+            stmt = stmt.where(
+                SupplierRecord.date
+                >= start_date
+            )
+
+        if end_date:
+            stmt = stmt.where(
+                SupplierRecord.date
+                <= end_date
+            )
+
+        stmt = stmt.order_by(
+            desc(SupplierRecord.date),
+            desc(SupplierRecord.serial),
+        )
+
         result = await db.execute(stmt)
+
         docs = result.scalars().all()
 
-        results = []
-        for doc in docs:
-            results.append({
-                "doc_id": str(doc.id),
-                "company_code": doc.company_code,
-                "branch_code": doc.branch_code,
-                "store_code": doc.store_code,
-                "serial": doc.serial,
-                "date": doc.date,
-                "supplier_name": doc.supplier_name,
-                "payment_method": doc.payment_method,
-                "treasury": doc.treasury,
-                "is_add_to_store": doc.is_add_to_store,
-                "employee": doc.employee,
-                "items": doc.items,
-                "total_amount": doc.total_amount,
-                "paid_amount": doc.paid_amount,
-                "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
-            })
+        results = [
+            serialize_supplier(doc)
+            for doc in docs
+        ]
+
         return results
 
     except Exception as e:
-        logger.error(f"خطأ في list_supplier_transactions: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(
+            f"خطأ في list_supplier_transactions: {e}",
+            exc_info=True,
+        )
 
-# ==========================================
-# 4. جلب التحديثات التزايدية للموردين
-# ==========================================
+        raise HTTPException(
+            status_code=500,
+            detail=str(e),
+        )
+
+
+# ============================================================
+# 3. جلب التحديثات التزايدية للموردين
+#
+# مهم:
+# المحذوفات لا يتم استبعادها.
+# ============================================================
+
 @router.get("/changes/{company_code}")
 async def get_supplier_changes(
     company_code: str,
     since: str = Query(
         ...,
-        description="وقت آخر مزامنة بصيغة ISO 8601، مثال: 2026-08-11T14:30:00Z"
+        description=(
+            "وقت آخر مزامنة بصيغة ISO 8601 "
+            "مثال: 2026-08-11T14:30:00Z"
+        ),
     ),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     try:
-        # ------------------------------------------
-        # 1) تحويل since إلى datetime
-        # ------------------------------------------
-        since_dt = datetime.datetime.fromisoformat(
-            since.replace("Z", "+00:00")
+        # ------------------------------------------------------
+        # تحويل since
+        # ------------------------------------------------------
+
+        since_dt = (
+            datetime.datetime.fromisoformat(
+                since.replace(
+                    "Z",
+                    "+00:00",
+                )
+            )
         )
 
-        # ------------------------------------------
-        # 2) توحيد التوقيت إلى UTC
-        #    ثم إزالة timezone لأن updated_at
-        #    في PostgreSQL من نوع TIMESTAMP WITHOUT TIME ZONE
-        # ------------------------------------------
-        if since_dt.tzinfo is not None:
-            since_dt = since_dt.astimezone(datetime.timezone.utc)
-            since_dt = since_dt.replace(tzinfo=None)
+        # ------------------------------------------------------
+        # UTC
+        #
+        # updated_at = TIMESTAMP WITHOUT TIME ZONE
+        # ------------------------------------------------------
 
-        # ------------------------------------------
-        # 3) جلب التحديثات فقط منذ آخر مزامنة
-        # ------------------------------------------
+        if since_dt.tzinfo is not None:
+            since_dt = since_dt.astimezone(
+                datetime.timezone.utc
+            )
+
+            since_dt = since_dt.replace(
+                tzinfo=None
+            )
+
+        # ------------------------------------------------------
+        # جلب كل التغييرات
+        # بما فيها المحذوف.
+        # ------------------------------------------------------
+
         stmt = (
             select(SupplierRecord)
             .where(
-                SupplierRecord.company_code == company_code,
-                SupplierRecord.updated_at >= since_dt
+                SupplierRecord.company_code
+                == company_code,
+
+                SupplierRecord.updated_at
+                >= since_dt,
             )
-            .order_by(SupplierRecord.updated_at)
+            .order_by(
+                SupplierRecord.updated_at
+            )
         )
 
         result = await db.execute(stmt)
+
         docs = result.scalars().all()
 
-        # ------------------------------------------
-        # 4) تحويل النتائج إلى نفس تنسيق /list
-        # ------------------------------------------
         results = []
 
         for doc in docs:
-            results.append({
-                "doc_id": str(doc.id),
-                "company_code": doc.company_code,
-                "branch_code": doc.branch_code,
-                "store_code": doc.store_code,
-                "serial": doc.serial,
-                "date": doc.date,
-                "supplier_name": doc.supplier_name,
-                "payment_method": doc.payment_method,
-                "treasury": doc.treasury,
-                "is_add_to_store": doc.is_add_to_store,
-                "employee": doc.employee,
-                "items": doc.items,
-                "total_amount": doc.total_amount,
-                "paid_amount": doc.paid_amount,
-                "updated_at": (
-                    doc.updated_at.isoformat()
-                    if doc.updated_at
-                    else None
-                ),
-            })
+
+            if doc.is_deleted:
+                action = "delete"
+            else:
+                action = "update"
+
+            results.append(
+                serialize_supplier(
+                    doc,
+                    action=action,
+                )
+            )
 
         return results
 
     except ValueError:
         raise HTTPException(
             status_code=400,
-            detail="صيغة `since` غير صحيحة، استخدم ISO 8601"
+            detail=(
+                "صيغة `since` غير صحيحة، "
+                "استخدم ISO 8601"
+            ),
         )
 
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=str(e)
+            detail=str(e),
         )
-# ==========================================
-# 3. حذف حركة مورد
-# ==========================================
-@router.delete("/delete/{company_code}/{doc_id}")
+
+
+# ============================================================
+# 4. حذف حركة مورد
+#
+# Soft Delete
+# ============================================================
+
+@router.delete(
+    "/delete/{company_code}/{doc_id}"
+)
 async def delete_supplier_transaction(
     company_code: str,
     doc_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     try:
-        # تحويل doc_id إلى int
+        # ------------------------------------------------------
+        # تحويل doc_id
+        # ------------------------------------------------------
+
         try:
             doc_id_int = int(doc_id)
         except ValueError:
-            raise HTTPException(status_code=400, detail="doc_id غير صالح (يجب أن يكون رقماً)")
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "doc_id غير صالح "
+                    "(يجب أن يكون رقماً)"
+                ),
+            )
 
-        stmt = select(SupplierRecord).where(SupplierRecord.id == doc_id_int)
+        # ------------------------------------------------------
+        # البحث عن السجل
+        # ------------------------------------------------------
+
+        stmt = (
+            select(SupplierRecord)
+            .where(
+                SupplierRecord.id
+                == doc_id_int,
+
+                SupplierRecord.company_code
+                == company_code,
+            )
+        )
+
         result = await db.execute(stmt)
+
         existing = result.scalar_one_or_none()
+
         if not existing:
-            raise HTTPException(status_code=404, detail="Supplier record not found")
+            raise HTTPException(
+                status_code=404,
+                detail="Supplier record not found",
+            )
 
-        # حفظ البيانات قبل الحذف
-        deleted_data = {
-            "doc_id": str(existing.id),
-            "company_code": existing.company_code,
-            "branch_code": existing.branch_code,
-            "store_code": existing.store_code,
-            "serial": existing.serial,
-            "date": existing.date,
-            "supplier_name": existing.supplier_name,
-            "payment_method": existing.payment_method,
-            "treasury": existing.treasury,
-            "is_add_to_store": existing.is_add_to_store,
-            "employee": existing.employee,
-            "items": existing.items,
-            "total_amount": existing.total_amount,
-            "paid_amount": existing.paid_amount,
-            "updated_at": existing.updated_at.isoformat() if existing.updated_at else None,
-        }
+        # ------------------------------------------------------
+        # لو محذوف بالفعل
+        # ------------------------------------------------------
 
-        await db.delete(existing)
+        if existing.is_deleted:
+            return {
+                "status": "success",
+                "message": (
+                    "حركة المورد محذوفة بالفعل"
+                ),
+                "doc_id": str(existing.id),
+            }
+
+        # ------------------------------------------------------
+        # Soft Delete
+        # ------------------------------------------------------
+
+        existing.is_deleted = True
+
+        existing.updated_at = (
+            datetime.datetime.utcnow()
+        )
+
         await db.commit()
 
-        # بث الحذف
-        await manager.broadcast(company_code, {
-            "type": "supplier",
-            "action": "delete",
-            "data": deleted_data
-        })
+        await db.refresh(existing)
 
-        return {"status": "success"}
+        # ------------------------------------------------------
+        # بث الحذف للأجهزة المتصلة
+        # ------------------------------------------------------
+
+        await manager.broadcast(
+            company_code,
+            {
+                "type": "supplier",
+                "action": "delete",
+                "data": {
+                    "doc_id": str(existing.id),
+                    "company_code":
+                        existing.company_code,
+                    "branch_code":
+                        existing.branch_code,
+                    "store_code":
+                        existing.store_code,
+                    "serial":
+                        existing.serial,
+                    "date":
+                        existing.date,
+                    "supplier_name":
+                        existing.supplier_name,
+                    "payment_method":
+                        existing.payment_method,
+                    "treasury":
+                        existing.treasury,
+                    "is_add_to_store":
+                        existing.is_add_to_store,
+                    "employee":
+                        existing.employee,
+                    "items":
+                        existing.items,
+                    "total_amount":
+                        existing.total_amount,
+                    "paid_amount":
+                        existing.paid_amount,
+                    "updated_at": (
+                        existing.updated_at.isoformat()
+                        if existing.updated_at
+                        else None
+                    ),
+                    "is_deleted": True,
+                },
+            },
+        )
+
+        return {
+            "status": "success",
+            "message": (
+                "تم حذف حركة المورد بنجاح"
+            ),
+            "doc_id": str(existing.id),
+        }
 
     except HTTPException:
         raise
+
     except Exception as e:
         await db.rollback()
-        logger.error(f"خطأ في delete_supplier_transaction: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+
+        logger.error(
+            f"خطأ في delete_supplier_transaction: {e}",
+            exc_info=True,
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e),
+        )

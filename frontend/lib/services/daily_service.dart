@@ -1,184 +1,585 @@
 import 'dart:convert';
+
 import 'package:http/http.dart' as http;
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
 import '../core/constants.dart';
 
-class DailyService {
-  final String baseUrl = ApiConstants.baseUrl;
-  
-  // فتح صندوق الحركات المالي الخاص باليومية لـ Hive
-  final Box _transactionBox = Hive.box('daily_transactions_box');
 
-  // 1. جلب الأرصدة التراكمية من الخزائن المتكودة محلياً في الـ Hive
-  Future<Map<String, dynamic>> getDailySummaryLocal(String companyCode, {String? branchCode}) async {
+class DailyService {
+  // ============================================================
+  // API
+  // ============================================================
+
+  final String baseUrl = ApiConstants.baseUrl;
+
+
+  // ============================================================
+  // Hive
+  // ============================================================
+
+  final Box _transactionBox =
+      Hive.box('daily_transactions_box');
+
+
+  // ============================================================
+  // 1. حساب الأرصدة محلياً من Hive
+  // ============================================================
+
+  Future<Map<String, dynamic>> getDailySummaryLocal(
+    String companyCode, {
+    String? branchCode,
+  }) async {
     try {
-      final Box codingBox = Hive.box('coding_box');
-      final String localKey = "${companyCode}_safes";
-      
+      // --------------------------------------------------------
+      // قراءة الخزائن من التكويد المحلي
+      // --------------------------------------------------------
+
+      final Box codingBox =
+          Hive.box('coding_box');
+
+      final String localKey =
+          "${companyCode}_safes";
+
       List<String> activeTreasuries = [];
+
       if (codingBox.containsKey(localKey)) {
-        final dynamic rawData = codingBox.get(localKey);
+        final dynamic rawData =
+            codingBox.get(localKey);
+
         if (rawData is List) {
           activeTreasuries = rawData
-              .map((item) => item['name']?.toString() ?? "")
-              .where((name) => name.isNotEmpty)
+              .whereType<Map>()
+              .map(
+                (item) =>
+                    item['name']?.toString() ?? "",
+              )
+              .where(
+                (name) => name.isNotEmpty,
+              )
               .toList();
         }
       }
 
+
+      // --------------------------------------------------------
+      // إنشاء الأرصدة
+      // --------------------------------------------------------
+
       Map<String, double> treasuryBalances = {};
-      for (var name in activeTreasuries) {
+
+      for (final name in activeTreasuries) {
         treasuryBalances[name] = 0.0;
       }
 
-      List<dynamic> allTx = _transactionBox.values.toList();
-      
-      // 🌟 التعديل السحري: ترتيب آمن جداً يمنع الـ Crash لو السيريال مش رقم صريح
-      allTx.sort((a, b) => 
-        (int.tryParse(a['serial']?.toString() ?? '0') ?? 0)
-        .compareTo(int.tryParse(b['serial']?.toString() ?? '0') ?? 0)
+
+      // --------------------------------------------------------
+      // قراءة كل الحركات من Hive
+      // --------------------------------------------------------
+
+      final List<dynamic> allTx =
+          _transactionBox.values.toList();
+
+
+      // --------------------------------------------------------
+      // ترتيب آمن بالسيريال
+      // --------------------------------------------------------
+
+      allTx.sort(
+        (a, b) {
+          final int aSerial =
+              int.tryParse(
+                    a is Map
+                        ? a['serial']?.toString() ?? '0'
+                        : '0',
+                  ) ??
+                  0;
+
+          final int bSerial =
+              int.tryParse(
+                    b is Map
+                        ? b['serial']?.toString() ?? '0'
+                        : '0',
+                  ) ??
+                  0;
+
+          return aSerial.compareTo(
+            bSerial,
+          );
+        },
       );
 
-      for (var tx in allTx) {
-        if (tx['company_code'] == companyCode) {
-          
-          // 👈 تم التعديل: الفلترة باستخدام branch_code وتجاهل كلمات التحديد العام
-          if (branchCode != null && !['الكل', 'كل الفروع', 'all', ''].contains(branchCode) && tx['branch_code'] != branchCode) {
-            continue; 
-          }
 
-          String tName = tx['treasury'] ?? "";
-          double amt = double.tryParse(tx['amount']?.toString() ?? '0.0') ?? 0.0;
-          String type = tx['type'] ?? "وارد";
+      // --------------------------------------------------------
+      // حساب الأرصدة
+      // --------------------------------------------------------
 
-          if (treasuryBalances.containsKey(tName)) {
-            if (type == "وارد") {
-              treasuryBalances[tName] = treasuryBalances[tName]! + amt;
-            } else if (type == "صادر") {
-              treasuryBalances[tName] = treasuryBalances[tName]! - amt;
-            }
+      for (final rawTx in allTx) {
+        if (rawTx is! Map) {
+          continue;
+        }
+
+        final tx =
+            Map<String, dynamic>.from(
+          rawTx,
+        );
+
+
+        // ======================================================
+        // تجاهل السجلات المحذوفة
+        // ======================================================
+
+        if (tx['is_deleted'] == true) {
+          continue;
+        }
+
+
+        // ======================================================
+        // التأكد من الشركة
+        // ======================================================
+
+        if (tx['company_code'] != companyCode) {
+          continue;
+        }
+
+
+        // ======================================================
+        // فلترة الفرع
+        // ======================================================
+
+        if (branchCode != null &&
+            ![
+              'الكل',
+              'كل الفروع',
+              'all',
+              '',
+            ].contains(branchCode) &&
+            tx['branch_code']?.toString() !=
+                branchCode) {
+          continue;
+        }
+
+
+        // ======================================================
+        // بيانات الحركة
+        // ======================================================
+
+        final String treasury =
+            tx['treasury']?.toString() ?? "";
+
+        final double amount =
+            double.tryParse(
+                  tx['amount']?.toString() ?? '0.0',
+                ) ??
+                0.0;
+
+        final String type =
+            tx['type']?.toString() ?? "وارد";
+
+
+        // ======================================================
+        // إضافة / خصم
+        // ======================================================
+
+        if (treasuryBalances.containsKey(
+          treasury,
+        )) {
+          if (type == "وارد") {
+            treasuryBalances[treasury] =
+                treasuryBalances[treasury]! +
+                    amount;
+          } else if (type == "صادر") {
+            treasuryBalances[treasury] =
+                treasuryBalances[treasury]! -
+                    amount;
           }
         }
       }
 
-      // 🌟 تحديث الـ Hive اللحظي من قلب الدالة عشان الشاشة تقرأ الرصيد فوراً وميصفرش
-      await Hive.box('daily_transactions_box').put("${companyCode}_balances", treasuryBalances);
+
+      // --------------------------------------------------------
+      // حفظ الأرصدة محلياً
+      // --------------------------------------------------------
+
+      await _transactionBox.put(
+        "${companyCode}_balances",
+        treasuryBalances,
+      );
+
 
       return {
         "status": "success",
         "balances": treasuryBalances,
       };
     } catch (e) {
-      print("خطأ في حساب الأرصدة: $e");
-      return {"status": "error", "balances": {}};
+      print(
+        "❌ خطأ في حساب الأرصدة: $e",
+      );
+
+      return {
+        "status": "error",
+        "balances": {},
+      };
     }
   }
 
-  // جلب جميع اليوميات من السيرفر (بدون تحديد نطاق تاريخ)
-  Future<List<dynamic>> fetchAllTransactions(String companyCode) async {
+
+  // ============================================================
+  // 2. جلب جميع اليوميات من السيرفر
+  //    Full Sync - جهاز جديد فقط
+  // ============================================================
+
+  Future<List<dynamic>> fetchAllTransactions(
+    String companyCode,
+  ) async {
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl/transactions/list/$companyCode?start_date=2020-01-01&end_date=2100-12-31'),
+        Uri.parse(
+          '$baseUrl/transactions/list/$companyCode'
+          '?start_date=2020-01-01'
+          '&end_date=2100-12-31',
+        ),
       );
-      if (response.statusCode == 200) {
-        List<dynamic> serverData = jsonDecode(response.body);
-        // تخزين في Hive بنفس المفاتيح المستخدمة (branch_code + serial)
-        for (var item in serverData) {
-          String bCode = item['branch_code']?.toString() ?? '1';
-          await _transactionBox.put("branch_${bCode}_${item['serial']}", item);
-        }
-        // تحديث الأرصدة
-        await getDailySummaryLocal(companyCode);
-        print("✅ تم جلب ${serverData.length} يومية من السيرفر وتخزينها محلياً");
-        return serverData;
-      } else {
-        throw 'فشل جلب اليوميات من السيرفر';
-      }
-    } catch (e) {
-      print("❌ فشل جلب جميع اليوميات: $e");
-      rethrow;
-    }
-  }
 
-  // ✅ المزامنة التزايدية لليوميات (تجلب فقط التغييرات منذ آخر مزامنة)
- // ✅ المزامنة التزايدية لليوميات (مع دعم lastSync وحل مشكلة التوقيت UTC)
-// lib/services/daily_service.dart
-// ✅ المزامنة التزايدية لليوميات (مع حل مؤقت لطرح 5 دقائق)
-Future<void> syncChangesFromServer(String companyCode, [String? lastSync]) async {
-    final prefs = await SharedPreferences.getInstance();
-    final lastSyncKey = '${ApiConstants.LAST_SYNC_DAILY}$companyCode';
-    final lastSyncValue = lastSync ?? prefs.getString(lastSyncKey);
-
-    if (lastSyncValue == null) {
-      print('📥 لا يوجد lastSync لليوميات، جاري التحميل الكامل...');
-      await syncAllTransactions(companyCode);
-      await prefs.setString(lastSyncKey, DateTime.now().toUtc().toIso8601String());
-      return;
-    }
-
-    try {
-      // نأخذ وقت بداية المزامنة، وليس وقت نهايتها، حتى لا نفقد
-      // أي تغيير حدث أثناء تنفيذ الطلب.
-      final syncStartedAt = DateTime.now().toUtc();
-      DateTime sinceDt = DateTime.parse(lastSyncValue).toUtc();
-
-      // هامش بسيط لتغطية فروق التوقيت بين العميل والخادم.
-      sinceDt = sinceDt.subtract(const Duration(minutes: 5));
-      final effectiveSince = sinceDt.toIso8601String();
-
-      print('📡 يوميات: جلب التغييرات منذ $effectiveSince');
-
-      final response = await http.get(
-        Uri.parse('$baseUrl/transactions/changes/$companyCode?since=$effectiveSince'),
-      );
 
       if (response.statusCode != 200) {
         throw Exception(
-          'فشل مزامنة اليوميات. HTTP ${response.statusCode}: ${response.body}',
+          'فشل جلب اليوميات '
+          'HTTP ${response.statusCode}: '
+          '${response.body}',
         );
       }
 
-      final List<dynamic> changes = jsonDecode(response.body);
 
-      for (final item in changes) {
-        if (item is! Map) continue;
+      final List<dynamic> serverData =
+          jsonDecode(response.body);
 
-        final map = Map<String, dynamic>.from(item);
-        final action = map['action']?.toString() ?? 'update';
-        final branchCode = map['branch_code']?.toString() ?? '1';
-        final serial = map['serial']?.toString();
 
-        if (serial == null) {
-          throw Exception('تحديث يومية بدون serial');
+      // --------------------------------------------------------
+      // حفظ البيانات
+      // --------------------------------------------------------
+
+      for (final rawItem in serverData) {
+        if (rawItem is! Map) {
+          continue;
         }
 
-        final key = 'branch_${branchCode}_$serial';
+        final Map<String, dynamic> item =
+            Map<String, dynamic>.from(
+          rawItem,
+        );
 
-        if (action == 'delete') {
-          await _transactionBox.delete(key);
-        } else {
-          // remove action حتى لا تدخل كحقل في البيانات المحلية لو أرسله السيرفر.
-          map.remove('action');
-          await _transactionBox.put(key, map);
+
+        // ------------------------------------------------------
+        // لو المحذوف وصل لأي سبب، لا نحفظه
+        // ------------------------------------------------------
+
+        if (item['is_deleted'] == true) {
+          continue;
         }
+
+
+        final String branchCode =
+            item['branch_code']
+                    ?.toString() ??
+                '1';
+
+        final String serial =
+            item['serial']?.toString() ?? '';
+
+
+        if (serial.isEmpty) {
+          continue;
+        }
+
+
+        final String key =
+            "branch_${branchCode}_$serial";
+
+
+        await _transactionBox.put(
+          key,
+          item,
+        );
       }
 
-      await getDailySummaryLocal(companyCode);
 
-      // نحفظ وقت بداية المزامنة فقط بعد نجاح تطبيق كل التحديثات.
-      // أي تغيير حصل أثناء المزامنة سيظهر في المرة التالية.
-      await prefs.setString(lastSyncKey, syncStartedAt.toIso8601String());
+      // --------------------------------------------------------
+      // تحديث الأرصدة
+      // --------------------------------------------------------
 
-      print('✅ تمت مزامنة ${changes.length} تحديث لليوميات');
+      await getDailySummaryLocal(
+        companyCode,
+      );
+
+
+      print(
+        "✅ تم جلب ${serverData.length} يومية "
+        "من السيرفر وتخزينها محلياً",
+      );
+
+
+      return serverData;
     } catch (e) {
-      print('❌ فشل مزامنة اليوميات: $e');
-      // مهم: لا نحدث lastSync عند الفشل.
+      print(
+        "❌ فشل جلب جميع اليوميات: $e",
+      );
+
       rethrow;
     }
   }
 
-  // 2. دالة حفظ أو تعديل حركة (ترسل للسيرفر وتحدث الـ Hive ذكياً)
+
+  // ============================================================
+  // 3. المزامنة التزايدية
+  //
+  // lastSync موجود
+  //      ↓
+  // changes فقط
+  //
+  // delete
+  //      ↓
+  // حذف من Hive
+  //
+  // update / insert
+  //      ↓
+  // تحديث Hive
+  // ============================================================
+
+  Future<void> syncChangesFromServer(
+    String companyCode, [
+    String? lastSync,
+  ]) async {
+    final prefs =
+        await SharedPreferences.getInstance();
+
+    final String lastSyncKey =
+        '${ApiConstants.LAST_SYNC_DAILY}$companyCode';
+
+    final String? lastSyncValue =
+        lastSync ??
+        prefs.getString(
+          lastSyncKey,
+        );
+
+
+    // ==========================================================
+    // لا يوجد lastSync
+    // ==========================================================
+
+    if (lastSyncValue == null ||
+        lastSyncValue.isEmpty) {
+      print(
+        '📥 لا يوجد lastSync لليوميات، '
+        'جاري التحميل الكامل...',
+      );
+
+      await syncAllTransactions(
+        companyCode,
+      );
+
+      await prefs.setString(
+        lastSyncKey,
+        DateTime.now()
+            .toUtc()
+            .toIso8601String(),
+      );
+
+      return;
+    }
+
+
+    try {
+      // --------------------------------------------------------
+      // وقت بداية المزامنة
+      //
+      // نستخدمه كحد أعلى للتحديثات التي نعتبرها مكتملة.
+      // أي تغيير يحصل بعده سيظهر في المرة القادمة.
+      // --------------------------------------------------------
+
+      final DateTime syncStartedAt =
+          DateTime.now().toUtc();
+
+
+      // --------------------------------------------------------
+      // آخر وقت مزامنة
+      //
+      // Backend يستقبل UTC بدون timezone داخل SQL.
+      // --------------------------------------------------------
+
+      DateTime sinceDt = DateTime.parse(lastSyncValue).toUtc();
+
+sinceDt = sinceDt.subtract(
+  const Duration(minutes: 1),
+);
+
+final String effectiveSince =
+    sinceDt.toIso8601String();
+
+
+      print(
+        '📡 اليوميات: جلب التغييرات منذ '
+        '$effectiveSince',
+      );
+
+
+      // --------------------------------------------------------
+      // Request
+      // --------------------------------------------------------
+
+      final response = await http.get(
+        Uri.parse(
+          '$baseUrl/transactions/changes/'
+          '$companyCode?since=$effectiveSince',
+        ),
+      );
+
+
+      if (response.statusCode != 200) {
+        throw Exception(
+          'فشل مزامنة اليوميات. '
+          'HTTP ${response.statusCode}: '
+          '${response.body}',
+        );
+      }
+
+
+      // --------------------------------------------------------
+      // Decode
+      // --------------------------------------------------------
+
+      final List<dynamic> changes =
+          jsonDecode(response.body);
+
+
+      // --------------------------------------------------------
+      // تطبيق التغييرات
+      // --------------------------------------------------------
+
+      for (final rawItem in changes) {
+        if (rawItem is! Map) {
+          continue;
+        }
+
+
+        final Map<String, dynamic> map =
+            Map<String, dynamic>.from(
+          rawItem,
+        );
+
+
+        final String action =
+            map['action']
+                    ?.toString() ??
+                'update';
+
+
+        final String branchCode =
+            map['branch_code']
+                    ?.toString() ??
+                '1';
+
+
+        final String? serial =
+            map['serial']?.toString();
+
+
+        if (serial == null ||
+            serial.isEmpty) {
+          throw Exception(
+            'تحديث يومية بدون serial',
+          );
+        }
+
+
+        final String key =
+            'branch_${branchCode}_$serial';
+
+
+        // ======================================================
+        // DELETE
+        // ======================================================
+
+        if (action == 'delete' ||
+            map['is_deleted'] == true) {
+          await _transactionBox.delete(
+            key,
+          );
+
+          print(
+            '🗑️ تم حذف اليومية [$key] من Hive',
+          );
+
+          continue;
+        }
+
+
+        // ======================================================
+        // INSERT / UPDATE
+        // ======================================================
+
+        map.remove('action');
+
+
+        // لا نحتاج حفظ is_deleted=false
+        // لكن تركه مش مشكلة.
+        // نخليه لضمان وضوح حالة السجل محلياً.
+        map['is_deleted'] = false;
+
+
+        await _transactionBox.put(
+          key,
+          map,
+        );
+
+
+        print(
+          '✅ تم تحديث اليومية [$key] في Hive',
+        );
+      }
+
+
+      // --------------------------------------------------------
+      // تحديث الأرصدة
+      // --------------------------------------------------------
+
+      await getDailySummaryLocal(
+        companyCode,
+      );
+
+
+      // --------------------------------------------------------
+      // تحديث lastSync فقط بعد نجاح العملية كاملة
+      // --------------------------------------------------------
+
+      await prefs.setString(
+        lastSyncKey,
+        syncStartedAt
+            .toIso8601String(),
+      );
+
+
+      print(
+        '✅ تمت مزامنة '
+        '${changes.length} تحديث لليوميات',
+      );
+    } catch (e) {
+      print(
+        '❌ فشل مزامنة اليوميات: $e',
+      );
+
+      // مهم:
+      // لا نغير lastSync عند الفشل.
+      rethrow;
+    }
+  }
+
+
+  // ============================================================
+  // 4. حفظ / تعديل حركة
+  // ============================================================
+
   Future<Map<String, dynamic>> saveTransaction({
     required String companyCode,
     required int serial,
@@ -189,206 +590,721 @@ Future<void> syncChangesFromServer(String companyCode, [String? lastSync]) async
     required String date,
     required String type,
     String? employee,
-    required String branchCode, // 👈 تم التعديل هنا
+    required String branchCode,
   }) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/transactions/save'),
-        headers: {'Content-Type': 'application/json'},
+        Uri.parse(
+          '$baseUrl/transactions/save',
+        ),
+        headers: {
+          'Content-Type':
+              'application/json',
+        },
         body: jsonEncode({
-          'company_code': companyCode,
-          'serial': serial, 
-          'treasury': treasury,
-          'amount': amount,
-          'statement': statement,
-          'category': category,
-          'date': date,
-          'type': type,
-          'employee': employee ?? "غير محدد",
-          'branch_code': branchCode, // 👈 تم التعديل هنا
+          'company_code':
+              companyCode,
+
+          'serial':
+              serial,
+
+          'treasury':
+              treasury,
+
+          'amount':
+              amount,
+
+          'statement':
+              statement,
+
+          'category':
+              category,
+
+          'date':
+              date,
+
+          'type':
+              type,
+
+          'employee':
+              employee ??
+              "غير محدد",
+
+          'branch_code':
+              branchCode,
         }),
       );
 
-      if (response.statusCode == 200) {
-        final Map<String, dynamic> result = jsonDecode(response.body);
-        if (result['status'] == 'success') {
-          int assignedSerial = result['serial'];
 
-          Map<String, dynamic> transactionData = {
-            'company_code': companyCode,
-            'serial': assignedSerial,
-            'treasury': treasury,
-            'amount': amount,
-            'statement': statement,
-            'category': category,
-            'date': date,
-            'type': type,
-            'employee': employee ?? "غير محدد",
-            'branch_code': branchCode, // 👈 تم التعديل هنا
-          };
-          
-          // 👈 تم التعديل: توحيد الآي دي ليتطابق مع ما تم إنشاؤه في الباك إند
-          String uniqueId = "branch_${branchCode}_$assignedSerial";
-          print("🚀 Sending to server: company_code=$companyCode, branch_code=$branchCode");
-          // تحديث الإذن محلياً في الـ Hive
-          await _transactionBox.put(uniqueId, transactionData);
-
-          // 🌟 هنمنع الدالة دي تشتغل لو بنعدل إذن قديم عشان متسحبش كل الأذون اللي بعده من الفايربيز
-          if (serial == 0) {
-            // تشغيل المزامنة التلقائية التراكمية في حالة الإضافة الجديدة فقط
-            // await syncCacheFromServer(companyCode, assignedSerial);
-          }
-
-          return {"success": true, "serial": assignedSerial};
-        }
+      if (response.statusCode != 200) {
+        throw Exception(
+          'HTTP ${response.statusCode}: '
+          '${response.body}',
+        );
       }
-      throw 'حدث خطأ أثناء الحفظ بالسيرفر';
-    } catch (e) {
-      throw 'فشل عملية الحفظ: $e';
-    }
-  }
 
-  // 3. المزامنة الذكية التراكمية بناءً على رقم إذن معين لتحديث باقي المستخدمين
-  Future<void> syncCacheFromServer(String companyCode, int fromSerial) async {
-    try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/transactions/updates/$companyCode/$fromSerial'),
+
+      final Map<String, dynamic> result =
+          jsonDecode(
+        response.body,
       );
 
-      if (response.statusCode == 200) {
-        List<dynamic> updates = jsonDecode(response.body);
-        for (var item in updates) {
-          if (item is Map && item.containsKey('serial')) {
-            // 👈 تم التعديل: إنشاء الآي دي بناءً على كود الفرع القادم من السيرفر
-            String bCode = item['branch_code']?.toString() ?? "1";
-            await _transactionBox.put("branch_${bCode}_${item['serial']}", Map<String, dynamic>.from(item));
-          }
-        }
+
+      if (result['status'] != 'success') {
+        throw Exception(
+          result['message'] ??
+              'فشل حفظ الحركة',
+        );
       }
+
+
+      final int assignedSerial =
+          (result['serial'] as num?)?.toInt() ??
+              serial;
+
+
+      // --------------------------------------------------------
+      // بيانات محلية
+      // --------------------------------------------------------
+
+      final Map<String, dynamic>
+          transactionData = {
+        'company_code':
+            companyCode,
+
+        'serial':
+            assignedSerial,
+
+        'treasury':
+            treasury,
+
+        'amount':
+            amount,
+
+        'statement':
+            statement,
+
+        'category':
+            category,
+
+        'date':
+            date,
+
+        'type':
+            type,
+
+        'employee':
+            employee ??
+            "غير محدد",
+
+        'branch_code':
+            branchCode,
+
+        'is_deleted':
+            false,
+      };
+
+
+      final String uniqueId =
+          "branch_${branchCode}_$assignedSerial";
+
+
+      print(
+        "🚀 Sending to server: "
+        "company_code=$companyCode, "
+        "branch_code=$branchCode",
+      );
+
+
+      // --------------------------------------------------------
+      // تحديث محلي فوري
+      // --------------------------------------------------------
+
+      await _transactionBox.put(
+        uniqueId,
+        transactionData,
+      );
+
+
+      return {
+        "success": true,
+        "serial": assignedSerial,
+      };
     } catch (e) {
-      print("خطأ في المزامنة الخلفية: $e");
+      throw Exception(
+        'فشل عملية الحفظ: $e',
+      );
     }
   }
 
-  // 4. جلب سجل الأذون التاريخي (ذكياً من Hive أولاً ثم فلترة بالتاريخ والفرع)
-  Future<List<dynamic>> getTransactionsHistory(String companyCode, String startDate, String endDate, {String? branchCode}) async {
-    try {
-      List<dynamic> resultData = [];
 
-      if (_transactionBox.isNotEmpty) {
-        List<dynamic> localData = _transactionBox.values
-            .where((tx) =>
-                tx['company_code'] == companyCode &&
-                tx['date'].toString().compareTo(startDate) >= 0 &&
-                tx['date'].toString().compareTo(endDate) <= 0)
-            .toList();
-        
-        if (localData.isNotEmpty) {
-          resultData = localData;
-        }
+  // ============================================================
+  // 5. مزامنة قديمة حسب Serial
+  //
+  // للتوافق مع أي كود قديم.
+  // ============================================================
+
+  Future<void> syncCacheFromServer(
+    String companyCode,
+    int fromSerial,
+  ) async {
+    try {
+      final response = await http.get(
+        Uri.parse(
+          '$baseUrl/transactions/updates/'
+          '$companyCode/$fromSerial',
+        ),
+      );
+
+
+      if (response.statusCode != 200) {
+        return;
       }
 
-      if (resultData.isEmpty) {
-        final response = await http.get(
-          Uri.parse('$baseUrl/transactions/list/$companyCode?start_date=$startDate&end_date=$endDate'),
+
+      final List<dynamic> updates =
+          jsonDecode(
+        response.body,
+      );
+
+
+      for (final rawItem in updates) {
+        if (rawItem is! Map) {
+          continue;
+        }
+
+
+        final Map<String, dynamic> item =
+            Map<String, dynamic>.from(
+          rawItem,
         );
 
-        if (response.statusCode == 200) {
-          List<dynamic> serverData = jsonDecode(response.body);
-          for (var item in serverData) {
-            // 👈 تم التعديل: إنشاء الآي دي بناءً على كود الفرع 
-            String bCode = item['branch_code']?.toString() ?? "1";
-            await _transactionBox.put("branch_${bCode}_${item['serial']}", item);
-          }
-          resultData = serverData;
-        } else {
-          throw 'خطأ من السيرفر: ${response.statusCode}';
+
+        if (!item.containsKey('serial')) {
+          continue;
+        }
+
+
+        // ------------------------------------------------------
+        // المحذوف
+        // ------------------------------------------------------
+
+        if (item['is_deleted'] == true ||
+            item['action'] == 'delete') {
+          final String bCode =
+              item['branch_code']
+                      ?.toString() ??
+                  "1";
+
+          final String serial =
+              item['serial']
+                  .toString();
+
+          await _transactionBox.delete(
+            "branch_${bCode}_$serial",
+          );
+
+          continue;
+        }
+
+
+        // ------------------------------------------------------
+        // العادي
+        // ------------------------------------------------------
+
+        final String bCode =
+            item['branch_code']
+                    ?.toString() ??
+                "1";
+
+
+        await _transactionBox.put(
+          "branch_${bCode}_${item['serial']}",
+          item,
+        );
+      }
+    } catch (e) {
+      print(
+        "⚠️ خطأ في المزامنة الخلفية: $e",
+      );
+    }
+  }
+
+
+  // ============================================================
+  // 6. جلب التاريخ
+  //
+  // Hive أولاً
+  // ثم السيرفر عند الحاجة
+  // ============================================================
+
+  Future<List<dynamic>> getTransactionsHistory(
+    String companyCode,
+    String startDate,
+    String endDate, {
+    String? branchCode,
+  }) async {
+    try {
+      List<dynamic> resultData =
+          [];
+
+
+      // --------------------------------------------------------
+      // قراءة من Hive
+      // --------------------------------------------------------
+
+      if (_transactionBox.isNotEmpty) {
+        final List<dynamic> localData =
+            _transactionBox.values
+                .where(
+                  (tx) {
+                    if (tx is! Map) {
+                      return false;
+                    }
+
+                    if (tx['company_code'] !=
+                        companyCode) {
+                      return false;
+                    }
+
+                    if (tx['is_deleted'] ==
+                        true) {
+                      return false;
+                    }
+
+                    final String txDate =
+                        tx['date']
+                                ?.toString() ??
+                            '';
+
+                    return txDate
+                                .compareTo(
+                                  startDate,
+                                ) >=
+                            0 &&
+                        txDate
+                                .compareTo(
+                                  endDate,
+                                ) <=
+                            0;
+                  },
+                )
+                .toList();
+
+
+        if (localData.isNotEmpty) {
+          resultData =
+              localData;
         }
       }
 
-      // 🌟 السحر هنا: فلترة الهيستوري بناءً على كود الفرع
-      if (branchCode != null && !['الكل', 'كل الفروع', 'all', ''].contains(branchCode)) {
-        resultData = resultData.where((tx) => tx['branch_code'] == branchCode).toList();
+
+      // --------------------------------------------------------
+      // لو مفيش محلي
+      // نجيب من السيرفر
+      // --------------------------------------------------------
+
+      if (resultData.isEmpty) {
+        final response =
+            await http.get(
+          Uri.parse(
+            '$baseUrl/transactions/list/'
+            '$companyCode'
+            '?start_date=$startDate'
+            '&end_date=$endDate',
+          ),
+        );
+
+
+        if (response.statusCode != 200) {
+          throw Exception(
+            'خطأ من السيرفر: '
+            '${response.statusCode}',
+          );
+        }
+
+
+        final List<dynamic>
+            serverData =
+            jsonDecode(
+          response.body,
+        );
+
+
+        for (final rawItem
+            in serverData) {
+          if (rawItem is! Map) {
+            continue;
+          }
+
+
+          final Map<String, dynamic>
+              item =
+              Map<String, dynamic>.from(
+            rawItem,
+          );
+
+
+          if (item['is_deleted'] ==
+              true) {
+            continue;
+          }
+
+
+          final String bCode =
+              item['branch_code']
+                      ?.toString() ??
+                  "1";
+
+
+          final String serial =
+              item['serial']
+                      ?.toString() ??
+                  '';
+
+
+          if (serial.isEmpty) {
+            continue;
+          }
+
+
+          await _transactionBox.put(
+            "branch_${bCode}_$serial",
+            item,
+          );
+        }
+
+
+        resultData =
+            serverData
+                .where(
+                  (item) =>
+                      item is Map &&
+                      item['is_deleted'] != true,
+                )
+                .toList();
       }
+
+
+      // --------------------------------------------------------
+      // فلترة الفرع
+      // --------------------------------------------------------
+
+      if (branchCode != null &&
+          ![
+            'الكل',
+            'كل الفروع',
+            'all',
+            '',
+          ].contains(branchCode)) {
+        resultData =
+            resultData
+                .where(
+                  (tx) =>
+                      tx is Map &&
+                      tx['branch_code']
+                              ?.toString() ==
+                          branchCode,
+                )
+                .toList();
+      }
+
 
       return resultData;
-
     } catch (e) {
-      // حائط الصد عند انقطاع الإنترنت (مع تطبيق فلترة الفروع أيضاً)
-      List<dynamic> fallbackData = _transactionBox.values
-          .where((tx) =>
-              tx['company_code'] == companyCode &&
-              tx['date'].toString().compareTo(startDate) >= 0 &&
-              tx['date'].toString().compareTo(endDate) <= 0)
-          .toList();
+      // --------------------------------------------------------
+      // Offline fallback
+      // --------------------------------------------------------
 
-      if (branchCode != null && !['الكل', 'كل الفروع', 'all', ''].contains(branchCode)) {
-        fallbackData = fallbackData.where((tx) => tx['branch_code'] == branchCode).toList();
+      List<dynamic> fallbackData =
+          _transactionBox.values
+              .where(
+                (tx) {
+                  if (tx is! Map) {
+                    return false;
+                  }
+
+                  if (tx['company_code'] !=
+                      companyCode) {
+                    return false;
+                  }
+
+                  if (tx['is_deleted'] ==
+                      true) {
+                    return false;
+                  }
+
+                  final String txDate =
+                      tx['date']
+                              ?.toString() ??
+                          '';
+
+                  return txDate
+                              .compareTo(
+                                startDate,
+                              ) >=
+                          0 &&
+                      txDate
+                              .compareTo(
+                                endDate,
+                              ) <=
+                          0;
+                },
+              )
+              .toList();
+
+
+      if (branchCode != null &&
+          ![
+            'الكل',
+            'كل الفروع',
+            'all',
+            '',
+          ].contains(branchCode)) {
+        fallbackData =
+            fallbackData
+                .where(
+                  (tx) =>
+                      tx is Map &&
+                      tx['branch_code']
+                              ?.toString() ==
+                          branchCode,
+                )
+                .toList();
       }
+
+
       return fallbackData;
     }
   }
 
-  // 5. عند الحذف
-  Future<void> deleteTransaction(String companyCode, int serial, String branchCode) async { // 👈 تم التعديل هنا
+
+  // ============================================================
+  // 7. حذف حركة
+  // ============================================================
+
+  Future<void> deleteTransaction(
+    String companyCode,
+    int serial,
+    String branchCode,
+  ) async {
     try {
-      // 👈 تم التعديل: الرابط بيستقبل الكود بدل الاسم
-      final response = await http.delete(
-        Uri.parse('$baseUrl/transactions/delete/$companyCode/$branchCode/$serial'),
+      final response =
+          await http.delete(
+        Uri.parse(
+          '$baseUrl/transactions/delete/'
+          '$companyCode/'
+          '$branchCode/'
+          '$serial',
+        ),
       );
 
-      if (response.statusCode == 200) {
-        // 👈 تم التعديل: التعديل المحلي المباشر بناءً على المعرف المطابق للباك إند
-        String docId = "branch_${branchCode}_$serial";
-        
-        await _transactionBox.delete(docId); // حذف محلي فوراً
-        
-        // تحديث الأرصدة المحلية فوراً لتسمع في الواجهات بناءً على البيانات الجديدة في الـ Hive
-        await getDailySummaryLocal(companyCode); 
-      } else {
-        throw 'فشل حذف الحركة من السيرفر';
+
+      if (response.statusCode != 200) {
+        throw Exception(
+          'فشل حذف الحركة من السيرفر. '
+          'HTTP ${response.statusCode}: '
+          '${response.body}',
+        );
       }
+
+
+      // --------------------------------------------------------
+      // السيرفر عمل Soft Delete بنجاح
+      // نحذف محليًا فورًا
+      // --------------------------------------------------------
+
+      final String docId =
+          "branch_${branchCode}_$serial";
+
+
+      await _transactionBox.delete(
+        docId,
+      );
+
+
+      // --------------------------------------------------------
+      // تحديث الأرصدة
+      // --------------------------------------------------------
+
+      await getDailySummaryLocal(
+        companyCode,
+      );
     } catch (e) {
-      throw 'خطأ أثناء الحذف: $e';
+      throw Exception(
+        'خطأ أثناء الحذف: $e',
+      );
     }
   }
 
-  // 6. جلب آخر سيريال محلياً
-  int getLastLocalSerial(String companyCode) {
-    var localTx = _transactionBox.values
-        .where((e) => e is Map && e['company_code'] == companyCode)
-        .toList();
-    if (localTx.isEmpty) return 0;
-    localTx.sort((a, b) => (a['serial'] as int).compareTo(b['serial'] as int));
-    return localTx.last['serial'] as int;
+
+  // ============================================================
+  // 8. آخر Serial محلي
+  // ============================================================
+
+  int getLastLocalSerial(
+    String companyCode,
+  ) {
+    final List<dynamic> localTx =
+        _transactionBox.values
+            .where(
+              (e) =>
+                  e is Map &&
+                  e['company_code'] ==
+                      companyCode &&
+                  e['is_deleted'] != true,
+            )
+            .toList();
+
+
+    if (localTx.isEmpty) {
+      return 0;
+    }
+
+
+    localTx.sort(
+      (a, b) {
+        final int aSerial =
+            int.tryParse(
+                  a['serial']
+                          ?.toString() ??
+                      '0',
+                ) ??
+                0;
+
+        final int bSerial =
+            int.tryParse(
+                  b['serial']
+                          ?.toString() ??
+                      '0',
+                ) ??
+                0;
+
+        return aSerial.compareTo(
+          bSerial,
+        );
+      },
+    );
+
+
+    return int.tryParse(
+          localTx.last['serial']
+              ?.toString() ??
+              '0',
+        ) ??
+        0;
   }
 
-  // 7. دالة لجلب جميع الحركات من السيرفر (بدون تحديد فترة زمنية) - تستخدم للتحميل الكامل
-  Future<void> syncAllTransactions(String companyCode) async {
+
+  // ============================================================
+  // 9. Full Sync
+  // ============================================================
+
+  Future<void> syncAllTransactions(
+    String companyCode,
+  ) async {
     try {
-      // استخدم نطاق زمني واسع جداً لضمان جلب كل البيانات
-      final startDate = '2020-01-01';
-      final endDate = '2100-12-31';
-      
-      final response = await http.get(
-        Uri.parse('$baseUrl/transactions/list/$companyCode?start_date=$startDate&end_date=$endDate'),
+      final String startDate =
+          '2020-01-01';
+
+      final String endDate =
+          '2100-12-31';
+
+
+      final response =
+          await http.get(
+        Uri.parse(
+          '$baseUrl/transactions/list/'
+          '$companyCode'
+          '?start_date=$startDate'
+          '&end_date=$endDate',
+        ),
       );
 
-      if (response.statusCode == 200) {
-        List<dynamic> serverData = jsonDecode(response.body);
-        for (var item in serverData) {
-          // استخدام نفس مفتاح التخزين الموحد (branch_code + serial)
-          String bCode = item['branch_code']?.toString() ?? '1';
-          await _transactionBox.put("branch_${bCode}_${item['serial']}", item);
-        }
-        // بعد التخزين، نحدث الأرصدة المحلية فوراً
-        await getDailySummaryLocal(companyCode);
-        print("✅ تم مزامنة جميع الحركات من السيرفر بنجاح (عدد: ${serverData.length})");
-      } else {
-        throw 'فشل جلب البيانات من السيرفر';
+
+      if (response.statusCode != 200) {
+        throw Exception(
+          'فشل جلب البيانات من السيرفر. '
+          'HTTP ${response.statusCode}: '
+          '${response.body}',
+        );
       }
+
+
+      final List<dynamic>
+          serverData =
+          jsonDecode(
+        response.body,
+      );
+
+
+      // --------------------------------------------------------
+      // تخزين البيانات
+      // --------------------------------------------------------
+
+      for (final rawItem
+          in serverData) {
+        if (rawItem is! Map) {
+          continue;
+        }
+
+
+        final Map<String, dynamic>
+            item =
+            Map<String, dynamic>.from(
+          rawItem,
+        );
+
+
+        if (item['is_deleted'] ==
+            true) {
+          continue;
+        }
+
+
+        final String bCode =
+            item['branch_code']
+                    ?.toString() ??
+                '1';
+
+
+        final String serial =
+            item['serial']
+                    ?.toString() ??
+                '';
+
+
+        if (serial.isEmpty) {
+          continue;
+        }
+
+
+        await _transactionBox.put(
+          "branch_${bCode}_$serial",
+          item,
+        );
+      }
+
+
+      // --------------------------------------------------------
+      // تحديث الأرصدة
+      // --------------------------------------------------------
+
+      await getDailySummaryLocal(
+        companyCode,
+      );
+
+
+      print(
+        "✅ تم مزامنة جميع الحركات "
+        "من السيرفر بنجاح "
+        "(عدد: ${serverData.length})",
+      );
     } catch (e) {
-      print("❌ خطأ في مزامنة جميع الحركات: $e");
+      print(
+        "❌ خطأ في مزامنة جميع الحركات: $e",
+      );
+
       rethrow;
     }
   }

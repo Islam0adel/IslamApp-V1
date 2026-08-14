@@ -509,18 +509,34 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
           String endStr = DateFormat('yyyy-MM-dd').format(_toDate);
 
           for (var item in box.values) {
-            if (item is Map && item['company_code'] == widget.companyCode) {
-              if (widget.selectedBranchCode != null &&
-                  widget.selectedBranchCode != "all" &&
-                  widget.selectedBranchCode != "") {
-                if (item['branch_code']?.toString() != widget.selectedBranchCode) continue;
-              }
-              String txDate = item['date']?.toString() ?? "";
-              if (txDate.compareTo(startStr) >= 0 && txDate.compareTo(endStr) <= 0) {
-                displayList.add(Map<String, dynamic>.from(item));
-              }
-            }
-          }
+  if (item is! Map) continue;
+
+  // السجل المحذوف لا يظهر في الواجهة
+  if (item['is_deleted'] == true) continue;
+
+  if (item['company_code'] != widget.companyCode) {
+    continue;
+  }
+
+  if (widget.selectedBranchCode != null &&
+      widget.selectedBranchCode != "all" &&
+      widget.selectedBranchCode != "") {
+    if (item['branch_code']?.toString() !=
+        widget.selectedBranchCode) {
+      continue;
+    }
+  }
+
+  final String txDate =
+      item['date']?.toString() ?? "";
+
+  if (txDate.compareTo(startStr) >= 0 &&
+      txDate.compareTo(endStr) <= 0) {
+    displayList.add(
+      Map<String, dynamic>.from(item),
+    );
+  }
+}
 
           // 2. تطبيق الفلتر والترتيب (أبجدي حسب التصنيف)
           displayList = _applyFiltersAndSort(displayList);

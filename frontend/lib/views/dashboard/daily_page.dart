@@ -10,8 +10,7 @@ import 'daily_history_page.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'treasury_transfer_page.dart';
 import '../../services/permissions_service.dart'; // ✅ استيراد خدمة الصلاحيات
-import 'package:shared_preferences/shared_preferences.dart';
-import '../../core/constants.dart';
+
 
 class DailyPage extends StatefulWidget {
   final String companyCode;
@@ -38,6 +37,12 @@ class _DailyPageState extends State<DailyPage> with WidgetsBindingObserver { // 
   final CodingService _codingService = CodingService();
 
   final _amountController = TextEditingController();
+
+void _onAmountChanged() {
+  if (mounted) {
+    setState(() {});
+  }
+}
   final _statementController = TextEditingController();
   final _dateController = TextEditingController();
 
@@ -53,8 +58,6 @@ class _DailyPageState extends State<DailyPage> with WidgetsBindingObserver { // 
   List<Map<String, dynamic>> _treasuries = [];
   List<Map<String, dynamic>> _categories = [];
 
-  // ✅ مستمع للتغييرات في صندوق اليوميات (للتحديث التلقائي للأرصدة)
-  VoidCallback? _boxListener;
 
   @override
   void initState() {
@@ -62,14 +65,6 @@ class _DailyPageState extends State<DailyPage> with WidgetsBindingObserver { // 
     WidgetsBinding.instance.addObserver(this); // ✅ إضافة المراقب
     _amountController.addListener(() => setState(() {}));
     
-    // ✅ إضافة مستمع لتغييرات الصندوق
-    _boxListener = () {
-      // منع التحديث إذا كان التطبيق في حالة تحديث بالفعل
-      if (!_isUpdating && mounted) {
-        _loadInitialData();
-      }
-    };
-    Hive.box('daily_transactions_box').listenable().addListener(_boxListener!);
     
     _loadInitialData();
 
@@ -92,13 +87,28 @@ class _DailyPageState extends State<DailyPage> with WidgetsBindingObserver { // 
     }
   }
 
+  Future<void> _refreshBalancesOnly() async {
+  try {
+    final summary = await _dailyService.getDailySummaryLocal(
+      widget.companyCode,
+      branchCode: widget.selectedBranchCode ?? 'all',
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      _treasuryBalances =
+          Map<String, double>.from(summary['balances'] ?? {});
+    });
+  } catch (e) {
+    print("❌ خطأ في تحديث الأرصدة: $e");
+  }
+}
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _amountController.removeListener(() => setState(() {}));
-    if (_boxListener != null) {
-      Hive.box('daily_transactions_box').listenable().removeListener(_boxListener!);
-    }
+    _amountController.removeListener(_onAmountChanged);
     _amountController.dispose();
     _statementController.dispose();
     _dateController.dispose();
@@ -108,10 +118,8 @@ class _DailyPageState extends State<DailyPage> with WidgetsBindingObserver { // 
   // ✅ عند عودة التطبيق إلى المقدمة، نحدث الأرصدة
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      if (mounted) {
-        _loadInitialData();
-      }
+    if (state == AppLifecycleState.resumed && mounted) {
+      _refreshBalancesOnly();
     }
   }
 
@@ -165,30 +173,7 @@ class _DailyPageState extends State<DailyPage> with WidgetsBindingObserver { // 
     try {
       final Box dailyBox = Hive.box('daily_transactions_box');
 
-      // ✅ التحقق من وجود بيانات محلية للشركة الحالية (أي حركة)
-      bool hasLocalData = dailyBox.values.any((tx) =>
-          tx is Map && tx['company_code'] == widget.companyCode);
-
-      // ✅ المزامنة التزايدية فقط (بدون تحميل كامل)
-      final prefs = await SharedPreferences.getInstance();
-      final lastSyncKey = '${ApiConstants.LAST_SYNC_DAILY}${widget.companyCode}';
-      final lastSyncTime = prefs.getString(lastSyncKey);
-
-      if (!hasLocalData || lastSyncTime == null) {
-        // جهاز جديد أو لا توجد بيانات → تحميل كل البيانات (مرة واحدة فقط)
-        print("📥 الذاكرة المحلية فارغة أو لا يوجد وقت مزامنة، جاري تحميل كل البيانات...");
-        // await _dailyService.syncAllTransactions(widget.companyCode);
-        // حفظ وقت المزامنة
-        await prefs.setString(lastSyncKey, DateTime.now().toIso8601String());
-        print("✅ تم تحميل كل البيانات وتخزينها محلياً");
-      } else {
-        // جهاز موجود → مزامنة تزايدية فقط
-        print("📡 جاري جلب التحديثات التزايدية منذ: $lastSyncTime");
-        // await _dailyService.syncChangesFromServer(widget.companyCode, lastSyncTime);
-        // تحديث وقت المزامنة
-        await prefs.setString(lastSyncKey, DateTime.now().toIso8601String());
-        print("✅ تم تحديث البيانات من آخر مزامنة");
-      }
+      
 
       // الآن نستكمل حساب السيريال الأقصى (بعد التأكد من وجود البيانات)
       int maxSerial = 0;
@@ -627,9 +612,10 @@ class _DailyPageState extends State<DailyPage> with WidgetsBindingObserver { // 
         } else {
           _showSnackBar("تم الحفظ بنجاح وتحديث الذاكرة المحلية والشبكية التراكمية", Colors.green);
           _amountController.clear();
-          _statementController.clear();
-          // ✅ إعادة تحميل البيانات لتحديث الأرصدة فوراً
-          _loadInitialData();
+_statementController.clear();
+
+// تحديث الأرصدة فقط بعد نجاح الحفظ
+await _refreshBalancesOnly();
         }
       }
     } catch (e) {

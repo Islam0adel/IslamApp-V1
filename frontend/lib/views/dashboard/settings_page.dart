@@ -24,6 +24,7 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
   String _companyName = "شركتي";
   String _jobCode = ""; // 2. متغير جديد لحفظ كود الوظيفة
   bool _isLoadingData = true;
+  bool _showBranchDialog = true;
 
   @override
   void initState() {
@@ -37,17 +38,30 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
 
   // دالة لقراءة البيانات المقروءة عند تسجيل الدخول
   Future<void> _loadUserData() async {
-    final prefs = await SharedPreferences.getInstance();
-    if (mounted) {
-      setState(() {
-        _userName = prefs.getString('user_name') ?? "مستخدم غير معروف";
-        _companyName = prefs.getString('company_name') ?? "شركتي";
-        // 3. قراءة كود الوظيفة المحفوظ وقت تسجيل الدخول[cite: 9, 12]
-        _jobCode = prefs.getString('job_code') ?? ""; 
-        _isLoadingData = false;
-      });
-    }
+  final prefs = await SharedPreferences.getInstance();
+
+  final email = prefs.getString('user_email') ?? '';
+
+  final showDialog =
+      prefs.getBool('show_branch_dialog_$email') ?? true;
+
+  if (mounted) {
+    setState(() {
+      _userName =
+          prefs.getString('user_name') ?? "مستخدم غير معروف";
+
+      _companyName =
+          prefs.getString('company_name') ?? "شركتي";
+
+      _jobCode =
+          prefs.getString('job_code') ?? "";
+
+      _showBranchDialog = showDialog;
+
+      _isLoadingData = false;
+    });
   }
+}
 
   @override
   void dispose() {
@@ -186,6 +200,36 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
                                 },
                               ),
                             ),
+                            const Divider(
+  color: Colors.white10,
+  height: 20,
+),
+
+_buildSettingRow(
+  icon: Icons.storefront_rounded,
+  title: 'إظهار رسالة اختيار الفرع',
+  trailing: Switch(
+    value: _showBranchDialog,
+    activeColor: Colors.cyanAccent,
+    onChanged: (value) async {
+      final prefs = await SharedPreferences.getInstance();
+
+      final email =
+          prefs.getString('user_email') ?? '';
+
+      await prefs.setBool(
+        'show_branch_dialog_$email',
+        value,
+      );
+
+      if (mounted) {
+        setState(() {
+          _showBranchDialog = value;
+        });
+      }
+    },
+  ),
+),
                             const Divider(color: Colors.white10, height: 20),
                             _buildSettingRow(
                               icon: Icons.translate_rounded,

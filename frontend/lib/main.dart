@@ -29,7 +29,7 @@ final GlobalSyncService _syncService = GlobalSyncService();
 
 
 // ============================================================
-// متغيرات قديمة للحفاظ على التوافق مع أي كود سابق
+// متغيرات قديمة للحفاظ على التوافق
 // ============================================================
 
 StreamSubscription? globalSyncSubscription;
@@ -48,43 +48,35 @@ bool _isSyncing = false;
 // ============================================================
 // Sync Manager
 //
-// القاعدة:
-//
 // lastSync موجود
 //      ↓
 // Incremental Sync
 //
 // lastSync غير موجود
 //      ↓
-// Full Sync
-//
-// ولا نعتمد على Hive لتحديد هل الجهاز جديد أم لا.
+// Full Sync مرة واحدة فقط
 // ============================================================
 
 Future<void> syncAllDataIfNeeded(
   String companyCode,
 ) async {
-  // ----------------------------------------------------------
-  // منع التكرار
-  // ----------------------------------------------------------
-
   if (_isSyncing) {
-    print(
-      "⚠️ مزامنة قيد التنفيذ، تم تجاهل الطلب الجديد",
-    );
+    print("⚠️ مزامنة قيد التنفيذ، تم تجاهل الطلب الجديد");
     return;
   }
 
   _isSyncing = true;
 
-  print(
-    "🔄 بدء المزامنة للشركة: $companyCode",
-  );
+  print("🔄 بدء المزامنة للشركة: $companyCode");
 
   try {
-    final prefs =
-        await SharedPreferences.getInstance();
+    final prefs = await SharedPreferences.getInstance();
 
+    // ========================================================
+    // وقت بداية عملية المزامنة
+    // ========================================================
+    final syncStartedAt =
+        DateTime.now().toUtc().toIso8601String();
 
     // ========================================================
     // 1) اليوميات
@@ -97,25 +89,21 @@ Future<void> syncAllDataIfNeeded(
         prefs.getString(dailyKey);
 
     if (dailyLastSync == null) {
-      // ------------------------------------------------------
-      // جهاز جديد
-      // ------------------------------------------------------
-
-      print(
-        "📥 اليوميات: تحميل كامل",
-      );
+      print("📥 اليوميات: تحميل كامل");
 
       await DailyService()
           .syncAllTransactions(companyCode);
 
-      print(
-        "✅ اليوميات: اكتمل التحميل الكامل",
+      // مهم جداً:
+      // تسجيل وقت بداية الـ Full Sync
+      await prefs.setString(
+        dailyKey,
+        syncStartedAt,
       );
-    } else {
-      // ------------------------------------------------------
-      // جهاز قديم
-      // ------------------------------------------------------
 
+      print("✅ اليوميات: اكتمل التحميل الكامل");
+      print("💾 تم حفظ lastSync لليوميات: $syncStartedAt");
+    } else {
       print(
         "📡 اليوميات: مزامنة تزايدية منذ $dailyLastSync",
       );
@@ -126,11 +114,8 @@ Future<void> syncAllDataIfNeeded(
         dailyLastSync,
       );
 
-      print(
-        "✅ اليوميات: اكتملت المزامنة التزايدية",
-      );
+      print("✅ اليوميات: اكتملت المزامنة التزايدية");
     }
-
 
     // ========================================================
     // 2) التكويد
@@ -143,25 +128,19 @@ Future<void> syncAllDataIfNeeded(
         prefs.getString(codingKey);
 
     if (codingLastSync == null) {
-      // ------------------------------------------------------
-      // جهاز جديد
-      // ------------------------------------------------------
-
-      print(
-        "📥 التكويد: تحميل كامل",
-      );
+      print("📥 التكويد: تحميل كامل");
 
       await CodingService()
           .fetchAllCoding(companyCode);
 
-      print(
-        "✅ التكويد: اكتمل التحميل الكامل",
+      await prefs.setString(
+        codingKey,
+        syncStartedAt,
       );
-    } else {
-      // ------------------------------------------------------
-      // جهاز قديم
-      // ------------------------------------------------------
 
+      print("✅ التكويد: اكتمل التحميل الكامل");
+      print("💾 تم حفظ lastSync للتكويد: $syncStartedAt");
+    } else {
       print(
         "📡 التكويد: مزامنة تزايدية منذ $codingLastSync",
       );
@@ -172,11 +151,8 @@ Future<void> syncAllDataIfNeeded(
         codingLastSync,
       );
 
-      print(
-        "✅ التكويد: اكتملت المزامنة التزايدية",
-      );
+      print("✅ التكويد: اكتملت المزامنة التزايدية");
     }
-
 
     // ========================================================
     // 3) الموردين
@@ -189,25 +165,19 @@ Future<void> syncAllDataIfNeeded(
         prefs.getString(supplierKey);
 
     if (supplierLastSync == null) {
-      // ------------------------------------------------------
-      // جهاز جديد
-      // ------------------------------------------------------
-
-      print(
-        "📥 الموردين: تحميل كامل",
-      );
+      print("📥 الموردين: تحميل كامل");
 
       await SupplierService()
           .fetchAllSupplier(companyCode);
 
-      print(
-        "✅ الموردين: اكتمل التحميل الكامل",
+      await prefs.setString(
+        supplierKey,
+        syncStartedAt,
       );
-    } else {
-      // ------------------------------------------------------
-      // جهاز قديم
-      // ------------------------------------------------------
 
+      print("✅ الموردين: اكتمل التحميل الكامل");
+      print("💾 تم حفظ lastSync للموردين: $syncStartedAt");
+    } else {
       print(
         "📡 الموردين: مزامنة تزايدية منذ $supplierLastSync",
       );
@@ -218,11 +188,8 @@ Future<void> syncAllDataIfNeeded(
         supplierLastSync,
       );
 
-      print(
-        "✅ الموردين: اكتملت المزامنة التزايدية",
-      );
+      print("✅ الموردين: اكتملت المزامنة التزايدية");
     }
-
 
     // ========================================================
     // 4) الجرد
@@ -235,25 +202,19 @@ Future<void> syncAllDataIfNeeded(
         prefs.getString(inventoryKey);
 
     if (inventoryLastSync == null) {
-      // ------------------------------------------------------
-      // جهاز جديد
-      // ------------------------------------------------------
-
-      print(
-        "📥 الجرد: تحميل كامل",
-      );
+      print("📥 الجرد: تحميل كامل");
 
       await InventoryService()
           .fetchAllInventory(companyCode);
 
-      print(
-        "✅ الجرد: اكتمل التحميل الكامل",
+      await prefs.setString(
+        inventoryKey,
+        syncStartedAt,
       );
-    } else {
-      // ------------------------------------------------------
-      // جهاز قديم
-      // ------------------------------------------------------
 
+      print("✅ الجرد: اكتمل التحميل الكامل");
+      print("💾 تم حفظ lastSync للجرد: $syncStartedAt");
+    } else {
       print(
         "📡 الجرد: مزامنة تزايدية منذ $inventoryLastSync",
       );
@@ -264,33 +225,21 @@ Future<void> syncAllDataIfNeeded(
         inventoryLastSync,
       );
 
-      print(
-        "✅ الجرد: اكتملت المزامنة التزايدية",
-      );
+      print("✅ الجرد: اكتملت المزامنة التزايدية");
     }
 
-
     // ========================================================
-    // تحديث الأرصدة المحلية
-    //
-    // Local فقط
-    // لا يوجد API Request هنا
+    // تحديث الأرصدة المحلية فقط
     // ========================================================
 
     await DailyService()
         .getDailySummaryLocal(companyCode);
 
-    print(
-      "✅ تم تحديث الأرصدة المحلية",
-    );
+    print("✅ تم تحديث الأرصدة المحلية");
 
-    print(
-      "✅ اكتملت المزامنة المركزية بنجاح",
-    );
+    print("✅ اكتملت المزامنة المركزية بنجاح");
   } catch (e) {
-    print(
-      "❌ فشلت المزامنة المركزية: $e",
-    );
+    print("❌ فشلت المزامنة المركزية: $e");
   } finally {
     _isSyncing = false;
   }
@@ -300,59 +249,34 @@ Future<void> syncAllDataIfNeeded(
 // ============================================================
 // تشغيل Global Sync
 //
-// مهم جدًا:
-// قبل تشغيل WebSocket نربط callback.
-// وبكده أي reconnect للـWebSocket
-// سيشغل incremental sync تلقائيًا.
+// WebSocket عند الاتصال أو إعادة الاتصال
+// يطلب مزامنة مركزية واحدة.
 // ============================================================
 
-void initializeGlobalListener(
-  String companyCode,
-) {
+void initializeGlobalListener(String companyCode) {
   print(
     "🌐 طلب تشغيل المزامنة للشركة: $companyCode",
   );
 
-  // ----------------------------------------------------------
-  // Callback عند اتصال / إعادة اتصال WebSocket
-  // ----------------------------------------------------------
-
-  _syncService.onWebSocketConnected = () {
+  // ربط الـ callback مرة واحدة فقط
+  _syncService.onWebSocketConnected ??= () {
     print(
       "🔄 WebSocket اتصل/عاد الاتصال",
     );
 
-    // --------------------------------------------------------
-    // تشغيل Sync واحد فقط
-    //
-    // لو فيه Sync شغال _isSyncing هيتعامل مع التكرار.
-    // --------------------------------------------------------
-
-    Future.microtask(() {
-      syncAllDataIfNeeded(companyCode);
-    });
+    syncAllDataIfNeeded(
+      _syncService.currentCompanyCode ?? companyCode,
+    );
   };
 
-
-  // ----------------------------------------------------------
-  // لو WebSocket بالفعل شغال لنفس الشركة
-  // لا نفتح اتصال جديد
-  // ----------------------------------------------------------
-
+  // لو WebSocket شغال بالفعل لنفس الشركة
   if (_syncService.isConnected &&
-      _syncService.currentCompanyCode ==
-          companyCode) {
+      _syncService.currentCompanyCode == companyCode) {
     print(
       "✅ WebSocket شغال بالفعل للشركة: $companyCode",
     );
-
     return;
   }
-
-
-  // ----------------------------------------------------------
-  // بدء WebSocket
-  // ----------------------------------------------------------
 
   print(
     "🌐 بدء WebSocket للشركة: $companyCode",
@@ -393,7 +317,8 @@ Future<void> main() async {
   // ==========================================================
 
   await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
+    options:
+        DefaultFirebaseOptions.currentPlatform,
   );
 
 
@@ -432,7 +357,8 @@ Future<void> main() async {
       await SharedPreferences.getInstance();
 
   final bool rememberMe =
-      prefs.getBool('remember_me') ?? false;
+      prefs.getBool('remember_me') ??
+          false;
 
   final String? userName =
       prefs.getString('user_name');
@@ -450,41 +376,28 @@ Future<void> main() async {
 
   Widget initialScreen;
 
-
   if (rememberMe &&
       userName != null &&
       companyCode != null) {
 
     // --------------------------------------------------------
-    // المستخدم مسجل دخول مسبقًا
+    // تشغيل WebSocket
+    //
+    // عند نجاح الاتصال:
+    // onWebSocketConnected
+    // ↓
+    // syncAllDataIfNeeded
     // --------------------------------------------------------
 
-    // تشغيل WebSocket.
-    //
-    // الـcallback الموجود داخل
-    // initializeGlobalListener
-    // سيبدأ الـSync عند نجاح الاتصال.
     initializeGlobalListener(
       companyCode,
     );
 
 
     // --------------------------------------------------------
-    // نضمن مزامنة أولية واحدة فقط.
+    // لا يوجد Sync إضافي هنا
     //
-    // لو WebSocket اتصل في نفس اللحظة
-    // _isSyncing يمنع التكرار.
-    // --------------------------------------------------------
-
-    Future.microtask(() {
-      syncAllDataIfNeeded(
-        companyCode,
-      );
-    });
-
-
-    // --------------------------------------------------------
-    // افتح الصفحة مباشرة
+    // لمنع تكرار المزامنة.
     // --------------------------------------------------------
 
     initialScreen = HomePage(
@@ -494,10 +407,6 @@ Future<void> main() async {
       companyCode: companyCode,
     );
   } else {
-
-    // --------------------------------------------------------
-    // مفيش Login محفوظ
-    // --------------------------------------------------------
 
     initialScreen =
         const LoginScreen();
@@ -510,7 +419,8 @@ Future<void> main() async {
 
   runApp(
     IslamApp(
-      initialScreen: initialScreen,
+      initialScreen:
+          initialScreen,
     ),
   );
 }
@@ -577,7 +487,6 @@ class _IslamAppState
   ) {
     if (state ==
         AppLifecycleState.resumed) {
-
       _syncWhenAppResumes();
     }
   }
@@ -595,7 +504,9 @@ class _IslamAppState
             .getInstance();
 
     final bool rememberMe =
-        prefs.getBool('remember_me') ??
+        prefs.getBool(
+      'remember_me',
+    ) ??
             false;
 
     final String? companyCode =
@@ -617,17 +528,25 @@ class _IslamAppState
 
 
     // --------------------------------------------------------
-    // لو WebSocket مش شغال
-    // نحاول تشغيله من جديد.
+    // لو WebSocket غير متصل:
+    // نعيد تشغيله فقط.
+    //
+    // عند نجاح الاتصال callback
+    // سيشغل المزامنة.
     // --------------------------------------------------------
 
-    initializeGlobalListener(
-      companyCode,
-    );
+    if (!_syncService.isConnected) {
+      initializeGlobalListener(
+        companyCode,
+      );
+
+      return;
+    }
 
 
     // --------------------------------------------------------
-    // Incremental Sync
+    // WebSocket متصل بالفعل:
+    // مزامنة واحدة فقط.
     // --------------------------------------------------------
 
     await syncAllDataIfNeeded(
@@ -674,7 +593,8 @@ class _IslamAppState
     BuildContext context,
   ) {
     return MaterialApp(
-      title: 'IslamApp V1.0',
+      title:
+          'IslamApp V1.0',
 
       debugShowCheckedModeBanner:
           false,
@@ -710,7 +630,9 @@ class _IslamAppState
         return Directionality(
           textDirection:
               TextDirection.rtl,
-          child: child!,
+
+          child:
+              child!,
         );
       },
     );

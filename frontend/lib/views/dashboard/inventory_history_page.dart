@@ -1,20 +1,19 @@
 // lib/views/dashboard/inventory_history_page.dart
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+
 import '../../services/inventory_service.dart';
 import '../../models/inventory_model.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../services/permissions_service.dart';
 import '../../services/export_service.dart';
 import 'inventory_page.dart';
-import 'dart:convert';
-import 'package:http/http.dart' as http;
-import '../../core/constants.dart';
 
 class InventoryHistoryPage extends StatefulWidget {
   final String companyCode;
-  final String? selectedBranchCode; // ✅ إضافة لفلترة الأذون حسب الفرع
+  final String? selectedBranchCode;
   final String? branchName;
 
   const InventoryHistoryPage({
@@ -25,214 +24,273 @@ class InventoryHistoryPage extends StatefulWidget {
   });
 
   @override
-  State<InventoryHistoryPage> createState() => _InventoryHistoryPageState();
+  State<InventoryHistoryPage> createState() =>
+      _InventoryHistoryPageState();
 }
 
 class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
   final InventoryService _inventoryService = InventoryService();
+
   List<InventoryModel> _inventories = [];
   bool _isLoading = true;
   bool _isInitializing = false;
 
-  // فلاتر
   String? _filterStoreCode;
   String? _filterDate;
 
   List<Map<String, String>> _stores = [];
 
-  // متغير لعرض الجرد المحدد بتفاصيل كاملة
   InventoryModel? _selectedInventory;
   bool _showDetails = false;
 
-  // أضف متغيراً لحفظ مرجع المستمع
   VoidCallback? _inventoryBoxListener;
 
   @override
   void initState() {
     super.initState();
-    // حفظ المرجع ثم الإضافة
+
     _inventoryBoxListener = _onInventoryBoxChanged;
-    Hive.box('inventory_box').listenable().addListener(_inventoryBoxListener!);
+    Hive.box('inventory_box')
+        .listenable()
+        .addListener(_inventoryBoxListener!);
+
     _initialize();
   }
 
   @override
   void dispose() {
     if (_inventoryBoxListener != null) {
-      Hive.box('inventory_box').listenable().removeListener(_inventoryBoxListener!);
+      Hive.box('inventory_box')
+          .listenable()
+          .removeListener(_inventoryBoxListener!);
     }
     super.dispose();
   }
 
   void _onInventoryBoxChanged() {
-    _loadData(); // إعادة تحميل البيانات من Hive
+    if (mounted) {
+      _loadData();
+    }
   }
 
   Future<void> _initialize() async {
     if (_isInitializing) return;
     _isInitializing = true;
 
-    // 1. تحميل القوائم أولاً
     await _loadDropdowns();
-
-
-    // 3. تحميل البيانات المعروضة
     await _loadData();
 
-    setState(() {
-      _isLoading = false;
-      _isInitializing = false;
-    });
+    if (mounted) {
+      setState(() {
+        _isLoading = false;
+        _isInitializing = false;
+      });
+    }
   }
 
   Future<void> _loadDropdowns() async {
     final box = Hive.box('coding_box');
-    _stores = [{'code': 'all', 'name': 'كل المخازن'}];
-    var stores = box.get('${widget.companyCode}_stores') as List? ?? [];
-    for (var item in stores) {
-      _stores.add({'code': item['code'].toString(), 'name': item['name'].toString()});
+
+    _stores = [
+      {'code': 'all', 'name': 'كل المخازن'}
+    ];
+
+    final raw = box.get(
+      '${widget.companyCode}_stores',
+      defaultValue: [],
+    );
+
+    if (raw is List) {
+      for (var item in raw) {
+        if (item is Map) {
+          _stores.add({
+            'code': item['code']?.toString() ?? '',
+            'name': item['name']?.toString() ?? '',
+          });
+        }
+      }
     }
-    setState(() {});
+
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   Future<void> _loadData() async {
     if (!mounted) return;
 
     setState(() => _isLoading = true);
+
     try {
       final box = Hive.box('inventory_box');
       List<InventoryModel> all = [];
-      bool hasLocalData = false;
 
-      // 1️⃣ التحقق من وجود أي بيانات محلية للشركة الحالية
+      // ========================================================
+      // قراءة البيانات من Hive فقط
+      // ========================================================
+
       for (var key in box.keys) {
         final raw = box.get(key);
-        if (raw is List && raw.isNotEmpty) {
-          for (var item in raw) {
-            if (item['company_code'] == widget.companyCode) {
-              hasLocalData = true;
-              break;
-            }
-          }
-        }
-        if (hasLocalData) break;
-      }
 
-      // 2️⃣ إذا كانت هناك بيانات محلية، نحاول قراءتها
-      if (hasLocalData) {
-        for (var key in box.keys) {
-          final raw = box.get(key);
-          if (raw is List) {
-            for (var item in raw) {
-              if (item['company_code'] == widget.companyCode) {
-                try {
-                  all.add(InventoryModel.fromMap(item));
-                } catch (e) {
-                  print('⚠️ فشل تحويل عنصر الجرد: $e');
-                }
-              }
-            }
+        if (raw is! List) continue;
+
+        for (var item in raw) {
+          if (item is! Map) continue;
+
+          // تجاهل المحذوف
+          if (item['is_deleted'] == true) continue;
+
+          if (item['company_code']?.toString() !=
+              widget.companyCode) {
+            continue;
+          }
+
+          try {
+            all.add(
+              InventoryModel.fromMap(
+                Map<String, dynamic>.from(item),
+              ),
+            );
+          } catch (e) {
+            print('⚠️ فشل تحويل عنصر الجرد: $e');
           }
         }
       }
 
-      // 3️⃣ إذا لم تكن هناك بيانات محلية أو كانت فارغة، نطلب من السيرفر
-      if (!hasLocalData || all.isEmpty) {
-        print("📥 جاري جلب الجردات من السيرفر...");
-        try {
-          final response = await http.get(
-            Uri.parse('${ApiConstants.baseUrl}/inventory/list/${widget.companyCode}'),
-          );
-          if (response.statusCode == 200) {
-            final List<dynamic> decoded = json.decode(response.body);
-            // ✅ حفظ البيانات في Hive بنفس المفتاح المستخدم في saveInventory
-            for (var item in decoded) {
-              final model = InventoryModel.fromMap(item);
-              final String localKey =
-                  '${model.companyCode}_${model.branchCode}_${model.storeCode}_${model.date}';
-              List<Map<String, dynamic>> list = [];
-              if (box.containsKey(localKey)) {
-                final raw = box.get(localKey);
-                if (raw is List) {
-                  list = raw.map((e) => Map<String, dynamic>.from(e)).toList();
-                }
-              }
-              list.removeWhere((e) => e['doc_id'] == model.docId);
-              list.add(model.toMap());
-              await box.put(localKey, list);
-            }
-            // إعادة قراءة البيانات من Hive بعد الحفظ
-            all.clear();
-            for (var key in box.keys) {
-              final raw = box.get(key);
-              if (raw is List) {
-                for (var item in raw) {
-                  if (item['company_code'] == widget.companyCode) {
-                    all.add(InventoryModel.fromMap(item));
-                  }
-                }
-              }
-            }
-            print("✅ تم جلب ${all.length} جرد من السيرفر وحفظها في Hive");
-          }
-        } catch (e) {
-          print("❌ فشل جلب الجردات من السيرفر: $e");
-        }
-      }
+      // ========================================================
+      // الفلاتر
+      // ========================================================
 
-      // 4️⃣ تطبيق الفلاتر
       if (widget.selectedBranchCode != null &&
           widget.selectedBranchCode != 'all' &&
           widget.selectedBranchCode!.isNotEmpty) {
-        all = all.where((inv) => inv.branchCode == widget.selectedBranchCode).toList();
+        all = all
+            .where(
+              (inv) =>
+                  inv.branchCode ==
+                  widget.selectedBranchCode,
+            )
+            .toList();
       }
-      if (_filterStoreCode != null && _filterStoreCode != 'all') {
-        all = all.where((inv) => inv.storeCode == _filterStoreCode).toList();
+
+      if (_filterStoreCode != null &&
+          _filterStoreCode != 'all') {
+        all = all
+            .where(
+              (inv) => inv.storeCode == _filterStoreCode,
+            )
+            .toList();
       }
-      if (_filterDate != null && _filterDate!.isNotEmpty) {
-        all = all.where((inv) => inv.date == _filterDate).toList();
+
+      if (_filterDate != null &&
+          _filterDate!.isNotEmpty) {
+        all = all
+            .where(
+              (inv) => inv.date == _filterDate,
+            )
+            .toList();
       }
+
       all.sort((a, b) {
-        int dateCmp = b.date.compareTo(a.date);
+        final dateCmp = b.date.compareTo(a.date);
         if (dateCmp != 0) return dateCmp;
         return (b.serial ?? 0).compareTo(a.serial ?? 0);
       });
 
       if (!mounted) return;
+
       setState(() {
         _inventories = all;
         _isLoading = false;
       });
     } catch (e) {
       if (!mounted) return;
+
       setState(() => _isLoading = false);
       print('❌ خطأ في تحميل الجردات: $e');
     }
   }
 
-  String _getBranchName(String? code) {
-    if (code == null || code == 'all' || code == '') return 'كل الفروع';
-    final box = Hive.box('coding_box');
-    final rawData = box.get("${widget.companyCode}_branches", defaultValue: []);
-    for (var item in rawData) {
-      if (item['code']?.toString() == code) {
-        return item['name']?.toString() ?? "فرع غير معروف";
+  // ============================================================
+  // تحديث يدوي - Incremental فقط
+  // ============================================================
+
+  Future<void> _refreshFromServer() async {
+    if (!mounted) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      await _inventoryService.syncChangesFromServer(
+        widget.companyCode,
+      );
+
+      await _loadData();
+
+      if (mounted) {
+        _showSnackBar(
+          'تم تحديث الجرد بنجاح',
+          Colors.green,
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        _showSnackBar(
+          'فشل التحديث: $e',
+          Colors.red,
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
       }
     }
+  }
+
+  String _getBranchName(String? code) {
+    if (code == null || code == 'all' || code == '') {
+      return 'كل الفروع';
+    }
+
+    final box = Hive.box('coding_box');
+    final rawData = box.get(
+      "${widget.companyCode}_branches",
+      defaultValue: [],
+    );
+
+    if (rawData is List) {
+      for (var item in rawData) {
+        if (item is Map &&
+            item['code']?.toString() == code) {
+          return item['name']?.toString() ??
+              "فرع غير معروف";
+        }
+      }
+    }
+
     return "فرع غير معروف";
   }
 
   String _getStoreName(String? code) {
-    if (code == null || code == 'all') return 'كل المخازن';
-    final found = _stores.firstWhere((s) => s['code'] == code, orElse: () => {});
+    if (code == null || code == 'all') {
+      return 'كل المخازن';
+    }
+
+    final found = _stores.firstWhere(
+      (s) => s['code'] == code,
+      orElse: () => {},
+    );
+
     return found['name'] ?? code;
   }
 
   String _formatCurrency(double amount) {
-    return NumberFormat('#,##0.00', 'ar_EG').format(amount);
+    return NumberFormat(
+      '#,##0.00',
+      'ar_EG',
+    ).format(amount);
   }
 
-  // عرض تفاصيل الجرد في صفحة جديدة منفصلة
   void _showInventoryDetails(InventoryModel model) {
     setState(() {
       _selectedInventory = model;
@@ -264,7 +322,10 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: Colors.indigo.shade900,
-        title: const Text('تأكيد الحذف', style: TextStyle(color: Colors.white)),
+        title: const Text(
+          'تأكيد الحذف',
+          style: TextStyle(color: Colors.white),
+        ),
         content: Text(
           'هل أنت متأكد من حذف جرد ${model.date} - إذن ${model.serial ?? ''}؟',
           style: const TextStyle(color: Colors.white70),
@@ -272,73 +333,128 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('إلغاء', style: TextStyle(color: Colors.white)),
+            child: const Text(
+              'إلغاء',
+              style: TextStyle(color: Colors.white),
+            ),
           ),
           TextButton(
             onPressed: () async {
               Navigator.pop(ctx);
-              if (model.docId != null) {
-                bool deleted = await _inventoryService.deleteInventory(
-                  widget.companyCode,
-                  model.docId!,
+
+              if (model.docId == null) {
+                _showSnackBar(
+                  'رقم الجرد غير موجود',
+                  Colors.red,
                 );
-                if (deleted) {
-                  _showSnackBar('تم الحذف بنجاح', Colors.green);
-                  _loadData();
-                } else {
-                  _showSnackBar('فشل الحذف', Colors.red);
-                }
+                return;
+              }
+
+              final deleted =
+                  await _inventoryService.deleteInventory(
+                widget.companyCode,
+                model.docId!,
+              );
+
+              if (deleted) {
+                _showSnackBar(
+                  'تم الحذف بنجاح',
+                  Colors.green,
+                );
+                await _loadData();
+              } else {
+                _showSnackBar(
+                  'فشل الحذف',
+                  Colors.red,
+                );
               }
             },
-            child: const Text('حذف', style: TextStyle(color: Colors.red)),
+            child: const Text(
+              'حذف',
+              style: TextStyle(color: Colors.red),
+            ),
           ),
         ],
       ),
     );
   }
 
-  // ================== تصدير الإذن الواحد ==================
-  Future<void> _exportSingleExcel(InventoryModel inv) async {
+  Future<void> _exportSingleExcel(
+    InventoryModel inv,
+  ) async {
     try {
-      List<Map<String, dynamic>> data = inv.items.map((item) => {
-        'الكود': item.code,
-        'الصنف': item.name,
-        'الكمية': item.quantity,
-        'سعر الجملة': item.wholesalePrice,
-        'قيمة الجملة': item.wholesaleValue,
-        'سعر البيع': item.retailPrice,
-        'قيمة البيع': item.retailValue,
-      }).toList();
+      final data = inv.items
+          .map(
+            (item) => {
+              'الكود': item.code,
+              'الصنف': item.name,
+              'الكمية': item.quantity,
+              'سعر الجملة': item.wholesalePrice,
+              'قيمة الجملة': item.wholesaleValue,
+              'سعر البيع': item.retailPrice,
+              'قيمة البيع': item.retailValue,
+            },
+          )
+          .toList();
 
       await ExportService.exportToExcel(
         data,
         'جرد_${inv.date}_${inv.serial ?? ''}',
-        ['الكود', 'الصنف', 'الكمية', 'سعر الجملة', 'قيمة الجملة', 'سعر البيع', 'قيمة البيع'],
-        ['الكود', 'الصنف', 'الكمية', 'سعر الجملة', 'قيمة الجملة', 'سعر البيع', 'قيمة البيع'],
+        [
+          'الكود',
+          'الصنف',
+          'الكمية',
+          'سعر الجملة',
+          'قيمة الجملة',
+          'سعر البيع',
+          'قيمة البيع',
+        ],
+        [
+          'الكود',
+          'الصنف',
+          'الكمية',
+          'سعر الجملة',
+          'قيمة الجملة',
+          'سعر البيع',
+          'قيمة البيع',
+        ],
       );
-      _showSnackBar('تم تصدير الإذن بنجاح', Colors.green);
+
+      _showSnackBar(
+        'تم تصدير الإذن بنجاح',
+        Colors.green,
+      );
     } catch (e) {
-      _showSnackBar('فشل التصدير: $e', Colors.red);
+      _showSnackBar(
+        'فشل التصدير: $e',
+        Colors.red,
+      );
     }
   }
 
-  // ================== تصدير الإذن الواحد (PDF) ==================
-  Future<void> _exportSinglePDF(InventoryModel inv) async {
+  Future<void> _exportSinglePDF(
+    InventoryModel inv,
+  ) async {
     try {
-      // تحويل الأصناف إلى بيانات للجدول
-      List<Map<String, dynamic>> data = inv.items.map((item) => {
-        'الكود': item.code,
-        'الصنف': item.name,
-        'الكمية': item.quantity,
-        'سعر الجملة': item.wholesalePrice,
-        'قيمة الجملة': item.wholesaleValue,
-        'سعر البيع': item.retailPrice,
-        'قيمة البيع': item.retailValue,
-      }).toList();
+      final data = inv.items
+          .map(
+            (item) => {
+              'الكود': item.code,
+              'الصنف': item.name,
+              'الكمية': item.quantity,
+              'سعر الجملة': item.wholesalePrice,
+              'قيمة الجملة': item.wholesaleValue,
+              'سعر البيع': item.retailPrice,
+              'قيمة البيع': item.retailValue,
+            },
+          )
+          .toList();
 
-      // حساب الإجماليات
       final summary = {
-        'totalQuantity': inv.items.fold(0.0, (sum, item) => sum + item.quantity),
+        'totalQuantity': inv.items.fold(
+          0.0,
+          (sum, item) => sum + item.quantity,
+        ),
         'totalWholesale': inv.totalWholesale,
         'totalRetail': inv.totalRetail,
       };
@@ -353,7 +469,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
           'سعر الجملة',
           'قيمة الجملة',
           'سعر البيع',
-          'قيمة البيع'
+          'قيمة البيع',
         ],
         keys: [
           'الكود',
@@ -362,7 +478,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
           'سعر الجملة',
           'قيمة الجملة',
           'سعر البيع',
-          'قيمة البيع'
+          'قيمة البيع',
         ],
         summary: summary,
         serial: inv.serial?.toString(),
@@ -370,30 +486,50 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
         branchName: _getBranchName(inv.branchCode),
         storeName: _getStoreName(inv.storeCode),
       );
-      _showSnackBar('تم تصدير الإذن بنجاح', Colors.green);
+
+      _showSnackBar(
+        'تم تصدير الإذن بنجاح',
+        Colors.green,
+      );
     } catch (e) {
-      _showSnackBar('فشل تصدير PDF: $e', Colors.red);
+      _showSnackBar(
+        'فشل تصدير PDF: $e',
+        Colors.red,
+      );
     }
   }
 
-  // ================== تصدير جميع الأذون (Excel) ==================
   Future<void> _exportAllExcel() async {
     if (_inventories.isEmpty) {
-      _showSnackBar('لا توجد بيانات للتصدير', Colors.orange);
+      _showSnackBar(
+        'لا توجد بيانات للتصدير',
+        Colors.orange,
+      );
       return;
     }
+
     try {
-      List<Map<String, dynamic>> data = _inventories.map((inv) => {
-        'رقم الإذن': inv.serial ?? '',
-        'التاريخ': inv.date,
-        'الفرع': _getBranchName(inv.branchCode),
-        'المخزن': _getStoreName(inv.storeCode),
-        'النوع': inv.inventoryType == 'general' ? 'جرد عام' : 'جرد محدد',
-        'إجمالي الجملة': inv.totalWholesale,
-        'إجمالي البيع': inv.totalRetail,
-        'عدد الأصناف': inv.items.length,
-        'إجمالي الكميات': inv.items.fold(0.0, (sum, item) => sum + item.quantity),
-      }).toList();
+      final data = _inventories
+          .map(
+            (inv) => {
+              'رقم الإذن': inv.serial ?? '',
+              'التاريخ': inv.date,
+              'الفرع': _getBranchName(inv.branchCode),
+              'المخزن': _getStoreName(inv.storeCode),
+              'النوع': inv.inventoryType == 'general'
+                  ? 'جرد عام'
+                  : 'جرد محدد',
+              'إجمالي الجملة': inv.totalWholesale,
+              'إجمالي البيع': inv.totalRetail,
+              'عدد الأصناف': inv.items.length,
+              'إجمالي الكميات': inv.items.fold(
+                0.0,
+                (sum, item) => sum + item.quantity,
+              ),
+            },
+          )
+          .toList();
+
       await ExportService.exportToExcel(
         data,
         'الجردات_${DateFormat('yyyy-MM-dd').format(DateTime.now())}',
@@ -406,7 +542,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
           'إجمالي الجملة',
           'إجمالي البيع',
           'عدد الأصناف',
-          'إجمالي الكميات'
+          'إجمالي الكميات',
         ],
         [
           'رقم الإذن',
@@ -417,33 +553,52 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
           'إجمالي الجملة',
           'إجمالي البيع',
           'عدد الأصناف',
-          'إجمالي الكميات'
+          'إجمالي الكميات',
         ],
       );
-      _showSnackBar('تم تصدير جميع الجردات بنجاح', Colors.green);
+
+      _showSnackBar(
+        'تم تصدير جميع الجردات بنجاح',
+        Colors.green,
+      );
     } catch (e) {
-      _showSnackBar('فشل التصدير: $e', Colors.red);
+      _showSnackBar(
+        'فشل التصدير: $e',
+        Colors.red,
+      );
     }
   }
 
-  // ================== تصدير جميع الأذون (PDF) ==================
   Future<void> _exportAllPDF() async {
     if (_inventories.isEmpty) {
-      _showSnackBar('لا توجد بيانات للتصدير', Colors.orange);
+      _showSnackBar(
+        'لا توجد بيانات للتصدير',
+        Colors.orange,
+      );
       return;
     }
+
     try {
-      List<Map<String, dynamic>> data = _inventories.map((inv) => {
-        'رقم الإذن': inv.serial ?? '',
-        'التاريخ': inv.date,
-        'الفرع': _getBranchName(inv.branchCode),
-        'المخزن': _getStoreName(inv.storeCode),
-        'النوع': inv.inventoryType == 'general' ? 'جرد عام' : 'جرد محدد',
-        'إجمالي الجملة': inv.totalWholesale,
-        'إجمالي البيع': inv.totalRetail,
-        'عدد الأصناف': inv.items.length,
-        'إجمالي الكميات': inv.items.fold(0.0, (sum, item) => sum + item.quantity),
-      }).toList();
+      final data = _inventories
+          .map(
+            (inv) => {
+              'رقم الإذن': inv.serial ?? '',
+              'التاريخ': inv.date,
+              'الفرع': _getBranchName(inv.branchCode),
+              'المخزن': _getStoreName(inv.storeCode),
+              'النوع': inv.inventoryType == 'general'
+                  ? 'جرد عام'
+                  : 'جرد محدد',
+              'إجمالي الجملة': inv.totalWholesale,
+              'إجمالي البيع': inv.totalRetail,
+              'عدد الأصناف': inv.items.length,
+              'إجمالي الكميات': inv.items.fold(
+                0.0,
+                (sum, item) => sum + item.quantity,
+              ),
+            },
+          )
+          .toList();
 
       await ExportService.exportToPDF(
         data: data,
@@ -457,7 +612,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
           'إجمالي الجملة',
           'إجمالي البيع',
           'عدد الأصناف',
-          'إجمالي الكميات'
+          'إجمالي الكميات',
         ],
         keys: [
           'رقم الإذن',
@@ -468,23 +623,34 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
           'إجمالي الجملة',
           'إجمالي البيع',
           'عدد الأصناف',
-          'إجمالي الكميات'
+          'إجمالي الكميات',
         ],
-        // لا نحتاج summary هنا لأنه تقرير مجمع
       );
-      _showSnackBar('تم تصدير جميع الجردات بنجاح', Colors.green);
+
+      _showSnackBar(
+        'تم تصدير جميع الجردات بنجاح',
+        Colors.green,
+      );
     } catch (e) {
-      _showSnackBar('فشل تصدير PDF: $e', Colors.red);
+      _showSnackBar(
+        'فشل تصدير PDF: $e',
+        Colors.red,
+      );
     }
   }
 
-  void _showSnackBar(String msg, Color color) {
+  void _showSnackBar(
+    String msg,
+    Color color,
+  ) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           msg,
           textAlign: TextAlign.center,
-          style: const TextStyle(fontFamily: 'Cairo'),
+          style: const TextStyle(
+            fontFamily: 'Cairo',
+          ),
         ),
         backgroundColor: color,
         duration: const Duration(seconds: 3),
@@ -497,82 +663,107 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          _showDetails ? 'تفاصيل الجرد' : 'معاينة الجرد',
-          style: const TextStyle(color: Colors.white),
+          _showDetails
+              ? 'تفاصيل الجرد'
+              : 'معاينة الجرد',
+          style: const TextStyle(
+            color: Colors.white,
+          ),
         ),
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: Icon(_showDetails ? Icons.arrow_back : Icons.arrow_back, color: Colors.white),
-          onPressed: _showDetails ? _goBackToList : () => Navigator.pop(context),
+          icon: const Icon(
+            Icons.arrow_back,
+            color: Colors.white,
+          ),
+          onPressed: _showDetails
+              ? _goBackToList
+              : () => Navigator.pop(context),
         ),
         actions: [
-          if (!_showDetails && PermissionsService().canExportInventory)
+          if (!_showDetails &&
+              PermissionsService().canExportInventory)
             IconButton(
-              icon: const Icon(Icons.download, color: Colors.blueAccent),
+              icon: const Icon(
+                Icons.download,
+                color: Colors.blueAccent,
+              ),
               onPressed: _exportAllExcel,
               tooltip: 'تصدير جميع الجردات Excel',
             ),
-          if (!_showDetails && PermissionsService().canExportInventory)
+          if (!_showDetails &&
+              PermissionsService().canExportInventory)
             IconButton(
-              icon: const Icon(Icons.picture_as_pdf, color: Colors.redAccent),
+              icon: const Icon(
+                Icons.picture_as_pdf,
+                color: Colors.redAccent,
+              ),
               onPressed: _exportAllPDF,
               tooltip: 'تصدير جميع الجردات PDF',
             ),
           if (!_showDetails)
             IconButton(
-              icon: const Icon(Icons.refresh, color: Colors.white),
-              onPressed: () async {
-                setState(() => _isLoading = true);
-                try {
-                  // ✅ جلب جميع الجردات من السيرفر وتحديث Hive
-                  await _inventoryService.fetchAllInventory(widget.companyCode);
-                  // ✅ إعادة تحميل البيانات المعروضة
-                  await _loadData();
-                } catch (e) {
-                  _showSnackBar('فشل التحديث: $e', Colors.red);
-                } finally {
-                  if (mounted) setState(() => _isLoading = false);
-                }
-              },
-              tooltip: 'تحديث من السيرفر',
-            )
+              icon: const Icon(
+                Icons.refresh,
+                color: Colors.white,
+              ),
+              onPressed: _refreshFromServer,
+              tooltip: 'تحديث التغييرات من السيرفر',
+            ),
         ],
       ),
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            colors: [Colors.black, Color(0xFF1A237E), Colors.black],
+            colors: [
+              Colors.black,
+              Color(0xFF1A237E),
+              Colors.black,
+            ],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
         ),
         child: SafeArea(
           child: _isLoading
-              ? const Center(child: CircularProgressIndicator(color: Colors.white))
+              ? const Center(
+                  child: CircularProgressIndicator(
+                    color: Colors.white,
+                  ),
+                )
               : _showDetails && _selectedInventory != null
-                  ? _buildDetailsView(_selectedInventory!)
+                  ? _buildDetailsView(
+                      _selectedInventory!,
+                    )
                   : _buildListView(),
         ),
       ),
     );
   }
 
-  // ================== عرض القائمة الرئيسية ==================
   Widget _buildListView() {
-    final bool isMobile = MediaQuery.of(context).size.width < 600;
-    // اسم الفرع المعروض (من المعامل أو من Hive)
-    String displayBranchName = widget.branchName ?? _getBranchName(widget.selectedBranchCode);
+    final bool isMobile =
+        MediaQuery.of(context).size.width < 600;
+
+    final String displayBranchName =
+        widget.branchName ??
+            _getBranchName(
+              widget.selectedBranchCode,
+            );
 
     return Column(
       children: [
-        // ✅ بطاقة عرض الفرع الحالي (بدلاً من فلتر الفرع)
         GlassCard(
           child: Padding(
-            padding: const EdgeInsets.all(8.0),
+            padding: const EdgeInsets.all(8),
             child: Row(
               children: [
-                const Icon(Icons.storefront, color: Colors.cyanAccent, size: 20),
+                const Icon(
+                  Icons.storefront,
+                  color: Colors.cyanAccent,
+                  size: 20,
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -590,291 +781,223 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
           ),
         ),
         const SizedBox(height: 6),
-
-        // الفلاتر (مخزن + تاريخ + إلغاء) - بدون الفرع
         GlassCard(
           child: Padding(
-            padding: const EdgeInsets.all(6.0),
-            child: isMobile
-                ? SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // المخزن
-                        SizedBox(
-                          width: 110,
-                          height: 56,
-                          child: DropdownButtonFormField<String?>(
-                            value: _filterStoreCode,
-                            dropdownColor: Colors.indigo.shade900,
-                            style: const TextStyle(color: Colors.white, fontSize: 12),
-                            decoration: const InputDecoration(
-                              labelText: 'المخزن',
-                              labelStyle: TextStyle(color: Colors.white70, fontSize: 10),
-                              contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-                              border: OutlineInputBorder(
-                                borderSide: BorderSide(color: Colors.white24),
-                                borderRadius: BorderRadius.all(Radius.circular(12)),
-                              ),
-                              enabledBorder: OutlineInputBorder(
-                                borderSide: BorderSide(color: Colors.white24),
-                                borderRadius: BorderRadius.all(Radius.circular(12)),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderSide: BorderSide(color: Colors.cyanAccent),
-                                borderRadius: BorderRadius.all(Radius.circular(12)),
-                              ),
-                              filled: true,
-                              fillColor: Colors.transparent,
-                              isDense: false,
-                            ),
-                            items: _stores.map((s) {
-                              return DropdownMenuItem<String?>(
-                                value: s['code'],
-                                child: Text(
-                                  s['name'] ?? '',
-                                  style: const TextStyle(fontSize: 10),
-                                ),
-                              );
-                            }).toList(),
-                            onChanged: (val) {
-                              setState(() {
-                                _filterStoreCode = val;
-                                _loadData();
-                              });
-                            },
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        // التاريخ
-                        SizedBox(
-                          width: 110,
-                          height: 56,
-                          child: TextFormField(
-                            initialValue: _filterDate,
-                            readOnly: true,
-                            style: const TextStyle(color: Colors.white, fontSize: 12),
-                            decoration: const InputDecoration(
-                              labelText: 'التاريخ',
-                              labelStyle: TextStyle(color: Colors.white70, fontSize: 10),
-                              suffixIcon: Icon(
-                                Icons.calendar_today,
-                                size: 18,
-                                color: Colors.white54,
-                              ),
-                              contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-                              border: OutlineInputBorder(
-                                borderSide: BorderSide(color: Colors.white24),
-                                borderRadius: BorderRadius.all(Radius.circular(12)),
-                              ),
-                              enabledBorder: OutlineInputBorder(
-                                borderSide: BorderSide(color: Colors.white24),
-                                borderRadius: BorderRadius.all(Radius.circular(12)),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderSide: BorderSide(color: Colors.cyanAccent),
-                                borderRadius: BorderRadius.all(Radius.circular(12)),
-                              ),
-                              filled: true,
-                              fillColor: Colors.transparent,
-                              isDense: false,
-                            ),
-                            onTap: () async {
-                              DateTime? picked = await showDatePicker(
-                                context: context,
-                                initialDate: DateTime.now(),
-                                firstDate: DateTime(2020),
-                                lastDate: DateTime(2101),
-                              );
-                              if (picked != null) {
-                                setState(() {
-                                  _filterDate = DateFormat('yyyy-MM-dd').format(picked);
-                                  _loadData();
-                                });
-                              }
-                            },
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        // زر إلغاء الفلاتر
-                        SizedBox(
-                          height: 56,
-                          child: IconButton(
-                            icon: const Icon(Icons.clear, color: Colors.white70, size: 20),
-                            onPressed: () {
-                              setState(() {
-                                _filterStoreCode = null;
-                                _filterDate = null;
-                                _loadData();
-                              });
-                            },
-                            tooltip: 'إلغاء الفلاتر',
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                          ),
-                        ),
-                      ],
+            padding: const EdgeInsets.all(6),
+            child: Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String?>(
+                    value: _filterStoreCode,
+                    dropdownColor: Colors.indigo.shade900,
+                    style: const TextStyle(
+                      color: Colors.white,
                     ),
-                  )
-                : Row(
-                    children: [
-                      Expanded(
-                        child: DropdownButtonFormField<String?>(
-                          value: _filterStoreCode,
-                          dropdownColor: Colors.indigo.shade900,
-                          style: const TextStyle(color: Colors.white),
-                          decoration: const InputDecoration(
-                            labelText: 'المخزن',
-                            isDense: true,
-                          ),
-                          items: _stores.map((s) {
-                            return DropdownMenuItem<String?>(
-                              value: s['code'],
-                              child: Text(s['name'] ?? ''),
-                            );
-                          }).toList(),
-                          onChanged: (val) {
-                            setState(() {
-                              _filterStoreCode = val;
-                              _loadData();
-                            });
-                          },
+                    decoration: const InputDecoration(
+                      labelText: 'المخزن',
+                      isDense: true,
+                    ),
+                    items: _stores.map((s) {
+                      return DropdownMenuItem<String?>(
+                        value: s['code'],
+                        child: Text(
+                          s['name'] ?? '',
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextFormField(
-                          initialValue: _filterDate,
-                          readOnly: true,
-                          decoration: const InputDecoration(
-                            labelText: 'التاريخ',
-                            suffixIcon: Icon(Icons.calendar_today),
-                            isDense: true,
-                          ),
-                          onTap: () async {
-                            DateTime? picked = await showDatePicker(
-                              context: context,
-                              initialDate: DateTime.now(),
-                              firstDate: DateTime(2020),
-                              lastDate: DateTime(2101),
-                            );
-                            if (picked != null) {
-                              setState(() {
-                                _filterDate = DateFormat('yyyy-MM-dd').format(picked);
-                                _loadData();
-                              });
-                            }
-                          },
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.clear, color: Colors.white70),
-                        onPressed: () {
-                          setState(() {
-                            _filterStoreCode = null;
-                            _filterDate = null;
-                            _loadData();
-                          });
-                        },
-                        tooltip: 'إلغاء الفلاتر',
-                      ),
-                    ],
+                      );
+                    }).toList(),
+                    onChanged: (val) {
+                      setState(() {
+                        _filterStoreCode = val;
+                      });
+                      _loadData();
+                    },
                   ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextFormField(
+                    initialValue: _filterDate,
+                    readOnly: true,
+                    decoration: const InputDecoration(
+                      labelText: 'التاريخ',
+                      suffixIcon: Icon(
+                        Icons.calendar_today,
+                      ),
+                      isDense: true,
+                    ),
+                    onTap: () async {
+                      final picked =
+                          await showDatePicker(
+                        context: context,
+                        initialDate: DateTime.now(),
+                        firstDate: DateTime(2020),
+                        lastDate: DateTime(2101),
+                      );
+
+                      if (picked != null) {
+                        setState(() {
+                          _filterDate =
+                              DateFormat(
+                            'yyyy-MM-dd',
+                          ).format(picked);
+                        });
+                        _loadData();
+                      }
+                    },
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(
+                    Icons.clear,
+                    color: Colors.white70,
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _filterStoreCode = null;
+                      _filterDate = null;
+                    });
+                    _loadData();
+                  },
+                  tooltip: 'إلغاء الفلاتر',
+                ),
+              ],
+            ),
           ),
         ),
         const SizedBox(height: 6),
-
-        // قائمة الجردات
         Expanded(
           child: _inventories.isEmpty
               ? const Center(
                   child: Text(
                     'لا توجد جردات',
-                    style: TextStyle(color: Colors.white70),
+                    style: TextStyle(
+                      color: Colors.white70,
+                    ),
                   ),
                 )
               : ListView.builder(
                   itemCount: _inventories.length,
                   itemBuilder: (c, i) {
-                    final inv = _inventories[i];
+                    final inv =
+                        _inventories[i];
+
                     return Card(
-                      color: Colors.white.withOpacity(0.05),
-                      margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
+                      color:
+                          Colors.white.withOpacity(0.05),
+                      margin:
+                          const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 4,
+                      ),
+                      shape:
+                          RoundedRectangleBorder(
+                        borderRadius:
+                            BorderRadius.circular(10),
                       ),
                       child: InkWell(
-                        borderRadius: BorderRadius.circular(10),
-                        onTap: () => _showInventoryDetails(inv),
+                        borderRadius:
+                            BorderRadius.circular(10),
+                        onTap: () =>
+                            _showInventoryDetails(inv),
                         child: Padding(
-                          padding: EdgeInsets.all(isMobile ? 8.0 : 12.0),
+                          padding:
+                              EdgeInsets.all(
+                            isMobile ? 8 : 12,
+                          ),
                           child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                            crossAxisAlignment:
+                                CrossAxisAlignment.start,
                             children: [
                               Row(
                                 children: [
                                   CircleAvatar(
-                                    radius: isMobile ? 16 : 20,
-                                    backgroundColor: Colors.cyanAccent.withOpacity(0.2),
+                                    radius:
+                                        isMobile ? 16 : 20,
+                                    backgroundColor:
+                                        Colors.cyanAccent
+                                            .withOpacity(
+                                      0.2,
+                                    ),
                                     child: Text(
                                       '${inv.serial ?? ''}',
                                       style: TextStyle(
-                                        color: Colors.cyanAccent,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: isMobile ? 10 : 12,
+                                        color:
+                                            Colors.cyanAccent,
+                                        fontWeight:
+                                            FontWeight.bold,
+                                        fontSize:
+                                            isMobile ? 10 : 12,
                                       ),
                                     ),
                                   ),
-                                  const SizedBox(width: 10),
+                                  const SizedBox(
+                                    width: 10,
+                                  ),
                                   Expanded(
                                     child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
                                         Text(
                                           '${_getBranchName(inv.branchCode)} - ${_getStoreName(inv.storeCode)}',
                                           style: TextStyle(
                                             color: Colors.white,
-                                            fontSize: isMobile ? 12 : 14,
-                                            fontWeight: FontWeight.bold,
+                                            fontSize:
+                                                isMobile ? 12 : 14,
+                                            fontWeight:
+                                                FontWeight.bold,
                                           ),
                                         ),
                                         Text(
                                           'التاريخ: ${inv.date}',
                                           style: TextStyle(
-                                            color: Colors.white60,
-                                            fontSize: isMobile ? 10 : 12,
+                                            color:
+                                                Colors.white60,
+                                            fontSize:
+                                                isMobile ? 10 : 12,
                                           ),
                                         ),
                                       ],
                                     ),
                                   ),
                                   Container(
-                                    padding: const EdgeInsets.symmetric(
+                                    padding:
+                                        const EdgeInsets.symmetric(
                                       horizontal: 6,
                                       vertical: 2,
                                     ),
-                                    decoration: BoxDecoration(
-                                      color: inv.inventoryType == 'general'
-                                          ? Colors.greenAccent.withOpacity(0.15)
-                                          : Colors.orangeAccent.withOpacity(0.15),
-                                      borderRadius: BorderRadius.circular(10),
-                                      border: Border.all(
-                                        color: inv.inventoryType == 'general'
-                                            ? Colors.greenAccent.withOpacity(0.3)
-                                            : Colors.orangeAccent.withOpacity(0.3),
+                                    decoration:
+                                        BoxDecoration(
+                                      color: inv.inventoryType ==
+                                              'general'
+                                          ? Colors.greenAccent
+                                              .withOpacity(
+                                              0.15,
+                                            )
+                                          : Colors.orangeAccent
+                                              .withOpacity(
+                                              0.15,
+                                            ),
+                                      borderRadius:
+                                          BorderRadius.circular(
+                                        10,
                                       ),
                                     ),
                                     child: Text(
-                                      inv.inventoryType == 'general'
+                                      inv.inventoryType ==
+                                              'general'
                                           ? 'جرد عام'
                                           : 'جرد محدد',
                                       style: TextStyle(
-                                        color: inv.inventoryType == 'general'
-                                            ? Colors.greenAccent
-                                            : Colors.orangeAccent,
-                                        fontSize: isMobile ? 8 : 10,
-                                        fontWeight: FontWeight.bold,
+                                        color:
+                                            inv.inventoryType ==
+                                                    'general'
+                                                ? Colors.greenAccent
+                                                : Colors.orangeAccent,
+                                        fontSize:
+                                            isMobile ? 8 : 10,
+                                        fontWeight:
+                                            FontWeight.bold,
                                       ),
                                     ),
                                   ),
@@ -882,24 +1005,30 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                               ),
                               const SizedBox(height: 6),
                               Wrap(
-                                spacing: isMobile ? 4 : 8,
+                                spacing:
+                                    isMobile ? 4 : 8,
                                 runSpacing: 4,
                                 children: [
                                   _buildInfoChip(
                                     'الأصناف',
-                                    inv.items.length.toString(),
+                                    inv.items.length
+                                        .toString(),
                                     Colors.blueAccent,
                                     isMobile,
                                   ),
                                   _buildInfoChip(
                                     'إجمالي الجملة',
-                                    _formatCurrency(inv.totalWholesale),
+                                    _formatCurrency(
+                                      inv.totalWholesale,
+                                    ),
                                     Colors.greenAccent,
                                     isMobile,
                                   ),
                                   _buildInfoChip(
                                     'إجمالي البيع',
-                                    _formatCurrency(inv.totalRetail),
+                                    _formatCurrency(
+                                      inv.totalRetail,
+                                    ),
                                     Colors.amber,
                                     isMobile,
                                   ),
@@ -907,42 +1036,55 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                               ),
                               const SizedBox(height: 4),
                               Row(
-                                mainAxisAlignment: MainAxisAlignment.end,
+                                mainAxisAlignment:
+                                    MainAxisAlignment.end,
                                 children: [
-                                  if (PermissionsService().canEditInventory)
+                                  if (PermissionsService()
+                                      .canEditInventory)
                                     IconButton(
                                       icon: const Icon(
                                         Icons.edit,
                                         color: Colors.orange,
                                         size: 18,
                                       ),
-                                      onPressed: () => _editInventory(inv),
-                                      tooltip: 'تعديل',
-                                      padding: EdgeInsets.zero,
-                                      constraints: const BoxConstraints(),
+                                      onPressed: () =>
+                                          _editInventory(inv),
+                                      padding:
+                                          EdgeInsets.zero,
+                                      constraints:
+                                          const BoxConstraints(),
                                     ),
-                                  if (PermissionsService().canDeleteInventory)
+                                  if (PermissionsService()
+                                      .canDeleteInventory)
                                     IconButton(
                                       icon: const Icon(
                                         Icons.delete,
                                         color: Colors.red,
                                         size: 18,
                                       ),
-                                      onPressed: () => _confirmDelete(inv),
-                                      tooltip: 'حذف',
-                                      padding: EdgeInsets.zero,
-                                      constraints: const BoxConstraints(),
+                                      onPressed: () =>
+                                          _confirmDelete(inv),
+                                      padding:
+                                          EdgeInsets.zero,
+                                      constraints:
+                                          const BoxConstraints(),
                                     ),
                                   IconButton(
                                     icon: Icon(
                                       Icons.arrow_forward_ios,
-                                      color: Colors.cyanAccent,
-                                      size: isMobile ? 16 : 18,
+                                      color:
+                                          Colors.cyanAccent,
+                                      size:
+                                          isMobile ? 16 : 18,
                                     ),
-                                    onPressed: () => _showInventoryDetails(inv),
-                                    tooltip: 'عرض التفاصيل',
-                                    padding: EdgeInsets.zero,
-                                    constraints: const BoxConstraints(),
+                                    onPressed: () =>
+                                        _showInventoryDetails(
+                                      inv,
+                                    ),
+                                    padding:
+                                        EdgeInsets.zero,
+                                    constraints:
+                                        const BoxConstraints(),
                                   ),
                                 ],
                               ),
@@ -958,25 +1100,33 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
     );
   }
 
-  Widget _buildInfoChip(String label, String value, Color color, bool isMobile) {
+  Widget _buildInfoChip(
+    String label,
+    String value,
+    Color color,
+    bool isMobile,
+  ) {
     return Container(
-      padding: EdgeInsets.symmetric(
+      padding:
+          EdgeInsets.symmetric(
         horizontal: isMobile ? 6 : 8,
         vertical: isMobile ? 2 : 4,
       ),
       decoration: BoxDecoration(
         color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: color.withOpacity(0.2)),
+        borderRadius:
+            BorderRadius.circular(6),
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize:
+            MainAxisSize.min,
         children: [
           Text(
             label,
             style: TextStyle(
               color: Colors.white60,
-              fontSize: isMobile ? 9 : 11,
+              fontSize:
+                  isMobile ? 9 : 11,
             ),
           ),
           const SizedBox(width: 4),
@@ -984,8 +1134,10 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
             value,
             style: TextStyle(
               color: color,
-              fontSize: isMobile ? 10 : 12,
-              fontWeight: FontWeight.bold,
+              fontSize:
+                  isMobile ? 10 : 12,
+              fontWeight:
+                  FontWeight.bold,
             ),
           ),
         ],
@@ -993,83 +1145,93 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
     );
   }
 
-  // ================== عرض تفاصيل الجرد (صفحة منفصلة) ==================
-  Widget _buildDetailsView(InventoryModel inv) {
-    final bool isMobile = MediaQuery.of(context).size.width < 600;
+  Widget _buildDetailsView(
+    InventoryModel inv,
+  ) {
+    final bool isMobile =
+        MediaQuery.of(context).size.width < 600;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment:
+            CrossAxisAlignment.start,
         children: [
-          // بطاقة معلومات الجرد
           GlassCard(
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment:
+                    CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
                       Expanded(
                         child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                          crossAxisAlignment:
+                              CrossAxisAlignment.start,
                           children: [
                             Text(
                               'إذن جرد رقم ${inv.serial ?? ''}',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: isMobile ? 16 : 18,
-                                fontWeight: FontWeight.bold,
+                              style:
+                                  TextStyle(
+                                color:
+                                    Colors.white,
+                                fontSize:
+                                    isMobile
+                                        ? 16
+                                        : 18,
+                                fontWeight:
+                                    FontWeight.bold,
                               ),
                             ),
-                            const SizedBox(height: 2),
+                            const SizedBox(
+                              height: 2,
+                            ),
                             Text(
                               'التاريخ: ${inv.date}',
-                              style: TextStyle(
-                                color: Colors.white60,
-                                fontSize: isMobile ? 12 : 14,
+                              style:
+                                  TextStyle(
+                                color:
+                                    Colors.white60,
+                                fontSize:
+                                    isMobile
+                                        ? 12
+                                        : 14,
                               ),
                             ),
                           ],
                         ),
                       ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: inv.inventoryType == 'general'
-                              ? Colors.greenAccent.withOpacity(0.15)
-                              : Colors.orangeAccent.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: inv.inventoryType == 'general'
-                                ? Colors.greenAccent.withOpacity(0.3)
-                                : Colors.orangeAccent.withOpacity(0.3),
-                          ),
-                        ),
-                        child: Text(
-                          inv.inventoryType == 'general' ? 'جرد عام' : 'جرد محدد',
-                          style: TextStyle(
-                            color: inv.inventoryType == 'general'
-                                ? Colors.greenAccent
-                                : Colors.orangeAccent,
-                            fontSize: isMobile ? 10 : 12,
-                            fontWeight: FontWeight.bold,
-                          ),
+                      Text(
+                        inv.inventoryType ==
+                                'general'
+                            ? 'جرد عام'
+                            : 'جرد محدد',
+                        style: TextStyle(
+                          color: inv.inventoryType ==
+                                  'general'
+                              ? Colors.greenAccent
+                              : Colors.orangeAccent,
+                          fontWeight:
+                              FontWeight.bold,
+                          fontSize:
+                              isMobile ? 10 : 12,
                         ),
                       ),
                     ],
                   ),
-                  const Divider(color: Colors.white24, height: 16),
+                  const Divider(
+                    color: Colors.white24,
+                  ),
                   Row(
                     children: [
                       Expanded(
                         child: _buildDetailItem(
                           'الفرع',
-                          _getBranchName(inv.branchCode),
+                          _getBranchName(
+                            inv.branchCode,
+                          ),
                           Icons.storefront,
                           isMobile,
                         ),
@@ -1077,7 +1239,9 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                       Expanded(
                         child: _buildDetailItem(
                           'المخزن',
-                          _getStoreName(inv.storeCode),
+                          _getStoreName(
+                            inv.storeCode,
+                          ),
                           Icons.store,
                           isMobile,
                         ),
@@ -1085,7 +1249,8 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                       Expanded(
                         child: _buildDetailItem(
                           'عدد الأصناف',
-                          inv.items.length.toString(),
+                          inv.items.length
+                              .toString(),
                           Icons.list_alt,
                           isMobile,
                         ),
@@ -1094,38 +1259,51 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                   ),
                   const SizedBox(height: 8),
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
+                    mainAxisAlignment:
+                        MainAxisAlignment.end,
                     children: [
-                      if (PermissionsService().canExportInventory)
+                      if (PermissionsService()
+                          .canExportInventory)
                         TextButton.icon(
-                          onPressed: () => _exportSingleExcel(inv),
-                          icon: Icon(
-                            Icons.download,
-                            color: Colors.blueAccent,
-                            size: isMobile ? 16 : 18,
+                          onPressed: () =>
+                              _exportSingleExcel(
+                            inv,
                           ),
-                          label: Text(
+                          icon: const Icon(
+                            Icons.download,
+                            color:
+                                Colors.blueAccent,
+                          ),
+                          label:
+                              const Text(
                             'تصدير Excel',
-                            style: TextStyle(
-                              color: Colors.blueAccent,
-                              fontSize: isMobile ? 11 : 13,
+                            style:
+                                TextStyle(
+                              color:
+                                  Colors.blueAccent,
                             ),
                           ),
                         ),
-                      const SizedBox(width: 4),
-                      if (PermissionsService().canExportInventory)
+                      if (PermissionsService()
+                          .canExportInventory)
                         TextButton.icon(
-                          onPressed: () => _exportSinglePDF(inv),
-                          icon: Icon(
-                            Icons.picture_as_pdf,
-                            color: Colors.redAccent,
-                            size: isMobile ? 16 : 18,
+                          onPressed: () =>
+                              _exportSinglePDF(
+                            inv,
                           ),
-                          label: Text(
+                          icon:
+                              const Icon(
+                            Icons.picture_as_pdf,
+                            color:
+                                Colors.redAccent,
+                          ),
+                          label:
+                              const Text(
                             'تصدير PDF',
-                            style: TextStyle(
-                              color: Colors.redAccent,
-                              fontSize: isMobile ? 11 : 13,
+                            style:
+                                TextStyle(
+                              color:
+                                  Colors.redAccent,
                             ),
                           ),
                         ),
@@ -1136,582 +1314,611 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
             ),
           ),
           const SizedBox(height: 12),
-
-          // ===== جدول الأصناف =====
           GlassCard(
             child: Padding(
-              padding: const EdgeInsets.all(10),
+              padding:
+                  const EdgeInsets.all(10),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment:
+                    CrossAxisAlignment.start,
                 children: [
-                  Text(
+                  const Text(
                     'تفاصيل الأصناف',
                     style: TextStyle(
-                      color: Colors.cyanAccent,
-                      fontSize: isMobile ? 14 : 16,
-                      fontWeight: FontWeight.bold,
+                      color:
+                          Colors.cyanAccent,
+                      fontSize: 16,
+                      fontWeight:
+                          FontWeight.bold,
                     ),
                   ),
                   const SizedBox(height: 8),
-
-                  // ✅ جدول كامل داخل مسطرة واحدة للموبايل
-                  isMobile
-                      ? SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // عناوين الأعمدة
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 6,
-                                  horizontal: 8,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.white10,
-                                  borderRadius: BorderRadius.circular(6),
-                                ),
-                                child: Row(
-                                  children: [
-                                    SizedBox(
-                                      width: 30,
-                                      child: Text(
-                                        '#',
-                                        textAlign: TextAlign.center,
-                                        style: TextStyle(
-                                          color: Colors.cyan,
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 9,
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    SizedBox(
-                                      width: 60,
-                                      child: Text(
-                                        'الكود',
-                                        textAlign: TextAlign.center,
-                                        style: TextStyle(
-                                          color: Colors.cyan,
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 9,
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    SizedBox(
-                                      width: 80,
-                                      child: Text(
-                                        'الصنف',
-                                        textAlign: TextAlign.center,
-                                        style: TextStyle(
-                                          color: Colors.cyan,
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 9,
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    SizedBox(
-                                      width: 50,
-                                      child: Text(
-                                        'الكمية',
-                                        textAlign: TextAlign.center,
-                                        style: TextStyle(
-                                          color: Colors.cyan,
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 9,
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    SizedBox(
-                                      width: 65,
-                                      child: Text(
-                                        'سعر الجملة',
-                                        textAlign: TextAlign.center,
-                                        style: TextStyle(
-                                          color: Colors.greenAccent,
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 8,
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    SizedBox(
-                                      width: 65,
-                                      child: Text(
-                                        'قيمة الجملة',
-                                        textAlign: TextAlign.center,
-                                        style: TextStyle(
-                                          color: Colors.greenAccent,
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 8,
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    SizedBox(
-                                      width: 65,
-                                      child: Text(
-                                        'سعر البيع',
-                                        textAlign: TextAlign.center,
-                                        style: TextStyle(
-                                          color: Colors.amber,
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 8,
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    SizedBox(
-                                      width: 65,
-                                      child: Text(
-                                        'قيمة البيع',
-                                        textAlign: TextAlign.center,
-                                        style: TextStyle(
-                                          color: Colors.amber,
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 8,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
+                  if (isMobile)
+                    SingleChildScrollView(
+                      scrollDirection:
+                          Axis.horizontal,
+                      child: Column(
+                        children: [
+                          Row(
+                            children: const [
+                              SizedBox(
+                                width: 30,
+                                child: Text(
+                                  '#',
+                                  textAlign:
+                                      TextAlign.center,
+                                  style:
+                                      TextStyle(
+                                    color:
+                                        Colors.cyan,
+                                    fontSize: 9,
+                                  ),
                                 ),
                               ),
-                              const SizedBox(height: 4),
-                              // صفوف البيانات
-                              ...inv.items.asMap().entries.map((entry) {
-                                int idx = entry.key;
-                                final item = entry.value;
-                                return Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 4,
-                                    horizontal: 8,
+                              SizedBox(
+                                width: 60,
+                                child: Text(
+                                  'الكود',
+                                  textAlign:
+                                      TextAlign.center,
+                                  style:
+                                      TextStyle(
+                                    color:
+                                        Colors.cyan,
+                                    fontSize: 9,
                                   ),
-                                  decoration: BoxDecoration(
-                                    border: Border(
-                                      bottom: BorderSide(
-                                        color: Colors.white.withOpacity(0.05),
-                                        width: 0.5,
-                                      ),
-                                    ),
+                                ),
+                              ),
+                              SizedBox(
+                                width: 80,
+                                child: Text(
+                                  'الصنف',
+                                  textAlign:
+                                      TextAlign.center,
+                                  style:
+                                      TextStyle(
+                                    color:
+                                        Colors.cyan,
+                                    fontSize: 9,
                                   ),
-                                  child: Row(
-                                    children: [
-                                      SizedBox(
-                                        width: 30,
-                                        child: Text(
-                                          '${idx + 1}',
-                                          style: TextStyle(
-                                            color: Colors.white54,
-                                            fontSize: 9,
-                                          ),
-                                          textAlign: TextAlign.center,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 4),
-                                      SizedBox(
-                                        width: 60,
-                                        child: Text(
-                                          item.code,
-                                          style: TextStyle(
-                                            color: Colors.white70,
-                                            fontSize: 9,
-                                          ),
-                                          textAlign: TextAlign.center,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 4),
-                                      SizedBox(
-                                        width: 80,
-                                        child: Text(
-                                          item.name,
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 10,
-                                          ),
-                                          textAlign: TextAlign.center,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 4),
-                                      SizedBox(
-                                        width: 50,
-                                        child: Text(
-                                          item.quantity.toStringAsFixed(0),
-                                          style: TextStyle(
-                                            color: Colors.white70,
-                                            fontSize: 9,
-                                          ),
-                                          textAlign: TextAlign.center,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 4),
-                                      SizedBox(
-                                        width: 65,
-                                        child: Text(
-                                          _formatCurrency(item.wholesalePrice),
-                                          style: TextStyle(
-                                            color: Colors.greenAccent,
-                                            fontSize: 9,
-                                          ),
-                                          textAlign: TextAlign.center,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 4),
-                                      SizedBox(
-                                        width: 65,
-                                        child: Text(
-                                          _formatCurrency(item.wholesaleValue),
-                                          style: TextStyle(
-                                            color: Colors.greenAccent,
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 9,
-                                          ),
-                                          textAlign: TextAlign.center,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 4),
-                                      SizedBox(
-                                        width: 65,
-                                        child: Text(
-                                          _formatCurrency(item.retailPrice),
-                                          style: TextStyle(
-                                            color: Colors.amber,
-                                            fontSize: 9,
-                                          ),
-                                          textAlign: TextAlign.center,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 4),
-                                      SizedBox(
-                                        width: 65,
-                                        child: Text(
-                                          _formatCurrency(item.retailValue),
-                                          style: TextStyle(
-                                            color: Colors.amber,
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 9,
-                                          ),
-                                          textAlign: TextAlign.center,
-                                        ),
-                                      ),
-                                    ],
+                                ),
+                              ),
+                              SizedBox(
+                                width: 50,
+                                child: Text(
+                                  'الكمية',
+                                  textAlign:
+                                      TextAlign.center,
+                                  style:
+                                      TextStyle(
+                                    color:
+                                        Colors.cyan,
+                                    fontSize: 9,
                                   ),
-                                );
-                              }).toList(),
+                                ),
+                              ),
+                              SizedBox(
+                                width: 65,
+                                child: Text(
+                                  'جملة',
+                                  textAlign:
+                                      TextAlign.center,
+                                  style:
+                                      TextStyle(
+                                    color:
+                                        Colors.greenAccent,
+                                    fontSize: 9,
+                                  ),
+                                ),
+                              ),
+                              SizedBox(
+                                width: 65,
+                                child: Text(
+                                  'قيمة',
+                                  textAlign:
+                                      TextAlign.center,
+                                  style:
+                                      TextStyle(
+                                    color:
+                                        Colors.greenAccent,
+                                    fontSize: 9,
+                                  ),
+                                ),
+                              ),
+                              SizedBox(
+                                width: 65,
+                                child: Text(
+                                  'بيع',
+                                  textAlign:
+                                      TextAlign.center,
+                                  style:
+                                      TextStyle(
+                                    color:
+                                        Colors.amber,
+                                    fontSize: 9,
+                                  ),
+                                ),
+                              ),
+                              SizedBox(
+                                width: 65,
+                                child: Text(
+                                  'قيمة',
+                                  textAlign:
+                                      TextAlign.center,
+                                  style:
+                                      TextStyle(
+                                    color:
+                                        Colors.amber,
+                                    fontSize: 9,
+                                  ),
+                                ),
+                              ),
                             ],
                           ),
-                        )
-                      : Column(
-                          children: [
-                            // عناوين الأعمدة (سطح المكتب)
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                vertical: 6,
-                                horizontal: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.white10,
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: const Row(
+                          ...inv.items
+                              .asMap()
+                              .entries
+                              .map(
+                                (entry) {
+                              final item =
+                                  entry.value;
+
+                              return Row(
                                 children: [
-                                  Expanded(
-                                    flex: 0,
-                                    child: Text(
-                                      '#',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        color: Colors.cyan,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 11,
+                                  SizedBox(
+                                    width: 30,
+                                    child:
+                                        Text(
+                                      '${entry.key + 1}',
+                                      textAlign:
+                                          TextAlign.center,
+                                      style:
+                                          const TextStyle(
+                                        color:
+                                            Colors.white54,
+                                        fontSize:
+                                            9,
                                       ),
                                     ),
                                   ),
-                                  Expanded(
-                                    flex: 1,
-                                    child: Text(
-                                      'الكود',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        color: Colors.cyan,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 11,
+                                  SizedBox(
+                                    width: 60,
+                                    child:
+                                        Text(
+                                      item.code,
+                                      textAlign:
+                                          TextAlign.center,
+                                      style:
+                                          const TextStyle(
+                                        color:
+                                            Colors.white70,
+                                        fontSize:
+                                            9,
                                       ),
                                     ),
                                   ),
-                                  Expanded(
-                                    flex: 2,
-                                    child: Text(
-                                      'الصنف',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        color: Colors.cyan,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 11,
+                                  SizedBox(
+                                    width: 80,
+                                    child:
+                                        Text(
+                                      item.name,
+                                      textAlign:
+                                          TextAlign.center,
+                                      style:
+                                          const TextStyle(
+                                        color:
+                                            Colors.white,
+                                        fontSize:
+                                            9,
                                       ),
                                     ),
                                   ),
-                                  Expanded(
-                                    flex: 1,
-                                    child: Text(
-                                      'الكمية',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        color: Colors.cyan,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 11,
+                                  SizedBox(
+                                    width: 50,
+                                    child:
+                                        Text(
+                                      item.quantity
+                                          .toStringAsFixed(
+                                        0,
+                                      ),
+                                      textAlign:
+                                          TextAlign.center,
+                                      style:
+                                          const TextStyle(
+                                        color:
+                                            Colors.white70,
+                                        fontSize:
+                                            9,
                                       ),
                                     ),
                                   ),
-                                  Expanded(
-                                    flex: 1,
-                                    child: Text(
-                                      'سعر الجملة',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        color: Colors.greenAccent,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 11,
+                                  SizedBox(
+                                    width: 65,
+                                    child:
+                                        Text(
+                                      _formatCurrency(
+                                        item.wholesalePrice,
+                                      ),
+                                      textAlign:
+                                          TextAlign.center,
+                                      style:
+                                          const TextStyle(
+                                        color:
+                                            Colors.greenAccent,
+                                        fontSize:
+                                            9,
                                       ),
                                     ),
                                   ),
-                                  Expanded(
-                                    flex: 1,
-                                    child: Text(
-                                      'قيمة الجملة',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        color: Colors.greenAccent,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 11,
+                                  SizedBox(
+                                    width: 65,
+                                    child:
+                                        Text(
+                                      _formatCurrency(
+                                        item.wholesaleValue,
+                                      ),
+                                      textAlign:
+                                          TextAlign.center,
+                                      style:
+                                          const TextStyle(
+                                        color:
+                                            Colors.greenAccent,
+                                        fontSize:
+                                            9,
                                       ),
                                     ),
                                   ),
-                                  Expanded(
-                                    flex: 1,
-                                    child: Text(
-                                      'سعر البيع',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        color: Colors.amber,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 11,
+                                  SizedBox(
+                                    width: 65,
+                                    child:
+                                        Text(
+                                      _formatCurrency(
+                                        item.retailPrice,
+                                      ),
+                                      textAlign:
+                                          TextAlign.center,
+                                      style:
+                                          const TextStyle(
+                                        color:
+                                            Colors.amber,
+                                        fontSize:
+                                            9,
                                       ),
                                     ),
                                   ),
-                                  Expanded(
-                                    flex: 1,
-                                    child: Text(
-                                      'قيمة البيع',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        color: Colors.amber,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 11,
+                                  SizedBox(
+                                    width: 65,
+                                    child:
+                                        Text(
+                                      _formatCurrency(
+                                        item.retailValue,
+                                      ),
+                                      textAlign:
+                                          TextAlign.center,
+                                      style:
+                                          const TextStyle(
+                                        color:
+                                            Colors.amber,
+                                        fontSize:
+                                            9,
                                       ),
                                     ),
                                   ),
                                 ],
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+                    )
+                  else
+                    Column(
+                      children: [
+                        const Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                '#',
+                                textAlign:
+                                    TextAlign.center,
+                                style:
+                                    TextStyle(
+                                  color:
+                                      Colors.cyan,
+                                ),
                               ),
                             ),
-                            const SizedBox(height: 4),
-                            // صفوف البيانات
-                            ListView.separated(
-                              shrinkWrap: true,
-                              physics: const NeverScrollableScrollPhysics(),
-                              itemCount: inv.items.length,
-                              separatorBuilder: (_, __) => const Divider(
-                                color: Colors.white10,
-                                height: 1,
+                            Expanded(
+                              child: Text(
+                                'الكود',
+                                textAlign:
+                                    TextAlign.center,
+                                style:
+                                    TextStyle(
+                                  color:
+                                      Colors.cyan,
+                                ),
                               ),
-                              itemBuilder: (ctx, idx) {
-                                final item = inv.items[idx];
-                                return Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 4,
-                                    horizontal: 2,
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        flex: 0,
-                                        child: Text(
-                                          '${idx + 1}',
-                                          style: const TextStyle(
-                                            color: Colors.white54,
-                                            fontSize: 10,
-                                          ),
-                                          textAlign: TextAlign.center,
-                                        ),
-                                      ),
-                                      Expanded(
-                                        flex: 1,
-                                        child: Text(
-                                          item.code,
-                                          style: const TextStyle(
-                                            color: Colors.white70,
-                                            fontSize: 10,
-                                          ),
-                                          textAlign: TextAlign.center,
-                                        ),
-                                      ),
-                                      Expanded(
-                                        flex: 2,
-                                        child: Text(
-                                          item.name,
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 11,
-                                          ),
-                                          textAlign: TextAlign.center,
-                                        ),
-                                      ),
-                                      Expanded(
-                                        flex: 1,
-                                        child: Text(
-                                          item.quantity.toStringAsFixed(0),
-                                          style: const TextStyle(
-                                            color: Colors.white70,
-                                            fontSize: 10,
-                                          ),
-                                          textAlign: TextAlign.center,
-                                        ),
-                                      ),
-                                      Expanded(
-                                        flex: 1,
-                                        child: Text(
-                                          _formatCurrency(item.wholesalePrice),
-                                          style: const TextStyle(
-                                            color: Colors.greenAccent,
-                                            fontSize: 10,
-                                          ),
-                                          textAlign: TextAlign.center,
-                                        ),
-                                      ),
-                                      Expanded(
-                                        flex: 1,
-                                        child: Text(
-                                          _formatCurrency(item.wholesaleValue),
-                                          style: const TextStyle(
-                                            color: Colors.greenAccent,
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 10,
-                                          ),
-                                          textAlign: TextAlign.center,
-                                        ),
-                                      ),
-                                      Expanded(
-                                        flex: 1,
-                                        child: Text(
-                                          _formatCurrency(item.retailPrice),
-                                          style: const TextStyle(
-                                            color: Colors.amber,
-                                            fontSize: 10,
-                                          ),
-                                          textAlign: TextAlign.center,
-                                        ),
-                                      ),
-                                      Expanded(
-                                        flex: 1,
-                                        child: Text(
-                                          _formatCurrency(item.retailValue),
-                                          style: const TextStyle(
-                                            color: Colors.amber,
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 10,
-                                          ),
-                                          textAlign: TextAlign.center,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              },
+                            ),
+                            Expanded(
+                              flex: 2,
+                              child: Text(
+                                'الصنف',
+                                textAlign:
+                                    TextAlign.center,
+                                style:
+                                    TextStyle(
+                                  color:
+                                      Colors.cyan,
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              child: Text(
+                                'الكمية',
+                                textAlign:
+                                    TextAlign.center,
+                                style:
+                                    TextStyle(
+                                  color:
+                                      Colors.cyan,
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              child: Text(
+                                'سعر الجملة',
+                                textAlign:
+                                    TextAlign.center,
+                                style:
+                                    TextStyle(
+                                  color:
+                                      Colors.greenAccent,
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              child: Text(
+                                'قيمة الجملة',
+                                textAlign:
+                                    TextAlign.center,
+                                style:
+                                    TextStyle(
+                                  color:
+                                      Colors.greenAccent,
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              child: Text(
+                                'سعر البيع',
+                                textAlign:
+                                    TextAlign.center,
+                                style:
+                                    TextStyle(
+                                  color:
+                                      Colors.amber,
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              child: Text(
+                                'قيمة البيع',
+                                textAlign:
+                                    TextAlign.center,
+                                style:
+                                    TextStyle(
+                                  color:
+                                      Colors.amber,
+                                ),
+                              ),
                             ),
                           ],
                         ),
+                        const SizedBox(
+                          height: 4,
+                        ),
+                        ListView.separated(
+                          shrinkWrap:
+                              true,
+                          physics:
+                              const NeverScrollableScrollPhysics(),
+                          itemCount:
+                              inv.items.length,
+                          separatorBuilder:
+                              (_, __) =>
+                                  const Divider(
+                            color:
+                                Colors.white10,
+                          ),
+                          itemBuilder:
+                              (ctx, idx) {
+                            final item =
+                                inv.items[idx];
+
+                            return Row(
+                              children: [
+                                Expanded(
+                                  child:
+                                      Text(
+                                    '${idx + 1}',
+                                    textAlign:
+                                        TextAlign.center,
+                                    style:
+                                        const TextStyle(
+                                      color:
+                                          Colors.white54,
+                                    ),
+                                  ),
+                                ),
+                                Expanded(
+                                  child:
+                                      Text(
+                                    item.code,
+                                    textAlign:
+                                        TextAlign.center,
+                                  ),
+                                ),
+                                Expanded(
+                                  flex: 2,
+                                  child:
+                                      Text(
+                                    item.name,
+                                    textAlign:
+                                        TextAlign.center,
+                                    style:
+                                        const TextStyle(
+                                      color:
+                                          Colors.white,
+                                    ),
+                                  ),
+                                ),
+                                Expanded(
+                                  child:
+                                      Text(
+                                    item.quantity
+                                        .toStringAsFixed(
+                                      0,
+                                    ),
+                                    textAlign:
+                                        TextAlign.center,
+                                  ),
+                                ),
+                                Expanded(
+                                  child:
+                                      Text(
+                                    _formatCurrency(
+                                      item.wholesalePrice,
+                                    ),
+                                    textAlign:
+                                        TextAlign.center,
+                                  ),
+                                ),
+                                Expanded(
+                                  child:
+                                      Text(
+                                    _formatCurrency(
+                                      item.wholesaleValue,
+                                    ),
+                                    textAlign:
+                                        TextAlign.center,
+                                  ),
+                                ),
+                                Expanded(
+                                  child:
+                                      Text(
+                                    _formatCurrency(
+                                      item.retailPrice,
+                                    ),
+                                    textAlign:
+                                        TextAlign.center,
+                                  ),
+                                ),
+                                Expanded(
+                                  child:
+                                      Text(
+                                    _formatCurrency(
+                                      item.retailValue,
+                                    ),
+                                    textAlign:
+                                        TextAlign.center,
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                      ],
+                    ),
                 ],
               ),
             ),
           ),
           const SizedBox(height: 12),
-
-          // بطاقة الإجماليات
           GlassCard(
             child: Padding(
-              padding: const EdgeInsets.all(10),
+              padding:
+                  const EdgeInsets.all(10),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                mainAxisAlignment:
+                    MainAxisAlignment.spaceAround,
                 children: [
                   Column(
                     children: [
-                      Text(
+                      const Text(
                         'إجمالي الجملة',
                         style: TextStyle(
-                          color: Colors.white60,
-                          fontSize: isMobile ? 10 : 12,
+                          color:
+                              Colors.white60,
                         ),
                       ),
-                      const SizedBox(height: 2),
                       Text(
-                        _formatCurrency(inv.totalWholesale),
-                        style: TextStyle(
-                          color: Colors.greenAccent,
-                          fontSize: isMobile ? 16 : 18,
-                          fontWeight: FontWeight.bold,
+                        _formatCurrency(
+                          inv.totalWholesale,
+                        ),
+                        style: const TextStyle(
+                          color:
+                              Colors.greenAccent,
+                          fontWeight:
+                              FontWeight.bold,
                         ),
                       ),
                     ],
                   ),
                   Container(
                     width: 1,
-                    height: isMobile ? 24 : 30,
+                    height: 30,
                     color: Colors.white24,
                   ),
                   Column(
                     children: [
-                      Text(
+                      const Text(
                         'إجمالي البيع',
                         style: TextStyle(
-                          color: Colors.white60,
-                          fontSize: isMobile ? 10 : 12,
+                          color:
+                              Colors.white60,
                         ),
                       ),
-                      const SizedBox(height: 2),
                       Text(
-                        _formatCurrency(inv.totalRetail),
-                        style: TextStyle(
+                        _formatCurrency(
+                          inv.totalRetail,
+                        ),
+                        style: const TextStyle(
                           color: Colors.amber,
-                          fontSize: isMobile ? 16 : 18,
-                          fontWeight: FontWeight.bold,
+                          fontWeight:
+                              FontWeight.bold,
                         ),
                       ),
                     ],
                   ),
                   Container(
                     width: 1,
-                    height: isMobile ? 24 : 30,
+                    height: 30,
                     color: Colors.white24,
                   ),
                   Column(
                     children: [
-                      Text(
+                      const Text(
                         'إجمالي الكميات',
                         style: TextStyle(
-                          color: Colors.white60,
-                          fontSize: isMobile ? 10 : 12,
+                          color:
+                              Colors.white60,
                         ),
                       ),
-                      const SizedBox(height: 2),
                       Text(
-                        inv.items.fold(0.0, (sum, item) => sum + item.quantity)
+                        inv.items
+                            .fold(
+                              0.0,
+                              (sum, item) =>
+                                  sum + item.quantity,
+                            )
                             .toStringAsFixed(0),
-                        style: TextStyle(
-                          color: Colors.cyanAccent,
-                          fontSize: isMobile ? 16 : 18,
-                          fontWeight: FontWeight.bold,
+                        style:
+                            const TextStyle(
+                          color:
+                              Colors.cyanAccent,
+                          fontWeight:
+                              FontWeight.bold,
                         ),
                       ),
                     ],
@@ -1720,13 +1927,17 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
               ),
             ),
           ),
-          const SizedBox(height: 16),
         ],
       ),
     );
   }
 
-  Widget _buildDetailItem(String label, String value, IconData icon, bool isMobile) {
+  Widget _buildDetailItem(
+    String label,
+    String value,
+    IconData icon,
+    bool isMobile,
+  ) {
     return Row(
       children: [
         Icon(
@@ -1736,21 +1947,23 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
         ),
         const SizedBox(width: 4),
         Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment:
+              CrossAxisAlignment.start,
           children: [
             Text(
               label,
               style: TextStyle(
                 color: Colors.white60,
-                fontSize: isMobile ? 8 : 10,
+                fontSize:
+                    isMobile ? 8 : 10,
               ),
             ),
             Text(
               value,
               style: TextStyle(
                 color: Colors.white,
-                fontSize: isMobile ? 11 : 13,
-                fontWeight: FontWeight.w500,
+                fontSize:
+                    isMobile ? 11 : 13,
               ),
             ),
           ],

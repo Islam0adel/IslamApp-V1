@@ -17,6 +17,7 @@ import '../../views/dashboard/inventory_page.dart'; // تأكد من المسا�
 import 'stock_balance_page.dart'; // تأكد من المسار الصحيح
 // import '../../views/dashboard/supplier_page.dart';
 import 'suppliers_dashboard_page.dart'; // ✅ استيراد الصفحة الجديدة
+import 'package:firebase_auth/firebase_auth.dart';
 
 class HomePage extends StatefulWidget {
   final String userName;
@@ -46,7 +47,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   String _selectedBranchCode = "all";
   List<Map<String, String>> _branches = [{'name': 'كل الفروع', 'code': 'all'}];
   bool _isLoadingBranches = true;
-  bool _isLoading = true;
+  bool _permissionsLoaded = false;
 
   @override
   void initState() {
@@ -72,24 +73,26 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 
   Future<void> _loadAllData() async {
-    try {
-      await PermissionsService().loadPermissions();
-      await _loadBranchesAndCheck();
-      initializeGlobalListener(widget.companyCode);
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      print("خطأ في تحميل البيانات: $e");
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
+  try {
+    await PermissionsService().loadPermissions();
+
+    if (!mounted) return;
+
+    setState(() {
+      _permissionsLoaded = true;
+    });
+
+    await _loadBranchesAndCheck();
+  } catch (e) {
+    print("خطأ في تحميل البيانات: $e");
+
+    if (mounted) {
+      setState(() {
+        _permissionsLoaded = true;
+      });
     }
   }
+}
 
   Future<void> _loadBranchesAndCheck() async {
   try {
@@ -98,100 +101,258 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     final String localKey = "${widget.companyCode}_branches";
 
     List<Map<String, String>> fetchedBranches = [];
-    bool hasLocalData = false;
 
-    // 1️⃣ قراءة الفروع من Hive
-    final dynamic rawData = codingBox.get(localKey, defaultValue: []);
-    if (rawData is List && rawData.isNotEmpty) {
-      for (var item in rawData) {
-        if (item is Map && item['name'] != null && item['code'] != null) {
-          fetchedBranches.add({'name': item['name'].toString(), 'code': item['code'].toString()});
+    // ==========================================================
+    // 1) قراءة الفروع من Hive
+    // ==========================================================
+
+    final dynamic rawData =
+        codingBox.get(localKey, defaultValue: []);
+
+    if (rawData is List) {
+      for (final item in rawData) {
+        if (item is Map &&
+            item['name'] != null &&
+            item['code'] != null) {
+          fetchedBranches.add({
+            'name': item['name'].toString(),
+            'code': item['code'].toString(),
+          });
         }
-      }
-      if (fetchedBranches.isNotEmpty) {
-        hasLocalData = true;
       }
     }
 
-    // 2️⃣ جلب من السيرفر إذا لم تكن محلية
-    if (!hasLocalData) {
+    // ==========================================================
+    // 2) لو Hive فاضي فقط، جلب الفروع من السيرفر
+    // ==========================================================
+
+    if (fetchedBranches.isEmpty) {
       print("📥 الفروع غير موجودة محلياً.. جاري الجلب من السيرفر");
-      List<CodingModel> branchesData = await _codingService.getCodingList(
+
+      final List<CodingModel> branchesData =
+          await _codingService.getCodingList(
         companyCode: widget.companyCode,
         category: "branches",
       );
-      fetchedBranches = [];
-      for (var item in branchesData) {
-        fetchedBranches.add({'name': item.name, 'code': item.code});
-      }
+
+      fetchedBranches = branchesData
+          .map(
+            (item) => {
+              'name': item.name,
+              'code': item.code,
+            },
+          )
+          .toList();
     }
 
-    // 3️⃣ تصفية الفروع حسب صلاحية المستخدم
-    final allowed = PermissionsService().allowedBranches;
+    // ==========================================================
+    // 3) قراءة الفروع المسموحة
+    // ==========================================================
+
+    final List<String>? allowed =
+        PermissionsService().allowedBranches;
+
     List<Map<String, String>> filteredBranches;
+
     if (allowed != null && !allowed.contains('all')) {
-      filteredBranches = fetchedBranches.where((b) => allowed.contains(b['code'])).toList();
+      filteredBranches = fetchedBranches
+          .where(
+            (branch) => allowed.contains(branch['code']),
+          )
+          .toList();
     } else {
-      filteredBranches = List.from(fetchedBranches);
+      filteredBranches = List<Map<String, String>>.from(
+        fetchedBranches,
+      );
     }
 
-    // ═══ إضافة خيار "كل الفروع" دائماً إذا كانت الصلاحية تسمح بذلك ═══
+    // ==========================================================
+    // 4) إضافة "كل الفروع" لو مسموح
+    // ==========================================================
+
     if (allowed == null || allowed.contains('all')) {
-      filteredBranches.insert(0, {'name': 'كل الفروع', 'code': 'all'});
+      filteredBranches.insert(
+        0,
+        {
+          'name': 'كل الفروع',
+          'code': 'all',
+        },
+      );
     }
+
+    // ==========================================================
+    // 5) لو مفيش فروع مسموحة
+    // ==========================================================
 
     if (filteredBranches.isEmpty) {
-      filteredBranches = [{'name': 'لا توجد فروع مسموحة', 'code': 'none'}];
+      filteredBranches = [
+        {
+          'name': 'لا توجد فروع مسموحة',
+          'code': 'none',
+        },
+      ];
     }
 
-    if (mounted) {
-      setState(() {
-        _branches = filteredBranches;
-        _isLoadingBranches = false;
+    // ==========================================================
+    // 6) إعداد رسالة اختيار الفرع
+    // ==========================================================
 
-        // 4️⃣ اختيار الفرع الافتراضي
-        String? savedBranchCode = prefs.getString('selected_branch_code');
-        String? savedBranchName = prefs.getString('selected_branch_name');
+    final String email =
+        prefs.getString('user_email') ?? '';
 
-        bool isAllowed = _branches.any((b) => b['code'] == savedBranchCode);
-        if (savedBranchCode != null && isAllowed && savedBranchCode != 'none') {
-          _selectedBranchCode = savedBranchCode;
-          _selectedBranchName = savedBranchName ?? "كل الفروع";
-        } else {
-          // ✅ استبعاد 'none' و 'all' للحصول على الفروع الحقيقية فقط
-          var realBranches = _branches.where((b) => b['code'] != 'none' && b['code'] != 'all').toList();
-          
-          if (realBranches.isNotEmpty) {
-            // ✅ اختيار أول فرع حقيقي (الفرع الرئيسي عادة)
-            _selectedBranchCode = realBranches[0]['code']!;
-            _selectedBranchName = realBranches[0]['name']!;
-            // ✅ حفظ الاختيار ليتم تذكره في下次
-            prefs.setString('selected_branch_code', _selectedBranchCode);
-            prefs.setString('selected_branch_name', _selectedBranchName);
-            print("✅ تم اختيار الفرع الافتراضي: $_selectedBranchName ($_selectedBranchCode)");
-          } else {
-            // لا توجد فروع حقيقية → نستخدم 'all' إذا وجد
-            if (_branches.any((b) => b['code'] == 'all')) {
-              _selectedBranchCode = 'all';
-              _selectedBranchName = 'كل الفروع';
-            } else {
-              _selectedBranchCode = 'none';
-              _selectedBranchName = 'لا توجد فروع';
-            }
-          }
-        }
-      });
+    final bool showBranchDialog =
+        prefs.getBool(
+          'show_branch_dialog_$email',
+        ) ?? true;
 
-      // عرض الحوار التلقائي فقط إذا كان عدد الفروع الحقيقية > 1
-      var realBranches = _branches.where((b) => b['code'] != 'all' && b['code'] != 'none').toList();
-      if (realBranches.length > 1) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _showBranchSelectionDialog();
-        });
+    // ==========================================================
+    // 7) تحديد الفرع الحالي
+    // ==========================================================
+
+    String selectedCode = 'all';
+    String selectedName = 'كل الفروع';
+
+    final String? savedBranchCode =
+        prefs.getString('selected_branch_code');
+
+    final String? savedBranchName =
+        prefs.getString('selected_branch_name');
+
+    final bool savedBranchIsAllowed =
+        savedBranchCode != null &&
+        filteredBranches.any(
+          (branch) =>
+              branch['code'] == savedBranchCode,
+        ) &&
+        savedBranchCode != 'none';
+
+    if (savedBranchIsAllowed) {
+      // هنا savedBranchCode مضمون إنه غير null
+      selectedCode = savedBranchCode;
+      selectedName = savedBranchName ?? 'كل الفروع';
+    } else {
+      // ========================================================
+      // الفروع الحقيقية فقط
+      // ========================================================
+
+      final List<Map<String, String>> realBranches =
+          filteredBranches
+              .where(
+                (branch) =>
+                    branch['code'] != 'all' &&
+                    branch['code'] != 'none',
+              )
+              .toList();
+
+      // --------------------------------------------------------
+      // فرع واحد
+      // --------------------------------------------------------
+
+      if (realBranches.length == 1) {
+        selectedCode =
+            realBranches.first['code'] ?? 'all';
+
+        selectedName =
+            realBranches.first['name'] ?? 'فرع';
+
+        await prefs.setString(
+          'selected_branch_code',
+          selectedCode,
+        );
+
+        await prefs.setString(
+          'selected_branch_name',
+          selectedName,
+        );
+
+        print(
+          "✅ تم اختيار الفرع الوحيد: "
+          "$selectedName ($selectedCode)",
+        );
+      }
+
+      // --------------------------------------------------------
+      // أكثر من فرع
+      // --------------------------------------------------------
+
+      else if (realBranches.length > 1) {
+        selectedCode =
+            realBranches.first['code'] ?? 'all';
+
+        selectedName =
+            realBranches.first['name'] ?? 'فرع';
+
+        await prefs.setString(
+          'selected_branch_code',
+          selectedCode,
+        );
+
+        await prefs.setString(
+          'selected_branch_name',
+          selectedName,
+        );
+
+        print(
+          "✅ تم اختيار الفرع الافتراضي: "
+          "$selectedName ($selectedCode)",
+        );
+      }
+
+      // --------------------------------------------------------
+      // لا توجد فروع حقيقية
+      // --------------------------------------------------------
+
+      else if (filteredBranches.any(
+        (branch) => branch['code'] == 'all',
+      )) {
+        selectedCode = 'all';
+        selectedName = 'كل الفروع';
+      } else {
+        selectedCode = 'none';
+        selectedName = 'لا توجد فروع';
       }
     }
+
+    // ==========================================================
+    // 8) تحديث الواجهة
+    // ==========================================================
+
+    if (!mounted) return;
+
+    setState(() {
+      _branches = filteredBranches;
+      _selectedBranchCode = selectedCode;
+      _selectedBranchName = selectedName;
+      _isLoadingBranches = false;
+    });
+
+    // ==========================================================
+    // 9) رسالة اختيار الفرع
+    // ==========================================================
+
+    final List<Map<String, String>> realBranches =
+        filteredBranches
+            .where(
+              (branch) =>
+                  branch['code'] != 'all' &&
+                  branch['code'] != 'none',
+            )
+            .toList();
+
+    if (realBranches.length > 1 &&
+        showBranchDialog &&
+        PermissionsService().canChangeBranch) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) {
+          if (mounted) {
+            _showBranchSelectionDialog();
+          }
+        },
+      );
+    }
   } catch (e) {
-    print("خطأ في جلب الفروع: $e");
+    print("❌ خطأ في جلب الفروع: $e");
+
     if (mounted) {
       setState(() {
         _isLoadingBranches = false;
@@ -259,13 +420,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return const Scaffold(
-        body: Center(
-          child: CircularProgressIndicator(color: Colors.cyanAccent),
-        ),
-      );
-    }
 
     return Scaffold(
       extendBodyBehindAppBar: true,
@@ -365,7 +519,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           ),
         ),
         // ✅ زر "تغيير الفرع" يظهر دائماً إذا كان لدى المستخدم صلاحية
-        if (!_isLoadingBranches && PermissionsService().canChangeBranch)
+        if (!_isLoadingBranches &&
+    PermissionsService().canChangeBranch &&
+    !PermissionsService().hasSingleBranch())
           InkWell(
             onTap: _showBranchSelectionDialog,
             borderRadius: BorderRadius.circular(8),
@@ -426,7 +582,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     List<Widget> menuItems = [];
 
     // 1. حركة الخزينة
-    if (PermissionsService().canShowTreasury) {
+    if (_permissionsLoaded &&
+    PermissionsService().canShowTreasury) {
       menuItems.add(
         _menuItem("حركة الخزينة", Icons.account_balance_wallet_rounded, Colors.greenAccent, () {
           Navigator.push(
@@ -444,7 +601,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     }
 
     // 2. التكويد
-    if (PermissionsService().canShowCoding) {
+    if (_permissionsLoaded &&
+    PermissionsService().canShowCoding) {
       menuItems.add(
         _menuItem("التكويد", Icons.code_rounded, Colors.amber, () {
           Navigator.push(
@@ -458,7 +616,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     }
 
     // 3. 🔥 المشتريات والموردين (يؤدي إلى لوحة تحكم الموردين)
-if (PermissionsService().canShowSuppliers) {
+if (_permissionsLoaded &&PermissionsService().canShowSuppliers) {
   menuItems.add(
     _menuItem(
       "المشتريات والموردين",
@@ -482,7 +640,7 @@ if (PermissionsService().canShowSuppliers) {
 
     // 4. 🔥 حركة الجرد (جديد)
 // داخل HomePage - _buildMenuGrid()
-if (PermissionsService().canShowInventory) {
+if (_permissionsLoaded &&PermissionsService().canShowInventory) {
   menuItems.add(
     _menuItem("حركة الجرد", Icons.inventory_2_rounded, Colors.orangeAccent, () {
       Navigator.push(
@@ -498,7 +656,7 @@ if (PermissionsService().canShowInventory) {
   );
 }
 // 5. 🔥 رصيد المخزون
-if (PermissionsService().canShowInventory) { // أو يمكنك إنشاء صلاحية جديدة canShowStock
+if (_permissionsLoaded &&PermissionsService().canShowInventory) { // أو يمكنك إنشاء صلاحية جديدة canShowStock
   menuItems.add(
     _menuItem("رصيد المخزون", Icons.storage_rounded, Colors.tealAccent, () {
       Navigator.push(
@@ -515,7 +673,7 @@ if (PermissionsService().canShowInventory) { // أو يمكنك إنشاء صل�
 }
 
     // 5. التقارير
-    if (PermissionsService().canShowReports) {
+    if (_permissionsLoaded &&PermissionsService().canShowReports) {
       menuItems.add(
         _menuItem("التقارير", Icons.analytics_rounded, Colors.purpleAccent, () {
           Navigator.push(
@@ -536,9 +694,12 @@ if (PermissionsService().canShowInventory) { // أو يمكنك إنشاء صل�
       _menuItem("الاعدادات", Icons.settings_rounded, Colors.blueGrey, () async {
         await Navigator.push(context, MaterialPageRoute(builder: (c) => const SettingsPage()));
         await PermissionsService().loadPermissions();
-        if (mounted) {
-          setState(() {});
-        }
+
+if (mounted) {
+  setState(() {
+    _permissionsLoaded = true;
+  });
+}
       }),
     );
 
@@ -657,15 +818,33 @@ if (PermissionsService().canShowInventory) { // أو يمكنك إنشاء صل�
   }
 
   Future<void> _handleLogout() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.clear();
-    if (!mounted) return;
-    Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(builder: (context) => const LoginScreen()),
-      (route) => false,
-    );
-  }
+  final prefs = await SharedPreferences.getInstance();
+
+  await prefs.remove('remember_me');
+  await prefs.remove('saved_email');
+  await prefs.remove('saved_password');
+
+  await prefs.remove('user_name');
+  await prefs.remove('company_name');
+  await prefs.remove('company_code');
+  await prefs.remove('job_code');
+  await prefs.remove('job_title');
+  await prefs.remove('user_email');
+
+  await FirebaseAuth.instance.signOut();
+
+  disposeGlobalListener();
+
+  if (!mounted) return;
+
+  Navigator.pushAndRemoveUntil(
+    context,
+    MaterialPageRoute(
+      builder: (context) => const LoginScreen(),
+    ),
+    (route) => false,
+  );
+}
 
   void _showSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(

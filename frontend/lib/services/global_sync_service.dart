@@ -1,12 +1,16 @@
 // lib/services/global_sync_service.dart
 
 import 'package:hive_flutter/hive_flutter.dart';
+
 import 'websocket_sync_service.dart';
+
 
 /// مدير اتصال WebSocket فقط.
 ///
-/// Firebase يظل مسؤولاً عن Authentication / Users / Permissions كما هو.
-/// المزامنة هنا خاصة ببيانات التطبيق المخزنة في Hive.
+/// Firebase يظل مسؤولاً عن:
+/// Authentication / Users / Permissions
+///
+/// المزامنة هنا خاصة ببيانات التطبيق الموجودة في Hive.
 class GlobalSyncService {
   // ============================================================
   // WebSocket Service
@@ -15,6 +19,7 @@ class GlobalSyncService {
   final WebSocketSyncService _wsService =
       WebSocketSyncService();
 
+
   // ============================================================
   // إعدادات
   // ============================================================
@@ -22,136 +27,187 @@ class GlobalSyncService {
   bool useWebSocket = true;
 
   String? _currentCompanyCode;
+  bool _callbackAttached = false;
+
 
   // ============================================================
   // Callback
   // ============================================================
 
-  /// يتم استدعاؤه عند فتح WebSocket أو إعادة الاتصال.
+  /// يتم استدعاؤه عند:
   ///
-  /// مهم:
-  /// GlobalSyncService لا ينفذ المزامنة بنفسه.
+  /// 1. فتح WebSocket
+  /// 2. إعادة اتصال WebSocket بعد انقطاع
+  ///
+  /// GlobalSyncService لا يقوم بالمزامنة بنفسه.
   /// main.dart هو المسؤول عن:
   ///
   /// syncAllDataIfNeeded(companyCode)
   void Function()? onWebSocketConnected;
+
 
   // ============================================================
   // Hive Boxes
   // ============================================================
 
   /// موجودة للتوافق مع أي كود قديم يعتمد عليها.
+
   Box get dailyBox =>
-      Hive.box('daily_transactions_box');
+      Hive.box(
+        'daily_transactions_box',
+      );
 
   Box get codingBox =>
-      Hive.box('coding_box');
+      Hive.box(
+        'coding_box',
+      );
 
   Box get inventoryBox =>
-      Hive.box('inventory_box');
+      Hive.box(
+        'inventory_box',
+      );
 
   Box get supplierBox =>
-      Hive.box('supplier_box');
+      Hive.box(
+        'supplier_box',
+      );
+
 
   // ============================================================
-  // بدء المزامنة / WebSocket
+  // بدء WebSocket
   // ============================================================
 
-  void startSync(String companyCode) {
+  void startSync(
+    String companyCode,
+  ) {
     // ----------------------------------------------------------
-    // منع تشغيل اتصال مكرر لنفس الشركة
+    // حماية إضافية:
+    // لو نفس الشركة والـWebSocket شغال
+    // لا نعمل أي شيء.
     // ----------------------------------------------------------
 
     if (useWebSocket &&
-        _currentCompanyCode == companyCode &&
+        _currentCompanyCode ==
+            companyCode &&
         _wsService.isConnected) {
       print(
-        "✅ WebSocket شغال بالفعل للشركة: $companyCode",
+        "✅ WebSocket شغال بالفعل "
+        "للشركة: $companyCode",
       );
+
       return;
     }
 
+
     // ----------------------------------------------------------
-    // لو الشركة تغيرت
+    // لو الشركة اتغيرت
+    // نفصل الاتصال القديم
     // ----------------------------------------------------------
 
     if (_currentCompanyCode != null &&
-        _currentCompanyCode != companyCode) {
-      print(
-        "🔄 تغيير الشركة من $_currentCompanyCode إلى $companyCode",
-      );
+    _currentCompanyCode != companyCode) {
+  print(
+    "🔄 تغيير الشركة من "
+    "$_currentCompanyCode إلى "
+    "$companyCode",
+  );
 
-      _wsService.disconnect();
-    }
+  _wsService.disconnect();
 
-    _currentCompanyCode = companyCode;
+  _callbackAttached = false;
+  _wsService.onConnected = null;
+}
 
-    // ----------------------------------------------------------
+
+    _currentCompanyCode =
+        companyCode;
+
+
+    // ==========================================================
     // WebSocket Mode
-    // ----------------------------------------------------------
+    // ==========================================================
 
     if (useWebSocket) {
       print(
-        "🌐 بدء مدير WebSocket للشركة: $companyCode",
+        "🌐 بدء مدير WebSocket "
+        "للشركة: $companyCode",
       );
 
-      // --------------------------------------------------------
-      // عند نجاح الاتصال أو إعادة الاتصال
-      // --------------------------------------------------------
-
-      _wsService.onConnected = () {
-        print(
-          "✅ WebSocket اتصل/عاد الاتصال",
-        );
-
-        // ------------------------------------------------------
-        // لا تعمل Sync هنا مباشرة.
-        //
-        // main.dart هو المسؤول الوحيد عن Sync.
-        // ------------------------------------------------------
-
-        final callback = onWebSocketConnected;
-
-        if (callback != null) {
-          print(
-            "🔄 إبلاغ Sync Manager بأن WebSocket اتصل...",
-          );
-
-          callback();
-        }
-      };
 
       // --------------------------------------------------------
-      // فتح WebSocket
+      // Callback عند الاتصال أو إعادة الاتصال
+      // --------------------------------------------------------
+      
+      if (!_callbackAttached) {
+  _callbackAttached = true;
+
+  _wsService.onConnected = () {
+    print("✅ WebSocket اتصل/عاد الاتصال");
+
+    final callback = onWebSocketConnected;
+
+    if (callback != null) {
+      print("🔄 إبلاغ Sync Manager بأن WebSocket اتصل...");
+      callback();
+    }
+  };
+};
+
+
+      // --------------------------------------------------------
+      // فتح الاتصال
       // --------------------------------------------------------
 
-      _wsService.connect(companyCode);
+      _wsService.connect(
+        companyCode,
+      );
+
 
       return;
     }
 
-    // ----------------------------------------------------------
-    // Legacy Firestore Mode
-    // ----------------------------------------------------------
+
+    // ==========================================================
+    // Legacy Mode
+    // ==========================================================
 
     print(
-      "🔥 استخدام Firestore للمزامنة (Legacy Mode)",
+      "🔥 استخدام Firestore "
+      "للمزامنة (Legacy Mode)",
     );
 
-    _startFirestoreListeners(companyCode);
+
+    _startFirestoreListeners(
+      companyCode,
+    );
   }
+
 
   // ============================================================
   // إيقاف المزامنة
   // ============================================================
 
   void stopSync() {
-    print("🔌 إيقاف Global Sync Service");
+    print(
+      "🔌 إيقاف Global Sync Service",
+    );
+
 
     _wsService.disconnect();
 
-    _currentCompanyCode = null;
+
+    _currentCompanyCode =
+        null;
+
+
+    // مهم:
+    // نزيل callback حتى لا يحصل
+    // أي Sync بعد إغلاق الخدمة.
+    onWebSocketConnected =
+        null;
+        _callbackAttached = false;
   }
+
 
   // ============================================================
   // Legacy Firestore
@@ -160,15 +216,20 @@ class GlobalSyncService {
   /// متروكة فقط للتوافق مع الكود القديم.
   ///
   /// النظام الحالي يعتمد على:
-  /// WebSocket + HTTP incremental sync
+  ///
+  /// WebSocket
+  /// +
+  /// HTTP Incremental Sync
   void _startFirestoreListeners(
     String companyCode,
   ) {
     print(
-      "ℹ️ Firestore Legacy Mode غير مستخدم حاليًا "
+      "ℹ️ Firestore Legacy Mode "
+      "غير مستخدم حاليًا "
       "للشركة: $companyCode",
     );
   }
+
 
   // ============================================================
   // حالة الاتصال
@@ -179,8 +240,10 @@ class GlobalSyncService {
       return false;
     }
 
+
     return _wsService.isConnected;
   }
+
 
   // ============================================================
   // الشركة الحالية
