@@ -1,10 +1,17 @@
+// lib/views/dashboard/supplier_settlement_history_page.dart
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import '../../views/widgets/glass_card.dart';
-import '../../services/permissions_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../models/supplier_settlement_model.dart';
+import '../../services/supplier_service.dart';
+import '../../services/supplier_settlement_service.dart';
+import '../../services/permissions_service.dart';
 import '../../services/export_service.dart';
+import '../../views/widgets/glass_card.dart';
+import 'supplier_settlement_page.dart';
 
 class SupplierSettlementHistoryPage extends StatefulWidget {
   final String companyCode;
@@ -23,17 +30,23 @@ class SupplierSettlementHistoryPage extends StatefulWidget {
 
 class _SupplierSettlementHistoryPageState
     extends State<SupplierSettlementHistoryPage> {
-
+  final SupplierService _supplierService = SupplierService();
+  final SupplierSettlementService _settlementService =
+      SupplierSettlementService();
 
   List<Map<String, dynamic>> _allSettlements = [];
   List<Map<String, dynamic>> _filteredSettlements = [];
-
   List<String> _suppliers = [];
 
   String? _selectedSupplier;
-  DateTime _fromDate =
-      DateTime.now().subtract(const Duration(days: 30));
+  DateTime _fromDate = DateTime.now().subtract(
+    const Duration(days: 30),
+  );
   DateTime _toDate = DateTime.now();
+
+  double _totalPurchases = 0.0;
+  double _totalSettlements = 0.0;
+  double _remainingBalance = 0.0;
 
   bool _isLoading = true;
 
@@ -44,33 +57,27 @@ class _SupplierSettlementHistoryPageState
   }
 
   // ============================================================
-  // تحميل الدفعات من Hive
+  // تحميل التسويات من Hive
   // ============================================================
 
   Future<void> _loadData() async {
-    setState(() => _isLoading = true);
+    if (mounted) setState(() => _isLoading = true);
 
     try {
-      final box =
-          Hive.box('supplier_settlement_box');
-
+      final box = Hive.box('supplier_settlement_box');
       final List<Map<String, dynamic>> data = [];
 
       for (final key in box.keys) {
         final raw = box.get(key);
-
         if (raw is! List) continue;
 
         for (final value in raw) {
           if (value is! Map) continue;
 
-          final map =
-              Map<String, dynamic>.from(value);
+          final map = Map<String, dynamic>.from(value);
 
           if (map['is_deleted'] == true) continue;
-
-          if (map['company_code']?.toString() !=
-              widget.companyCode) {
+          if (map['company_code']?.toString() != widget.companyCode) {
             continue;
           }
 
@@ -86,76 +93,108 @@ class _SupplierSettlementHistoryPageState
       }
 
       data.sort(
-        (a, b) =>
-            (b['date']?.toString() ?? '')
-                .compareTo(
-              a['date']?.toString() ?? '',
-            ),
+        (a, b) => (b['date']?.toString() ?? '')
+            .compareTo(a['date']?.toString() ?? ''),
       );
 
-      final Set<String> supplierSet = {};
+      final supplierSet = <String>{};
 
       for (final item in data) {
-        final name =
-            item['supplier_name']
-                    ?.toString()
-                    .trim() ??
-                '';
-
-        if (name.isNotEmpty) {
-          supplierSet.add(name);
-        }
+        final name = item['supplier_name']?.toString().trim() ?? '';
+        if (name.isNotEmpty) supplierSet.add(name);
       }
 
       _allSettlements = data;
       _suppliers = supplierSet.toList()..sort();
 
-      _applyFilters();
-    } catch (e) {
-      debugPrint(
-        '❌ خطأ في تحميل معاينة التسويات: $e',
-      );
-    } finally {
+      await _applyFilters();
+
       if (mounted) {
         setState(() => _isLoading = false);
       }
+    } catch (e) {
+      debugPrint('❌ خطأ في تحميل معاينة التسويات: $e');
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   // ============================================================
-  // الفلترة
+  // الفلترة + حساب إجماليات الفترة
   // ============================================================
 
-  void _applyFilters() {
-    final from =
-        DateFormat('yyyy-MM-dd').format(_fromDate);
+  Future<void> _applyFilters() async {
+    final from = DateFormat('yyyy-MM-dd').format(_fromDate);
+    final to = DateFormat('yyyy-MM-dd').format(_toDate);
 
-    final to =
-        DateFormat('yyyy-MM-dd').format(_toDate);
+    _filteredSettlements = _allSettlements.where((item) {
+      final date = item['date']?.toString() ?? '';
 
-    _filteredSettlements =
-        _allSettlements.where((item) {
-      final date =
-          item['date']?.toString() ?? '';
-
-      if (date.compareTo(from) < 0 ||
-          date.compareTo(to) > 0) {
+      if (date.compareTo(from) < 0 || date.compareTo(to) > 0) {
         return false;
       }
 
       if (_selectedSupplier != null &&
           _selectedSupplier!.isNotEmpty &&
-          item['supplier_name']?.toString() !=
-              _selectedSupplier) {
+          item['supplier_name']?.toString() != _selectedSupplier) {
         return false;
       }
 
       return true;
     }).toList();
 
-    if (mounted) {
-      setState(() {});
+    await _calculatePeriodTotals();
+
+    if (mounted) setState(() {});
+  }
+
+  // ============================================================
+  // حساب:
+  // المشتريات
+  // الدفعات
+  // المتبقي
+  // ============================================================
+
+  Future<void> _calculatePeriodTotals() async {
+    try {
+      final purchases =
+          await _supplierService.getSupplierTransactions(
+        companyCode: widget.companyCode,
+        branchCode: widget.selectedBranchCode,
+        supplierName: _selectedSupplier,
+        startDate: DateFormat('yyyy-MM-dd').format(_fromDate),
+        endDate: DateFormat('yyyy-MM-dd').format(_toDate),
+      );
+
+      double purchasesTotal = 0.0;
+
+      for (final purchase in purchases) {
+        purchasesTotal += purchase.totalAmount;
+      }
+
+      double settlementsTotal = 0.0;
+
+      for (final item in _filteredSettlements) {
+        settlementsTotal += _toDouble(item['amount']);
+      }
+
+      _totalPurchases = purchasesTotal;
+      _totalSettlements = settlementsTotal;
+      _remainingBalance =
+          _totalPurchases - _totalSettlements;
+    } catch (e) {
+      debugPrint(
+        '❌ خطأ في حساب إجماليات المورد: $e',
+      );
+
+      _totalPurchases = 0.0;
+      _totalSettlements = 0.0;
+      _remainingBalance = 0.0;
     }
+  }
+
+  double _toDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '0') ?? 0.0;
   }
 
   // ============================================================
@@ -163,31 +202,52 @@ class _SupplierSettlementHistoryPageState
   // ============================================================
 
   String _getTreasuryName(String? codeOrName) {
-    if (codeOrName == null ||
-        codeOrName.isEmpty) {
+    if (codeOrName == null || codeOrName.isEmpty) {
       return 'غير محدد';
     }
 
-    final box =
-        Hive.box('coding_box');
-
-    final raw =
-        box.get(
-              '${widget.companyCode}_safes',
-              defaultValue: [],
-            );
+    final box = Hive.box('coding_box');
+    final raw = box.get(
+      '${widget.companyCode}_safes',
+      defaultValue: [],
+    );
 
     if (raw is List) {
       for (final item in raw) {
-        if (item is Map) {
-          if (item['code']?.toString() ==
-                  codeOrName ||
-              item['name']?.toString() ==
-                  codeOrName) {
-            return item['name']
-                    ?.toString() ??
-                codeOrName;
-          }
+        if (item is Map &&
+            (item['code']?.toString() == codeOrName ||
+                item['name']?.toString() == codeOrName)) {
+          return item['name']?.toString() ?? codeOrName;
+        }
+      }
+    }
+
+    return codeOrName;
+  }
+
+  // ============================================================
+  // اسم الفرع
+  // ============================================================
+
+  String _getBranchName(String? codeOrName) {
+    if (codeOrName == null ||
+        codeOrName.isEmpty ||
+        codeOrName == 'all') {
+      return 'كل الفروع';
+    }
+
+    final box = Hive.box('coding_box');
+    final raw = box.get(
+      '${widget.companyCode}_branches',
+      defaultValue: [],
+    );
+
+    if (raw is List) {
+      for (final item in raw) {
+        if (item is Map &&
+            (item['code']?.toString() == codeOrName ||
+                item['name']?.toString() == codeOrName)) {
+          return item['name']?.toString() ?? codeOrName;
         }
       }
     }
@@ -200,30 +260,20 @@ class _SupplierSettlementHistoryPageState
   // ============================================================
 
   String _formatCurrency(dynamic value) {
-    final amount = value is num
-        ? value.toDouble()
-        : double.tryParse(
-              value?.toString() ?? '0',
-            ) ??
-            0.0;
-
     return NumberFormat(
       '#,##0.00',
       'en_US',
-    ).format(amount);
+    ).format(_toDouble(value));
   }
 
   // ============================================================
   // اختيار التاريخ
   // ============================================================
 
-  Future<void> _pickDate(
-    bool isFrom,
-  ) async {
+  Future<void> _pickDate(bool isFrom) async {
     final picked = await showDatePicker(
       context: context,
-      initialDate:
-          isFrom ? _fromDate : _toDate,
+      initialDate: isFrom ? _fromDate : _toDate,
       firstDate: DateTime(2020),
       lastDate: DateTime(2101),
     );
@@ -238,44 +288,130 @@ class _SupplierSettlementHistoryPageState
       }
     });
 
-    _applyFilters();
+    await _applyFilters();
   }
 
   // ============================================================
   // إعادة تعيين الفلاتر
   // ============================================================
 
-  void _clearFilters() {
+  Future<void> _clearFilters() async {
     setState(() {
       _selectedSupplier = null;
-      _fromDate =
-          DateTime.now().subtract(
+      _fromDate = DateTime.now().subtract(
         const Duration(days: 30),
       );
       _toDate = DateTime.now();
     });
 
-    _applyFilters();
+    await _applyFilters();
   }
 
   // ============================================================
   // إجمالي الدفعات
   // ============================================================
 
-  double get _totalAmount {
-    return _filteredSettlements.fold(
-      0.0,
-      (sum, item) =>
-          sum +
-          (item['amount'] is num
-              ? (item['amount'] as num).toDouble()
-              : double.tryParse(
-                    item['amount']
-                            ?.toString() ??
-                        '0',
-                  ) ??
-                  0.0),
+  double get _totalAmount => _totalSettlements;
+
+  // ============================================================
+  // تعديل التسوية
+  // ============================================================
+
+  Future<void> _editSettlement(
+    Map<String, dynamic> item,
+  ) async {
+    final model = SupplierSettlementModel.fromMap(item);
+
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => SupplierSettlementPage(
+          companyCode: widget.companyCode,
+          selectedBranchCode: widget.selectedBranchCode,
+          userName: item['employee']?.toString(),
+          editItem: model,
+        ),
+      ),
     );
+
+    if (result == true) {
+      await _loadData();
+    }
+  }
+
+  // ============================================================
+  // حذف التسوية
+  // ============================================================
+
+  Future<void> _deleteSettlement(
+    Map<String, dynamic> item,
+  ) async {
+    final docId = item['doc_id']?.toString();
+
+    if (docId == null || docId.isEmpty) {
+      _showSnackBar(
+        'رقم الحركة غير موجود',
+        Colors.red,
+      );
+      return;
+    }
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF0F172A),
+        title: const Text(
+          'تأكيد الحذف',
+          style: TextStyle(
+            color: Colors.white,
+            fontFamily: 'Cairo',
+          ),
+        ),
+        content: Text(
+          'هل تريد حذف الدفعة رقم ${item['serial'] ?? ''}؟',
+          style: const TextStyle(
+            color: Colors.white70,
+            fontFamily: 'Cairo',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text(
+              'إلغاء',
+              style: TextStyle(color: Colors.white70),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text(
+              'حذف',
+              style: TextStyle(color: Colors.redAccent),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    final success = await _settlementService.deleteSettlement(
+      widget.companyCode,
+      docId,
+    );
+
+    if (success) {
+      _showSnackBar(
+        'تم حذف الدفعة بنجاح',
+        Colors.green,
+      );
+      await _loadData();
+    } else {
+      _showSnackBar(
+        'فشل حذف الدفعة',
+        Colors.red,
+      );
+    }
   }
 
   // ============================================================
@@ -284,41 +420,40 @@ class _SupplierSettlementHistoryPageState
 
   Future<void> _exportExcel() async {
     if (_filteredSettlements.isEmpty) {
-      _showSnackBar(
-        'لا توجد بيانات للتصدير',
-        Colors.orange,
-      );
+      _showSnackBar('لا توجد بيانات للتصدير', Colors.orange);
       return;
     }
 
     try {
-      final data =
-          _filteredSettlements.map((item) {
-        return {
-          'رقم الدفعة':
-              item['serial'] ?? '',
-          'التاريخ':
-              item['date'] ?? '',
-          'المورد':
-              item['supplier_name'] ?? '',
-          'طريقة الدفع':
-              item['payment_method'] ?? '',
-          'الخزينة':
-              _getTreasuryName(
-            item['treasury']?.toString(),
-          ),
-          'المبلغ':
-              item['amount'] ?? 0,
-          'البيان':
-              item['statement'] ?? '',
-          'الموظف':
-              item['employee'] ?? '',
-        };
-      }).toList();
+      final prefs = await SharedPreferences.getInstance();
+      final companyName =
+          prefs.getString('company_name') ?? 'شركتي';
+      final branchName =
+          _getBranchName(widget.selectedBranchCode);
+      final period =
+          '${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى '
+          '${DateFormat('yyyy-MM-dd').format(_toDate)}';
+
+      final data = _filteredSettlements.map((item) => {
+            'رقم الإذن': item['serial'] ?? '',
+            'التاريخ': item['date'] ?? '',
+            'الفرع': _getBranchName(
+              item['branch_code']?.toString(),
+            ),
+            'المورد': item['supplier_name'] ?? '',
+            'طريقة الدفع': item['payment_method'] ?? '',
+            'الخزينة': _getTreasuryName(
+              item['treasury']?.toString(),
+            ),
+            'المبلغ': item['amount'] ?? 0,
+            'البيان': item['statement'] ?? '',
+            'الموظف': item['employee'] ?? 'غير محدد',
+          }).toList();
 
       const headers = [
-        'رقم الدفعة',
+        'رقم الإذن',
         'التاريخ',
+        'الفرع',
         'المورد',
         'طريقة الدفع',
         'الخزينة',
@@ -329,18 +464,27 @@ class _SupplierSettlementHistoryPageState
 
       await ExportService.exportToExcel(
         data,
-        'تسويات_الموردين_${DateFormat('yyyy-MM-dd').format(DateTime.now())}',
+        'تقرير تسويات الموردين',
         headers,
         headers,
+        companyName: companyName,
+        branchName: branchName,
+        period: period,
+        supplierName: _selectedSupplier,
+        summary: {
+          'إجمالي المشتريات': _totalPurchases,
+          'إجمالي الدفعات': _totalSettlements,
+          'المتبقي': _remainingBalance,
+        },
       );
 
       _showSnackBar(
-        'تم التصدير بنجاح',
+        'تم تصدير Excel بنجاح',
         Colors.green,
       );
     } catch (e) {
       _showSnackBar(
-        'فشل التصدير: $e',
+        'فشل تصدير Excel: $e',
         Colors.red,
       );
     }
@@ -352,44 +496,46 @@ class _SupplierSettlementHistoryPageState
 
   Future<void> _exportPDF() async {
     if (_filteredSettlements.isEmpty) {
-      _showSnackBar(
-        'لا توجد بيانات للتصدير',
-        Colors.orange,
-      );
+      _showSnackBar('لا توجد بيانات للتصدير', Colors.orange);
       return;
     }
 
     try {
-      final data =
-          _filteredSettlements.map((item) {
-        return {
-          'رقم الدفعة':
-              item['serial'] ?? '',
-          'التاريخ':
-              item['date'] ?? '',
-          'المورد':
-              item['supplier_name'] ?? '',
-          'طريقة الدفع':
-              item['payment_method'] ?? '',
-          'الخزينة':
-              _getTreasuryName(
-            item['treasury']?.toString(),
-          ),
-          'المبلغ':
-              item['amount'] ?? 0,
-          'البيان':
-              item['statement'] ?? '',
-        };
-      }).toList();
+      final prefs = await SharedPreferences.getInstance();
+      final companyName =
+          prefs.getString('company_name') ?? 'شركتي';
+      final branchName =
+          _getBranchName(widget.selectedBranchCode);
+      final period =
+          '${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى '
+          '${DateFormat('yyyy-MM-dd').format(_toDate)}';
+
+      final data = _filteredSettlements.map((item) => {
+            'رقم الإذن': item['serial'] ?? '',
+            'التاريخ': item['date'] ?? '',
+            'الفرع': _getBranchName(
+              item['branch_code']?.toString(),
+            ),
+            'المورد': item['supplier_name'] ?? '',
+            'طريقة الدفع': item['payment_method'] ?? '',
+            'الخزينة': _getTreasuryName(
+              item['treasury']?.toString(),
+            ),
+            'المبلغ': item['amount'] ?? 0,
+            'البيان': item['statement'] ?? '',
+            'الموظف': item['employee'] ?? 'غير محدد',
+          }).toList();
 
       const headers = [
-        'رقم الدفعة',
+        'رقم الإذن',
         'التاريخ',
+        'الفرع',
         'المورد',
         'طريقة الدفع',
         'الخزينة',
         'المبلغ',
         'البيان',
+        'الموظف',
       ];
 
       await ExportService.exportToPDF(
@@ -397,9 +543,16 @@ class _SupplierSettlementHistoryPageState
         title: 'تقرير تسويات الموردين',
         headers: headers,
         keys: headers,
+        companyName: companyName,
+        branchName: branchName,
+        period: period,
+        supplierName: _selectedSupplier,
         summary: {
-          'totalAmount': _totalAmount,
+          'totalPurchases': _totalPurchases,
+          'totalAmount': _totalSettlements,
+          'remainingBalance': _remainingBalance,
         },
+        totalAmount: _totalSettlements,
       );
 
       _showSnackBar(
@@ -422,18 +575,91 @@ class _SupplierSettlementHistoryPageState
     String message,
     Color color,
   ) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           message,
           textAlign: TextAlign.center,
-          style: const TextStyle(
-            fontFamily: 'Cairo',
-          ),
+          style: const TextStyle(fontFamily: 'Cairo'),
         ),
         backgroundColor: color,
       ),
+    );
+  }
+
+  // ============================================================
+  // بطاقة الإجماليات
+  // ============================================================
+
+  Widget _buildTotalsCard() {
+    return GlassCard(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: 8,
+          vertical: 12,
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            _buildTotalItem(
+              'المشتريات',
+              _totalPurchases,
+              Colors.cyanAccent,
+            ),
+            Container(
+              width: 1,
+              height: 42,
+              color: Colors.white24,
+            ),
+            _buildTotalItem(
+              'الدفعات',
+              _totalSettlements,
+              Colors.redAccent,
+            ),
+            Container(
+              width: 1,
+              height: 42,
+              color: Colors.white24,
+            ),
+            _buildTotalItem(
+              'المتبقي',
+              _remainingBalance,
+              Colors.greenAccent,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTotalItem(
+    String title,
+    double value,
+    Color color,
+  ) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            color: Colors.white60,
+            fontFamily: 'Cairo',
+            fontSize: 10,
+          ),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          _formatCurrency(value),
+          style: TextStyle(
+            color: color,
+            fontSize: 15,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ],
     );
   }
 
@@ -444,30 +670,20 @@ class _SupplierSettlementHistoryPageState
   Widget _buildSettlementCard(
     Map<String, dynamic> item,
   ) {
-    final amount =
-        item['amount'] ?? 0;
-
     return Card(
-      color:
-          Colors.white.withOpacity(0.05),
-      margin:
-          const EdgeInsets.symmetric(
+      color: Colors.white.withOpacity(0.05),
+      margin: const EdgeInsets.symmetric(
         horizontal: 6,
         vertical: 4,
       ),
-      shape:
-          RoundedRectangleBorder(
-        borderRadius:
-            BorderRadius.circular(10),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
       ),
       child: InkWell(
-        borderRadius:
-            BorderRadius.circular(10),
-        onTap: () =>
-            _showDetails(item),
+        borderRadius: BorderRadius.circular(10),
+        onTap: () => _showDetails(item),
         child: Padding(
-          padding:
-              const EdgeInsets.all(10),
+          padding: const EdgeInsets.all(10),
           child: Column(
             children: [
               Row(
@@ -475,92 +691,135 @@ class _SupplierSettlementHistoryPageState
                   CircleAvatar(
                     radius: 17,
                     backgroundColor:
-                        Colors.amber
-                            .withOpacity(0.15),
+                        Colors.amber.withOpacity(0.15),
                     child: Text(
                       '${item['serial'] ?? ''}',
-                      style:
-                          const TextStyle(
-                        color:
-                            Colors.amber,
+                      style: const TextStyle(
+                        color: Colors.amber,
                         fontSize: 10,
-                        fontWeight:
-                            FontWeight.bold,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
                   ),
-                  const SizedBox(
-                    width: 10,
-                  ),
+                  const SizedBox(width: 10),
                   Expanded(
                     child: Column(
                       crossAxisAlignment:
-                          CrossAxisAlignment
-                              .start,
+                          CrossAxisAlignment.start,
                       children: [
                         Text(
-                          item['supplier_name']
-                                  ?.toString() ??
-                              '',
-                          style:
-                              const TextStyle(
-                            color:
-                                Colors.white,
+                          item['supplier_name']?.toString() ?? '',
+                          style: const TextStyle(
+                            color: Colors.white,
                             fontSize: 14,
-                            fontWeight:
-                                FontWeight.bold,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Text(
+                          'إذن رقم: ${item['serial'] ?? ''}',
+                          style: const TextStyle(
+                            color: Colors.cyanAccent,
+                            fontSize: 10,
+                            fontFamily: 'Cairo',
                           ),
                         ),
                         Text(
                           'التاريخ: ${item['date'] ?? ''}',
-                          style:
-                              const TextStyle(
-                            color:
-                                Colors.white60,
-                            fontSize: 11,
+                          style: const TextStyle(
+                            color: Colors.white60,
+                            fontSize: 10,
+                          ),
+                        ),
+                        Text(
+                          'الفرع: ${_getBranchName(item['branch_code']?.toString())}',
+                          style: const TextStyle(
+                            color: Colors.greenAccent,
+                            fontSize: 10,
+                            fontFamily: 'Cairo',
+                          ),
+                        ),
+                        Text(
+                          'الموظف: ${item['employee']?.toString() ?? 'غير محدد'}',
+                          style: const TextStyle(
+                            color: Colors.white54,
+                            fontSize: 10,
+                            fontFamily: 'Cairo',
                           ),
                         ),
                       ],
                     ),
                   ),
                   Text(
-                    _formatCurrency(
-                      amount,
-                    ),
-                    style:
-                        const TextStyle(
-                      color:
-                          Colors.redAccent,
+                    _formatCurrency(item['amount']),
+                    style: const TextStyle(
+                      color: Colors.redAccent,
                       fontSize: 15,
-                      fontWeight:
-                          FontWeight.bold,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
                 ],
               ),
-              const SizedBox(
-                height: 8,
-              ),
+              const SizedBox(height: 8),
               Row(
                 mainAxisAlignment:
-                    MainAxisAlignment
-                        .spaceAround,
+                    MainAxisAlignment.spaceAround,
                 children: [
                   _infoChip(
                     'الخزينة',
                     _getTreasuryName(
-                      item['treasury']
-                          ?.toString(),
+                      item['treasury']?.toString(),
                     ),
                     Colors.blueAccent,
                   ),
                   _infoChip(
                     'طريقة الدفع',
-                    item['payment_method']
-                            ?.toString() ??
-                        '',
+                    item['payment_method']?.toString() ?? '',
                     Colors.cyanAccent,
                   ),
+                ],
+              ),
+              const SizedBox(height: 6),
+
+              // ✅ أزرار التعديل والحذف حسب الصلاحيات
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (PermissionsService()
+                      .canEditSupplierSettlement)
+                    TextButton.icon(
+                      onPressed: () => _editSettlement(item),
+                      icon: const Icon(
+                        Icons.edit,
+                        color: Colors.amber,
+                        size: 18,
+                      ),
+                      label: const Text(
+                        'تعديل',
+                        style: TextStyle(
+                          color: Colors.amber,
+                          fontFamily: 'Cairo',
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                  if (PermissionsService()
+                      .canDeleteSupplierSettlement)
+                    TextButton.icon(
+                      onPressed: () => _deleteSettlement(item),
+                      icon: const Icon(
+                        Icons.delete,
+                        color: Colors.redAccent,
+                        size: 18,
+                      ),
+                      label: const Text(
+                        'حذف',
+                        style: TextStyle(
+                          color: Colors.redAccent,
+                          fontFamily: 'Cairo',
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ],
@@ -576,20 +835,15 @@ class _SupplierSettlementHistoryPageState
     Color color,
   ) {
     return Container(
-      padding:
-          const EdgeInsets.symmetric(
+      padding: const EdgeInsets.symmetric(
         horizontal: 8,
         vertical: 4,
       ),
-      decoration:
-          BoxDecoration(
-        color:
-            color.withOpacity(0.08),
-        borderRadius:
-            BorderRadius.circular(7),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(7),
         border: Border.all(
-          color:
-              color.withOpacity(0.2),
+          color: color.withOpacity(0.2),
         ),
       ),
       child: Text(
@@ -611,80 +865,65 @@ class _SupplierSettlementHistoryPageState
   ) {
     showDialog(
       context: context,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor:
-              const Color(0xFF0F172A),
-          title: const Text(
-            'تفاصيل الدفعة',
-            style: TextStyle(
-              color: Colors.white,
-              fontFamily: 'Cairo',
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF0F172A),
+        title: const Text(
+          'تفاصيل الدفعة',
+          style: TextStyle(
+            color: Colors.white,
+            fontFamily: 'Cairo',
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _detailText('رقم الإذن', '${item['serial'] ?? ''}'),
+            _detailText('التاريخ', '${item['date'] ?? ''}'),
+            _detailText(
+              'الفرع',
+              _getBranchName(item['branch_code']?.toString()),
             ),
-          ),
-          content: Column(
-            mainAxisSize:
-                MainAxisSize.min,
-            crossAxisAlignment:
-                CrossAxisAlignment
-                    .start,
-            children: [
-              _detailText(
-                'رقم الدفعة',
-                '${item['serial'] ?? ''}',
+            _detailText(
+              'المورد',
+              '${item['supplier_name'] ?? ''}',
+            ),
+            _detailText(
+              'المبلغ',
+              _formatCurrency(item['amount']),
+            ),
+            _detailText(
+              'طريقة الدفع',
+              '${item['payment_method'] ?? ''}',
+            ),
+            _detailText(
+              'الخزينة',
+              _getTreasuryName(
+                item['treasury']?.toString(),
               ),
-              _detailText(
-                'التاريخ',
-                '${item['date'] ?? ''}',
-              ),
-              _detailText(
-                'المورد',
-                '${item['supplier_name'] ?? ''}',
-              ),
-              _detailText(
-                'المبلغ',
-                _formatCurrency(
-                  item['amount'],
-                ),
-              ),
-              _detailText(
-                'طريقة الدفع',
-                '${item['payment_method'] ?? ''}',
-              ),
-              _detailText(
-                'الخزينة',
-                _getTreasuryName(
-                  item['treasury']?.toString(),
-                ),
-              ),
-              _detailText(
-                'البيان',
-                '${item['statement'] ?? ''}',
-              ),
-              _detailText(
-                'الموظف',
-                '${item['employee'] ?? ''}',
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed:
-                  () => Navigator.pop(
-                context,
-              ),
-              child: const Text(
-                'إغلاق',
-                style:
-                    TextStyle(
-                  color:
-                      Colors.cyanAccent,
-                ),
-              ),
+            ),
+            _detailText(
+              'البيان',
+              '${item['statement'] ?? ''}',
+            ),
+            _detailText(
+              'الموظف',
+              '${item['employee'] ?? 'غير محدد'}',
             ),
           ],
-        );
-      },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text(
+              'إغلاق',
+              style: TextStyle(
+                color: Colors.cyanAccent,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -693,31 +932,22 @@ class _SupplierSettlementHistoryPageState
     String value,
   ) {
     return Padding(
-      padding:
-          const EdgeInsets.symmetric(
-        vertical: 4,
-      ),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: RichText(
         text: TextSpan(
           children: [
             TextSpan(
               text: '$label: ',
-              style:
-                  const TextStyle(
-                color:
-                    Colors.white54,
-                fontFamily:
-                    'Cairo',
+              style: const TextStyle(
+                color: Colors.white54,
+                fontFamily: 'Cairo',
               ),
             ),
             TextSpan(
               text: value,
-              style:
-                  const TextStyle(
-                color:
-                    Colors.white,
-                fontFamily:
-                    'Cairo',
+              style: const TextStyle(
+                color: Colors.white,
+                fontFamily: 'Cairo',
               ),
             ),
           ],
@@ -731,11 +961,8 @@ class _SupplierSettlementHistoryPageState
   // ============================================================
 
   @override
-  Widget build(
-    BuildContext context,
-  ) {
-    if (!PermissionsService()
-        .canShowSupplierSettlements) {
+  Widget build(BuildContext context) {
+    if (!PermissionsService().canShowSupplierSettlements) {
       return Scaffold(
         appBar: AppBar(
           title: const Text(
@@ -745,14 +972,11 @@ class _SupplierSettlementHistoryPageState
               fontFamily: 'Cairo',
             ),
           ),
-          backgroundColor:
-              Colors.transparent,
+          backgroundColor: Colors.transparent,
         ),
         body: Container(
-          decoration:
-              const BoxDecoration(
-            gradient:
-                LinearGradient(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
               colors: [
                 Colors.black,
                 Color(0xFF1A237E),
@@ -760,16 +984,12 @@ class _SupplierSettlementHistoryPageState
               ],
             ),
           ),
-          child:
-              const Center(
+          child: const Center(
             child: Text(
               'ليس لديك صلاحية لعرض التسويات',
-              style:
-                  TextStyle(
-                color:
-                    Colors.white70,
-                fontFamily:
-                    'Cairo',
+              style: TextStyle(
+                color: Colors.white70,
+                fontFamily: 'Cairo',
               ),
             ),
           ),
@@ -785,36 +1005,28 @@ class _SupplierSettlementHistoryPageState
             color: Colors.white,
             fontFamily: 'Cairo',
             fontSize: 16,
-            fontWeight:
-                FontWeight.bold,
+            fontWeight: FontWeight.bold,
           ),
         ),
-        backgroundColor:
-            Colors.transparent,
+        backgroundColor: Colors.transparent,
         elevation: 0,
         centerTitle: true,
         actions: [
-          if (PermissionsService()
-              .canExportSupplierSettlement)
+          if (PermissionsService().canExportSupplierSettlement)
             IconButton(
               icon: const Icon(
                 Icons.download,
-                color:
-                    Colors.blueAccent,
+                color: Colors.blueAccent,
               ),
-              onPressed:
-                  _exportExcel,
+              onPressed: _exportExcel,
             ),
-          if (PermissionsService()
-              .canExportSupplierSettlement)
+          if (PermissionsService().canExportSupplierSettlement)
             IconButton(
               icon: const Icon(
                 Icons.picture_as_pdf,
-                color:
-                    Colors.redAccent,
+                color: Colors.redAccent,
               ),
-              onPressed:
-                  _exportPDF,
+              onPressed: _exportPDF,
             ),
           IconButton(
             icon: const Icon(
@@ -826,140 +1038,96 @@ class _SupplierSettlementHistoryPageState
         ],
       ),
       body: Container(
-        decoration:
-            const BoxDecoration(
+        decoration: const BoxDecoration(
           gradient: LinearGradient(
             colors: [
               Colors.black,
               Color(0xFF1A237E),
               Colors.black,
             ],
-            begin:
-                Alignment.topLeft,
-            end:
-                Alignment.bottomRight,
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
         ),
         child: SafeArea(
           child: Column(
             children: [
+              // ==================================================
+              // الفلاتر
+              // ==================================================
+
               GlassCard(
                 child: Padding(
-                  padding:
-                      const EdgeInsets.all(
-                    8,
-                  ),
+                  padding: const EdgeInsets.all(8),
                   child: Column(
                     children: [
                       Row(
                         children: [
                           Expanded(
                             child:
-                                DropdownButtonFormField<
-                                    String?>(
-                              value:
-                                  _selectedSupplier,
+                                DropdownButtonFormField<String?>(
+                              value: _selectedSupplier,
                               dropdownColor:
-                                  Colors.indigo
-                                      .shade900,
-                              style:
-                                  const TextStyle(
-                                color:
-                                    Colors.white,
-                                fontSize:
-                                    12,
+                                  Colors.indigo.shade900,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
                               ),
                               decoration:
                                   const InputDecoration(
-                                labelText:
-                                    'المورد',
-                                labelStyle:
-                                    TextStyle(
-                                  color:
-                                      Colors.white70,
-                                  fontSize:
-                                      10,
+                                labelText: 'المورد',
+                                labelStyle: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 10,
                                 ),
-                                isDense:
-                                    true,
+                                isDense: true,
                               ),
                               items: [
-                                const DropdownMenuItem<
-                                    String?>(
-                                  value:
-                                      null,
-                                  child:
-                                      Text(
-                                    'كل الموردين',
-                                  ),
+                                const DropdownMenuItem<String?>(
+                                  value: null,
+                                  child: Text('كل الموردين'),
                                 ),
-                                ..._suppliers
-                                    .map(
-                                  (
-                                    name,
-                                  ) =>
-                                      DropdownMenuItem<
-                                          String?>(
-                                    value:
-                                        name,
-                                    child:
-                                        Text(
-                                      name,
-                                    ),
+                                ..._suppliers.map(
+                                  (name) =>
+                                      DropdownMenuItem<String?>(
+                                    value: name,
+                                    child: Text(name),
                                   ),
                                 ),
                               ],
-                              onChanged:
-                                  (value) {
+                              onChanged: (value) async {
                                 setState(
-                                  () =>
-                                      _selectedSupplier =
-                                          value,
+                                  () => _selectedSupplier = value,
                                 );
-                                _applyFilters();
+                                await _applyFilters();
                               },
                             ),
                           ),
                           IconButton(
-                            icon:
-                                const Icon(
+                            icon: const Icon(
                               Icons.clear,
-                              color:
-                                  Colors.white70,
+                              color: Colors.white70,
                             ),
-                            onPressed:
-                                _clearFilters,
+                            onPressed: _clearFilters,
                           ),
                         ],
                       ),
-                      const SizedBox(
-                        height: 6,
-                      ),
+                      const SizedBox(height: 6),
                       Row(
                         children: [
                           Expanded(
-                            child:
-                                _dateButton(
+                            child: _dateButton(
                               'من',
                               _fromDate,
-                              () =>
-                                  _pickDate(
-                                true,
-                              ),
+                              () => _pickDate(true),
                             ),
                           ),
-                          const SizedBox(
-                            width: 6,
-                          ),
+                          const SizedBox(width: 6),
                           Expanded(
-                            child:
-                                _dateButton(
+                            child: _dateButton(
                               'إلى',
                               _toDate,
-                              () =>
-                                  _pickDate(
-                                false,
-                              ),
+                              () => _pickDate(false),
                             ),
                           ),
                         ],
@@ -968,93 +1136,79 @@ class _SupplierSettlementHistoryPageState
                   ),
                 ),
               ),
-              const SizedBox(
-                height: 6,
-              ),
+
+              const SizedBox(height: 6),
+
+              // ==================================================
+              // إجماليات الفترة
+              // ==================================================
+
+              _buildTotalsCard(),
+
+              const SizedBox(height: 6),
+
+              // ==================================================
+              // قائمة التسويات
+              // ==================================================
+
               Expanded(
-                child:
-                    _isLoading
+                child: _isLoading
+                    ? const Center(
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                        ),
+                      )
+                    : _filteredSettlements.isEmpty
                         ? const Center(
-                            child:
-                                CircularProgressIndicator(
-                              color:
-                                  Colors.white,
+                            child: Text(
+                              'لا توجد دفعات',
+                              style: TextStyle(
+                                color: Colors.white60,
+                                fontFamily: 'Cairo',
+                              ),
                             ),
                           )
-                        : _filteredSettlements
-                                .isEmpty
-                            ? const Center(
-                                child:
-                                    Text(
-                                  'لا توجد دفعات',
-                                  style:
-                                      TextStyle(
-                                    color:
-                                        Colors.white60,
-                                    fontFamily:
-                                        'Cairo',
-                                  ),
-                                ),
-                              )
-                            : ListView.builder(
-                                itemCount:
-                                    _filteredSettlements
-                                        .length,
-                                itemBuilder:
-                                    (context,
-                                        index) =>
-                                        _buildSettlementCard(
-                                  _filteredSettlements[
-                                      index],
-                                ),
-                              ),
+                        : ListView.builder(
+                            itemCount:
+                                _filteredSettlements.length,
+                            itemBuilder: (context, index) =>
+                                _buildSettlementCard(
+                              _filteredSettlements[index],
+                            ),
+                          ),
               ),
+
+              // ==================================================
+              // إجمالي الدفعات
+              // ==================================================
+
               Container(
-                padding:
-                    const EdgeInsets.all(
-                  12,
-                ),
-                decoration:
-                    BoxDecoration(
-                  color: Colors.white
-                      .withOpacity(
-                          0.05),
-                  border:
-                      const Border(
-                    top:
-                        BorderSide(
-                      color:
-                          Colors.white24,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.05),
+                  border: const Border(
+                    top: BorderSide(
+                      color: Colors.white24,
                     ),
                   ),
                 ),
                 child: Row(
                   mainAxisAlignment:
-                      MainAxisAlignment
-                          .spaceAround,
+                      MainAxisAlignment.spaceAround,
                   children: [
                     const Text(
                       'إجمالي الدفعات',
-                      style:
-                          TextStyle(
-                        color:
-                            Colors.white60,
-                        fontFamily:
-                            'Cairo',
+                      style: TextStyle(
+                        color: Colors.white60,
+                        fontFamily: 'Cairo',
                       ),
                     ),
                     Text(
-                      _formatCurrency(
-                        _totalAmount,
-                      ),
-                      style:
-                          const TextStyle(
-                        color:
-                            Colors.redAccent,
-                        fontSize:
-                            18,
-                        fontWeight:
-                            FontWeight.bold,
+                      _formatCurrency(_totalAmount),
+                      style: const TextStyle(
+                        color: Colors.redAccent,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
                   ],
@@ -1067,6 +1221,10 @@ class _SupplierSettlementHistoryPageState
     );
   }
 
+  // ============================================================
+  // زر التاريخ
+  // ============================================================
+
   Widget _dateButton(
     String label,
     DateTime date,
@@ -1075,55 +1233,38 @@ class _SupplierSettlementHistoryPageState
     return InkWell(
       onTap: onTap,
       child: Container(
-        padding:
-            const EdgeInsets.symmetric(
+        padding: const EdgeInsets.symmetric(
           horizontal: 8,
           vertical: 7,
         ),
-        decoration:
-            BoxDecoration(
-          color: Colors.white
-              .withOpacity(0.05),
-          borderRadius:
-              BorderRadius.circular(7),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(7),
           border: Border.all(
             color: Colors.white24,
           ),
         ),
         child: Row(
-          mainAxisAlignment:
-              MainAxisAlignment
-                  .center,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text(
               '$label: ',
-              style:
-                  const TextStyle(
-                color:
-                    Colors.white60,
-                fontSize:
-                    10,
+              style: const TextStyle(
+                color: Colors.white60,
+                fontSize: 10,
               ),
             ),
             Text(
-              DateFormat(
-                'yyyy-MM-dd',
-              ).format(date),
-              style:
-                  const TextStyle(
-                color:
-                    Colors.white,
-                fontSize:
-                    10,
+              DateFormat('yyyy-MM-dd').format(date),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 10,
               ),
             ),
-            const SizedBox(
-              width: 4,
-            ),
+            const SizedBox(width: 4),
             const Icon(
               Icons.calendar_today,
-              color:
-                  Colors.amber,
+              color: Colors.amber,
               size: 12,
             ),
           ],

@@ -1764,11 +1764,7 @@ class _SupplierPageState extends State<SupplierPage> {
             field == 'total'
                 ? null
                 : (value) =>
-                    _updateItem(
-                      rowIndex,
-                      fieldIndex,
-                      value,
-                    ),
+                    _updateItem(rowIndex,fieldIndex,value,),
         onFieldSubmitted:
             (_) =>
                 _onFieldSubmitted(

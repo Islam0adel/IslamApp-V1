@@ -1,67 +1,101 @@
+// lib/services/permissions_service.dart
+
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../services/api_service.dart';
 
 class PermissionsService {
-  static final PermissionsService _instance = PermissionsService._internal();
+  static final PermissionsService _instance =
+      PermissionsService._internal();
 
   factory PermissionsService() => _instance;
 
   PermissionsService._internal();
 
+  // ============================================================
+  // البيانات الحالية للصلاحيات
+  // ============================================================
+
   Map<String, Map<String, bool>>? _permissions;
   List<String>? _allowedBranchCodes;
   String? _defaultBranchCode;
 
-  // ==========================================================
+  // ============================================================
   // تحميل الصلاحيات
-  // ==========================================================
+  //
+  // 1) نقرأ من Hive فوراً
+  // 2) ثم نحدث من Firestore في الخلفية
+  // ============================================================
 
   Future<void> loadPermissions() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final email = prefs.getString('user_email') ?? '';
-      final jobCode = prefs.getString('job_code') ?? '1';
+
+      final email =
+          prefs.getString('user_email') ?? '';
+
+      final jobCode =
+          prefs.getString('job_code') ?? '1';
 
       if (email.isEmpty) {
-        print("⚠️ PermissionsService: user_email غير موجود");
+        print(
+          '⚠️ PermissionsService: user_email غير موجود',
+        );
         return;
       }
 
-      final box = Hive.box('coding_box');
+      final box =
+          Hive.box('coding_box');
 
-      final permissionsKey = 'permissions_$email';
-      final branchesKey = 'allowed_branches_$email';
+      final permissionsKey =
+          'permissions_$email';
 
-      // --------------------------------------------------------
-      // 1. تحميل الصلاحيات محلياً فوراً
-      // --------------------------------------------------------
+      final branchesKey =
+          'allowed_branches_$email';
 
-      final localPermissions = box.get(permissionsKey);
+      // ----------------------------------------------------------
+      // الصلاحيات المحلية
+      // ----------------------------------------------------------
+
+      final localPermissions =
+          box.get(permissionsKey);
 
       if (localPermissions is Map) {
         _permissions =
-            _convertToPermissionsMap(localPermissions);
+            _convertToPermissionsMap(
+          localPermissions,
+        );
       } else {
         _permissions =
-            _createDefaultPermissions(jobCode);
+            _createDefaultPermissions(
+          jobCode,
+        );
       }
 
-      final localBranches = box.get(branchesKey);
+      // ----------------------------------------------------------
+      // الفروع المحلية
+      // ----------------------------------------------------------
+
+      final localBranches =
+          box.get(branchesKey);
 
       if (localBranches is List) {
         _allowedBranchCodes =
-            localBranches.map((e) => e.toString()).toList();
+            localBranches
+                .map((e) => e.toString())
+                .toList();
       } else {
         _allowedBranchCodes = ['all'];
       }
 
-      print("⚡ تم تحميل الصلاحيات والفروع من Hive");
+      print(
+        '⚡ تم تحميل الصلاحيات والفروع من Hive',
+      );
 
-      // --------------------------------------------------------
-      // 2. تحديث Firestore في الخلفية
-      // --------------------------------------------------------
+      // ----------------------------------------------------------
+      // تحديث Firestore في الخلفية
+      // ----------------------------------------------------------
 
       _refreshFromFirestore(
         email,
@@ -69,23 +103,31 @@ class PermissionsService {
         branchesKey,
       );
     } catch (e) {
-      print("❌ خطأ في loadPermissions: $e");
+      print(
+        '❌ خطأ في loadPermissions: $e',
+      );
 
       if (_permissions == null) {
-        final prefs = await SharedPreferences.getInstance();
-        final jobCode = prefs.getString('job_code') ?? '1';
+        final prefs =
+            await SharedPreferences
+                .getInstance();
+
+        final jobCode =
+            prefs.getString('job_code') ?? '1';
 
         _permissions =
-            _createDefaultPermissions(jobCode);
+            _createDefaultPermissions(
+          jobCode,
+        );
 
         _allowedBranchCodes = ['all'];
       }
     }
   }
 
-  // ==========================================================
+  // ============================================================
   // تحديث الصلاحيات من Firestore
-  // ==========================================================
+  // ============================================================
 
   Future<void> _refreshFromFirestore(
     String email,
@@ -93,30 +135,41 @@ class PermissionsService {
     String branchesKey,
   ) async {
     try {
-      final box = Hive.box('coding_box');
+      final box =
+          Hive.box('coding_box');
 
-      final doc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(email)
-          .get();
+      final doc =
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(email)
+              .get();
 
-      if (!doc.exists) return;
+      if (!doc.exists) {
+        return;
+      }
 
-      final data = doc.data();
+      final data =
+          doc.data();
 
-      if (data == null) return;
+      if (data == null) {
+        return;
+      }
 
-      // --------------------------------------------------------
+      // ----------------------------------------------------------
       // الصلاحيات
-      // --------------------------------------------------------
+      // ----------------------------------------------------------
 
-      final permissionsData = data['permissions'];
+      final permissionsData =
+          data['permissions'];
 
       if (permissionsData is Map) {
         final newPermissions =
-            _convertToPermissionsMap(permissionsData);
+            _convertToPermissionsMap(
+          permissionsData,
+        );
 
-        _permissions = newPermissions;
+        _permissions =
+            newPermissions;
 
         await box.put(
           permissionsKey,
@@ -124,15 +177,18 @@ class PermissionsService {
         );
       }
 
-      // --------------------------------------------------------
+      // ----------------------------------------------------------
       // الفروع
-      // --------------------------------------------------------
+      // ----------------------------------------------------------
 
       final branches =
-          _parseBranchList(data['allowed_branches']);
+          _parseBranchList(
+        data['allowed_branches'],
+      );
 
       if (branches != null) {
-        _allowedBranchCodes = branches;
+        _allowedBranchCodes =
+            branches;
 
         await box.put(
           branchesKey,
@@ -140,20 +196,26 @@ class PermissionsService {
         );
       }
 
-      print("🔄 تم تحديث الصلاحيات والفروع من Firestore");
+      print(
+        '🔄 تم تحديث الصلاحيات والفروع من Firestore',
+      );
     } catch (e) {
       print(
-        "⚠️ فشل تحديث الصلاحيات من Firestore: $e",
+        '⚠️ فشل تحديث الصلاحيات من Firestore: $e',
       );
     }
   }
 
-  // ==========================================================
-  // تحويل الفروع
-  // ==========================================================
+  // ============================================================
+  // تحليل قائمة الفروع
+  // ============================================================
 
-  List<String>? _parseBranchList(dynamic data) {
-    if (data == null) return null;
+  List<String>? _parseBranchList(
+    dynamic data,
+  ) {
+    if (data == null) {
+      return null;
+    }
 
     if (data is String &&
         data.toLowerCase() == 'all') {
@@ -169,9 +231,9 @@ class PermissionsService {
     return null;
   }
 
-  // ==========================================================
-  // Getters
-  // ==========================================================
+  // ============================================================
+  // Getters - الفروع
+  // ============================================================
 
   List<String>? get allowedBranches =>
       _allowedBranchCodes;
@@ -191,7 +253,9 @@ class PermissionsService {
     return _allowedBranchCodes!.length == 1;
   }
 
-  bool canAccessBranch(String branchCode) {
+  bool canAccessBranch(
+    String branchCode,
+  ) {
     if (_allowedBranchCodes == null) {
       return true;
     }
@@ -200,12 +264,14 @@ class PermissionsService {
       return true;
     }
 
-    return _allowedBranchCodes!.contains(branchCode);
+    return _allowedBranchCodes!.contains(
+      branchCode,
+    );
   }
 
-  // ==========================================================
+  // ============================================================
   // حفظ الصلاحيات
-  // ==========================================================
+  // ============================================================
 
   Future<void> savePermissions(
     Map<String, Map<String, bool>> permissions, {
@@ -217,15 +283,19 @@ class PermissionsService {
 
     final email =
         targetEmail ??
-        prefs.getString('user_email');
+            prefs.getString('user_email');
 
-    if (email == null || email.isEmpty) {
-      print("⚠️ لا يوجد بريد إلكتروني مستهدف للحفظ");
+    if (email == null ||
+        email.isEmpty) {
+      print(
+        '⚠️ لا يوجد بريد إلكتروني مستهدف للحفظ',
+      );
       return;
     }
 
     try {
-      final box = Hive.box('coding_box');
+      final box =
+          Hive.box('coding_box');
 
       final permissionsKey =
           'permissions_$email';
@@ -233,9 +303,9 @@ class PermissionsService {
       final branchesKey =
           'allowed_branches_$email';
 
-      // --------------------------------------------------------
-      // حفظ محلي أولاً
-      // --------------------------------------------------------
+      // ----------------------------------------------------------
+      // حفظ الصلاحيات محلياً أولاً
+      // ----------------------------------------------------------
 
       await box.put(
         permissionsKey,
@@ -251,38 +321,44 @@ class PermissionsService {
         if (email ==
             prefs.getString('user_email')) {
           _allowedBranchCodes =
-              List<String>.from(allowedBranches);
+              List<String>.from(
+            allowedBranches,
+          );
         }
       }
 
       if (email ==
           prefs.getString('user_email')) {
-        _permissions = permissions;
+        _permissions =
+            permissions;
       }
 
-      // --------------------------------------------------------
+      // ----------------------------------------------------------
       // حفظ على السيرفر
-      // --------------------------------------------------------
+      // ----------------------------------------------------------
 
       await ApiService().updatePermissions(
         email,
         permissions,
-        allowedBranches: allowedBranches,
+        allowedBranches:
+            allowedBranches,
       );
 
       print(
-        "✅ تم حفظ صلاحيات $email بنجاح",
+        '✅ تم حفظ صلاحيات $email بنجاح',
       );
     } catch (e) {
       print(
-        "⚠️ فشل حفظ الصلاحيات: $e",
+        '⚠️ فشل حفظ الصلاحيات: $e',
       );
+
+      rethrow;
     }
   }
 
-  // ==========================================================
+  // ============================================================
   // تحويل Map الصلاحيات
-  // ==========================================================
+  // ============================================================
 
   Map<String, Map<String, bool>>
       _convertToPermissionsMap(
@@ -301,7 +377,8 @@ class PermissionsService {
           return;
         }
 
-        final Map<String, bool> subMap = {};
+        final Map<String, bool>
+            subMap = {};
 
         categoryValue.forEach(
           (permKey, permValue) {
@@ -311,7 +388,8 @@ class PermissionsService {
               value = permValue;
             } else if (permValue is String) {
               value =
-                  permValue.toLowerCase() == 'true';
+                  permValue.toLowerCase() ==
+                      'true';
             } else if (permValue is num) {
               value = permValue == 1;
             }
@@ -329,9 +407,9 @@ class PermissionsService {
     return converted;
   }
 
-  // ==========================================================
+  // ============================================================
   // الصلاحيات الافتراضية
-  // ==========================================================
+  // ============================================================
 
   Map<String, Map<String, bool>>
       _createDefaultPermissions(
@@ -339,6 +417,10 @@ class PermissionsService {
   ) {
     final Map<String, Map<String, bool>>
         allPermissions = {
+      // ========================================================
+      // حركة الخزينة
+      // ========================================================
+
       'حركة الخزينة': {
         'شاشات الارصدة': false,
         'ادخال اذون': false,
@@ -349,6 +431,11 @@ class PermissionsService {
         'تصدير': false,
         'فلترة': false,
       },
+
+      // ========================================================
+      // التكويد
+      // ========================================================
+
       'التكويد': {
         'معاينة': false,
         'اضافة صنف': false,
@@ -362,6 +449,11 @@ class PermissionsService {
         'اضافة بنك': false,
         'اضافة موظف': false,
       },
+
+      // ========================================================
+      // حسابات الموردين = المشتريات
+      // ========================================================
+
       'حسابات الموردين': {
         'اضافة': false,
         'تعديل': false,
@@ -369,6 +461,23 @@ class PermissionsService {
         'معاينة': false,
         'تصدير': false,
       },
+
+      // ========================================================
+      // تسويات الموردين
+      // ========================================================
+
+      'تسويات الموردين': {
+        'إضافة': false,
+        'تعديل': false,
+        'حذف': false,
+        'معاينة': false,
+        'تصدير': false,
+      },
+
+      // ========================================================
+      // حركة الجرد
+      // ========================================================
+
       'حركة الجرد': {
         'اضافة': false,
         'تعديل': false,
@@ -377,11 +486,31 @@ class PermissionsService {
         'استيراد': false,
         'تصدير': false,
       },
+
+      // ========================================================
+      // التقارير
+      // ========================================================
+
       'التقارير': {
         'تقرير المبيعات': false,
         'تقرير فترة': false,
         'مشاركة': false,
       },
+
+      // ========================================================
+      // رصيد المخزون
+      // ========================================================
+
+      'رصيد المخزون': {
+        'معاينة': false,
+        'عرض سعر الجملة': false,
+        'تصدير': false,
+      },
+
+      // ========================================================
+      // الصلاحيات العامة
+      // ========================================================
+
       'صلاحيات عامة': {
         'تغيير الفرع(صفحة الهوم)': false,
         'صفحة الصلاحيات(الاعدادات)': false,
@@ -391,27 +520,22 @@ class PermissionsService {
         'إظهار حركة الموردين': true,
         'إظهار حركة الجرد': true,
       },
-      'رصيد المخزون': {
-        'معاينة': false,
-        'عرض سعر الجملة': false,
-        'تصدير': false,
-      },
-      'تسويات الموردين': {
-  'إضافة': false,
-  'تعديل': false,
-  'حذف': false,
-  'معاينة': false,
-  'تصدير': false,
-},
     };
 
-    if (jobCode == '99' || jobCode == '200') {
+    // ==========================================================
+    // المدير / الأدمن
+    // ==========================================================
+
+    if (jobCode == '99' ||
+        jobCode == '200') {
       for (final category
           in allPermissions.keys) {
         for (final permission
-            in allPermissions[category]!.keys) {
-          allPermissions[category]![permission] =
-              true;
+            in allPermissions[
+                    category]!
+                .keys) {
+          allPermissions[category]![
+              permission] = true;
         }
       }
     }
@@ -419,9 +543,9 @@ class PermissionsService {
     return allPermissions;
   }
 
-  // ==========================================================
-  // Permission Helper
-  // ==========================================================
+  // ============================================================
+  // فحص صلاحية عامة
+  // ============================================================
 
   bool hasPermission(
     String category,
@@ -430,6 +554,10 @@ class PermissionsService {
     return _permissions?[category]?[permission] ??
         false;
   }
+
+  // ============================================================
+  // حركة الخزينة
+  // ============================================================
 
   bool get canViewBalances =>
       hasPermission(
@@ -478,6 +606,10 @@ class PermissionsService {
         'حركة الخزينة',
         'فلترة',
       );
+
+  // ============================================================
+  // التكويد
+  // ============================================================
 
   bool get canViewCoding =>
       hasPermission(
@@ -545,6 +677,126 @@ class PermissionsService {
         'اضافة موظف',
       );
 
+  // ============================================================
+  // حسابات الموردين = المشتريات
+  // ============================================================
+
+  bool get canAddSupplierTransaction =>
+      hasPermission(
+        'حسابات الموردين',
+        'اضافة',
+      );
+
+  bool get canEditSupplierTransaction =>
+      hasPermission(
+        'حسابات الموردين',
+        'تعديل',
+      );
+
+  bool get canDeleteSupplierTransaction =>
+      hasPermission(
+        'حسابات الموردين',
+        'حذف',
+      );
+
+  bool get canViewSupplierHistory =>
+      hasPermission(
+        'حسابات الموردين',
+        'معاينة',
+      );
+
+  bool get canExportSupplier =>
+      hasPermission(
+        'حسابات الموردين',
+        'تصدير',
+      );
+
+  // ============================================================
+  // تسويات الموردين
+  // ============================================================
+
+  bool get canAddSupplierSettlement =>
+      hasPermission(
+        'تسويات الموردين',
+        'إضافة',
+      );
+
+  bool get canEditSupplierSettlement =>
+      hasPermission(
+        'تسويات الموردين',
+        'تعديل',
+      );
+
+  bool get canDeleteSupplierSettlement =>
+      hasPermission(
+        'تسويات الموردين',
+        'حذف',
+      );
+
+  bool get canViewSupplierSettlements =>
+      hasPermission(
+        'تسويات الموردين',
+        'معاينة',
+      );
+
+  bool get canExportSupplierSettlement =>
+      hasPermission(
+        'تسويات الموردين',
+        'تصدير',
+      );
+
+  // إظهار صفحة التسويات
+  //
+  // السماح بالدخول لو المستخدم عنده
+  // معاينة أو إضافة.
+  bool get canShowSupplierSettlements =>
+      canViewSupplierSettlements ||
+      canAddSupplierSettlement;
+
+  // ============================================================
+  // حركة الجرد
+  // ============================================================
+
+  bool get canAddInventory =>
+      hasPermission(
+        'حركة الجرد',
+        'اضافة',
+      );
+
+  bool get canEditInventory =>
+      hasPermission(
+        'حركة الجرد',
+        'تعديل',
+      );
+
+  bool get canDeleteInventory =>
+      hasPermission(
+        'حركة الجرد',
+        'حذف',
+      );
+
+  bool get canViewInventory =>
+      hasPermission(
+        'حركة الجرد',
+        'معاينة',
+      );
+
+  bool get canImportInventory =>
+      hasPermission(
+        'حركة الجرد',
+        'استيراد',
+      );
+
+  bool get canExportInventory =>
+      hasPermission(
+        'حركة الجرد',
+        'تصدير',
+      );
+
+  // ============================================================
+  // التقارير
+  // ============================================================
+
   bool get canViewReportsSales =>
       hasPermission(
         'التقارير',
@@ -562,6 +814,32 @@ class PermissionsService {
         'التقارير',
         'مشاركة',
       );
+
+  // ============================================================
+  // رصيد المخزون
+  // ============================================================
+
+  bool get canShowStock =>
+      hasPermission(
+        'رصيد المخزون',
+        'معاينة',
+      );
+
+  bool get canViewStockWholesalePrice =>
+      hasPermission(
+        'رصيد المخزون',
+        'عرض سعر الجملة',
+      );
+
+  bool get canExportStock =>
+      hasPermission(
+        'رصيد المخزون',
+        'تصدير',
+      );
+
+  // ============================================================
+  // الصلاحيات العامة
+  // ============================================================
 
   bool get canChangeBranch =>
       hasPermission(
@@ -604,122 +882,4 @@ class PermissionsService {
         'صلاحيات عامة',
         'إظهار حركة الجرد',
       );
-
-  bool get canAddInventory =>
-      hasPermission(
-        'حركة الجرد',
-        'اضافة',
-      );
-
-  bool get canEditInventory =>
-      hasPermission(
-        'حركة الجرد',
-        'تعديل',
-      );
-
-  bool get canDeleteInventory =>
-      hasPermission(
-        'حركة الجرد',
-        'حذف',
-      );
-
-  bool get canViewInventory =>
-      hasPermission(
-        'حركة الجرد',
-        'معاينة',
-      );
-
-  bool get canImportInventory =>
-      hasPermission(
-        'حركة الجرد',
-        'استيراد',
-      );
-
-  bool get canExportInventory =>
-      hasPermission(
-        'حركة الجرد',
-        'تصدير',
-      );
-
-  bool get canShowStock =>
-      hasPermission(
-        'رصيد المخزون',
-        'معاينة',
-      );
-
-  bool get canViewStockWholesalePrice =>
-      hasPermission(
-        'رصيد المخزون',
-        'عرض سعر الجملة',
-      );
-
-  bool get canExportStock =>
-      hasPermission(
-        'رصيد المخزون',
-        'تصدير',
-      );
-
-  bool get canAddSupplierTransaction =>
-      hasPermission(
-        'حسابات الموردين',
-        'اضافة',
-      );
-
-  bool get canEditSupplierTransaction =>
-      hasPermission(
-        'حسابات الموردين',
-        'تعديل',
-      );
-
-  bool get canDeleteSupplierTransaction =>
-      hasPermission(
-        'حسابات الموردين',
-        'حذف',
-      );
-
-  bool get canViewSupplierHistory =>
-      hasPermission(
-        'حسابات الموردين',
-        'معاينة',
-      );
-
-  bool get canExportSupplier =>
-      hasPermission(
-        'حسابات الموردين',
-        'تصدير',
-      );
-
-  bool get canAddSupplierSettlement =>
-    hasPermission(
-      'تسويات الموردين',
-      'إضافة',
-    );
-
-bool get canEditSupplierSettlement =>
-    hasPermission(
-      'تسويات الموردين',
-      'تعديل',
-    );
-
-bool get canDeleteSupplierSettlement =>
-    hasPermission(
-      'تسويات الموردين',
-      'حذف',
-    );
-
-bool get canViewSupplierSettlements =>
-    hasPermission(
-      'تسويات الموردين',
-      'معاينة',
-    );
-
-bool get canExportSupplierSettlement =>
-    hasPermission(
-      'تسويات الموردين',
-      'تصدير',
-    );
-
-bool get canShowSupplierSettlements =>
-    canViewSupplierSettlements ||
-    canAddSupplierSettlement;
 }

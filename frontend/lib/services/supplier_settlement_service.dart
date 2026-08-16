@@ -1,5 +1,6 @@
-import 'dart:convert';
+// lib/services/supplier_settlement_service.dart
 
+import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -9,12 +10,23 @@ import '../models/supplier_settlement_model.dart';
 
 class SupplierSettlementService {
   final String baseUrl = ApiConstants.baseUrl;
+  final Box _box = Hive.box('supplier_settlement_box');
 
-  final Box _box =
-      Hive.box('supplier_settlement_box');
+  // ============================================================
+  // هل الفرع = كل الفروع؟
+  // ============================================================
+
+  bool _isAllBranches(String? branchCode) =>
+      branchCode == null ||
+      branchCode.isEmpty ||
+      branchCode == 'all' ||
+      branchCode == 'الكل' ||
+      branchCode == 'كل الفروع';
 
   // ============================================================
   // رصيد التسويات لمورد
+  //
+  // لو الفرع = all يتم حساب كل الفروع.
   // ============================================================
 
   Future<double> getSupplierSettlementTotal(
@@ -26,20 +38,20 @@ class SupplierSettlementService {
 
     for (final key in _box.keys) {
       final raw = _box.get(key);
-
       if (raw is! List) continue;
 
       for (final item in raw) {
         final map = _toMap(item);
 
-        if (map.isEmpty ||
-            map['is_deleted'] == true) {
+        if (map.isEmpty || map['is_deleted'] == true) continue;
+        if (map['company_code']?.toString() != companyCode) continue;
+
+        if (!_isAllBranches(branchCode) &&
+            map['branch_code']?.toString() != branchCode) {
           continue;
         }
 
-        if (map['company_code']?.toString() != companyCode ||
-            map['branch_code']?.toString() != branchCode ||
-            map['supplier_name']?.toString() != supplierName) {
+        if (map['supplier_name']?.toString() != supplierName) {
           continue;
         }
 
@@ -52,37 +64,30 @@ class SupplierSettlementService {
 
   // ============================================================
   // السيريال التالي
+  //
+  // يتم الترقيم لكل شركة + فرع.
   // ============================================================
 
-  int _getNextSerial(
-    String companyCode,
-    String branchCode,
-  ) {
+  int _getNextSerial(String companyCode, String branchCode) {
     int maxSerial = 0;
 
     for (final key in _box.keys) {
       final raw = _box.get(key);
-
       if (raw is! List) continue;
 
       for (final item in raw) {
         final map = _toMap(item);
 
-        if (map.isEmpty ||
-            map['is_deleted'] == true) {
-          continue;
-        }
+        if (map.isEmpty || map['is_deleted'] == true) continue;
+        if (map['company_code']?.toString() != companyCode) continue;
 
-        if (map['company_code']?.toString() != companyCode ||
-            map['branch_code']?.toString() != branchCode) {
+        // لو all لا نستخدمه كسيريال لفرع معين.
+        if (map['branch_code']?.toString() != branchCode) {
           continue;
         }
 
         final serial = _toInt(map['serial']);
-
-        if (serial > maxSerial) {
-          maxSerial = serial;
-        }
+        if (serial > maxSerial) maxSerial = serial;
       }
     }
 
@@ -97,18 +102,30 @@ class SupplierSettlementService {
     SupplierSettlementModel model,
   ) async {
     try {
-      if (model.serial == 0) {
+      // --------------------------------------------------------
+      // التأكد من رقم الإذن
+      // --------------------------------------------------------
+
+      if (model.serial <= 0) {
         model.serial = _getNextSerial(
           model.companyCode,
           model.branchCode,
         );
       }
 
+      // --------------------------------------------------------
+      // تحديث وقت التعديل
+      // --------------------------------------------------------
+
+      model.updatedAt = DateTime.now();
+
+      // --------------------------------------------------------
+      // إرسال للسيرفر
+      // --------------------------------------------------------
+
       final response = await http.post(
         Uri.parse('$baseUrl/supplier-settlement/save'),
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: {'Content-Type': 'application/json'},
         body: jsonEncode(model.toMap()),
       );
 
@@ -120,12 +137,10 @@ class SupplierSettlementService {
         };
       }
 
-      final result =
-          jsonDecode(response.body)
-              as Map<String, dynamic>;
+      final result = jsonDecode(response.body)
+          as Map<String, dynamic>;
 
-      final docId =
-          result['doc_id']?.toString() ?? '';
+      final docId = result['doc_id']?.toString() ?? '';
 
       if (docId.isEmpty) {
         return {
@@ -134,13 +149,26 @@ class SupplierSettlementService {
         };
       }
 
+      // --------------------------------------------------------
+      // حفظ doc_id
+      // --------------------------------------------------------
+
       model.docId = docId;
+
+      // لو السيرفر رجع serial نستخدمه
+      if (result['serial'] is num) {
+        model.serial = (result['serial'] as num).toInt();
+      }
+
+      // --------------------------------------------------------
+      // حفظ محلي
+      // --------------------------------------------------------
 
       await _saveLocal(model);
 
       return {
         'success': true,
-        'doc_id': docId,
+        'doc_id': model.docId,
         'serial': model.serial,
         'action':
             result['action']?.toString() ?? 'insert',
@@ -171,15 +199,16 @@ class SupplierSettlementService {
       list = raw
           .whereType<Map>()
           .map(_toMap)
-          .where(
-            (e) =>
-                e.isNotEmpty &&
-                e['is_deleted'] != true,
-          )
+          .where((e) => e.isNotEmpty && e['is_deleted'] != true)
           .toList();
     }
 
-    final item = model.toMap();
+    final item = _toMap(model.toMap());
+
+    item['doc_id'] = model.docId;
+    item['serial'] = model.serial;
+    item['employee'] = model.employee;
+    item['is_deleted'] = false;
 
     list.removeWhere(
       (e) =>
@@ -194,10 +223,11 @@ class SupplierSettlementService {
 
   // ============================================================
   // جلب التسويات
+  //
+  // all = كل الفروع
   // ============================================================
 
-  Future<List<SupplierSettlementModel>>
-      getSettlements({
+  Future<List<SupplierSettlementModel>> getSettlements({
     required String companyCode,
     String? branchCode,
     String? supplierName,
@@ -208,33 +238,26 @@ class SupplierSettlementService {
 
     for (final key in _box.keys) {
       final raw = _box.get(key);
-
       if (raw is! List) continue;
 
       for (final item in raw) {
         final map = _toMap(item);
 
-        if (map.isEmpty ||
-            map['is_deleted'] == true) {
-          continue;
-        }
+        if (map.isEmpty || map['is_deleted'] == true) continue;
+        if (map['company_code']?.toString() != companyCode) continue;
 
-        if (map['company_code']?.toString() != companyCode) {
-          continue;
-        }
-
-        if (branchCode != null &&
+        if (!_isAllBranches(branchCode) &&
             map['branch_code']?.toString() != branchCode) {
           continue;
         }
 
         if (supplierName != null &&
+            supplierName.isNotEmpty &&
             map['supplier_name']?.toString() != supplierName) {
           continue;
         }
 
-        final date =
-            map['date']?.toString() ?? '';
+        final date = map['date']?.toString() ?? '';
 
         if (startDate != null &&
             date.compareTo(startDate) < 0) {
@@ -246,21 +269,31 @@ class SupplierSettlementService {
           continue;
         }
 
-        result.add(
-          SupplierSettlementModel.fromMap(map),
-        );
+        try {
+          result.add(
+            SupplierSettlementModel.fromMap(map),
+          );
+        } catch (e) {
+          print(
+            '⚠️ خطأ في تحويل التسوية: $e',
+          );
+        }
       }
     }
 
-    result.sort(
-      (a, b) => b.date.compareTo(a.date),
-    );
+    result.sort((a, b) {
+      final dateCompare = b.date.compareTo(a.date);
+
+      if (dateCompare != 0) return dateCompare;
+
+      return b.serial.compareTo(a.serial);
+    });
 
     return result;
   }
 
   // ============================================================
-  // حذف
+  // حذف تسوية
   // ============================================================
 
   Future<bool> deleteSettlement(
@@ -276,32 +309,39 @@ class SupplierSettlementService {
       );
 
       if (response.statusCode != 200) {
+        print(
+          '❌ فشل حذف التسوية: ${response.statusCode}',
+        );
         return false;
       }
 
-      for (final key in _box.keys.toList()) {
-        final raw = _box.get(key);
+      final keys = _box.keys.toList();
 
+      for (final key in keys) {
+        final raw = _box.get(key);
         if (raw is! List) continue;
 
-        final updated = raw
-            .whereType<Map>()
-            .map(_toMap)
-            .where(
-              (e) =>
-                  e['doc_id']?.toString() != docId &&
-                  e['is_deleted'] != true,
-            )
-            .toList();
+        final List<Map<String, dynamic>> updated = [];
+        bool found = false;
 
-        final hadRecord =
-            raw.any(
-          (e) =>
-              e is Map &&
-              e['doc_id']?.toString() == docId,
-        );
+        for (final item in raw) {
+          final map = _toMap(item);
 
-        if (!hadRecord) continue;
+          if (map.isEmpty) continue;
+
+          if (map['doc_id']?.toString() == docId.toString()) {
+            found = true;
+            continue;
+          }
+
+          if (map['is_deleted'] == true) {
+            continue;
+          }
+
+          updated.add(map);
+        }
+
+        if (!found) continue;
 
         if (updated.isEmpty) {
           await _box.delete(key);
@@ -314,7 +354,9 @@ class SupplierSettlementService {
 
       return true;
     } catch (e) {
-      print('❌ خطأ حذف التسوية: $e');
+      print(
+        '❌ خطأ حذف التسوية: $e',
+      );
       return false;
     }
   }
@@ -326,38 +368,53 @@ class SupplierSettlementService {
   Future<void> fetchAllSettlements(
     String companyCode,
   ) async {
-    final response = await http.get(
-      Uri.parse(
-        '$baseUrl/supplier-settlement/list/$companyCode',
-      ),
-    );
-
-    if (response.statusCode != 200) {
-      throw Exception(
-        'فشل تحميل التسويات: ${response.statusCode}',
+    try {
+      final response = await http.get(
+        Uri.parse(
+          '$baseUrl/supplier-settlement/list/$companyCode',
+        ),
       );
-    }
 
-    final List<dynamic> data =
-        jsonDecode(response.body);
-
-    for (final raw in data) {
-      final map = _toMap(raw);
-
-      if (map.isEmpty ||
-          map['is_deleted'] == true) {
-        continue;
+      if (response.statusCode != 200) {
+        throw Exception(
+          'فشل تحميل التسويات: '
+          '${response.statusCode}: '
+          '${response.body}',
+        );
       }
 
-      final model =
-          SupplierSettlementModel.fromMap(map);
+      final List<dynamic> data =
+          jsonDecode(response.body);
 
-      await _saveLocal(model);
+      // --------------------------------------------------------
+      // نضع فقط السجلات النشطة.
+      // --------------------------------------------------------
+
+      for (final raw in data) {
+        final map = _toMap(raw);
+
+        if (map.isEmpty || map['is_deleted'] == true) {
+          continue;
+        }
+
+        map['is_deleted'] = false;
+
+        final model =
+            SupplierSettlementModel.fromMap(map);
+
+        await _saveLocal(model);
+      }
+
+      print(
+        '✅ تم FULL SYNC للتسويات '
+        '(${data.length} سجل)',
+      );
+    } catch (e) {
+      print(
+        '❌ فشل FULL SYNC للتسويات: $e',
+      );
+      rethrow;
     }
-
-    print(
-      '✅ تم FULL SYNC للتسويات (${data.length})',
-    );
   }
 
   // ============================================================
@@ -371,18 +428,30 @@ class SupplierSettlementService {
     final prefs =
         await SharedPreferences.getInstance();
 
-    final key =
-        '${ApiConstants.LAST_SYNC_SETTLEMENT}$companyCode';
+    final String lastSyncKey =
+        '${ApiConstants.LAST_SYNC_SETTLEMENT}'
+        '$companyCode';
 
-    final since =
+    final String? savedLastSync =
         lastSync ??
-        prefs.getString(key);
+        prefs.getString(lastSyncKey);
 
-    if (since == null || since.isEmpty) {
-      await fetchAllSettlements(companyCode);
+    // ==========================================================
+    // جهاز جديد
+    // ==========================================================
+
+    if (savedLastSync == null ||
+        savedLastSync.isEmpty) {
+      print(
+        '📥 التسويات: لا يوجد lastSync → FULL SYNC',
+      );
+
+      await fetchAllSettlements(
+        companyCode,
+      );
 
       await prefs.setString(
-        key,
+        lastSyncKey,
         DateTime.now()
             .toUtc()
             .toIso8601String(),
@@ -391,106 +460,186 @@ class SupplierSettlementService {
       return;
     }
 
-    final started =
-        DateTime.now().toUtc();
+    // ==========================================================
+    // Incremental
+    // ==========================================================
 
-    final response = await http.get(
-      Uri.parse(
-        '$baseUrl/supplier-settlement/changes/'
-        '$companyCode?since=$since',
-      ),
-    );
+    try {
+      final DateTime syncStartedAt =
+          DateTime.now().toUtc();
 
-    if (response.statusCode != 200) {
-      throw Exception(
-        'فشل مزامنة التسويات: ${response.statusCode}',
-      );
-    }
+      DateTime since =
+          DateTime.parse(
+        savedLastSync,
+      ).toUtc();
 
-    final List<dynamic> changes =
-        jsonDecode(response.body);
-
-    for (final raw in changes) {
-      final map = _toMap(raw);
-
-      final docId =
-          map['doc_id']?.toString();
-
-      if (docId == null || docId.isEmpty) {
-        continue;
-      }
-
-      final action =
-          map['action']?.toString() ??
-          (map['is_deleted'] == true
-              ? 'delete'
-              : 'update');
-
-      final localKey =
-          '${map['company_code']}_'
-          '${map['branch_code']}_'
-          '${map['date']}';
-
-      List<Map<String, dynamic>> list = [];
-
-      final localRaw = _box.get(localKey);
-
-      if (localRaw is List) {
-        list = localRaw
-            .whereType<Map>()
-            .map(_toMap)
-            .where(
-              (e) =>
-                  e['is_deleted'] != true,
-            )
-            .toList();
-      }
-
-      list.removeWhere(
-        (e) =>
-            e['doc_id']?.toString() ==
-            docId,
+      // هامش صغير حتى لا نفقد تحديثًا بسبب فرق
+      // أجزاء الثانية بين lastSync و updated_at.
+      since = since.subtract(
+        const Duration(minutes: 1),
       );
 
-      if (action == 'delete' ||
-          map['is_deleted'] == true) {
-        if (list.isEmpty) {
-          await _box.delete(localKey);
-        } else {
-          await _box.put(localKey, list);
+      final response = await http.get(
+        Uri.parse(
+          '$baseUrl/supplier-settlement/changes/'
+          '$companyCode'
+          '?since=${since.toIso8601String()}',
+        ),
+      );
+
+      if (response.statusCode != 200) {
+        throw Exception(
+          'فشل مزامنة التسويات: '
+          '${response.statusCode}: '
+          '${response.body}',
+        );
+      }
+
+      final List<dynamic> changes =
+          jsonDecode(response.body);
+
+      // --------------------------------------------------------
+      // تطبيق كل التغييرات
+      // --------------------------------------------------------
+
+      for (final raw in changes) {
+        final map = _toMap(raw);
+
+        if (map.isEmpty) {
+          continue;
         }
 
-        continue;
+        final docId =
+            map['doc_id']?.toString();
+
+        if (docId == null ||
+            docId.isEmpty) {
+          print(
+            '⚠️ تحديث تسوية بدون doc_id',
+          );
+          continue;
+        }
+
+        final action =
+            map['action']?.toString() ??
+            (map['is_deleted'] == true
+                ? 'delete'
+                : 'update');
+
+        final company =
+            map['company_code']
+                    ?.toString() ??
+                companyCode;
+
+        final branch =
+            map['branch_code']
+                    ?.toString() ??
+                'all';
+
+        final date =
+            map['date']
+                    ?.toString() ??
+                '';
+
+        final localKey =
+            '${company}_${branch}_$date';
+
+        List<Map<String, dynamic>> list = [];
+
+        final localRaw =
+            _box.get(localKey);
+
+        if (localRaw is List) {
+          list = localRaw
+              .whereType<Map>()
+              .map(_toMap)
+              .where(
+                (e) =>
+                    e['is_deleted'] != true,
+              )
+              .toList();
+        }
+
+        // ------------------------------------------------------
+        // إزالة النسخة القديمة
+        // ------------------------------------------------------
+
+        list.removeWhere(
+          (e) =>
+              e['doc_id']?.toString() ==
+              docId,
+        );
+
+        // ------------------------------------------------------
+        // حذف
+        // ------------------------------------------------------
+
+        if (action == 'delete' ||
+            map['is_deleted'] == true) {
+          if (list.isEmpty) {
+            await _box.delete(localKey);
+          } else {
+            await _box.put(
+              localKey,
+              list,
+            );
+          }
+
+          print(
+            '🗑️ تم حذف التسوية [$docId]',
+          );
+
+          continue;
+        }
+
+        // ------------------------------------------------------
+        // إضافة / تعديل
+        // ------------------------------------------------------
+
+        map.remove('action');
+        map['is_deleted'] = false;
+
+        list.add(map);
+
+        await _box.put(
+          localKey,
+          list,
+        );
+
+        print(
+          '✅ تم تحديث التسوية [$docId]',
+        );
       }
 
-      map.remove('action');
-      map['is_deleted'] = false;
+      // --------------------------------------------------------
+      // تحديث lastSync فقط بعد نجاح كل العملية
+      // --------------------------------------------------------
 
-      list.add(map);
-
-      await _box.put(
-        localKey,
-        list,
+      await prefs.setString(
+        lastSyncKey,
+        syncStartedAt
+            .toIso8601String(),
       );
+
+      print(
+        '✅ تمت مزامنة '
+        '${changes.length} تحديث للتسويات',
+      );
+    } catch (e) {
+      print(
+        '❌ فشل مزامنة التسويات: $e',
+      );
+
+      // لا نغير lastSync عند الفشل.
+      rethrow;
     }
-
-    await prefs.setString(
-      key,
-      started.toIso8601String(),
-    );
-
-    print(
-      '✅ تمت مزامنة ${changes.length} تسوية',
-    );
   }
 
   // ============================================================
   // Helpers
   // ============================================================
 
-  Map<String, dynamic> _toMap(
-    dynamic value,
-  ) {
+  Map<String, dynamic> _toMap(dynamic value) {
     if (value is Map<String, dynamic>) {
       return Map<String, dynamic>.from(value);
     }
@@ -499,7 +648,10 @@ class SupplierSettlementService {
       return Map<String, dynamic>.from(
         value.map(
           (key, value) =>
-              MapEntry(key.toString(), value),
+              MapEntry(
+                key.toString(),
+                value,
+              ),
         ),
       );
     }

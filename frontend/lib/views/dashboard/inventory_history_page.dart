@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../services/inventory_service.dart';
 import '../../models/inventory_model.dart';
@@ -24,36 +25,47 @@ class InventoryHistoryPage extends StatefulWidget {
   });
 
   @override
-  State<InventoryHistoryPage> createState() =>
-      _InventoryHistoryPageState();
+  State<InventoryHistoryPage> createState() => _InventoryHistoryPageState();
 }
 
 class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
   final InventoryService _inventoryService = InventoryService();
 
   List<InventoryModel> _inventories = [];
+  List<Map<String, String>> _stores = [];
+
   bool _isLoading = true;
   bool _isInitializing = false;
 
   String? _filterStoreCode;
   String? _filterDate;
 
-  List<Map<String, String>> _stores = [];
-
   InventoryModel? _selectedInventory;
   bool _showDetails = false;
 
   VoidCallback? _inventoryBoxListener;
 
+  static const List<String> _itemHeaders = [
+    'الكود',
+    'الصنف',
+    'الكمية',
+    'سعر الجملة',
+    'قيمة الجملة',
+    'سعر البيع',
+    'قيمة البيع',
+  ];
+
+  // ============================================================
+  // Init / Dispose
+  // ============================================================
+
   @override
   void initState() {
     super.initState();
-
     _inventoryBoxListener = _onInventoryBoxChanged;
     Hive.box('inventory_box')
         .listenable()
         .addListener(_inventoryBoxListener!);
-
     _initialize();
   }
 
@@ -68,10 +80,12 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
   }
 
   void _onInventoryBoxChanged() {
-    if (mounted) {
-      _loadData();
-    }
+    if (mounted) _loadData();
   }
+
+  // ============================================================
+  // التهيئة
+  // ============================================================
 
   Future<void> _initialize() async {
     if (_isInitializing) return;
@@ -80,20 +94,21 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
     await _loadDropdowns();
     await _loadData();
 
-    if (mounted) {
-      setState(() {
-        _isLoading = false;
-        _isInitializing = false;
-      });
-    }
+    if (!mounted) return;
+
+    setState(() {
+      _isLoading = false;
+      _isInitializing = false;
+    });
   }
+
+  // ============================================================
+  // تحميل المخازن
+  // ============================================================
 
   Future<void> _loadDropdowns() async {
     final box = Hive.box('coding_box');
-
-    _stores = [
-      {'code': 'all', 'name': 'كل المخازن'}
-    ];
+    _stores = [{'code': 'all', 'name': 'كل المخازن'}];
 
     final raw = box.get(
       '${widget.companyCode}_stores',
@@ -101,47 +116,55 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
     );
 
     if (raw is List) {
-      for (var item in raw) {
-        if (item is Map) {
-          _stores.add({
-            'code': item['code']?.toString() ?? '',
-            'name': item['name']?.toString() ?? '',
-          });
-        }
+      for (final item in raw) {
+        if (item is! Map) continue;
+
+        final code = item['code']?.toString() ?? '';
+        final name = item['name']?.toString() ?? '';
+
+        if (code.isEmpty || name.isEmpty) continue;
+
+        _stores.add({'code': code, 'name': name});
       }
     }
 
-    if (mounted) {
-      setState(() {});
-    }
+    if (mounted) setState(() {});
   }
+
+  // ============================================================
+  // هل المستخدم على كل الفروع؟
+  // ============================================================
+
+  bool get _isAllBranches {
+    final code = widget.selectedBranchCode?.trim();
+
+    return code == null ||
+        code.isEmpty ||
+        code == 'all' ||
+        code == 'الكل' ||
+        code == 'كل الفروع';
+  }
+
+  // ============================================================
+  // تحميل البيانات
+  // ============================================================
 
   Future<void> _loadData() async {
     if (!mounted) return;
-
     setState(() => _isLoading = true);
 
     try {
       final box = Hive.box('inventory_box');
-      List<InventoryModel> all = [];
+      final List<InventoryModel> all = [];
 
-      // ========================================================
-      // قراءة البيانات من Hive فقط
-      // ========================================================
-
-      for (var key in box.keys) {
+      for (final key in box.keys) {
         final raw = box.get(key);
-
         if (raw is! List) continue;
 
-        for (var item in raw) {
-          if (item is! Map) continue;
+        for (final item in raw) {
+          if (item is! Map || item['is_deleted'] == true) continue;
 
-          // تجاهل المحذوف
-          if (item['is_deleted'] == true) continue;
-
-          if (item['company_code']?.toString() !=
-              widget.companyCode) {
+          if (item['company_code']?.toString() != widget.companyCode) {
             continue;
           }
 
@@ -152,48 +175,32 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
               ),
             );
           } catch (e) {
-            print('⚠️ فشل تحويل عنصر الجرد: $e');
+            debugPrint('⚠️ فشل تحويل عنصر الجرد: $e');
           }
         }
       }
 
-      // ========================================================
-      // الفلاتر
-      // ========================================================
-
-      if (widget.selectedBranchCode != null &&
-          widget.selectedBranchCode != 'all' &&
-          widget.selectedBranchCode!.isNotEmpty) {
-        all = all
-            .where(
-              (inv) =>
-                  inv.branchCode ==
-                  widget.selectedBranchCode,
-            )
-            .toList();
+      if (!_isAllBranches) {
+        all.removeWhere(
+          (inv) => inv.branchCode != widget.selectedBranchCode,
+        );
       }
 
-      if (_filterStoreCode != null &&
-          _filterStoreCode != 'all') {
-        all = all
-            .where(
-              (inv) => inv.storeCode == _filterStoreCode,
-            )
-            .toList();
+      if (_filterStoreCode != null && _filterStoreCode != 'all') {
+        all.removeWhere(
+          (inv) => inv.storeCode != _filterStoreCode,
+        );
       }
 
-      if (_filterDate != null &&
-          _filterDate!.isNotEmpty) {
-        all = all
-            .where(
-              (inv) => inv.date == _filterDate,
-            )
-            .toList();
+      if (_filterDate != null && _filterDate!.isNotEmpty) {
+        all.removeWhere(
+          (inv) => inv.date != _filterDate,
+        );
       }
 
       all.sort((a, b) {
-        final dateCmp = b.date.compareTo(a.date);
-        if (dateCmp != 0) return dateCmp;
+        final dateCompare = b.date.compareTo(a.date);
+        if (dateCompare != 0) return dateCompare;
         return (b.serial ?? 0).compareTo(a.serial ?? 0);
       });
 
@@ -204,15 +211,16 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
         _isLoading = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      debugPrint('❌ خطأ في تحميل الجردات: $e');
 
-      setState(() => _isLoading = false);
-      print('❌ خطأ في تحميل الجردات: $e');
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
   // ============================================================
-  // تحديث يدوي - Incremental فقط
+  // تحديث من السيرفر
   // ============================================================
 
   Future<void> _refreshFromServer() async {
@@ -221,58 +229,55 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
     setState(() => _isLoading = true);
 
     try {
-      await _inventoryService.syncChangesFromServer(
-        widget.companyCode,
-      );
-
+      await _inventoryService.syncChangesFromServer(widget.companyCode);
       await _loadData();
 
       if (mounted) {
-        _showSnackBar(
-          'تم تحديث الجرد بنجاح',
-          Colors.green,
-        );
+        _showSnackBar('تم تحديث الجرد بنجاح', Colors.green);
       }
     } catch (e) {
       if (mounted) {
-        _showSnackBar(
-          'فشل التحديث: $e',
-          Colors.red,
-        );
+        _showSnackBar('فشل التحديث: $e', Colors.red);
       }
     } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
+  // ============================================================
+  // أسماء الفرع والمخزن والشركة
+  // ============================================================
+
   String _getBranchName(String? code) {
-    if (code == null || code == 'all' || code == '') {
+    if (code == null ||
+        code.isEmpty ||
+        code == 'all' ||
+        code == 'الكل' ||
+        code == 'كل الفروع') {
       return 'كل الفروع';
     }
 
     final box = Hive.box('coding_box');
-    final rawData = box.get(
-      "${widget.companyCode}_branches",
+    final raw = box.get(
+      '${widget.companyCode}_branches',
       defaultValue: [],
     );
 
-    if (rawData is List) {
-      for (var item in rawData) {
+    if (raw is List) {
+      for (final item in raw) {
         if (item is Map &&
-            item['code']?.toString() == code) {
-          return item['name']?.toString() ??
-              "فرع غير معروف";
+            (item['code']?.toString() == code ||
+                item['name']?.toString() == code)) {
+          return item['name']?.toString() ?? code;
         }
       }
     }
 
-    return "فرع غير معروف";
+    return 'فرع غير معروف';
   }
 
   String _getStoreName(String? code) {
-    if (code == null || code == 'all') {
+    if (code == null || code.isEmpty || code == 'all') {
       return 'كل المخازن';
     }
 
@@ -284,12 +289,33 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
     return found['name'] ?? code;
   }
 
-  String _formatCurrency(double amount) {
-    return NumberFormat(
-      '#,##0.00',
-      'ar_EG',
-    ).format(amount);
+  Future<String> _getCompanyName() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('company_name') ?? 'شركتي';
   }
+
+  // ============================================================
+  // تنسيق الأرقام
+  // ============================================================
+
+  String _formatQuantity(double value) {
+    return NumberFormat('#,##0.##', 'en_US').format(value);
+  }
+
+  String _formatCurrency(double value) {
+    return NumberFormat('#,##0.00', 'en_US').format(value);
+  }
+
+  double _getTotalQuantity(InventoryModel inv) {
+    return inv.items.fold<double>(
+  0.0,
+  (sum, item) => sum + item.quantity,
+);
+  }
+
+  // ============================================================
+  // تفاصيل / تعديل / حذف
+  // ============================================================
 
   void _showInventoryDetails(InventoryModel model) {
     setState(() {
@@ -324,11 +350,17 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
         backgroundColor: Colors.indigo.shade900,
         title: const Text(
           'تأكيد الحذف',
-          style: TextStyle(color: Colors.white),
+          style: TextStyle(
+            color: Colors.white,
+            fontFamily: 'Cairo',
+          ),
         ),
         content: Text(
           'هل أنت متأكد من حذف جرد ${model.date} - إذن ${model.serial ?? ''}؟',
-          style: const TextStyle(color: Colors.white70),
+          style: const TextStyle(
+            color: Colors.white70,
+            fontFamily: 'Cairo',
+          ),
         ),
         actions: [
           TextButton(
@@ -343,30 +375,20 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
               Navigator.pop(ctx);
 
               if (model.docId == null) {
-                _showSnackBar(
-                  'رقم الجرد غير موجود',
-                  Colors.red,
-                );
+                _showSnackBar('رقم الجرد غير موجود', Colors.red);
                 return;
               }
 
-              final deleted =
-                  await _inventoryService.deleteInventory(
+              final deleted = await _inventoryService.deleteInventory(
                 widget.companyCode,
                 model.docId!,
               );
 
               if (deleted) {
-                _showSnackBar(
-                  'تم الحذف بنجاح',
-                  Colors.green,
-                );
+                _showSnackBar('تم الحذف بنجاح', Colors.green);
                 await _loadData();
               } else {
-                _showSnackBar(
-                  'فشل الحذف',
-                  Colors.red,
-                );
+                _showSnackBar('فشل الحذف', Colors.red);
               }
             },
             child: const Text(
@@ -379,278 +401,260 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
     );
   }
 
-  Future<void> _exportSingleExcel(
+  // ============================================================
+  // تجهيز بيانات التصدير
+  // ============================================================
+
+  List<Map<String, dynamic>> _getItemExportData(
     InventoryModel inv,
-  ) async {
+  ) {
+    return inv.items.map(
+      (item) => {
+        'الكود': item.code,
+        'الصنف': item.name,
+        'الكمية': item.quantity,
+        'سعر الجملة': item.wholesalePrice,
+        'قيمة الجملة': item.wholesaleValue,
+        'سعر البيع': item.retailPrice,
+        'قيمة البيع': item.retailValue,
+      },
+    ).toList();
+  }
+
+  // ============================================================
+  // تصدير إذن واحد Excel
+  // ============================================================
+
+  Future<void> _exportSingleExcel(InventoryModel inv) async {
     try {
-      final data = inv.items
-          .map(
-            (item) => {
-              'الكود': item.code,
-              'الصنف': item.name,
-              'الكمية': item.quantity,
-              'سعر الجملة': item.wholesalePrice,
-              'قيمة الجملة': item.wholesaleValue,
-              'سعر البيع': item.retailPrice,
-              'قيمة البيع': item.retailValue,
-            },
-          )
-          .toList();
+      final companyName = await _getCompanyName();
+      final branchName = _getBranchName(inv.branchCode);
+      final data = _getItemExportData(inv);
 
       await ExportService.exportToExcel(
         data,
         'جرد_${inv.date}_${inv.serial ?? ''}',
-        [
-          'الكود',
-          'الصنف',
-          'الكمية',
-          'سعر الجملة',
-          'قيمة الجملة',
-          'سعر البيع',
-          'قيمة البيع',
-        ],
-        [
-          'الكود',
-          'الصنف',
-          'الكمية',
-          'سعر الجملة',
-          'قيمة الجملة',
-          'سعر البيع',
-          'قيمة البيع',
-        ],
+        _itemHeaders,
+        _itemHeaders,
+        companyName: companyName,
+        branchName: branchName,
+        storeName: _getStoreName(inv.storeCode),
+        serial: inv.serial?.toString(),
+        date: inv.date,
+        summary: {
+          'إجمالي الكمية': _getTotalQuantity(inv),
+          'إجمالي الجملة': inv.totalWholesale,
+          'إجمالي البيع': inv.totalRetail,
+        },
       );
 
-      _showSnackBar(
-        'تم تصدير الإذن بنجاح',
-        Colors.green,
-      );
+      _showSnackBar('تم تصدير الإذن بنجاح', Colors.green);
     } catch (e) {
-      _showSnackBar(
-        'فشل التصدير: $e',
-        Colors.red,
-      );
+      _showSnackBar('فشل التصدير: $e', Colors.red);
     }
   }
 
-  Future<void> _exportSinglePDF(
-    InventoryModel inv,
-  ) async {
-    try {
-      final data = inv.items
-          .map(
-            (item) => {
-              'الكود': item.code,
-              'الصنف': item.name,
-              'الكمية': item.quantity,
-              'سعر الجملة': item.wholesalePrice,
-              'قيمة الجملة': item.wholesaleValue,
-              'سعر البيع': item.retailPrice,
-              'قيمة البيع': item.retailValue,
-            },
-          )
-          .toList();
+  // ============================================================
+  // تصدير إذن واحد PDF
+  // ============================================================
 
-      final summary = {
-        'totalQuantity': inv.items.fold(
-          0.0,
-          (sum, item) => sum + item.quantity,
-        ),
-        'totalWholesale': inv.totalWholesale,
-        'totalRetail': inv.totalRetail,
-      };
+  Future<void> _exportSinglePDF(InventoryModel inv) async {
+    try {
+      final companyName = await _getCompanyName();
+      final branchName = _getBranchName(inv.branchCode);
+      final data = _getItemExportData(inv);
 
       await ExportService.exportToPDF(
         data: data,
         title: 'تقرير جرد المخزون',
-        headers: [
-          'الكود',
-          'الصنف',
-          'الكمية',
-          'سعر الجملة',
-          'قيمة الجملة',
-          'سعر البيع',
-          'قيمة البيع',
-        ],
-        keys: [
-          'الكود',
-          'الصنف',
-          'الكمية',
-          'سعر الجملة',
-          'قيمة الجملة',
-          'سعر البيع',
-          'قيمة البيع',
-        ],
-        summary: summary,
+        headers: _itemHeaders,
+        keys: _itemHeaders,
+        companyName: companyName,
+        branchName: branchName,
+        storeName: _getStoreName(inv.storeCode),
         serial: inv.serial?.toString(),
         date: inv.date,
-        branchName: _getBranchName(inv.branchCode),
-        storeName: _getStoreName(inv.storeCode),
+        summary: {
+          'totalQuantity': _getTotalQuantity(inv),
+          'totalWholesale': inv.totalWholesale,
+          'totalRetail': inv.totalRetail,
+        },
+        totalAmount: inv.totalWholesale,
       );
 
-      _showSnackBar(
-        'تم تصدير الإذن بنجاح',
-        Colors.green,
-      );
+      _showSnackBar('تم تصدير الإذن بنجاح', Colors.green);
     } catch (e) {
-      _showSnackBar(
-        'فشل تصدير PDF: $e',
-        Colors.red,
-      );
+      _showSnackBar('فشل التصدير: $e', Colors.red);
     }
   }
 
+  // ============================================================
+  // تصدير كل الجردات Excel
+  // ============================================================
+
   Future<void> _exportAllExcel() async {
     if (_inventories.isEmpty) {
-      _showSnackBar(
-        'لا توجد بيانات للتصدير',
-        Colors.orange,
-      );
+      _showSnackBar('لا توجد بيانات للتصدير', Colors.orange);
       return;
     }
 
     try {
-      final data = _inventories
-          .map(
-            (inv) => {
-              'رقم الإذن': inv.serial ?? '',
-              'التاريخ': inv.date,
-              'الفرع': _getBranchName(inv.branchCode),
-              'المخزن': _getStoreName(inv.storeCode),
-              'النوع': inv.inventoryType == 'general'
-                  ? 'جرد عام'
-                  : 'جرد محدد',
-              'إجمالي الجملة': inv.totalWholesale,
-              'إجمالي البيع': inv.totalRetail,
-              'عدد الأصناف': inv.items.length,
-              'إجمالي الكميات': inv.items.fold(
-                0.0,
-                (sum, item) => sum + item.quantity,
-              ),
-            },
-          )
-          .toList();
+      final companyName = await _getCompanyName();
+      final branchName = widget.branchName ??
+          (_isAllBranches
+              ? 'كل الفروع'
+              : _getBranchName(widget.selectedBranchCode));
+
+      final data = _inventories.map(
+        (inv) => {
+          'رقم الإذن': inv.serial ?? '',
+          'التاريخ': inv.date,
+          'الفرع': _getBranchName(inv.branchCode),
+          'المخزن': _getStoreName(inv.storeCode),
+          'النوع': inv.inventoryType == 'general'
+              ? 'جرد عام'
+              : 'جرد محدد',
+          'إجمالي الجملة': inv.totalWholesale,
+          'إجمالي البيع': inv.totalRetail,
+          'عدد الأصناف': inv.items.length,
+          'إجمالي الكميات': _getTotalQuantity(inv),
+        },
+      ).toList();
+
+      const headers = [
+        'رقم الإذن',
+        'التاريخ',
+        'الفرع',
+        'المخزن',
+        'النوع',
+        'إجمالي الجملة',
+        'إجمالي البيع',
+        'عدد الأصناف',
+        'إجمالي الكميات',
+      ];
 
       await ExportService.exportToExcel(
         data,
         'الجردات_${DateFormat('yyyy-MM-dd').format(DateTime.now())}',
-        [
-          'رقم الإذن',
-          'التاريخ',
-          'الفرع',
-          'المخزن',
-          'النوع',
-          'إجمالي الجملة',
-          'إجمالي البيع',
-          'عدد الأصناف',
-          'إجمالي الكميات',
-        ],
-        [
-          'رقم الإذن',
-          'التاريخ',
-          'الفرع',
-          'المخزن',
-          'النوع',
-          'إجمالي الجملة',
-          'إجمالي البيع',
-          'عدد الأصناف',
-          'إجمالي الكميات',
-        ],
+        headers,
+        headers,
+        companyName: companyName,
+        branchName: branchName,
+        period: _filterDate ?? 'كل التواريخ',
+        summary: {
+          'إجمالي الكميات': _inventories.fold<double>(
+            0.0,
+            (sum, inv) => sum + _getTotalQuantity(inv),
+          ),
+          'إجمالي الجملة': _inventories.fold<double>(
+            0.0,
+            (sum, inv) => sum + inv.totalWholesale,
+          ),
+          'إجمالي البيع': _inventories.fold<double>(
+            0.0,
+            (sum, inv) => sum + inv.totalRetail,
+          ),
+        },
       );
 
-      _showSnackBar(
-        'تم تصدير جميع الجردات بنجاح',
-        Colors.green,
-      );
+      _showSnackBar('تم تصدير جميع الجردات بنجاح', Colors.green);
     } catch (e) {
-      _showSnackBar(
-        'فشل التصدير: $e',
-        Colors.red,
-      );
+      _showSnackBar('فشل التصدير: $e', Colors.red);
     }
   }
 
+  // ============================================================
+  // تصدير كل الجردات PDF
+  // ============================================================
+
   Future<void> _exportAllPDF() async {
     if (_inventories.isEmpty) {
-      _showSnackBar(
-        'لا توجد بيانات للتصدير',
-        Colors.orange,
-      );
+      _showSnackBar('لا توجد بيانات للتصدير', Colors.orange);
       return;
     }
 
     try {
-      final data = _inventories
-          .map(
-            (inv) => {
-              'رقم الإذن': inv.serial ?? '',
-              'التاريخ': inv.date,
-              'الفرع': _getBranchName(inv.branchCode),
-              'المخزن': _getStoreName(inv.storeCode),
-              'النوع': inv.inventoryType == 'general'
-                  ? 'جرد عام'
-                  : 'جرد محدد',
-              'إجمالي الجملة': inv.totalWholesale,
-              'إجمالي البيع': inv.totalRetail,
-              'عدد الأصناف': inv.items.length,
-              'إجمالي الكميات': inv.items.fold(
-                0.0,
-                (sum, item) => sum + item.quantity,
-              ),
-            },
-          )
-          .toList();
+      final companyName = await _getCompanyName();
+      final branchName = widget.branchName ??
+          (_isAllBranches
+              ? 'كل الفروع'
+              : _getBranchName(widget.selectedBranchCode));
+
+      final data = _inventories.map(
+        (inv) => {
+          'رقم الإذن': inv.serial ?? '',
+          'التاريخ': inv.date,
+          'الفرع': _getBranchName(inv.branchCode),
+          'المخزن': _getStoreName(inv.storeCode),
+          'النوع': inv.inventoryType == 'general'
+              ? 'جرد عام'
+              : 'جرد محدد',
+          'إجمالي الجملة': inv.totalWholesale,
+          'إجمالي البيع': inv.totalRetail,
+          'عدد الأصناف': inv.items.length,
+          'إجمالي الكميات': _getTotalQuantity(inv),
+        },
+      ).toList();
+
+      const headers = [
+        'رقم الإذن',
+        'التاريخ',
+        'الفرع',
+        'المخزن',
+        'النوع',
+        'إجمالي الجملة',
+        'إجمالي البيع',
+        'عدد الأصناف',
+        'إجمالي الكميات',
+      ];
 
       await ExportService.exportToPDF(
         data: data,
         title: 'تقرير الجردات المجمعة',
-        headers: [
-          'رقم الإذن',
-          'التاريخ',
-          'الفرع',
-          'المخزن',
-          'النوع',
-          'إجمالي الجملة',
-          'إجمالي البيع',
-          'عدد الأصناف',
-          'إجمالي الكميات',
-        ],
-        keys: [
-          'رقم الإذن',
-          'التاريخ',
-          'الفرع',
-          'المخزن',
-          'النوع',
-          'إجمالي الجملة',
-          'إجمالي البيع',
-          'عدد الأصناف',
-          'إجمالي الكميات',
-        ],
+        headers: headers,
+        keys: headers,
+        companyName: companyName,
+        branchName: branchName,
+        period: _filterDate ?? 'كل التواريخ',
+        summary: {
+          'totalQuantity': _inventories.fold(
+            0.0,
+            (sum, inv) => sum + _getTotalQuantity(inv),
+          ),
+          'totalWholesale': _inventories.fold(
+            0.0,
+            (sum, inv) => sum + inv.totalWholesale,
+          ),
+          'totalRetail': _inventories.fold(
+            0.0,
+            (sum, inv) => sum + inv.totalRetail,
+          ),
+        },
+        totalAmount: _inventories.fold<double>(
+          0.0,
+          (sum, inv) => sum + inv.totalWholesale,
+        ),
       );
 
-      _showSnackBar(
-        'تم تصدير جميع الجردات بنجاح',
-        Colors.green,
-      );
+      _showSnackBar('تم تصدير جميع الجردات بنجاح', Colors.green);
     } catch (e) {
-      _showSnackBar(
-        'فشل تصدير PDF: $e',
-        Colors.red,
-      );
+      _showSnackBar('فشل التصدير: $e', Colors.red);
     }
   }
 
-  void _showSnackBar(
-    String msg,
-    Color color,
-  ) {
+  // ============================================================
+  // SnackBar
+  // ============================================================
+
+  void _showSnackBar(String message, Color color) {
+    if (!mounted) return;
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          msg,
+          message,
           textAlign: TextAlign.center,
-          style: const TextStyle(
-            fontFamily: 'Cairo',
-          ),
+          style: const TextStyle(fontFamily: 'Cairo'),
         ),
         backgroundColor: color,
         duration: const Duration(seconds: 3),
@@ -658,25 +662,49 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
     );
   }
 
+  // ============================================================
+  // Build
+  // ============================================================
+
   @override
   Widget build(BuildContext context) {
+    if (!PermissionsService().canViewInventory) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text(
+            'معاينة الجرد',
+            style: TextStyle(
+              color: Colors.white,
+              fontFamily: 'Cairo',
+            ),
+          ),
+          backgroundColor: Colors.transparent,
+        ),
+        body: const Center(
+          child: Text(
+            'ليس لديك صلاحية لعرض الجرد',
+            style: TextStyle(
+              color: Colors.white70,
+              fontFamily: 'Cairo',
+            ),
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          _showDetails
-              ? 'تفاصيل الجرد'
-              : 'معاينة الجرد',
+          _showDetails ? 'تفاصيل الجرد' : 'معاينة الجرد',
           style: const TextStyle(
             color: Colors.white,
+            fontFamily: 'Cairo',
           ),
         ),
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(
-            Icons.arrow_back,
-            color: Colors.white,
-          ),
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: _showDetails
               ? _goBackToList
               : () => Navigator.pop(context),
@@ -690,7 +718,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                 color: Colors.blueAccent,
               ),
               onPressed: _exportAllExcel,
-              tooltip: 'تصدير جميع الجردات Excel',
+              tooltip: 'تصدير Excel',
             ),
           if (!_showDetails &&
               PermissionsService().canExportInventory)
@@ -700,7 +728,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                 color: Colors.redAccent,
               ),
               onPressed: _exportAllPDF,
-              tooltip: 'تصدير جميع الجردات PDF',
+              tooltip: 'تصدير PDF',
             ),
           if (!_showDetails)
             IconButton(
@@ -709,7 +737,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                 color: Colors.white,
               ),
               onPressed: _refreshFromServer,
-              tooltip: 'تحديث التغييرات من السيرفر',
+              tooltip: 'تحديث من السيرفر',
             ),
         ],
       ),
@@ -732,7 +760,8 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                     color: Colors.white,
                   ),
                 )
-              : _showDetails && _selectedInventory != null
+              : _showDetails &&
+                      _selectedInventory != null
                   ? _buildDetailsView(
                       _selectedInventory!,
                     )
@@ -742,15 +771,14 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
     );
   }
 
-  Widget _buildListView() {
-    final bool isMobile =
-        MediaQuery.of(context).size.width < 600;
+  // ============================================================
+  // القائمة
+  // ============================================================
 
-    final String displayBranchName =
-        widget.branchName ??
-            _getBranchName(
-              widget.selectedBranchCode,
-            );
+  Widget _buildListView() {
+    final isMobile = MediaQuery.of(context).size.width < 600;
+    final displayBranchName = widget.branchName ??
+        _getBranchName(widget.selectedBranchCode);
 
     return Column(
       children: [
@@ -790,25 +818,19 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                   child: DropdownButtonFormField<String?>(
                     value: _filterStoreCode,
                     dropdownColor: Colors.indigo.shade900,
-                    style: const TextStyle(
-                      color: Colors.white,
-                    ),
+                    style: const TextStyle(color: Colors.white),
                     decoration: const InputDecoration(
                       labelText: 'المخزن',
                       isDense: true,
                     ),
-                    items: _stores.map((s) {
-                      return DropdownMenuItem<String?>(
+                    items: _stores.map(
+                      (s) => DropdownMenuItem<String?>(
                         value: s['code'],
-                        child: Text(
-                          s['name'] ?? '',
-                        ),
-                      );
-                    }).toList(),
+                        child: Text(s['name'] ?? ''),
+                      ),
+                    ).toList(),
                     onChanged: (val) {
-                      setState(() {
-                        _filterStoreCode = val;
-                      });
+                      setState(() => _filterStoreCode = val);
                       _loadData();
                     },
                   ),
@@ -816,33 +838,35 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: TextFormField(
-                    initialValue: _filterDate,
+                    key: ValueKey(_filterDate),
+                    initialValue: _filterDate ?? '',
                     readOnly: true,
                     decoration: const InputDecoration(
                       labelText: 'التاريخ',
-                      suffixIcon: Icon(
-                        Icons.calendar_today,
-                      ),
+                      suffixIcon:
+                          Icon(Icons.calendar_today),
                       isDense: true,
                     ),
                     onTap: () async {
-                      final picked =
-                          await showDatePicker(
+                      final picked = await showDatePicker(
                         context: context,
-                        initialDate: DateTime.now(),
+                        initialDate: _filterDate != null
+                            ? DateTime.tryParse(_filterDate!) ??
+                                DateTime.now()
+                            : DateTime.now(),
                         firstDate: DateTime(2020),
                         lastDate: DateTime(2101),
                       );
 
-                      if (picked != null) {
-                        setState(() {
-                          _filterDate =
-                              DateFormat(
-                            'yyyy-MM-dd',
-                          ).format(picked);
-                        });
-                        _loadData();
-                      }
+                      if (picked == null) return;
+
+                      setState(
+                        () => _filterDate =
+                            DateFormat('yyyy-MM-dd')
+                                .format(picked),
+                      );
+
+                      _loadData();
                     },
                   ),
                 ),
@@ -872,233 +896,204 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                     'لا توجد جردات',
                     style: TextStyle(
                       color: Colors.white70,
+                      fontFamily: 'Cairo',
                     ),
                   ),
                 )
               : ListView.builder(
                   itemCount: _inventories.length,
-                  itemBuilder: (c, i) {
-                    final inv =
-                        _inventories[i];
-
-                    return Card(
-                      color:
-                          Colors.white.withOpacity(0.05),
-                      margin:
-                          const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 4,
-                      ),
-                      shape:
-                          RoundedRectangleBorder(
-                        borderRadius:
-                            BorderRadius.circular(10),
-                      ),
-                      child: InkWell(
-                        borderRadius:
-                            BorderRadius.circular(10),
-                        onTap: () =>
-                            _showInventoryDetails(inv),
-                        child: Padding(
-                          padding:
-                              EdgeInsets.all(
-                            isMobile ? 8 : 12,
-                          ),
-                          child: Column(
-                            crossAxisAlignment:
-                                CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  CircleAvatar(
-                                    radius:
-                                        isMobile ? 16 : 20,
-                                    backgroundColor:
-                                        Colors.cyanAccent
-                                            .withOpacity(
-                                      0.2,
-                                    ),
-                                    child: Text(
-                                      '${inv.serial ?? ''}',
-                                      style: TextStyle(
-                                        color:
-                                            Colors.cyanAccent,
-                                        fontWeight:
-                                            FontWeight.bold,
-                                        fontSize:
-                                            isMobile ? 10 : 12,
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(
-                                    width: 10,
-                                  ),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          '${_getBranchName(inv.branchCode)} - ${_getStoreName(inv.storeCode)}',
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontSize:
-                                                isMobile ? 12 : 14,
-                                            fontWeight:
-                                                FontWeight.bold,
-                                          ),
-                                        ),
-                                        Text(
-                                          'التاريخ: ${inv.date}',
-                                          style: TextStyle(
-                                            color:
-                                                Colors.white60,
-                                            fontSize:
-                                                isMobile ? 10 : 12,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  Container(
-                                    padding:
-                                        const EdgeInsets.symmetric(
-                                      horizontal: 6,
-                                      vertical: 2,
-                                    ),
-                                    decoration:
-                                        BoxDecoration(
-                                      color: inv.inventoryType ==
-                                              'general'
-                                          ? Colors.greenAccent
-                                              .withOpacity(
-                                              0.15,
-                                            )
-                                          : Colors.orangeAccent
-                                              .withOpacity(
-                                              0.15,
-                                            ),
-                                      borderRadius:
-                                          BorderRadius.circular(
-                                        10,
-                                      ),
-                                    ),
-                                    child: Text(
-                                      inv.inventoryType ==
-                                              'general'
-                                          ? 'جرد عام'
-                                          : 'جرد محدد',
-                                      style: TextStyle(
-                                        color:
-                                            inv.inventoryType ==
-                                                    'general'
-                                                ? Colors.greenAccent
-                                                : Colors.orangeAccent,
-                                        fontSize:
-                                            isMobile ? 8 : 10,
-                                        fontWeight:
-                                            FontWeight.bold,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 6),
-                              Wrap(
-                                spacing:
-                                    isMobile ? 4 : 8,
-                                runSpacing: 4,
-                                children: [
-                                  _buildInfoChip(
-                                    'الأصناف',
-                                    inv.items.length
-                                        .toString(),
-                                    Colors.blueAccent,
-                                    isMobile,
-                                  ),
-                                  _buildInfoChip(
-                                    'إجمالي الجملة',
-                                    _formatCurrency(
-                                      inv.totalWholesale,
-                                    ),
-                                    Colors.greenAccent,
-                                    isMobile,
-                                  ),
-                                  _buildInfoChip(
-                                    'إجمالي البيع',
-                                    _formatCurrency(
-                                      inv.totalRetail,
-                                    ),
-                                    Colors.amber,
-                                    isMobile,
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 4),
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.end,
-                                children: [
-                                  if (PermissionsService()
-                                      .canEditInventory)
-                                    IconButton(
-                                      icon: const Icon(
-                                        Icons.edit,
-                                        color: Colors.orange,
-                                        size: 18,
-                                      ),
-                                      onPressed: () =>
-                                          _editInventory(inv),
-                                      padding:
-                                          EdgeInsets.zero,
-                                      constraints:
-                                          const BoxConstraints(),
-                                    ),
-                                  if (PermissionsService()
-                                      .canDeleteInventory)
-                                    IconButton(
-                                      icon: const Icon(
-                                        Icons.delete,
-                                        color: Colors.red,
-                                        size: 18,
-                                      ),
-                                      onPressed: () =>
-                                          _confirmDelete(inv),
-                                      padding:
-                                          EdgeInsets.zero,
-                                      constraints:
-                                          const BoxConstraints(),
-                                    ),
-                                  IconButton(
-                                    icon: Icon(
-                                      Icons.arrow_forward_ios,
-                                      color:
-                                          Colors.cyanAccent,
-                                      size:
-                                          isMobile ? 16 : 18,
-                                    ),
-                                    onPressed: () =>
-                                        _showInventoryDetails(
-                                      inv,
-                                    ),
-                                    padding:
-                                        EdgeInsets.zero,
-                                    constraints:
-                                        const BoxConstraints(),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    );
-                  },
+                  itemBuilder: (c, i) =>
+                      _buildInventoryCard(
+                    _inventories[i],
+                    isMobile,
+                  ),
                 ),
         ),
       ],
     );
   }
+
+  // ============================================================
+  // بطاقة الجرد
+  // ============================================================
+
+  Widget _buildInventoryCard(
+    InventoryModel inv,
+    bool isMobile,
+  ) {
+    return Card(
+      color: Colors.white.withOpacity(0.05),
+      margin: const EdgeInsets.symmetric(
+        horizontal: 6,
+        vertical: 4,
+      ),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: () => _showInventoryDetails(inv),
+        child: Padding(
+          padding: EdgeInsets.all(isMobile ? 8 : 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  CircleAvatar(
+                    radius: isMobile ? 16 : 20,
+                    backgroundColor:
+                        Colors.cyanAccent.withOpacity(0.2),
+                    child: Text(
+                      '${inv.serial ?? ''}',
+                      style: TextStyle(
+                        color: Colors.cyanAccent,
+                        fontWeight: FontWeight.bold,
+                        fontSize: isMobile ? 10 : 12,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment:
+                          CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${_getBranchName(inv.branchCode)} - ${_getStoreName(inv.storeCode)}',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: isMobile ? 12 : 14,
+                            fontWeight: FontWeight.bold,
+                            fontFamily: 'Cairo',
+                          ),
+                        ),
+                        Text(
+                          'إذن رقم: ${inv.serial ?? ''}',
+                          style: TextStyle(
+                            color: Colors.cyanAccent,
+                            fontSize: isMobile ? 10 : 11,
+                            fontFamily: 'Cairo',
+                          ),
+                        ),
+                        Text(
+                          'التاريخ: ${inv.date}',
+                          style: TextStyle(
+                            color: Colors.white60,
+                            fontSize: isMobile ? 10 : 12,
+                            fontFamily: 'Cairo',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: inv.inventoryType == 'general'
+                          ? Colors.greenAccent.withOpacity(0.15)
+                          : Colors.orangeAccent.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      inv.inventoryType == 'general'
+                          ? 'جرد عام'
+                          : 'جرد محدد',
+                      style: TextStyle(
+                        color: inv.inventoryType == 'general'
+                            ? Colors.greenAccent
+                            : Colors.orangeAccent,
+                        fontSize: isMobile ? 8 : 10,
+                        fontWeight: FontWeight.bold,
+                        fontFamily: 'Cairo',
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: isMobile ? 4 : 8,
+                runSpacing: 4,
+                children: [
+                  _buildInfoChip(
+                    'الأصناف',
+                    inv.items.length.toString(),
+                    Colors.blueAccent,
+                    isMobile,
+                  ),
+                  _buildInfoChip(
+                    'إجمالي الكمية',
+                    _formatQuantity(_getTotalQuantity(inv)),
+                    Colors.cyanAccent,
+                    isMobile,
+                  ),
+                  _buildInfoChip(
+                    'إجمالي الجملة',
+                    _formatCurrency(inv.totalWholesale),
+                    Colors.greenAccent,
+                    isMobile,
+                  ),
+                  _buildInfoChip(
+                    'إجمالي البيع',
+                    _formatCurrency(inv.totalRetail),
+                    Colors.amber,
+                    isMobile,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  if (PermissionsService().canEditInventory)
+                    IconButton(
+                      icon: const Icon(
+                        Icons.edit,
+                        color: Colors.orange,
+                        size: 18,
+                      ),
+                      onPressed: () => _editInventory(inv),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                  if (PermissionsService().canDeleteInventory)
+                    IconButton(
+                      icon: const Icon(
+                        Icons.delete,
+                        color: Colors.red,
+                        size: 18,
+                      ),
+                      onPressed: () => _confirmDelete(inv),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                  IconButton(
+                    icon: const Icon(
+                      Icons.arrow_forward_ios,
+                      color: Colors.cyanAccent,
+                      size: 16,
+                    ),
+                    onPressed: () =>
+                        _showInventoryDetails(inv),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // Info Chip
+  // ============================================================
 
   Widget _buildInfoChip(
     String label,
@@ -1107,26 +1102,26 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
     bool isMobile,
   ) {
     return Container(
-      padding:
-          EdgeInsets.symmetric(
+      padding: EdgeInsets.symmetric(
         horizontal: isMobile ? 6 : 8,
         vertical: isMobile ? 2 : 4,
       ),
       decoration: BoxDecoration(
         color: color.withOpacity(0.1),
-        borderRadius:
-            BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: color.withOpacity(0.2),
+        ),
       ),
       child: Row(
-        mainAxisSize:
-            MainAxisSize.min,
+        mainAxisSize: MainAxisSize.min,
         children: [
           Text(
             label,
             style: TextStyle(
               color: Colors.white60,
-              fontSize:
-                  isMobile ? 9 : 11,
+              fontSize: isMobile ? 8 : 10,
+              fontFamily: 'Cairo',
             ),
           ),
           const SizedBox(width: 4),
@@ -1134,10 +1129,8 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
             value,
             style: TextStyle(
               color: color,
-              fontSize:
-                  isMobile ? 10 : 12,
-              fontWeight:
-                  FontWeight.bold,
+              fontSize: isMobile ? 9 : 11,
+              fontWeight: FontWeight.bold,
             ),
           ),
         ],
@@ -1145,17 +1138,19 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
     );
   }
 
+  // ============================================================
+  // التفاصيل
+  // ============================================================
+
   Widget _buildDetailsView(
     InventoryModel inv,
   ) {
-    final bool isMobile =
-        MediaQuery.of(context).size.width < 600;
+    final isMobile = MediaQuery.of(context).size.width < 600;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
       child: Column(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           GlassCard(
             child: Padding(
@@ -1173,85 +1168,91 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                           children: [
                             Text(
                               'إذن جرد رقم ${inv.serial ?? ''}',
-                              style:
-                                  TextStyle(
-                                color:
-                                    Colors.white,
-                                fontSize:
-                                    isMobile
-                                        ? 16
-                                        : 18,
-                                fontWeight:
-                                    FontWeight.bold,
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: isMobile ? 16 : 18,
+                                fontWeight: FontWeight.bold,
+                                fontFamily: 'Cairo',
                               ),
                             ),
-                            const SizedBox(
-                              height: 2,
+                            const SizedBox(height: 2),
+                            Text(
+                              'الفرع: ${_getBranchName(inv.branchCode)}',
+                              style: const TextStyle(
+                                color: Colors.greenAccent,
+                                fontFamily: 'Cairo',
+                              ),
+                            ),
+                            Text(
+                              'المخزن: ${_getStoreName(inv.storeCode)}',
+                              style: const TextStyle(
+                                color: Colors.white60,
+                                fontFamily: 'Cairo',
+                              ),
                             ),
                             Text(
                               'التاريخ: ${inv.date}',
-                              style:
-                                  TextStyle(
-                                color:
-                                    Colors.white60,
-                                fontSize:
-                                    isMobile
-                                        ? 12
-                                        : 14,
+                              style: const TextStyle(
+                                color: Colors.white60,
+                                fontFamily: 'Cairo',
                               ),
                             ),
                           ],
                         ),
                       ),
                       Text(
-                        inv.inventoryType ==
-                                'general'
+                        inv.inventoryType == 'general'
                             ? 'جرد عام'
                             : 'جرد محدد',
                         style: TextStyle(
-                          color: inv.inventoryType ==
-                                  'general'
+                          color: inv.inventoryType == 'general'
                               ? Colors.greenAccent
                               : Colors.orangeAccent,
-                          fontWeight:
-                              FontWeight.bold,
-                          fontSize:
-                              isMobile ? 10 : 12,
+                          fontWeight: FontWeight.bold,
+                          fontSize: isMobile ? 10 : 12,
+                          fontFamily: 'Cairo',
                         ),
                       ),
                     ],
                   ),
-                  const Divider(
-                    color: Colors.white24,
-                  ),
+                  const Divider(color: Colors.white24),
                   Row(
                     children: [
                       Expanded(
                         child: _buildDetailItem(
-                          'الفرع',
-                          _getBranchName(
-                            inv.branchCode,
-                          ),
-                          Icons.storefront,
-                          isMobile,
-                        ),
-                      ),
-                      Expanded(
-                        child: _buildDetailItem(
-                          'المخزن',
-                          _getStoreName(
-                            inv.storeCode,
-                          ),
-                          Icons.store,
-                          isMobile,
-                        ),
-                      ),
-                      Expanded(
-                        child: _buildDetailItem(
                           'عدد الأصناف',
-                          inv.items.length
-                              .toString(),
+                          inv.items.length.toString(),
                           Icons.list_alt,
+                          isMobile,
+                        ),
+                      ),
+                      Expanded(
+                        child: _buildDetailItem(
+                          'إجمالي الكمية',
+                          _formatQuantity(
+                            _getTotalQuantity(inv),
+                          ),
+                          Icons.numbers,
+                          isMobile,
+                        ),
+                      ),
+                      Expanded(
+                        child: _buildDetailItem(
+                          'إجمالي الجملة',
+                          _formatCurrency(
+                            inv.totalWholesale,
+                          ),
+                          Icons.attach_money,
+                          isMobile,
+                        ),
+                      ),
+                      Expanded(
+                        child: _buildDetailItem(
+                          'إجمالي البيع',
+                          _formatCurrency(
+                            inv.totalRetail,
+                          ),
+                          Icons.sell,
                           isMobile,
                         ),
                       ),
@@ -1259,28 +1260,39 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                   ),
                   const SizedBox(height: 8),
                   Row(
-                    mainAxisAlignment:
-                        MainAxisAlignment.end,
+                    mainAxisAlignment: MainAxisAlignment.end,
                     children: [
                       if (PermissionsService()
-                          .canExportInventory)
+                          .canEditInventory)
                         TextButton.icon(
                           onPressed: () =>
-                              _exportSingleExcel(
-                            inv,
-                          ),
+                              _editInventory(inv),
                           icon: const Icon(
-                            Icons.download,
-                            color:
-                                Colors.blueAccent,
+                            Icons.edit,
+                            color: Colors.orange,
                           ),
-                          label:
-                              const Text(
-                            'تصدير Excel',
-                            style:
-                                TextStyle(
-                              color:
-                                  Colors.blueAccent,
+                          label: const Text(
+                            'تعديل',
+                            style: TextStyle(
+                              color: Colors.orange,
+                              fontFamily: 'Cairo',
+                            ),
+                          ),
+                        ),
+                      if (PermissionsService()
+                          .canDeleteInventory)
+                        TextButton.icon(
+                          onPressed: () =>
+                              _confirmDelete(inv),
+                          icon: const Icon(
+                            Icons.delete,
+                            color: Colors.red,
+                          ),
+                          label: const Text(
+                            'حذف',
+                            style: TextStyle(
+                              color: Colors.red,
+                              fontFamily: 'Cairo',
                             ),
                           ),
                         ),
@@ -1288,22 +1300,31 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                           .canExportInventory)
                         TextButton.icon(
                           onPressed: () =>
-                              _exportSinglePDF(
-                            inv,
+                              _exportSingleExcel(inv),
+                          icon: const Icon(
+                            Icons.download,
+                            color: Colors.blueAccent,
                           ),
-                          icon:
-                              const Icon(
+                          label: const Text(
+                            'Excel',
+                            style: TextStyle(
+                              color: Colors.blueAccent,
+                            ),
+                          ),
+                        ),
+                      if (PermissionsService()
+                          .canExportInventory)
+                        TextButton.icon(
+                          onPressed: () =>
+                              _exportSinglePDF(inv),
+                          icon: const Icon(
                             Icons.picture_as_pdf,
-                            color:
-                                Colors.redAccent,
+                            color: Colors.redAccent,
                           ),
-                          label:
-                              const Text(
-                            'تصدير PDF',
-                            style:
-                                TextStyle(
-                              color:
-                                  Colors.redAccent,
+                          label: const Text(
+                            'PDF',
+                            style: TextStyle(
+                              color: Colors.redAccent,
                             ),
                           ),
                         ),
@@ -1316,8 +1337,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
           const SizedBox(height: 12),
           GlassCard(
             child: Padding(
-              padding:
-                  const EdgeInsets.all(10),
+              padding: const EdgeInsets.all(10),
               child: Column(
                 crossAxisAlignment:
                     CrossAxisAlignment.start,
@@ -1325,511 +1345,14 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                   const Text(
                     'تفاصيل الأصناف',
                     style: TextStyle(
-                      color:
-                          Colors.cyanAccent,
+                      color: Colors.cyanAccent,
                       fontSize: 16,
-                      fontWeight:
-                          FontWeight.bold,
+                      fontWeight: FontWeight.bold,
+                      fontFamily: 'Cairo',
                     ),
                   ),
                   const SizedBox(height: 8),
-                  if (isMobile)
-                    SingleChildScrollView(
-                      scrollDirection:
-                          Axis.horizontal,
-                      child: Column(
-                        children: [
-                          Row(
-                            children: const [
-                              SizedBox(
-                                width: 30,
-                                child: Text(
-                                  '#',
-                                  textAlign:
-                                      TextAlign.center,
-                                  style:
-                                      TextStyle(
-                                    color:
-                                        Colors.cyan,
-                                    fontSize: 9,
-                                  ),
-                                ),
-                              ),
-                              SizedBox(
-                                width: 60,
-                                child: Text(
-                                  'الكود',
-                                  textAlign:
-                                      TextAlign.center,
-                                  style:
-                                      TextStyle(
-                                    color:
-                                        Colors.cyan,
-                                    fontSize: 9,
-                                  ),
-                                ),
-                              ),
-                              SizedBox(
-                                width: 80,
-                                child: Text(
-                                  'الصنف',
-                                  textAlign:
-                                      TextAlign.center,
-                                  style:
-                                      TextStyle(
-                                    color:
-                                        Colors.cyan,
-                                    fontSize: 9,
-                                  ),
-                                ),
-                              ),
-                              SizedBox(
-                                width: 50,
-                                child: Text(
-                                  'الكمية',
-                                  textAlign:
-                                      TextAlign.center,
-                                  style:
-                                      TextStyle(
-                                    color:
-                                        Colors.cyan,
-                                    fontSize: 9,
-                                  ),
-                                ),
-                              ),
-                              SizedBox(
-                                width: 65,
-                                child: Text(
-                                  'جملة',
-                                  textAlign:
-                                      TextAlign.center,
-                                  style:
-                                      TextStyle(
-                                    color:
-                                        Colors.greenAccent,
-                                    fontSize: 9,
-                                  ),
-                                ),
-                              ),
-                              SizedBox(
-                                width: 65,
-                                child: Text(
-                                  'قيمة',
-                                  textAlign:
-                                      TextAlign.center,
-                                  style:
-                                      TextStyle(
-                                    color:
-                                        Colors.greenAccent,
-                                    fontSize: 9,
-                                  ),
-                                ),
-                              ),
-                              SizedBox(
-                                width: 65,
-                                child: Text(
-                                  'بيع',
-                                  textAlign:
-                                      TextAlign.center,
-                                  style:
-                                      TextStyle(
-                                    color:
-                                        Colors.amber,
-                                    fontSize: 9,
-                                  ),
-                                ),
-                              ),
-                              SizedBox(
-                                width: 65,
-                                child: Text(
-                                  'قيمة',
-                                  textAlign:
-                                      TextAlign.center,
-                                  style:
-                                      TextStyle(
-                                    color:
-                                        Colors.amber,
-                                    fontSize: 9,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          ...inv.items
-                              .asMap()
-                              .entries
-                              .map(
-                                (entry) {
-                              final item =
-                                  entry.value;
-
-                              return Row(
-                                children: [
-                                  SizedBox(
-                                    width: 30,
-                                    child:
-                                        Text(
-                                      '${entry.key + 1}',
-                                      textAlign:
-                                          TextAlign.center,
-                                      style:
-                                          const TextStyle(
-                                        color:
-                                            Colors.white54,
-                                        fontSize:
-                                            9,
-                                      ),
-                                    ),
-                                  ),
-                                  SizedBox(
-                                    width: 60,
-                                    child:
-                                        Text(
-                                      item.code,
-                                      textAlign:
-                                          TextAlign.center,
-                                      style:
-                                          const TextStyle(
-                                        color:
-                                            Colors.white70,
-                                        fontSize:
-                                            9,
-                                      ),
-                                    ),
-                                  ),
-                                  SizedBox(
-                                    width: 80,
-                                    child:
-                                        Text(
-                                      item.name,
-                                      textAlign:
-                                          TextAlign.center,
-                                      style:
-                                          const TextStyle(
-                                        color:
-                                            Colors.white,
-                                        fontSize:
-                                            9,
-                                      ),
-                                    ),
-                                  ),
-                                  SizedBox(
-                                    width: 50,
-                                    child:
-                                        Text(
-                                      item.quantity
-                                          .toStringAsFixed(
-                                        0,
-                                      ),
-                                      textAlign:
-                                          TextAlign.center,
-                                      style:
-                                          const TextStyle(
-                                        color:
-                                            Colors.white70,
-                                        fontSize:
-                                            9,
-                                      ),
-                                    ),
-                                  ),
-                                  SizedBox(
-                                    width: 65,
-                                    child:
-                                        Text(
-                                      _formatCurrency(
-                                        item.wholesalePrice,
-                                      ),
-                                      textAlign:
-                                          TextAlign.center,
-                                      style:
-                                          const TextStyle(
-                                        color:
-                                            Colors.greenAccent,
-                                        fontSize:
-                                            9,
-                                      ),
-                                    ),
-                                  ),
-                                  SizedBox(
-                                    width: 65,
-                                    child:
-                                        Text(
-                                      _formatCurrency(
-                                        item.wholesaleValue,
-                                      ),
-                                      textAlign:
-                                          TextAlign.center,
-                                      style:
-                                          const TextStyle(
-                                        color:
-                                            Colors.greenAccent,
-                                        fontSize:
-                                            9,
-                                      ),
-                                    ),
-                                  ),
-                                  SizedBox(
-                                    width: 65,
-                                    child:
-                                        Text(
-                                      _formatCurrency(
-                                        item.retailPrice,
-                                      ),
-                                      textAlign:
-                                          TextAlign.center,
-                                      style:
-                                          const TextStyle(
-                                        color:
-                                            Colors.amber,
-                                        fontSize:
-                                            9,
-                                      ),
-                                    ),
-                                  ),
-                                  SizedBox(
-                                    width: 65,
-                                    child:
-                                        Text(
-                                      _formatCurrency(
-                                        item.retailValue,
-                                      ),
-                                      textAlign:
-                                          TextAlign.center,
-                                      style:
-                                          const TextStyle(
-                                        color:
-                                            Colors.amber,
-                                        fontSize:
-                                            9,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              );
-                            },
-                          ),
-                        ],
-                      ),
-                    )
-                  else
-                    Column(
-                      children: [
-                        const Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                '#',
-                                textAlign:
-                                    TextAlign.center,
-                                style:
-                                    TextStyle(
-                                  color:
-                                      Colors.cyan,
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              child: Text(
-                                'الكود',
-                                textAlign:
-                                    TextAlign.center,
-                                style:
-                                    TextStyle(
-                                  color:
-                                      Colors.cyan,
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              flex: 2,
-                              child: Text(
-                                'الصنف',
-                                textAlign:
-                                    TextAlign.center,
-                                style:
-                                    TextStyle(
-                                  color:
-                                      Colors.cyan,
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              child: Text(
-                                'الكمية',
-                                textAlign:
-                                    TextAlign.center,
-                                style:
-                                    TextStyle(
-                                  color:
-                                      Colors.cyan,
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              child: Text(
-                                'سعر الجملة',
-                                textAlign:
-                                    TextAlign.center,
-                                style:
-                                    TextStyle(
-                                  color:
-                                      Colors.greenAccent,
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              child: Text(
-                                'قيمة الجملة',
-                                textAlign:
-                                    TextAlign.center,
-                                style:
-                                    TextStyle(
-                                  color:
-                                      Colors.greenAccent,
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              child: Text(
-                                'سعر البيع',
-                                textAlign:
-                                    TextAlign.center,
-                                style:
-                                    TextStyle(
-                                  color:
-                                      Colors.amber,
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              child: Text(
-                                'قيمة البيع',
-                                textAlign:
-                                    TextAlign.center,
-                                style:
-                                    TextStyle(
-                                  color:
-                                      Colors.amber,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(
-                          height: 4,
-                        ),
-                        ListView.separated(
-                          shrinkWrap:
-                              true,
-                          physics:
-                              const NeverScrollableScrollPhysics(),
-                          itemCount:
-                              inv.items.length,
-                          separatorBuilder:
-                              (_, __) =>
-                                  const Divider(
-                            color:
-                                Colors.white10,
-                          ),
-                          itemBuilder:
-                              (ctx, idx) {
-                            final item =
-                                inv.items[idx];
-
-                            return Row(
-                              children: [
-                                Expanded(
-                                  child:
-                                      Text(
-                                    '${idx + 1}',
-                                    textAlign:
-                                        TextAlign.center,
-                                    style:
-                                        const TextStyle(
-                                      color:
-                                          Colors.white54,
-                                    ),
-                                  ),
-                                ),
-                                Expanded(
-                                  child:
-                                      Text(
-                                    item.code,
-                                    textAlign:
-                                        TextAlign.center,
-                                  ),
-                                ),
-                                Expanded(
-                                  flex: 2,
-                                  child:
-                                      Text(
-                                    item.name,
-                                    textAlign:
-                                        TextAlign.center,
-                                    style:
-                                        const TextStyle(
-                                      color:
-                                          Colors.white,
-                                    ),
-                                  ),
-                                ),
-                                Expanded(
-                                  child:
-                                      Text(
-                                    item.quantity
-                                        .toStringAsFixed(
-                                      0,
-                                    ),
-                                    textAlign:
-                                        TextAlign.center,
-                                  ),
-                                ),
-                                Expanded(
-                                  child:
-                                      Text(
-                                    _formatCurrency(
-                                      item.wholesalePrice,
-                                    ),
-                                    textAlign:
-                                        TextAlign.center,
-                                  ),
-                                ),
-                                Expanded(
-                                  child:
-                                      Text(
-                                    _formatCurrency(
-                                      item.wholesaleValue,
-                                    ),
-                                    textAlign:
-                                        TextAlign.center,
-                                  ),
-                                ),
-                                Expanded(
-                                  child:
-                                      Text(
-                                    _formatCurrency(
-                                      item.retailPrice,
-                                    ),
-                                    textAlign:
-                                        TextAlign.center,
-                                  ),
-                                ),
-                                Expanded(
-                                  child:
-                                      Text(
-                                    _formatCurrency(
-                                      item.retailValue,
-                                    ),
-                                    textAlign:
-                                        TextAlign.center,
-                                  ),
-                                ),
-                              ],
-                            );
-                          },
-                        ),
-                      ],
-                    ),
+                  _buildItemsTable(inv, isMobile),
                 ],
               ),
             ),
@@ -1837,91 +1360,33 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
           const SizedBox(height: 12),
           GlassCard(
             child: Padding(
-              padding:
-                  const EdgeInsets.all(10),
+              padding: const EdgeInsets.all(10),
               child: Row(
                 mainAxisAlignment:
                     MainAxisAlignment.spaceAround,
                 children: [
-                  Column(
-                    children: [
-                      const Text(
-                        'إجمالي الجملة',
-                        style: TextStyle(
-                          color:
-                              Colors.white60,
-                        ),
-                      ),
-                      Text(
-                        _formatCurrency(
-                          inv.totalWholesale,
-                        ),
-                        style: const TextStyle(
-                          color:
-                              Colors.greenAccent,
-                          fontWeight:
-                              FontWeight.bold,
-                        ),
-                      ),
-                    ],
+                  _buildTotalBox(
+                    'إجمالي الكمية',
+                    _formatQuantity(
+                      _getTotalQuantity(inv),
+                    ),
+                    Colors.cyanAccent,
                   ),
-                  Container(
-                    width: 1,
-                    height: 30,
-                    color: Colors.white24,
+                  _buildVerticalDivider(),
+                  _buildTotalBox(
+                    'إجمالي الجملة',
+                    _formatCurrency(
+                      inv.totalWholesale,
+                    ),
+                    Colors.greenAccent,
                   ),
-                  Column(
-                    children: [
-                      const Text(
-                        'إجمالي البيع',
-                        style: TextStyle(
-                          color:
-                              Colors.white60,
-                        ),
-                      ),
-                      Text(
-                        _formatCurrency(
-                          inv.totalRetail,
-                        ),
-                        style: const TextStyle(
-                          color: Colors.amber,
-                          fontWeight:
-                              FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                  Container(
-                    width: 1,
-                    height: 30,
-                    color: Colors.white24,
-                  ),
-                  Column(
-                    children: [
-                      const Text(
-                        'إجمالي الكميات',
-                        style: TextStyle(
-                          color:
-                              Colors.white60,
-                        ),
-                      ),
-                      Text(
-                        inv.items
-                            .fold(
-                              0.0,
-                              (sum, item) =>
-                                  sum + item.quantity,
-                            )
-                            .toStringAsFixed(0),
-                        style:
-                            const TextStyle(
-                          color:
-                              Colors.cyanAccent,
-                          fontWeight:
-                              FontWeight.bold,
-                        ),
-                      ),
-                    ],
+                  _buildVerticalDivider(),
+                  _buildTotalBox(
+                    'إجمالي البيع',
+                    _formatCurrency(
+                      inv.totalRetail,
+                    ),
+                    Colors.amber,
                   ),
                 ],
               ),
@@ -1931,6 +1396,312 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
       ),
     );
   }
+
+  // ============================================================
+  // جدول الأصناف
+  // ============================================================
+
+  Widget _buildItemsTable(
+    InventoryModel inv,
+    bool isMobile,
+  ) {
+    const codeWidth = 60.0;
+    const nameWidth = 85.0;
+    const qtyWidth = 60.0;
+    const valueWidth = 70.0;
+
+    if (isMobile) {
+      return SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                _tableHeader('#', 30, Colors.cyan),
+                _tableHeader('الكود', codeWidth, Colors.cyan),
+                _tableHeader('الصنف', nameWidth, Colors.cyan),
+                _tableHeader('الكمية', qtyWidth, Colors.cyan),
+                _tableHeader(
+                  'سعر الجملة',
+                  valueWidth,
+                  Colors.greenAccent,
+                ),
+                _tableHeader(
+                  'قيمة الجملة',
+                  valueWidth,
+                  Colors.greenAccent,
+                ),
+                _tableHeader(
+                  'سعر البيع',
+                  valueWidth,
+                  Colors.amber,
+                ),
+                _tableHeader(
+                  'قيمة البيع',
+                  valueWidth,
+                  Colors.amber,
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            ...inv.items.asMap().entries.map(
+              (entry) => Row(
+                children: [
+                  _tableCell(
+                    '${entry.key + 1}',
+                    30,
+                    Colors.white54,
+                  ),
+                  _tableCell(
+                    entry.value.code,
+                    codeWidth,
+                    Colors.white70,
+                  ),
+                  _tableCell(
+                    entry.value.name,
+                    nameWidth,
+                    Colors.white,
+                  ),
+                  _tableCell(
+                    _formatQuantity(
+                      entry.value.quantity,
+                    ),
+                    qtyWidth,
+                    Colors.white70,
+                  ),
+                  _tableCell(
+                    _formatCurrency(
+                      entry.value.wholesalePrice,
+                    ),
+                    valueWidth,
+                    Colors.greenAccent,
+                  ),
+                  _tableCell(
+                    _formatCurrency(
+                      entry.value.wholesaleValue,
+                    ),
+                    valueWidth,
+                    Colors.greenAccent,
+                  ),
+                  _tableCell(
+                    _formatCurrency(
+                      entry.value.retailPrice,
+                    ),
+                    valueWidth,
+                    Colors.amber,
+                  ),
+                  _tableCell(
+                    _formatCurrency(
+                      entry.value.retailValue,
+                    ),
+                    valueWidth,
+                    Colors.amber,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        Row(
+          children: const [
+            Expanded(child: Text('#', textAlign: TextAlign.center)),
+            Expanded(child: Text('الكود', textAlign: TextAlign.center)),
+            Expanded(flex: 2, child: Text('الصنف', textAlign: TextAlign.center)),
+            Expanded(child: Text('الكمية', textAlign: TextAlign.center)),
+            Expanded(child: Text('سعر الجملة', textAlign: TextAlign.center)),
+            Expanded(child: Text('قيمة الجملة', textAlign: TextAlign.center)),
+            Expanded(child: Text('سعر البيع', textAlign: TextAlign.center)),
+            Expanded(child: Text('قيمة البيع', textAlign: TextAlign.center)),
+          ],
+        ),
+        const Divider(color: Colors.white10),
+        ...inv.items.asMap().entries.map(
+          (entry) {
+            final item = entry.value;
+
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _tableDesktopText(
+                      '${entry.key + 1}',
+                      Colors.white54,
+                    ),
+                  ),
+                  Expanded(
+                    child: _tableDesktopText(
+                      item.code,
+                      Colors.white70,
+                    ),
+                  ),
+                  Expanded(
+                    flex: 2,
+                    child: _tableDesktopText(
+                      item.name,
+                      Colors.white,
+                    ),
+                  ),
+                  Expanded(
+                    child: _tableDesktopText(
+                      _formatQuantity(item.quantity),
+                      Colors.white70,
+                    ),
+                  ),
+                  Expanded(
+                    child: _tableDesktopText(
+                      _formatCurrency(
+                        item.wholesalePrice,
+                      ),
+                      Colors.greenAccent,
+                    ),
+                  ),
+                  Expanded(
+                    child: _tableDesktopText(
+                      _formatCurrency(
+                        item.wholesaleValue,
+                      ),
+                      Colors.greenAccent,
+                    ),
+                  ),
+                  Expanded(
+                    child: _tableDesktopText(
+                      _formatCurrency(
+                        item.retailPrice,
+                      ),
+                      Colors.amber,
+                    ),
+                  ),
+                  Expanded(
+                    child: _tableDesktopText(
+                      _formatCurrency(
+                        item.retailValue,
+                      ),
+                      Colors.amber,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  // ============================================================
+  // إجماليات
+  // ============================================================
+
+  Widget _buildTotalBox(
+    String label,
+    String value,
+    Color color,
+  ) {
+    return Column(
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            color: Colors.white60,
+            fontSize: 10,
+            fontFamily: 'Cairo',
+          ),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          value,
+          style: TextStyle(
+            color: color,
+            fontWeight: FontWeight.bold,
+            fontSize: 13,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildVerticalDivider() {
+    return Container(
+      width: 1,
+      height: 30,
+      color: Colors.white24,
+    );
+  }
+
+  // ============================================================
+  // أدوات الجدول
+  // ============================================================
+
+  Widget _tableHeader(
+    String text,
+    double width,
+    Color color,
+  ) {
+    return SizedBox(
+      width: width,
+      child: Text(
+        text,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: color,
+          fontWeight: FontWeight.bold,
+          fontSize: 8,
+          fontFamily: 'Cairo',
+        ),
+      ),
+    );
+  }
+
+  Widget _tableCell(
+    String text,
+    double width,
+    Color color,
+  ) {
+    return SizedBox(
+      width: width,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          vertical: 4,
+          horizontal: 2,
+        ),
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: color,
+            fontSize: 8,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _tableDesktopText(
+    String text,
+    Color color,
+  ) {
+    return Text(
+      text,
+      textAlign: TextAlign.center,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        color: color,
+        fontSize: 9,
+      ),
+    );
+  }
+
+  // ============================================================
+  // Detail Item
+  // ============================================================
 
   Widget _buildDetailItem(
     String label,
@@ -1946,27 +1717,30 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
           size: isMobile ? 14 : 16,
         ),
         const SizedBox(width: 4),
-        Column(
-          crossAxisAlignment:
-              CrossAxisAlignment.start,
-          children: [
-            Text(
-              label,
-              style: TextStyle(
-                color: Colors.white60,
-                fontSize:
-                    isMobile ? 8 : 10,
+        Expanded(
+          child: Column(
+            crossAxisAlignment:
+                CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  color: Colors.white60,
+                  fontSize: isMobile ? 8 : 10,
+                  fontFamily: 'Cairo',
+                ),
               ),
-            ),
-            Text(
-              value,
-              style: TextStyle(
-                color: Colors.white,
-                fontSize:
-                    isMobile ? 11 : 13,
+              Text(
+                value,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: isMobile ? 10 : 12,
+                  fontFamily: 'Cairo',
+                ),
+                overflow: TextOverflow.ellipsis,
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ],
     );
