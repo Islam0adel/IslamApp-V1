@@ -1,7 +1,7 @@
 # backend/app/main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import auth, transactions, coding, inventory, supplier
+from app.routes import auth, transactions, coding, inventory, supplier, supplier_settlement
 from app.routes import sync
 from app.core.database import create_tables, AsyncSessionLocal
 from app.core.models import Company
@@ -48,6 +48,11 @@ app.include_router(coding.router, prefix="/coding", tags=["Coding"])
 app.include_router(inventory.router, prefix="/inventory", tags=["Inventory"])
 app.include_router(supplier.router, prefix="/supplier", tags=["Supplier"])
 app.include_router(sync.router, prefix="/sync", tags=["Sync"])
+app.include_router(
+    supplier_settlement.router,
+    prefix="/supplier-settlement",
+    tags=["Supplier Settlement"],
+)
 
 @app.get("/")
 async def root():

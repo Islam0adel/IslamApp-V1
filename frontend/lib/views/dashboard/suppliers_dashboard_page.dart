@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../views/widgets/glass_card.dart';
 import 'supplier_page.dart';
 import 'supplier_history_page.dart';
+import 'supplier_settlement_page.dart';
+import 'supplier_settlement_history_page.dart';
 
 class SuppliersDashboardPage extends StatelessWidget {
   final String companyCode;
@@ -105,21 +107,37 @@ class SuppliersDashboardPage extends StatelessWidget {
                   subtitle: 'تسوية حسابات الموردين والدفعات',
                   color: Colors.amber,
                   onTap: () {
-                    _showUnderDevelopment(context, 'تسويات الموردين');
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (c) => SupplierSettlementPage(
+                          companyCode: companyCode,
+                          selectedBranchCode: selectedBranchCode,
+                        ),
+                      ),
+                    );
                   },
                 ),
                 const SizedBox(height: 16),
-                // ✅ زر تحليل الموردين (قيد التطوير)
-                _buildDashboardCard(
-                  context,
-                  icon: Icons.analytics_rounded,
-                  title: 'تحليل الموردين',
-                  subtitle: 'تحليل أداء الموردين والتقارير',
-                  color: Colors.purpleAccent,
-                  onTap: () {
-                    _showUnderDevelopment(context, 'تحليل الموردين');
-                  },
-                ),
+
+_buildDashboardCard(
+  context,
+  icon: Icons.history_rounded,
+  title: 'معاينة التسويات',
+  subtitle: 'عرض دفعات وتسويات الموردين',
+  color: Colors.cyanAccent,
+  onTap: () {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (c) => SupplierSettlementHistoryPage(
+          companyCode: companyCode,
+          selectedBranchCode: selectedBranchCode,
+        ),
+      ),
+    );
+  },
+),
                 const SizedBox(height: 20),
               ],
             ),

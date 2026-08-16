@@ -6,11 +6,14 @@ class SupplierItem {
   double quantity;
   double price;
 
-  // "وارد (دخول بضاعة)" أو "صادر (دفعة)"
+  // وارد (دخول بضاعة)
   String type;
 
+  // الخصم على مستوى الصنف سيتم تركه 0 حالياً
+  // لأن الخصم أصبح على مستوى الفاتورة.
   double discountRate;
   double discountAmount;
+
   double total;
 
   SupplierItem({
@@ -24,10 +27,6 @@ class SupplierItem {
     this.total = 0.0,
   });
 
-  // ============================================================
-  // To Map
-  // ============================================================
-
   Map<String, dynamic> toMap() => {
         'code': code,
         'name': name,
@@ -39,39 +38,23 @@ class SupplierItem {
         'total': total,
       };
 
-  // ============================================================
-  // From Map
-  // ============================================================
-
   factory SupplierItem.fromMap(
     Map<String, dynamic> map,
   ) {
     return SupplierItem(
       code: map['code']?.toString() ?? '',
       name: map['name']?.toString() ?? '',
-
-      quantity: _toDouble(
-        map['quantity'],
-      ),
-
-      price: _toDouble(
-        map['price'],
-      ),
-
+      quantity: _toDouble(map['quantity']),
+      price: _toDouble(map['price']),
       type: map['type']?.toString() ??
           'وارد (دخول بضاعة)',
-
       discountRate: _toDouble(
         map['discountRate'],
       ),
-
       discountAmount: _toDouble(
         map['discountAmount'],
       ),
-
-      total: _toDouble(
-        map['total'],
-      ),
+      total: _toDouble(map['total']),
     );
   }
 }
@@ -95,23 +78,25 @@ class SupplierTransactionModel {
 
   bool isAddToStore;
 
+  // ✅ هل يتم تحديث / إضافة الصنف في التكويد؟
+  bool isAddToCoding;
+
   String employee;
 
   List<SupplierItem> items;
 
+  // إجمالي الفاتورة النهائي بعد الخصم
   double totalAmount;
+
+  // ✅ المشتريات لا تعتبر دفعة للمورد
+  // ويُترك حالياً = 0
   double paidAmount;
 
   String? docId;
 
   DateTime updatedAt;
 
-  // Soft Delete
-  //
-  // مش شرط نستخدمه في الواجهة،
-  // لكنه يسمح للموديل باستقبال بيانات السيرفر الجديدة.
   bool isDeleted;
-
 
   SupplierTransactionModel({
     required this.companyCode,
@@ -124,6 +109,9 @@ class SupplierTransactionModel {
     required this.treasury,
 
     this.isAddToStore = false,
+
+    // ✅ افتراضياً لا يتم إضافة/تعديل التكويد
+    this.isAddToCoding = false,
 
     this.employee = 'غير محدد',
 
@@ -163,6 +151,9 @@ class SupplierTransactionModel {
 
         'is_add_to_store': isAddToStore,
 
+        // ✅ جديد
+        'is_add_to_coding': isAddToCoding,
+
         'employee': employee,
 
         'items': items
@@ -173,6 +164,7 @@ class SupplierTransactionModel {
 
         'total_amount': totalAmount,
 
+        // المشتريات لا تسجل دفعة
         'paid_amount': paidAmount,
 
         'updated_at':
@@ -210,7 +202,7 @@ class SupplierTransactionModel {
               ),
             );
           } catch (_) {
-            // تجاهل العنصر غير الصالح
+            // تجاهل الصنف غير الصالح
           }
         }
       }
@@ -246,53 +238,42 @@ class SupplierTransactionModel {
 
     return SupplierTransactionModel(
       companyCode:
-          map['company_code']
-                  ?.toString() ??
-              '',
+          map['company_code']?.toString() ?? '',
 
       branchCode:
-          map['branch_code']
-                  ?.toString() ??
-              '',
+          map['branch_code']?.toString() ?? '',
 
       storeCode:
-          map['store_code']
-                  ?.toString() ??
-              '',
+          map['store_code']?.toString() ?? '',
 
       serial:
-          _toInt(
-        map['serial'],
-      ),
+          _toInt(map['serial']),
 
       date:
-          map['date']
-                  ?.toString() ??
-              '',
+          map['date']?.toString() ?? '',
 
       supplierName:
-          map['supplier_name']
-                  ?.toString() ??
-              '',
+          map['supplier_name']?.toString() ?? '',
 
       paymentMethod:
-          map['payment_method']
-                  ?.toString() ??
-              '',
+          map['payment_method']?.toString() ?? '',
 
       treasury:
-          map['treasury']
-                  ?.toString() ??
-              '',
+          map['treasury']?.toString() ?? '',
 
       isAddToStore:
           _toBool(
         map['is_add_to_store'],
       ),
 
+      // ✅ قراءة اختيار تحديث التكويد
+      isAddToCoding:
+          _toBool(
+        map['is_add_to_coding'],
+      ),
+
       employee:
-          map['employee']
-                  ?.toString() ??
+          map['employee']?.toString() ??
               'غير محدد',
 
       items:
@@ -327,9 +308,7 @@ class SupplierTransactionModel {
 // Helpers
 // ============================================================
 
-double _toDouble(
-  dynamic value,
-) {
+double _toDouble(dynamic value) {
   if (value is num) {
     return value.toDouble();
   }
@@ -341,9 +320,7 @@ double _toDouble(
 }
 
 
-int _toInt(
-  dynamic value,
-) {
+int _toInt(dynamic value) {
   if (value is int) {
     return value;
   }
@@ -359,16 +336,13 @@ int _toInt(
 }
 
 
-bool _toBool(
-  dynamic value,
-) {
+bool _toBool(dynamic value) {
   if (value is bool) {
     return value;
   }
 
   if (value is String) {
-    return value.toLowerCase() ==
-            'true' ||
+    return value.toLowerCase() == 'true' ||
         value == '1';
   }
 

@@ -192,7 +192,57 @@ class SupplierTransactionModel(BaseModel):
 
     doc_id: Optional[str] = None
 
+# ============================================================
+# تسويات الموردين
+# ============================================================
 
+class SupplierSettlementModel(BaseModel):
+    company_code: str
+    branch_code: str
+
+    serial: int
+    date: str
+
+    supplier_name: str
+
+    payment_method: str
+    treasury: str
+
+    amount: float
+
+    statement: str = ""
+    employee: str = "غير محدد"
+
+    updated_at: Optional[str] = None
+    doc_id: Optional[str] = None
+
+
+class SupplierSettlementSyncModel(BaseModel):
+    id: int
+
+    company_code: str
+    branch_code: str
+
+    serial: int
+    date: str
+
+    supplier_name: str
+
+    payment_method: str
+    treasury: str
+
+    amount: float
+
+    statement: str = ""
+    employee: str = "غير محدد"
+
+    updated_at: Optional[datetime] = None
+
+    doc_id: Optional[str] = None
+
+    is_deleted: bool = False
+
+    action: Optional[str] = None
 # ============================================================
 # نموذج استجابة/مزامنة الموردين
 # ============================================================

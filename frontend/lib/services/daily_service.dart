@@ -202,10 +202,19 @@ class DailyService {
       // حفظ الأرصدة محلياً
       // --------------------------------------------------------
 
-      await _transactionBox.put(
-        "${companyCode}_balances",
-        treasuryBalances,
-      );
+      final String balanceKey =
+    branchCode == null ||
+            branchCode.isEmpty ||
+            branchCode == 'all' ||
+            branchCode == 'الكل' ||
+            branchCode == 'كل الفروع'
+        ? "${companyCode}_balances_all"
+        : "${companyCode}_balances_${branchCode}";
+
+await _transactionBox.put(
+  balanceKey,
+  treasuryBalances,
+);
 
 
       return {
@@ -310,8 +319,9 @@ class DailyService {
       // --------------------------------------------------------
 
       await getDailySummaryLocal(
-        companyCode,
-      );
+  companyCode,
+  branchCode: null,
+);
 
 
       print(
@@ -545,8 +555,9 @@ final String effectiveSince =
       // --------------------------------------------------------
 
       await getDailySummaryLocal(
-        companyCode,
-      );
+  companyCode,
+  branchCode: null,
+);
 
 
       // --------------------------------------------------------
@@ -1128,8 +1139,9 @@ final String effectiveSince =
       // --------------------------------------------------------
 
       await getDailySummaryLocal(
-        companyCode,
-      );
+  companyCode,
+  branchCode: branchCode,
+);
     } catch (e) {
       throw Exception(
         'خطأ أثناء الحذف: $e',
@@ -1291,8 +1303,9 @@ final String effectiveSince =
       // --------------------------------------------------------
 
       await getDailySummaryLocal(
-        companyCode,
-      );
+  companyCode,
+  branchCode: null,
+);
 
 
       print(

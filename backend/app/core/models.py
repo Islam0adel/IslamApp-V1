@@ -590,3 +590,112 @@ class SupplierRecord(Base):
             'is_deleted',
         ),
     )
+
+# ==========================================
+# 7. تسويات الموردين
+# ==========================================
+class SupplierSettlementRecord(Base):
+    __tablename__ = "supplier_settlements"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
+        autoincrement=True,
+    )
+
+    company_code = Column(
+        String(50),
+        nullable=False,
+        index=True,
+    )
+
+    branch_code = Column(
+        String(50),
+        nullable=False,
+        index=True,
+    )
+
+    serial = Column(
+        Integer,
+        nullable=False,
+    )
+
+    date = Column(
+        String(20),
+        nullable=False,
+    )
+
+    supplier_name = Column(
+        String(255),
+        nullable=False,
+        index=True,
+    )
+
+    payment_method = Column(
+        String(100),
+        nullable=False,
+    )
+
+    treasury = Column(
+        String(255),
+        nullable=False,
+    )
+
+    amount = Column(
+        Float,
+        nullable=False,
+        default=0.0,
+    )
+
+    statement = Column(
+        Text,
+        default="",
+    )
+
+    employee = Column(
+        String(255),
+        default="غير محدد",
+    )
+
+    updated_at = Column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    is_deleted = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+
+    __table_args__ = (
+        Index(
+            'idx_settlement_company_branch_serial',
+            'company_code',
+            'branch_code',
+            'serial',
+            unique=True,
+        ),
+
+        Index(
+            'idx_settlement_company_supplier',
+            'company_code',
+            'supplier_name',
+        ),
+
+        Index(
+            'idx_settlement_changes',
+            'company_code',
+            'updated_at',
+        ),
+
+        Index(
+            'idx_settlement_active',
+            'company_code',
+            'branch_code',
+            'is_deleted',
+        ),
+    )

@@ -19,7 +19,7 @@ import 'services/daily_service.dart';
 import 'services/supplier_service.dart';
 import 'services/inventory_service.dart';
 import 'services/coding_service.dart';
-
+import 'services/supplier_settlement_service.dart';
 
 // ============================================================
 // Global Sync Service
@@ -117,6 +117,34 @@ Future<void> syncAllDataIfNeeded(
       print("✅ اليوميات: اكتملت المزامنة التزايدية");
     }
 
+
+  final String settlementKey =
+    'last_sync_settlement_$companyCode';
+
+final String? settlementLastSync =
+    prefs.getString(settlementKey);
+
+if (settlementLastSync == null) {
+  print("📥 التسويات: تحميل كامل");
+
+  await SupplierSettlementService()
+      .fetchAllSettlements(companyCode);
+
+  await prefs.setString(
+    settlementKey,
+    syncStartedAt,
+  );
+} else {
+  print(
+    "📡 التسويات: مزامنة تزايدية منذ $settlementLastSync",
+  );
+
+  await SupplierSettlementService()
+      .syncChangesFromServer(
+    companyCode,
+    settlementLastSync,
+  );
+}
     // ========================================================
     // 2) التكويد
     // ========================================================

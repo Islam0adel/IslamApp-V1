@@ -125,7 +125,15 @@ class _PermissionsPageState extends State<PermissionsPage> {
         'تعديل': false,
         'حذف': false,
         'معاينة': false,
+
       },
+      'تسويات الموردين': {
+  'إضافة': false,
+  'تعديل': false,
+  'حذف': false,
+  'معاينة': false,
+  'تصدير': false,
+},
       'حركة الجرد': {
         'اضافة': false,
         'تعديل': false,
@@ -402,6 +410,7 @@ if (savedBranches != null && savedBranches is List) {
                               Tab(text: 'حركة الخزينة'),
                               Tab(text: 'التكويد'),
                               Tab(text: 'حسابات الموردين'),
+                              Tab(text: 'تسويات الموردين'),
                               Tab(text: 'حركة الجرد'),
                               Tab(text: 'التقارير'),
                               Tab(text: 'رصيد المخزون'),
@@ -414,6 +423,7 @@ if (savedBranches != null && savedBranches is List) {
                                 buildPermissionsTab('حركة الخزينة'),
                                 buildPermissionsTab('التكويد'),
                                 buildPermissionsTab('حسابات الموردين'),
+                                buildPermissionsTab('تسويات الموردين'),
                                 buildPermissionsTab('حركة الجرد'),
                                 buildPermissionsTab('التقارير'),
                                 buildPermissionsTab('رصيد المخزون'),

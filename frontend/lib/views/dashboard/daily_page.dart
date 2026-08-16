@@ -195,7 +195,7 @@ void _onAmountChanged() {
         branchCode: widget.selectedBranchCode ?? 'all'
       );
       // ✅ تخزين الأرصدة في Hive (سيؤدي إلى تحديث ValueListenableBuilder)
-      await Hive.box('daily_transactions_box').put("${widget.companyCode}_balances", summary['balances']);
+
 
       final Box codingBox = Hive.box('coding_box');
       List<Map<String, dynamic>> safesList = [];
@@ -374,28 +374,48 @@ void _onAmountChanged() {
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
                             // ✅ شاشات الأرصدة (تظهر فقط إذا كانت الصلاحية موجودة)
-                            if (PermissionsService().canViewBalances)
-                              ValueListenableBuilder(
-                                valueListenable: dailyBox.listenable(keys: ["${widget.companyCode}_balances"]),
-                                builder: (context, Box box, child) {
-                                  final rawBalances = box.get("${widget.companyCode}_balances");
-                                  if (rawBalances is Map && rawBalances.isNotEmpty) {
-                                    Map<String, double> safeBalances = {};
-                                    rawBalances.forEach((key, value) {
-                                      safeBalances[key.toString()] = double.tryParse(value.toString()) ?? 0.0;
-                                    });
-                                    // ✅ تحديث المتغير المحلي عند تغير الأرصدة
-                                    _treasuryBalances = safeBalances;
-                                  }
-                                  return _buildDynamicBalancesGrid();
-                                },
-                              ),
-                            const SizedBox(height: 12),
-                            _buildInputForm(),
-                            const SizedBox(height: 15),
-                            _buildMainActions(),
-                            const SizedBox(height: 8),
-                            _buildSecondaryActions(),
+if (PermissionsService().canViewBalances)
+  Builder(
+    builder: (context) {
+      final String balanceKey =
+          "${widget.companyCode}_balances_${widget.selectedBranchCode ?? 'all'}";
+
+      return ValueListenableBuilder(
+        valueListenable: dailyBox.listenable(
+          keys: [balanceKey],
+        ),
+        builder: (context, Box box, child) {
+          final rawBalances = box.get(balanceKey);
+
+          if (rawBalances is Map && rawBalances.isNotEmpty) {
+            final Map<String, double> safeBalances = {};
+
+            rawBalances.forEach((key, value) {
+              safeBalances[key.toString()] =
+                  double.tryParse(value.toString()) ?? 0.0;
+            });
+
+            // ✅ تحديث الرصيد المحلي للفرع الحالي فقط
+            _treasuryBalances = safeBalances;
+          }
+
+          return _buildDynamicBalancesGrid();
+        },
+      );
+    },
+  ),
+
+const SizedBox(height: 12),
+
+_buildInputForm(),
+
+const SizedBox(height: 15),
+
+_buildMainActions(),
+
+const SizedBox(height: 8),
+
+_buildSecondaryActions(),
                           ],
                         ),
                       ),

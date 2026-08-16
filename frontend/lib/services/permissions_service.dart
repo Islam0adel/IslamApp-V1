@@ -396,6 +396,13 @@ class PermissionsService {
         'عرض سعر الجملة': false,
         'تصدير': false,
       },
+      'تسويات الموردين': {
+  'إضافة': false,
+  'تعديل': false,
+  'حذف': false,
+  'معاينة': false,
+  'تصدير': false,
+},
     };
 
     if (jobCode == '99' || jobCode == '200') {
@@ -681,4 +688,38 @@ class PermissionsService {
         'حسابات الموردين',
         'تصدير',
       );
+
+  bool get canAddSupplierSettlement =>
+    hasPermission(
+      'تسويات الموردين',
+      'إضافة',
+    );
+
+bool get canEditSupplierSettlement =>
+    hasPermission(
+      'تسويات الموردين',
+      'تعديل',
+    );
+
+bool get canDeleteSupplierSettlement =>
+    hasPermission(
+      'تسويات الموردين',
+      'حذف',
+    );
+
+bool get canViewSupplierSettlements =>
+    hasPermission(
+      'تسويات الموردين',
+      'معاينة',
+    );
+
+bool get canExportSupplierSettlement =>
+    hasPermission(
+      'تسويات الموردين',
+      'تصدير',
+    );
+
+bool get canShowSupplierSettlements =>
+    canViewSupplierSettlements ||
+    canAddSupplierSettlement;
 }

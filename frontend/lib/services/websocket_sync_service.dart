@@ -562,7 +562,9 @@ _dailySummaryTimer = null;
     }
 
     // تحديث الرصيد بعد اكتمال تعديل Hive فعليًا
-    _scheduleDailySummaryRefresh();
+    _scheduleDailySummaryRefresh(
+  branchCode: branchCode,
+);
   } catch (e) {
     print(
       "❌ خطأ في تحديث اليومية [$id]: $e",
@@ -578,7 +580,9 @@ _dailySummaryTimer = null;
   // ============================================================
 
 
-void _scheduleDailySummaryRefresh() {
+void _scheduleDailySummaryRefresh({
+  String? branchCode,
+}) {
   _dailySummaryTimer?.cancel();
 
   _dailySummaryTimer = Timer(
@@ -593,9 +597,14 @@ void _scheduleDailySummaryRefresh() {
       try {
         await DailyService().getDailySummaryLocal(
           companyCode,
+          branchCode: branchCode,
         );
 
-        print("✅ تم تحديث أرصدة اليومية بعد WebSocket");
+        print(
+          "✅ تم تحديث رصيد اليومية"
+          "${branchCode != null ? ' للفرع $branchCode' : ' لكل الفروع'}"
+          " بعد WebSocket",
+        );
       } catch (e) {
         print(
           "❌ خطأ في تحديث أرصدة اليومية: $e",
