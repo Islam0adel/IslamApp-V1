@@ -1023,8 +1023,10 @@ class _SupplierPageState extends State<SupplierPage> {
             _isAddToCoding,
 
         employee:
-            widget.userName ??
-                'غير محدد',
+    (widget.userName != null &&
+            widget.userName!.trim().isNotEmpty)
+        ? widget.userName!.trim()
+        : 'غير محدد',
 
         items:
             validItems,

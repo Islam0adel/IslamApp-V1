@@ -277,17 +277,110 @@ class SupplierService {
   // ============================================================
 
   Future<void> _saveLocalTransaction(
-    SupplierTransactionModel model,
-  ) async {
-    final key =
+  SupplierTransactionModel model,
+) async {
+  try {
+    final String newKey =
         '${model.companyCode}_'
         '${model.branchCode}_'
         '${model.date}';
 
+    final String? docId =
+        model.docId?.toString();
+
+    if (docId == null || docId.isEmpty) {
+      throw Exception('doc_id غير موجود أثناء الحفظ المحلي');
+    }
+
+    // ============================================================
+    // 1. حذف النسخة القديمة من أي مفتاح في Hive
+    //
+    // مهم جدًا لو تم تعديل:
+    // - التاريخ
+    // - الفرع
+    // - المخزن
+    //
+    // لأن المفتاح نفسه ممكن يتغير.
+    // ============================================================
+
+    final keys =
+        _supplierBox.keys.toList();
+
+    for (final key in keys) {
+      final raw =
+          _supplierBox.get(key);
+
+      if (raw is! List) {
+        continue;
+      }
+
+      final List<Map<String, dynamic>> updatedList = [];
+
+      bool found = false;
+
+      for (final value in raw) {
+        if (value is! Map) {
+          continue;
+        }
+
+        final map =
+            _toMapString(value);
+
+        if (map.isEmpty) {
+          continue;
+        }
+
+        final itemDocId =
+            map['doc_id']?.toString();
+
+        // حذف النسخة القديمة لنفس الإذن
+        if (itemDocId == docId) {
+          found = true;
+          continue;
+        }
+
+        // تنظيف أي سجل محذوف
+        if (map['is_deleted'] == true) {
+          continue;
+        }
+
+        updatedList.add(map);
+      }
+
+      if (!found) {
+        continue;
+      }
+
+      if (updatedList.isEmpty) {
+        await _supplierBox.delete(key);
+      } else {
+        await _supplierBox.put(
+          key,
+          updatedList,
+        );
+      }
+    }
+
+    // ============================================================
+    // 2. تجهيز النسخة الجديدة
+    // ============================================================
+
+    final Map<String, dynamic> localItem =
+        _toMapString(
+      model.toMap(),
+    );
+
+    localItem['doc_id'] = docId;
+    localItem['is_deleted'] = false;
+
+    // ============================================================
+    // 3. قراءة مفتاح التاريخ/الفرع/الشركة الجديد
+    // ============================================================
+
     List<Map<String, dynamic>> list = [];
 
     final raw =
-        _supplierBox.get(key);
+        _supplierBox.get(newKey);
 
     if (raw is List) {
       list = raw
@@ -301,30 +394,37 @@ class SupplierService {
           .toList();
     }
 
-    final localItem =
-        _toMapString(
-      model.toMap(),
-    );
-
-    localItem['doc_id'] =
-        model.docId;
-
-    localItem['is_deleted'] =
-        false;
+    // ============================================================
+    // 4. تأكيد عدم وجود نسخة قديمة في المفتاح الجديد
+    // ============================================================
 
     list.removeWhere(
       (item) =>
-          item['doc_id']?.toString() ==
-          model.docId?.toString(),
+          item['doc_id']?.toString() == docId,
     );
+
+    // ============================================================
+    // 5. إضافة النسخة الجديدة
+    // ============================================================
 
     list.add(localItem);
 
     await _supplierBox.put(
-      key,
+      newKey,
       list,
     );
+
+    print(
+      '✅ تم تحديث فاتورة المورد محليًا [$docId]',
+    );
+  } catch (e) {
+    print(
+      '❌ خطأ أثناء الحفظ المحلي لفاتورة المورد: $e',
+    );
+
+    rethrow;
   }
+}
 
   // ============================================================
   // 4. رقم الإذن التالي

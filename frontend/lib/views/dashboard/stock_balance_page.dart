@@ -691,12 +691,14 @@ class _StockBalancePageState extends State<StockBalancePage> {
                     as double),
       );
 
+  String _formatQuantity(double amount) =>
+      NumberFormat('0.########', 'en_US').format(amount);
   String _formatCurrency(
     double amount,
   ) {
     return NumberFormat(
       '#,##0.00',
-      'ar_EG',
+      'en_US',
     ).format(amount);
   }
 
@@ -788,7 +790,7 @@ class _StockBalancePageState extends State<StockBalancePage> {
       await ExportService
           .exportToExcel(
         exportData,
-        'رصيد_المخزون_${DateFormat('yyyy-MM-dd').format(DateTime.now())}',
+        'رصيد_المخزون_${DateFormat('yyyy-MM-dd', 'en_US').format(DateTime.now())}',
         headers,
         keys,
       );
@@ -1230,9 +1232,7 @@ class _StockBalancePageState extends State<StockBalancePage> {
           width:
               columnWidths[cellIndex++],
           child: Text(
-            (item['quantity']
-                    as double)
-                .toStringAsFixed(0),
+            _formatQuantity(item['quantity'] as double),
             textAlign:
                 TextAlign.center,
             style:
@@ -1744,7 +1744,7 @@ class _StockBalancePageState extends State<StockBalancePage> {
                                           8,
                                     ),
                                     Text(
-                                      'التاريخ: ${DateFormat('yyyy-MM-dd').format(_selectedDate)}',
+                                      'التاريخ: ${DateFormat('yyyy-MM-dd', 'en_US').format(_selectedDate)}',
                                       style:
                                           const TextStyle(
                                         color:
@@ -1926,10 +1926,7 @@ class _StockBalancePageState extends State<StockBalancePage> {
                             ),
                           ),
                           Text(
-                            totalQuantity
-                                .toStringAsFixed(
-                              0,
-                            ),
+                            _formatQuantity(totalQuantity),
                             style:
                                 const TextStyle(
                               color:

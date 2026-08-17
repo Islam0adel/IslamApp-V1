@@ -91,9 +91,10 @@ class SuppliersDashboardPage extends StatelessWidget {
                       context,
                       MaterialPageRoute(
                         builder: (c) => SupplierHistoryPage(
-                          companyCode: companyCode,
-                          selectedBranchCode: selectedBranchCode,
-                        ),
+  companyCode: companyCode,
+  selectedBranchCode: selectedBranchCode,
+  userName: userName,
+),
                       ),
                     );
                   },
@@ -165,10 +166,7 @@ _buildDashboardCard(
             children: [
               Container(
                 padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(12),
-                ),
+                decoration: BoxDecoration(color: color.withOpacity(0.15),borderRadius: BorderRadius.circular(12),),
                 child: Icon(
                   icon,
                   color: color,

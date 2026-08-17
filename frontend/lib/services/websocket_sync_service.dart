@@ -914,136 +914,175 @@ void _scheduleDailySummaryRefresh({
   // ============================================================
 
   Future<void> _updateSupplierBox(
-    Map<String, dynamic> payload,
-    String action,
-  ) async {
-    final String? docId =
-        payload['doc_id']?.toString();
+  Map<String, dynamic> payload,
+  String action,
+) async {
+  final String? docId =
+      payload['doc_id']?.toString();
 
-
-    if (docId == null ||
-        docId.isEmpty) {
-      print(
-        "⚠️ لا يوجد doc_id في رسالة المورد",
-      );
-      return;
-    }
-
-
-    final String companyCode =
-        payload['company_code']
-                ?.toString() ??
-            '';
-
-
-    final String branchCode =
-        payload['branch_code']
-                ?.toString() ??
-            '';
-
-
-    final String date =
-        payload['date']
-                ?.toString() ??
-            '';
-
-
-    final String key =
-        "${companyCode}_${branchCode}_$date";
-
-
-    List<Map<String, dynamic>>
-        list = [];
-
-
-    if (_supplierBox.containsKey(key)) {
-      final raw =
-          _supplierBox.get(key);
-
-
-      if (raw is List) {
-        list = raw
-            .whereType<Map>()
-            .map(
-              (e) =>
-                  Map<String, dynamic>
-                      .from(e),
-            )
-            .where(
-              (e) =>
-                  e['is_deleted'] !=
-                  true,
-            )
-            .toList();
-      }
-    }
-
-
-    // ----------------------------------------------------------
-    // إزالة النسخة القديمة
-    // ----------------------------------------------------------
-
-    list.removeWhere(
-      (item) =>
-          item['doc_id']?.toString() ==
-          docId,
+  if (docId == null || docId.isEmpty) {
+    print(
+      '⚠️ لا يوجد doc_id في رسالة المورد',
     );
+    return;
+  }
 
+  // ============================================================
+  // 1. حذف النسخة القديمة من جميع مفاتيح supplier_box
+  // ============================================================
 
-    // ----------------------------------------------------------
-    // DELETE
-    // ----------------------------------------------------------
+  final keys =
+      _supplierBox.keys.toList();
 
-    if (action == 'delete') {
-      if (list.isEmpty) {
-        await _supplierBox.delete(
-          key,
-        );
-      } else {
-        await _supplierBox.put(
-          key,
-          list,
-        );
+  for (final oldKey in keys) {
+    final raw =
+        _supplierBox.get(oldKey);
+
+    if (raw is! List) {
+      continue;
+    }
+
+    final List<Map<String, dynamic>> updatedList = [];
+
+    bool found = false;
+
+    for (final value in raw) {
+      if (value is! Map) {
+        continue;
       }
 
-
-      print(
-        "🗑️ تم حذف المورد [$docId] من Hive",
+      final map =
+          Map<String, dynamic>.from(
+        value.map(
+          (k, v) => MapEntry(
+            k.toString(),
+            v,
+          ),
+        ),
       );
 
-      return;
+      if (map['doc_id']?.toString() == docId) {
+        found = true;
+        continue;
+      }
+
+      if (map['is_deleted'] == true) {
+        continue;
+      }
+
+      updatedList.add(map);
     }
 
+    if (!found) {
+      continue;
+    }
 
-    // ----------------------------------------------------------
-    // INSERT / UPDATE
-    // ----------------------------------------------------------
-
-    payload['is_deleted'] =
-        false;
-
-
-    list.add(
-      payload,
-    );
-
-
-    if (list.isEmpty) {
-      await _supplierBox.delete(
-        key,
-      );
+    if (updatedList.isEmpty) {
+      await _supplierBox.delete(oldKey);
     } else {
       await _supplierBox.put(
-        key,
-        list,
+        oldKey,
+        updatedList,
       );
     }
-
-
-    print(
-      "✅ تم تحديث المورد [$docId] في Hive",
-    );
   }
+
+  // ============================================================
+  // 2. لو حذف → خلاص
+  // ============================================================
+
+  if (action == 'delete' ||
+      payload['is_deleted'] == true) {
+    print(
+      '🗑️ تم حذف فاتورة المورد [$docId] من Hive',
+    );
+
+    return;
+  }
+
+  // ============================================================
+  // 3. تجهيز المفتاح الجديد
+  // ============================================================
+
+  final String companyCode =
+      payload['company_code']?.toString() ?? '';
+
+  final String branchCode =
+      payload['branch_code']?.toString() ?? '';
+
+  final String date =
+      payload['date']?.toString() ?? '';
+
+  if (companyCode.isEmpty ||
+      branchCode.isEmpty ||
+      date.isEmpty) {
+    print(
+      '⚠️ بيانات المفتاح ناقصة للمورد [$docId]',
+    );
+    return;
+  }
+
+  final String newKey =
+      '${companyCode}_${branchCode}_$date';
+
+  // ============================================================
+  // 4. قراءة البيانات الموجودة في المفتاح الجديد
+  // ============================================================
+
+  List<Map<String, dynamic>> list = [];
+
+  final raw =
+      _supplierBox.get(newKey);
+
+  if (raw is List) {
+    list = raw
+        .whereType<Map>()
+        .map(
+          (e) => Map<String, dynamic>.from(
+            e.map(
+              (k, v) => MapEntry(
+                k.toString(),
+                v,
+              ),
+            ),
+          ),
+        )
+        .where(
+          (e) =>
+              e.isNotEmpty &&
+              e['is_deleted'] != true,
+        )
+        .toList();
+  }
+
+  // ============================================================
+  // 5. منع التكرار
+  // ============================================================
+
+  list.removeWhere(
+    (item) =>
+        item['doc_id']?.toString() == docId,
+  );
+
+  // ============================================================
+  // 6. إضافة النسخة الجديدة
+  // ============================================================
+
+  payload['is_deleted'] = false;
+
+  list.add(
+    Map<String, dynamic>.from(payload),
+  );
+
+  await _supplierBox.put(
+    newKey,
+    list,
+  );
+
+  print(
+    '✅ تم تحديث فاتورة المورد [$docId] من المزامنة',
+  );
+}
 
 
   // ============================================================
