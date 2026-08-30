@@ -6,7 +6,7 @@ import '../../views/widgets/glass_card.dart';
 import '../auth/login_screen.dart';
 import 'coding_page.dart';
 import 'daily_page.dart';
-import 'reports_page.dart';
+import 'reports_dashboard_page.dart';
 import 'settings_page.dart';
 import '../../main.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -679,7 +679,7 @@ if (_permissionsLoaded &&PermissionsService().canShowInventory) { // أو يمك
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (c) => ReportsPage(
+              builder: (c) => ReportsDashboardPage(
                 companyCode: widget.companyCode,
                 selectedBranchCode: _selectedBranchCode,
               ),

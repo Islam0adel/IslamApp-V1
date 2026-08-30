@@ -574,7 +574,7 @@ class _StockBalancePageState extends State<StockBalancePage> {
 
       balances.removeWhere(
         (code, quantity) =>
-            quantity <= 0,
+            quantity == 0,
       );
 
       // ========================================================

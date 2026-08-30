@@ -615,6 +615,171 @@ class _SupplierHistoryPageState extends State<SupplierHistoryPage> {
   }
 
   // ==========================================================
+  // تقرير تفصيلي للمشتريات حسب المورد والفترة
+  // ==========================================================
+
+  List<Map<String, dynamic>> _getSupplierReportData() {
+    final data = <Map<String, dynamic>>[];
+
+    for (final transaction in _transactions) {
+      for (final item in transaction.items) {
+        data.add({
+          'التاريخ': transaction.date,
+          'رقم الإذن': transaction.serial,
+          'المورد': transaction.supplierName,
+          'الكود': item.code,
+          'الصنف': item.name,
+          'الكمية': item.quantity,
+          'السعر': item.price,
+          'الإجمالي': item.total,
+        });
+      }
+    }
+
+    return data;
+  }
+
+  Future<void> _exportSupplierItemReport({required bool pdf}) async {
+    if (_transactions.isEmpty) {
+      _showSnackBar('لا توجد بيانات للتقرير', Colors.orange);
+      return;
+    }
+
+    try {
+      final companyName = await _getCompanyName();
+      final branchName = _isAllBranches ? 'كل الفروع' : _getBranchName(widget.selectedBranchCode);
+      final period = '${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}';
+      final data = _getSupplierReportData();
+      const headers = ['التاريخ', 'رقم الإذن', 'المورد', 'الكود', 'الصنف', 'الكمية', 'السعر', 'الإجمالي'];
+
+      if (pdf) {
+        await ExportService.exportToPDF(
+          data: data,
+          title: 'تقرير تفصيلي لمشتريات المورد',
+          headers: headers,
+          keys: headers,
+          companyName: companyName,
+          branchName: branchName,
+          period: period,
+          supplierName: _selectedSupplierCode == 'all' ? null : _getSupplierName(_selectedSupplierCode),
+          summary: {
+            'إجمالي المشتريات': _totalPurchases,
+            'إجمالي الدفعات': _totalSettlements,
+            'المتبقي للمورد': _supplierRemaining,
+          },
+          totalAmount: _totalPurchases,
+        );
+      } else {
+        await ExportService.exportToExcel(
+          data,
+          'تقرير تفصيلي لمشتريات المورد',
+          headers,
+          headers,
+          companyName: companyName,
+          branchName: branchName,
+          period: period,
+          supplierName: _selectedSupplierCode == 'all' ? null : _getSupplierName(_selectedSupplierCode),
+          summary: {
+            'إجمالي المشتريات': _totalPurchases,
+            'إجمالي الدفعات': _totalSettlements,
+            'المتبقي للمورد': _supplierRemaining,
+          },
+        );
+      }
+
+      _showSnackBar(pdf ? 'تم تصدير PDF بنجاح' : 'تم تصدير Excel بنجاح', Colors.green);
+    } catch (e) {
+      _showSnackBar('فشل التصدير: $e', Colors.red);
+    }
+  }
+
+  void _showSupplierItemReport() {
+    final data = _getSupplierReportData();
+
+    if (data.isEmpty) {
+      _showSnackBar('لا توجد بيانات للتقرير', Colors.orange);
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.indigo.shade900,
+        title: Text(
+          'تقرير مشتريات المورد',
+          style: const TextStyle(color: Colors.white, fontFamily: 'Cairo'),
+        ),
+        content: SizedBox(
+          width: 1100,
+          height: MediaQuery.of(context).size.height * 0.75,
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  Expanded(child: _buildSummaryBox('إجمالي المشتريات', _formatCurrency(_totalPurchases), Colors.greenAccent)),
+                  const SizedBox(width: 6),
+                  Expanded(child: _buildSummaryBox('إجمالي الدفعات', _formatCurrency(_totalSettlements), Colors.redAccent)),
+                  const SizedBox(width: 6),
+                  Expanded(child: _buildSummaryBox('المتبقي للمورد', _formatCurrency(_supplierRemaining), _supplierRemaining >= 0 ? Colors.cyanAccent : Colors.orangeAccent)),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: SingleChildScrollView(
+                    child: DataTable(
+                      headingRowColor: MaterialStateProperty.all(Colors.white10),
+                      columns: const [
+                        DataColumn(label: Text('التاريخ', style: TextStyle(color: Colors.cyanAccent))),
+                        DataColumn(label: Text('الإذن', style: TextStyle(color: Colors.cyanAccent))),
+                        DataColumn(label: Text('المورد', style: TextStyle(color: Colors.cyanAccent))),
+                        DataColumn(label: Text('الكود', style: TextStyle(color: Colors.cyanAccent))),
+                        DataColumn(label: Text('الصنف', style: TextStyle(color: Colors.cyanAccent))),
+                        DataColumn(label: Text('الكمية', style: TextStyle(color: Colors.cyanAccent))),
+                        DataColumn(label: Text('السعر', style: TextStyle(color: Colors.greenAccent))),
+                        DataColumn(label: Text('الإجمالي', style: TextStyle(color: Colors.greenAccent))),
+                      ],
+                      rows: data.map((row) => DataRow(cells: [
+                        DataCell(Text(row['التاريخ'].toString(), style: const TextStyle(color: Colors.white70))),
+                        DataCell(Text(row['رقم الإذن'].toString(), style: const TextStyle(color: Colors.white70))),
+                        DataCell(Text(row['المورد'].toString(), style: const TextStyle(color: Colors.white))),
+                        DataCell(Text(row['الكود'].toString(), style: const TextStyle(color: Colors.white70))),
+                        DataCell(Text(row['الصنف'].toString(), style: const TextStyle(color: Colors.white))),
+                        DataCell(Text(row['الكمية'].toString(), style: const TextStyle(color: Colors.white70))),
+                        DataCell(Text(_formatCurrency(_toDouble(row['السعر'])), style: const TextStyle(color: Colors.greenAccent))),
+                        DataCell(Text(_formatCurrency(_toDouble(row['الإجمالي'])), style: const TextStyle(color: Colors.greenAccent))),
+                      ])).toList(),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          if (PermissionsService().canExportSupplier)
+            TextButton.icon(
+              onPressed: () => _exportSupplierItemReport(pdf: false),
+              icon: const Icon(Icons.download, color: Colors.blueAccent),
+              label: const Text('Excel', style: TextStyle(color: Colors.blueAccent)),
+            ),
+          if (PermissionsService().canExportSupplier)
+            TextButton.icon(
+              onPressed: () => _exportSupplierItemReport(pdf: true),
+              icon: const Icon(Icons.picture_as_pdf, color: Colors.redAccent),
+              label: const Text('PDF', style: TextStyle(color: Colors.redAccent)),
+            ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إغلاق', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ==========================================================
   // SnackBar
   // ==========================================================
 
@@ -702,6 +867,28 @@ class _SupplierHistoryPageState extends State<SupplierHistoryPage> {
               icon: const Icon(Icons.picture_as_pdf, color: Colors.redAccent),
               onPressed: _exportPDF,
               tooltip: 'تصدير PDF',
+            ),
+          if (!_showDetails && PermissionsService().canAddSupplierTransaction)
+            IconButton(
+              icon: const Icon(Icons.assignment_return, color: Colors.redAccent),
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (c) => SupplierPage(
+                    companyCode: widget.companyCode,
+                    selectedBranchCode: widget.selectedBranchCode,
+                    userName: widget.userName,
+                    startAsReturn: true,
+                  ),
+                ),
+              ).then((_) => _loadData()),
+              tooltip: 'فتح مرتجع',
+            ),
+          if (!_showDetails)
+            IconButton(
+              icon: const Icon(Icons.summarize, color: Colors.cyanAccent),
+              onPressed: _showSupplierItemReport,
+              tooltip: 'تقرير تفصيلي',
             ),
           if (!_showDetails)
             IconButton(
@@ -1397,7 +1584,7 @@ class _SupplierHistoryPageState extends State<SupplierHistoryPage> {
                         ),
                       ),
                       Text(
-                        t.items.fold<double>(0.0, (sum, i) => sum + i.quantity).toStringAsFixed(0),
+                        NumberFormat('0.########', 'en_US').format(t.items.fold<double>(0.0, (sum, i) => sum + i.quantity)),
                         style: const TextStyle(
                           color: Colors.cyanAccent,
                           fontSize: 16,
@@ -1471,7 +1658,7 @@ class _SupplierHistoryPageState extends State<SupplierHistoryPage> {
                 _tableCell('${index + 1}', 30, Colors.white54),
                 _tableCell(item.code, colWidth, Colors.white70),
                 _tableCell(item.name, nameWidth, Colors.white),
-                _tableCell(item.quantity.toStringAsFixed(0), colWidth, Colors.white70),
+                _tableCell(NumberFormat('0.########', 'en_US').format(item.quantity), colWidth, Colors.white70),
                 _tableCell(_formatCurrency(item.price), colWidth, Colors.greenAccent),
                 _tableCell(item.discountRate.toStringAsFixed(1), colWidth, Colors.amber),
                 _tableCell(_formatCurrency(item.discountAmount), colWidth, Colors.amber),
@@ -1539,7 +1726,7 @@ class _SupplierHistoryPageState extends State<SupplierHistoryPage> {
                 Expanded(flex: 1, child: _tableDesktopText('${index + 1}', Colors.white54)),
                 Expanded(flex: 1, child: _tableDesktopText(item.code, Colors.white70)),
                 Expanded(flex: 2, child: _tableDesktopText(item.name, Colors.white)),
-                Expanded(flex: 1, child: _tableDesktopText(item.quantity.toStringAsFixed(0), Colors.white70)),
+                Expanded(flex: 1, child: _tableDesktopText(NumberFormat('0.########', 'en_US').format(item.quantity), Colors.white70)),
                 Expanded(flex: 1, child: _tableDesktopText(_formatCurrency(item.price), Colors.greenAccent)),
                 Expanded(flex: 1, child: _tableDesktopText(item.discountRate.toStringAsFixed(1), Colors.amber)),
                 Expanded(flex: 1, child: _tableDesktopText(_formatCurrency(item.discountAmount), Colors.amber)),

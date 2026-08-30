@@ -11,12 +11,14 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:universal_html/html.dart' as html;
 import '../../views/widgets/glass_card.dart';
 import '../../services/permissions_service.dart';
+import '../../services/export_service.dart';
 
 class ReportsPage extends StatefulWidget {
   final String companyCode;
   final String? selectedBranchCode;
+  final int initialReportType;
 
-  const ReportsPage({super.key, required this.companyCode, this.selectedBranchCode});
+  const ReportsPage({super.key, required this.companyCode, this.selectedBranchCode, this.initialReportType = 1});
 
   @override
   State<ReportsPage> createState() => _ReportsPageState();
@@ -26,14 +28,41 @@ class _ReportsPageState extends State<ReportsPage> {
   DateTime _fromDate = DateTime(DateTime.now().year, DateTime.now().month, 1);
   DateTime _toDate = DateTime.now();
   int _selectedReportType = 1;
+  Map<String, dynamic> _extendedSummary = {};
+  List<Map<String, dynamic>> _extendedSupplierBalances = [];
+  double _extendedInventoryValue = 0.0;
+
+  // متغيرات جديدة للتقرير الموسع
+  Map<String, double> _incomeDetails = {};
+  Map<String, double> _expenseDetails = {};
+  // ignore: unused_field
+  double _previousCash = 0.0;
+  double _expensesWithoutGoods = 0.0;
+  double _expensesWithoutGoodsAndProfit = 0.0;
 
   @override
   void initState() {
     super.initState();
+    _selectedReportType = widget.initialReportType;
     _setDefaultReportType();
+    _calculateExtendedReport();
   }
 
   void _setDefaultReportType() {
+    // إذا كان النوع الحالي هو 3 (التقرير الموسع)، يجب أن يكون المستخدم لديه صلاحية canViewExtendedReport
+    if (_selectedReportType == 3 && !PermissionsService().canViewExtendedReport) {
+      // إذا لم تكن الصلاحية موجودة، انتقل إلى تقرير آخر
+      if (PermissionsService().canViewReportsSales) {
+        _selectedReportType = 1;
+      } else if (PermissionsService().canViewReportsPeriod) {
+        _selectedReportType = 2;
+      } else {
+        _selectedReportType = 1; // سيتم عرض رسالة
+      }
+      return;
+    }
+    // سلوك سابق
+    if (_selectedReportType == 3 && PermissionsService().canViewReportsPeriod) return;
     if (PermissionsService().canViewReportsSales) {
       _selectedReportType = 1;
     } else if (PermissionsService().canViewReportsPeriod) {
@@ -75,10 +104,68 @@ class _ReportsPageState extends State<ReportsPage> {
     }).map((e) => e as Map<dynamic, dynamic>).toList();
   }
 
+      // دالة محسنة للحصول على اسم الشركة (تبحث في عدة مفاتيح محتملة)
+    String _getCompanyName() {
+    final Box codingBox = Hive.box('coding_box');
+    
+    // 1- البحث في الخريطة المخصصة للشركة (المفتاح: "${code}_company")
+    final companyData = codingBox.get("${widget.companyCode}_companyName");
+    if (companyData is Map) {
+      final name = companyData['name']?.toString() ??
+                   companyData['company_name']?.toString() ??
+                   companyData['companyName']?.toString();
+      if (name != null && name.isNotEmpty) return name;
+    }
+    
+    // 2- البحث عن مفتاح مباشر يحوي الاسم (مثل "code_name" أو "code_companyName")
+    final directName = codingBox.get("${widget.companyCode}_name")?.toString() ??
+                       codingBox.get("${widget.companyCode}_companyName")?.toString();
+    if (directName != null && directName.isNotEmpty) return directName;
+    
+    // 3- البحث في قائمة الشركات العامة (المفتاح "companies")
+    final companiesList = codingBox.get('companies');
+    if (companiesList is List) {
+      for (var company in companiesList) {
+        if (company is Map) {
+          final code = company['code']?.toString();
+          if (code == widget.companyCode) {
+            final name = company['name']?.toString() ??
+                         company['company_name']?.toString() ??
+                         company['companyName']?.toString();
+            if (name != null && name.isNotEmpty) return name;
+          }
+        }
+      }
+    }
+    
+    // 4- البحث في قائمة الشركات (المفتاح "company_list")
+    final companyList2 = codingBox.get('company_list');
+    if (companyList2 is List) {
+      for (var company in companyList2) {
+        if (company is Map) {
+          final code = company['code']?.toString();
+          if (code == widget.companyCode) {
+            final name = company['name']?.toString() ??
+                         company['company_name']?.toString() ??
+                         company['companyName']?.toString();
+            if (name != null && name.isNotEmpty) return name;
+          }
+        }
+      }
+    }
+    
+    // 5- إذا لم يوجد، نرجع الكود نفسه (أو يمكن إرجاع "شركة غير معروفة")
+    return widget.companyCode;
+  }
+
   // ===================== تصدير EXCEL =====================
   Future<void> _shareAsExcel() async {
     if (!PermissionsService().canShareReports) {
       _showErrorSnackBar("ليس لديك صلاحية لتصدير التقارير");
+      return;
+    }
+    if (_selectedReportType == 3) {
+      await _exportExtendedExcel();
       return;
     }
     final transactions = _getFilteredTransactions();
@@ -143,6 +230,7 @@ class _ReportsPageState extends State<ReportsPage> {
           sheetObject.appendRow([excel_lib.TextCellValue(cat), excel_lib.DoubleCellValue(categoryTotals[cat] ?? 0.0)]);
         }
         sheetObject.appendRow([excel_lib.TextCellValue("الإجمالي الكلي"), excel_lib.DoubleCellValue(grandTotal)]);
+        sheetObject.appendRow([excel_lib.TextCellValue("المتوسط اليومي"), excel_lib.DoubleCellValue(dailyData.isEmpty ? 0 : grandTotal / dailyData.length)]);
       } else if (_selectedReportType == 2) {
         // تقرير الفترة
         double totalIncome = 0, totalExpenses = 0, totalGoods = 0;
@@ -217,6 +305,10 @@ class _ReportsPageState extends State<ReportsPage> {
       _showErrorSnackBar("ليس لديك صلاحية لتصدير التقارير");
       return;
     }
+    if (_selectedReportType == 3) {
+      await _exportExtendedPdf();
+      return;
+    }
     final transactions = _getFilteredTransactions();
     if (transactions.isEmpty) return _showEmptySheetRow();
 
@@ -281,6 +373,83 @@ class _ReportsPageState extends State<ReportsPage> {
     } catch (e) {
       _showErrorSnackBar("تأكد من إعداد ملف الخط بشكل صحيح: $e");
     }
+  }
+
+  // ===== دوال التصدير للتقرير الموسع (المعدلة) =====
+  Future<void> _exportExtendedExcel() async {
+    if (_extendedSummary.isEmpty) await _calculateExtendedReport();
+    
+    // بناء قائمة التفاصيل للجدول (الإيرادات والمصروفات)
+    List<Map<String, dynamic>> detailRows = [];
+    
+    // تفاصيل الإيرادات
+    detailRows.add({'البند': '--- الإيرادات ---', 'القيمة': ''});
+    _incomeDetails.forEach((key, value) {
+      detailRows.add({'البند': key, 'القيمة': value});
+    });
+    
+    // تفاصيل المصروفات
+    detailRows.add({'البند': '--- المصروفات ---', 'القيمة': ''});
+    _expenseDetails.forEach((key, value) {
+      detailRows.add({'البند': key, 'القيمة': value});
+    });
+    
+    // بناء خريطة الإجماليات مع إضافة السطور الإضافية
+    Map<String, dynamic> summaryMap = {
+      ..._extendedSummary,
+      'المصروفات بدون بضاعة': _expensesWithoutGoods,
+      'المصروفات بدون بضاعة وأرباح': _expensesWithoutGoodsAndProfit,
+    };
+    
+    await ExportService.exportToExcel(
+      detailRows,
+      'التقرير المالي الموسع',
+      const ['البند', 'القيمة'],
+      const ['البند', 'القيمة'],
+      companyName: _getCompanyName(), // الآن يعرض اسم الشركة بدلاً من الكود
+      branchName: _getBranchName(widget.selectedBranchCode),
+      period: 'من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}',
+      summary: summaryMap,
+    );
+  }
+
+  Future<void> _exportExtendedPdf() async {
+    if (_extendedSummary.isEmpty) await _calculateExtendedReport();
+    
+    // بناء قائمة التفاصيل للجدول (الإيرادات والمصروفات)
+    List<Map<String, dynamic>> detailRows = [];
+    
+    // تفاصيل الإيرادات
+    detailRows.add({'البند': '--- الإيرادات ---', 'القيمة': ''});
+    _incomeDetails.forEach((key, value) {
+      detailRows.add({'البند': key, 'القيمة': value});
+    });
+    
+    // تفاصيل المصروفات
+    detailRows.add({'البند': '--- المصروفات ---', 'القيمة': ''});
+    _expenseDetails.forEach((key, value) {
+      detailRows.add({'البند': key, 'القيمة': value});
+    });
+    
+    // بناء خريطة الإجماليات مع إضافة السطور الإضافية
+    Map<String, dynamic> summaryMap = {
+      ..._extendedSummary,
+      'المصروفات بدون بضاعة': _expensesWithoutGoods,
+      'المصروفات بدون بضاعة وأرباح': _expensesWithoutGoodsAndProfit,
+    };
+    
+    await ExportService.exportToPDF(
+      data: detailRows,
+      title: 'التقرير المالي الموسع',
+      headers: const ['البند', 'القيمة'],
+      keys: const ['البند', 'القيمة'],
+      companyName: _getCompanyName(), // الآن يعرض اسم الشركة بدلاً من الكود
+      branchName: _getBranchName(widget.selectedBranchCode),
+      period: 'من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}',
+      summary: summaryMap,
+      totalAmount: _extendedSummary['صافي الجرد الحالي'] as double?,
+      date: DateFormat('yyyy-MM-dd').format(DateTime.now()),
+    );
   }
 
   void _showShareBottomSheet() {
@@ -351,8 +520,7 @@ class _ReportsPageState extends State<ReportsPage> {
       ),
     );
   }
-
-  Future<void> _selectDate(BuildContext context, bool isFrom) async {
+    Future<void> _selectDate(BuildContext context, bool isFrom) async {
     final DateTime? picked = await showDatePicker(
       context: context,
       initialDate: isFrom ? _fromDate : _toDate,
@@ -382,6 +550,10 @@ class _ReportsPageState extends State<ReportsPage> {
           if (_fromDate.isAfter(_toDate)) _fromDate = _toDate;
         }
       });
+      // إعادة حساب التقرير الموسع عند تغيير التاريخ
+      if (_selectedReportType == 3) {
+        _calculateExtendedReport();
+      }
     }
   }
 
@@ -468,9 +640,11 @@ class _ReportsPageState extends State<ReportsPage> {
                               style: TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 16),
                             ),
                           )
-                        : (_selectedReportType == 1
+                        : _selectedReportType == 1
                             ? _buildSalesReport()
-                            : _buildIncomeExpenseReport()),
+                            : _selectedReportType == 2
+                                ? _buildIncomeExpenseReport()
+                                : _buildExtendedReport(),
                   ),
                 ),
               ],
@@ -498,7 +672,8 @@ class _ReportsPageState extends State<ReportsPage> {
     List<String> sortedDates = dailyData.keys.toList()..sort();
     List<String> columns = allCategories.toList()..sort();
 
-    return pw.Table(
+    return pw.Column(children: [
+      pw.Table(
       border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
       children: [
         pw.TableRow(
@@ -517,7 +692,11 @@ class _ReportsPageState extends State<ReportsPage> {
           ]
         ))
       ]
-    );
+      ),
+      pw.SizedBox(height: 8),
+      _pdfSummaryRow("الإجمالي الكلي:", dailyData.values.fold<double>(0, (sum, v) => sum + (v['total'] ?? 0)), PdfColors.amber, font, isBold: true),
+      _pdfSummaryRow("المتوسط اليومي:", dailyData.isEmpty ? 0 : dailyData.values.fold<double>(0, (sum, v) => sum + (v['total'] ?? 0)) / dailyData.length, PdfColors.cyan, font),
+    ]);
   }
 
   pw.Widget _buildPdfFinanceReportStructure(List<Map<dynamic, dynamic>> transactions, pw.Font font, PdfColor primaryColor, PdfColor accentColor) {
@@ -595,47 +774,37 @@ class _ReportsPageState extends State<ReportsPage> {
   }
 
   Widget _buildReportTypeSelector() {
-    bool canSales = PermissionsService().canViewReportsSales;
-    bool canPeriod = PermissionsService().canViewReportsPeriod;
-
-    if (!canSales && !canPeriod) {
+    final buttons = <Widget>[];
+    if (PermissionsService().canViewReportsSales) {
+      buttons.add(_reportButton(1, 'المبيعات'));
+    }
+    if (PermissionsService().canViewReportsPeriod) {
+      buttons.add(_reportButton(2, 'تقرير الفترة'));
+    }
+    // إضافة زر التقرير الموسع فقط إذا كانت الصلاحية موجودة
+    if (PermissionsService().canViewExtendedReport && PermissionsService().canViewReportsPeriod) {
+      buttons.add(_reportButton(3, 'صافي الجرد الحالي'));
+    }
+    if (buttons.isEmpty) {
       return const Center(
         child: Text(
           'ليس لديك صلاحية لعرض أي تقرير',
-          style: TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 16),
+          style: TextStyle(color: Colors.white70, fontFamily: 'Cairo'),
         ),
       );
     }
-
-    return Row(
-      children: [
-        if (canSales)
-          Expanded(
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _selectedReportType == 1 ? Theme.of(context).primaryColor : Colors.white.withOpacity(0.1),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-              onPressed: () => setState(() => _selectedReportType = 1),
-              child: const Text("تقرير المبيعات (وارد)", style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
-            ),
-          ),
-        if (canPeriod)
-          Expanded(
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _selectedReportType == 2 ? Theme.of(context).primaryColor : Colors.white.withOpacity(0.1),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-              onPressed: () => setState(() => _selectedReportType = 2),
-              child: const Text("تقرير فترة", style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
-            ),
-          ),
-      ],
-    );
+    return Wrap(spacing: 8, runSpacing: 8, children: buttons);
   }
+
+  Widget _reportButton(int type, String label) => ElevatedButton(
+    style: ElevatedButton.styleFrom(
+      backgroundColor: _selectedReportType == type ? Theme.of(context).primaryColor : Colors.white.withOpacity(0.1),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+    ),
+    onPressed: () { setState(() => _selectedReportType = type); if (type == 3) _calculateExtendedReport(); },
+    child: Text(label, style: const TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
+  );
 
   Widget _buildSalesReport() {
     final transactions = _getFilteredTransactions();
@@ -708,6 +877,7 @@ class _ReportsPageState extends State<ReportsPage> {
               ),
               const SizedBox(height: 5),
               Text("الإجمالي الكلي: ${grandTotal.toStringAsFixed(2)}", style: const TextStyle(color: Colors.amber, fontSize: 16, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+              Text("المتوسط اليومي: ${(grandTotal / sortedDates.length).toStringAsFixed(2)}", style: const TextStyle(color: Colors.cyanAccent, fontSize: 15, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
             ],
           ),
         ),
@@ -767,6 +937,268 @@ class _ReportsPageState extends State<ReportsPage> {
     );
   }
 
+  Future<void> _calculateExtendedReport() async {
+    final box = Hive.box('daily_transactions_box');
+    final from = DateTime(_fromDate.year, _fromDate.month, _fromDate.day);
+    final to = DateTime(_toDate.year, _toDate.month, _toDate.day);
+    double income = 0, expenses = 0, goods = 0, previousIncome = 0, previousExpenses = 0;
+    final expenseByCategory = <String, double>{};
+    final incomeByTreasury = <String, double>{};
+
+    for (final raw in box.values) {
+      if (raw is! Map || raw['company_code']?.toString() != widget.companyCode || raw['category'] == 'transfer_hidden') continue;
+      if (widget.selectedBranchCode != null && widget.selectedBranchCode != 'all' && raw['branch_code']?.toString() != widget.selectedBranchCode) continue;
+      final d = DateTime.tryParse(raw['date']?.toString().substring(0, 10) ?? '');
+      if (d == null || d.isAfter(to)) continue;
+      final amount = double.tryParse(raw['amount']?.toString() ?? '0') ?? 0;
+      if (d.isBefore(from)) {
+        if (raw['type'] == 'وارد') previousIncome += amount;
+        if (raw['type'] == 'صادر') previousExpenses += amount;
+        continue;
+      }
+      if (raw['type'] == 'وارد') {
+        income += amount;
+        final treasury = raw['treasury']?.toString() ?? 'غير محدد';
+        incomeByTreasury[treasury] = (incomeByTreasury[treasury] ?? 0) + amount;
+      }
+      if (raw['type'] == 'صادر') {
+        expenses += amount;
+        final cat = raw['category']?.toString() ?? 'عام';
+        expenseByCategory[cat] = (expenseByCategory[cat] ?? 0) + amount;
+        if (cat == 'بضاعة') goods += amount;
+      }
+    }
+
+    final currentCash = income - expenses;
+    final previousCash = previousIncome - previousExpenses;
+    _extendedSupplierBalances = await _getExtendedSupplierBalances(to);
+    _extendedInventoryValue = _getLastInventoryWholesaleValue(to);
+    final previousSupplierBalances = await _getExtendedSupplierBalances(from.subtract(const Duration(days: 1)));
+    final supplierTotal = _extendedSupplierBalances.fold<double>(0, (s, e) => s + (e['الرصيد'] as double));
+    final previousSupplierTotal = previousSupplierBalances.fold<double>(0, (s, e) => s + (e['الرصيد'] as double));
+    final customerTotal = 0.0;
+    final totalDebit = _extendedInventoryValue + currentCash + customerTotal;
+    final totalCredit = supplierTotal;
+    final currentNet = totalDebit - totalCredit;
+    final previousInventoryValue = _getLastInventoryWholesaleValue(from.subtract(const Duration(days: 1)));
+    final previousNet = previousInventoryValue + previousCash - previousSupplierTotal;
+    final netProfit = currentNet - previousNet;
+    final profitDistributed = expenseByCategory['ارباح'] ?? expenseByCategory['أرباح'] ?? 0.0;
+    final remainingAfterProfit = netProfit - profitDistributed;
+
+    // حساب المصروفات بدون بضاعة وبدون بضاعة وأرباح
+    final expensesWithoutGoods = expenses - goods;
+    final expensesWithoutGoodsAndProfit = expensesWithoutGoods - profitDistributed;
+
+    // نسبة الربح: (صافي الربح + المصروفات بدون بضاعة وأرباح) / إجمالي الإيرادات
+    final profitRatio = income == 0 ? 0.0 : ((netProfit + expensesWithoutGoodsAndProfit) / income) * 100;
+
+    if (!mounted) return;
+    setState(() {
+      // تخزين التفاصيل للعرض
+      _incomeDetails = {
+        'الرصيد السابق': previousCash,
+        ...incomeByTreasury,
+      };
+      _expenseDetails = expenseByCategory;
+      _previousCash = previousCash;
+      _expensesWithoutGoods = expensesWithoutGoods;
+      _expensesWithoutGoodsAndProfit = expensesWithoutGoodsAndProfit;
+
+      _extendedSummary = {
+        'إجمالي الإيراد': income,
+        'المصروفات': expenses,
+        'الرصيد المتبقي': currentCash,
+        'الجرد الفعلي بسعر الجملة': _extendedInventoryValue,
+        'أرصدة العملاء غير المحصلة': customerTotal,
+        'إجمالي ملك الشركة': totalDebit,
+        'إجمالي ما على الشركة': totalCredit,
+        'صافي الجرد الحالي': currentNet,
+        'صافي الجرد السابق': previousNet,
+        'الفرق / صافي الأرباح': netProfit,
+        'المتبقي بعد توزيع الأرباح': remainingAfterProfit,
+        'نسبة الربح': profitRatio,
+      };
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> _getExtendedSupplierBalances(DateTime to) async {
+    final coding = Hive.box('coding_box').get('${widget.companyCode}_suppliers', defaultValue: []);
+    final names = <String>{};
+    if (coding is List) {
+      for (final x in coding.whereType<Map>()) {
+        final n = x['name']?.toString() ?? '';
+        if (n.isNotEmpty) names.add(n);
+      }
+    }
+    final result = <Map<String, dynamic>>[];
+    final purchases = Hive.box('supplier_box');
+    final settlements = Hive.box('supplier_settlement_box');
+    final totals = <String, double>{};
+    for (final rawList in purchases.values) {
+      if (rawList is! List) continue;
+      for (final raw in rawList.whereType<Map>()) {
+        if (raw['is_deleted'] == true || raw['company_code']?.toString() != widget.companyCode) continue;
+        if (widget.selectedBranchCode != null && widget.selectedBranchCode != 'all' && raw['branch_code']?.toString() != widget.selectedBranchCode) continue;
+        final d = DateTime.tryParse(raw['date']?.toString() ?? '');
+        if (d == null || d.isAfter(to)) continue;
+        final n = raw['supplier_name']?.toString() ?? 'غير محدد';
+        names.add(n);
+        totals[n] = (totals[n] ?? 0) + (double.tryParse(raw['total_amount']?.toString() ?? '0') ?? 0);
+      }
+    }
+    for (final rawList in settlements.values) {
+      if (rawList is! List) continue;
+      for (final raw in rawList.whereType<Map>()) {
+        if (raw['is_deleted'] == true || raw['company_code']?.toString() != widget.companyCode) continue;
+        if (widget.selectedBranchCode != null && widget.selectedBranchCode != 'all' && raw['branch_code']?.toString() != widget.selectedBranchCode) continue;
+        final d = DateTime.tryParse(raw['date']?.toString() ?? '');
+        if (d == null || d.isAfter(to)) continue;
+        final n = raw['supplier_name']?.toString() ?? 'غير محدد';
+        totals[n] = (totals[n] ?? 0) - (double.tryParse(raw['amount']?.toString() ?? '0') ?? 0);
+      }
+    }
+    for (final n in names) result.add({'المورد': n, 'الرصيد': totals[n] ?? 0.0});
+    result.sort((a,b) => (b['الرصيد'] as double).compareTo(a['الرصيد'] as double));
+    return result;
+  }
+
+  double _getLastInventoryWholesaleValue(DateTime to) {
+    final box = Hive.box('inventory_box');
+    DateTime? last;
+    double total = 0;
+    for (final rawList in box.values) {
+      if (rawList is! List) continue;
+      for (final raw in rawList.whereType<Map>()) {
+        if (raw['is_deleted'] == true || raw['company_code']?.toString() != widget.companyCode) continue;
+        if (widget.selectedBranchCode != null && widget.selectedBranchCode != 'all' && raw['branch_code']?.toString() != widget.selectedBranchCode) continue;
+        final d = DateTime.tryParse(raw['date']?.toString() ?? '');
+        if (d == null || d.isAfter(to)) continue;
+        if (last == null || d.isAfter(last)) {
+          last = d; total = 0;
+          final items = raw['items'];
+          if (items is List) for (final item in items.whereType<Map>()) total += (double.tryParse(item['wholesaleValue']?.toString() ?? item['wholesale_value']?.toString() ?? '0') ?? ((double.tryParse(item['quantity']?.toString() ?? '0') ?? 0) * (double.tryParse(item['wholesalePrice']?.toString() ?? item['wholesale_price']?.toString() ?? '0') ?? 0)));
+        }
+      }
+    }
+    return total;
+  }
+
+  Widget _buildExtendedReport() {
+    if (_extendedSummary.isEmpty) return const Center(child: CircularProgressIndicator(color: Colors.white));
+
+    return SingleChildScrollView(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        // ===== قسم تفاصيل الإيرادات (جديد) =====
+        _buildDetailSection('تفاصيل الإيرادات (الواردات)', _incomeDetails, Colors.green),
+        const SizedBox(height: 10),
+
+        // ===== قسم تفاصيل المصروفات (جديد) =====
+        _buildDetailSection('تفاصيل المصروفات', _expenseDetails, Colors.redAccent),
+        const SizedBox(height: 10),
+
+        // ===== الأقسام الأصلية (بدون تغيير) =====
+        _buildSummarySection('الإجمالي المالي', {
+          'الإيراد': _extendedSummary['إجمالي الإيراد'] as double,
+          'المصروفات': _extendedSummary['المصروفات'] as double,
+          'الرصيد المتبقي': _extendedSummary['الرصيد المتبقي'] as double,
+        }, _extendedSummary['إجمالي الإيراد'] as double, Colors.green),
+        const SizedBox(height: 10),
+
+        _buildSummarySection('الأصول المملوكة للشركة', {
+          'الجرد الفعلي بسعر الجملة': _extendedSummary['الجرد الفعلي بسعر الجملة'] as double,
+          'رصيد الخزينة': _extendedSummary['الرصيد المتبقي'] as double,
+          'أرصدة العملاء غير المحصلة': _extendedSummary['أرصدة العملاء غير المحصلة'] as double,
+          'الإجمالي': _extendedSummary['إجمالي ملك الشركة'] as double,
+        }, _extendedSummary['إجمالي ملك الشركة'] as double, Colors.cyanAccent),
+        const SizedBox(height: 10),
+
+        _buildSupplierBalanceSection(),
+        const SizedBox(height: 10),
+
+        // ===== الملخص النهائي (مع إضافة السطور الجديدة) =====
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(.05),
+            borderRadius: BorderRadius.circular(15),
+            border: Border.all(color: Colors.white24),
+          ),
+          child: Column(children: [
+            _summaryRow('إجمالي المدين / ملك الشركة:', _extendedSummary['إجمالي ملك الشركة'] as double, Colors.cyanAccent),
+            const Divider(color: Colors.white24),
+            _summaryRow('إجمالي الدائن / على الشركة:', _extendedSummary['إجمالي ما على الشركة'] as double, Colors.redAccent),
+            const Divider(color: Colors.white24),
+            _summaryRow('صافي الجرد الحالي:', _extendedSummary['صافي الجرد الحالي'] as double, Colors.amber, isBold: true),
+            _summaryRow('صافي الجرد السابق:', _extendedSummary['صافي الجرد السابق'] as double, Colors.white70),
+            _summaryRow('الفرق / صافي الأرباح:', _extendedSummary['الفرق / صافي الأرباح'] as double, Colors.greenAccent, isBold: true),
+            _summaryRow('المتبقي بعد توزيع الأرباح:', _extendedSummary['المتبقي بعد توزيع الأرباح'] as double, Colors.cyanAccent),
+
+            // السطور الجديدة (مضافة)
+            const Divider(color: Colors.white24),
+            _summaryRow('إجمالي المصروفات (بدون بضاعة):', _expensesWithoutGoods, Colors.orangeAccent),
+            _summaryRow('إجمالي المصروفات (بدون بضاعة وأرباح):', _expensesWithoutGoodsAndProfit, Colors.orangeAccent.shade100),
+            _summaryRow('نسبة الربح:', _extendedSummary['نسبة الربح'] as double, Colors.amber, isBold: true, suffix: '%'),
+          ]),
+        ),
+      ]),
+    );
+  }
+
+  Widget _buildSupplierBalanceSection() {
+    final total = _extendedSupplierBalances.fold<double>(0, (s, e) => s + (e['الرصيد'] as double));
+    return Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.white.withOpacity(.03), borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.white10)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Text('مديونيات الموردين', style: TextStyle(color: Colors.redAccent, fontSize: 16, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+      const Divider(color: Colors.white10),
+      ..._extendedSupplierBalances.map((e) => Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+        Text(e['المورد'].toString(), style: const TextStyle(color: Colors.white70, fontFamily: 'Cairo')),
+        Text((e['الرصيد'] as double).toStringAsFixed(2), style: TextStyle(color: (e['الرصيد'] as double) >= 0 ? Colors.redAccent : Colors.greenAccent, fontFamily: 'Cairo')),
+      ]))),
+      const Divider(color: Colors.white10),
+      _summaryRow('الإجمالي', total, Colors.redAccent, isBold: true),
+    ]));
+  }
+
+  // قسم عرض التفاصيل (جديد للإيرادات والمصروفات)
+  Widget _buildDetailSection(String title, Map<String, double> items, Color titleColor) {
+    if (items.isEmpty) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.03),
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: Colors.white.withOpacity(0.1)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: TextStyle(color: titleColor, fontSize: 16, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+          const Divider(color: Colors.white10),
+          ...items.entries.map((e) => Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(e.key, style: const TextStyle(color: Colors.white70, fontFamily: 'Cairo')),
+                Text(e.value.toStringAsFixed(2), style: const TextStyle(color: Colors.white, fontFamily: 'Cairo')),
+              ],
+            ),
+          )),
+          const Divider(color: Colors.white10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text("الإجمالي", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+              Text(items.values.fold(0.0, (sum, v) => sum + v).toStringAsFixed(2),
+                  style: TextStyle(color: titleColor, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // دالة _buildSummarySection (موجودة سابقاً)
   Widget _buildSummarySection(String title, Map<String, double> items, double total, Color titleColor) {
     return Container(
       padding: const EdgeInsets.all(12),
@@ -803,12 +1235,13 @@ class _ReportsPageState extends State<ReportsPage> {
     );
   }
 
-  Widget _summaryRow(String label, double amount, Color color, {bool isBold = false}) {
+  // دالة _summaryRow مع إضافة معامل suffix
+  Widget _summaryRow(String label, double amount, Color color, {bool isBold = false, String suffix = ''}) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text(label, style: TextStyle(color: Colors.white, fontSize: isBold ? 16 : 14, fontWeight: isBold ? FontWeight.bold : FontWeight.normal, fontFamily: 'Cairo')),
-        Text(amount.toStringAsFixed(2), style: TextStyle(color: color, fontSize: isBold ? 18 : 16, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+        Text('${amount.toStringAsFixed(2)}$suffix', style: TextStyle(color: color, fontSize: isBold ? 18 : 16, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
       ],
     );
   }

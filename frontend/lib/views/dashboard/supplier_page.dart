@@ -17,6 +17,7 @@ class SupplierPage extends StatefulWidget {
   final String? selectedBranchCode;
   final String? userName;
   final SupplierTransactionModel? editItem;
+  final bool startAsReturn;
 
   const SupplierPage({
     super.key,
@@ -24,6 +25,7 @@ class SupplierPage extends StatefulWidget {
     this.selectedBranchCode,
     this.userName,
     this.editItem,
+    this.startAsReturn = false,
   });
 
   @override
@@ -45,6 +47,7 @@ class _SupplierPageState extends State<SupplierPage> {
 
   // إضافة البضاعة للمخزن
   bool _isAddToStore = false;
+  bool _isReturn = false;
 
   // تحديث / إضافة الصنف في التكويد
   bool _isAddToCoding = false;
@@ -114,6 +117,8 @@ class _SupplierPageState extends State<SupplierPage> {
       _onDiscountAmountChanged,
     );
 
+    _isReturn = widget.startAsReturn;
+    if (_isReturn) _isAddToStore = true;
     _loadDropdowns();
   }
 
@@ -362,6 +367,9 @@ class _SupplierPageState extends State<SupplierPage> {
 
       _isAddToStore =
           model.isAddToStore;
+      _isReturn =
+          model.paymentMethod == 'مرتجع' ||
+          model.totalAmount < 0;
 
       _isAddToCoding =
           model.isAddToCoding;
@@ -375,7 +383,7 @@ class _SupplierPageState extends State<SupplierPage> {
           (item) => SupplierItem(
             code: item.code,
             name: item.name,
-            quantity: item.quantity,
+            quantity: _isReturn ? item.quantity.abs() : item.quantity,
             price: item.price,
             type: item.type,
             discountRate: 0,
@@ -403,7 +411,7 @@ class _SupplierPageState extends State<SupplierPage> {
 
       _totalAmount = _items.fold(
         0.0,
-        (sum, item) => sum + item.total,
+        (sum, item) => sum + item.total.abs(),
       );
 
       _discountAmount = 0;
@@ -508,7 +516,7 @@ class _SupplierPageState extends State<SupplierPage> {
 
       setState(() {
         _supplierBalance =
-            balance.abs();
+            balance;
 
         _updateExpectedBalance();
       });
@@ -520,9 +528,14 @@ class _SupplierPageState extends State<SupplierPage> {
   }
 
   void _updateExpectedBalance() {
+    final oldAmount =
+        widget.editItem?.totalAmount ?? 0.0;
+
+    final currentAmount = _totalAmount - _discountAmount;
     _expectedBalance =
-        _supplierBalance +
-        (_totalAmount - _discountAmount);
+        _supplierBalance -
+        oldAmount +
+        (_isReturn ? -currentAmount : currentAmount);
 
     if (mounted) {
       setState(() {});
@@ -961,17 +974,20 @@ class _SupplierPageState extends State<SupplierPage> {
       return;
     }
 
-    final netTotal =
+    final normalNetTotal =
         _totalAmount -
         _discountAmount;
 
-    if (netTotal < 0) {
+    if (normalNetTotal < 0) {
       _showSnackBar(
         'الخصم لا يمكن أن يكون أكبر من إجمالي الفاتورة',
         Colors.orange,
       );
       return;
     }
+
+    final netTotal =
+        _isReturn ? -normalNetTotal : normalNetTotal;
 
     setState(() {
       _isSaving = true;
@@ -981,6 +997,9 @@ class _SupplierPageState extends State<SupplierPage> {
       for (final item in validItems) {
         item.discountRate = 0;
         item.discountAmount = 0;
+        if (_isReturn) {
+          item.quantity = -item.quantity.abs();
+        }
         item.total =
             item.quantity * item.price;
       }
@@ -1011,7 +1030,7 @@ class _SupplierPageState extends State<SupplierPage> {
             _selectedSupplier!,
 
         paymentMethod:
-            'آجل',
+            _isReturn ? 'مرتجع' : 'آجل',
 
         treasury:
             '',
@@ -1989,6 +2008,31 @@ class _SupplierPageState extends State<SupplierPage> {
   // إضافة للمخزن
   // ============================================================
 
+  Widget _buildReturnToggle() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text('مرتجع', style: TextStyle(color: _isReturn ? Colors.redAccent : Colors.white54, fontSize: 10, fontFamily: 'Cairo')),
+        Switch(
+          value: _isReturn,
+          onChanged: (value) {
+            setState(() {
+              _isReturn = value;
+              if (value) {
+                _isAddToStore = true;
+                _isAddToCoding = false;
+              }
+              _updateExpectedBalance();
+            });
+          },
+          activeColor: Colors.redAccent,
+          inactiveThumbColor: Colors.grey,
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+      ],
+    );
+  }
+
   Widget _buildAddToStoreToggle() {
     return Column(
       mainAxisSize:
@@ -2549,6 +2593,13 @@ class _SupplierPageState extends State<SupplierPage> {
                                                     flex:
                                                         1,
                                                     child:
+                                                        _buildReturnToggle(),
+                                                  ),
+                                                  const SizedBox(width: 6),
+                                                  Expanded(
+                                                    flex:
+                                                        1,
+                                                    child:
                                                         _buildAddToStoreToggle(),
                                                   ),
                                                   const SizedBox(
@@ -2625,6 +2676,13 @@ class _SupplierPageState extends State<SupplierPage> {
                                                 width:
                                                     10,
                                               ),
+                                              Expanded(
+                                                flex:
+                                                    1,
+                                                child:
+                                                    _buildReturnToggle(),
+                                              ),
+                                              const SizedBox(width: 8),
                                               Expanded(
                                                 flex:
                                                     1,

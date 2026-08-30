@@ -132,11 +132,6 @@ class SupplierService {
       }
     }
 
-    // لا نعرض رصيد سالب
-    if (balance < 0) {
-      return 0.0;
-    }
-
     return balance;
   }
 

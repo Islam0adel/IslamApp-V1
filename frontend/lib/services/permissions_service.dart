@@ -495,6 +495,21 @@ class PermissionsService {
         'تقرير المبيعات': false,
         'تقرير فترة': false,
         'مشاركة': false,
+
+        'تقرير التدفق النقدي': false,
+  'تحليل هيكل المصروفات': false,
+  'الربحية الصافية لكل فرع': false,
+  'تحليل حجم الفاتورة': false,
+  'تحليل الخزائن النقدية': false,
+  'الأصناف بطيئة الحركة': false,
+  'تحليل دقة الجرد': false,
+  'تقييم المخزون و ABC': false,
+  'تحليل أداء الموردين': false,
+  'تحليل العوائد والخصومات': false,
+  'تحليل الاتجاهات الموسمية': false,
+  'تحليل هامش الربح الفعلي': false,
+  'تحليل تجميع المنتجات': false,
+  'التقرير الموسع (صافي الجرد)': false,  // <--- هذا للتقرير الموسع
       },
 
       // ========================================================
@@ -814,6 +829,27 @@ class PermissionsService {
         'التقارير',
         'مشاركة',
       );
+
+  // ============================================================
+// التقارير التحليلية (Advanced)
+// ============================================================
+
+bool get canViewAdvancedReport1 => hasPermission('التقارير', 'تقرير التدفق النقدي');
+bool get canViewAdvancedReport2 => hasPermission('التقارير', 'تحليل هيكل المصروفات');
+bool get canViewAdvancedReport3 => hasPermission('التقارير', 'الربحية الصافية لكل فرع');
+bool get canViewAdvancedReport4 => hasPermission('التقارير', 'تحليل حجم الفاتورة');
+bool get canViewAdvancedReport5 => hasPermission('التقارير', 'تحليل الخزائن النقدية');
+bool get canViewAdvancedReport6 => hasPermission('التقارير', 'الأصناف بطيئة الحركة');
+bool get canViewAdvancedReport7 => hasPermission('التقارير', 'تحليل دقة الجرد');
+bool get canViewAdvancedReport8 => hasPermission('التقارير', 'تقييم المخزون و ABC');
+bool get canViewAdvancedReport9 => hasPermission('التقارير', 'تحليل أداء الموردين');
+bool get canViewAdvancedReport10 => hasPermission('التقارير', 'تحليل العوائد والخصومات');
+bool get canViewAdvancedReport11 => hasPermission('التقارير', 'تحليل الاتجاهات الموسمية');
+bool get canViewAdvancedReport12 => hasPermission('التقارير', 'تحليل هامش الربح الفعلي');
+bool get canViewAdvancedReport13 => hasPermission('التقارير', 'تحليل تجميع المنتجات');
+
+// صلاحية التقرير الموسع (صافي الجرد الحالي)
+bool get canViewExtendedReport => hasPermission('التقارير', 'التقرير الموسع (صافي الجرد)');
 
   // ============================================================
   // رصيد المخزون
