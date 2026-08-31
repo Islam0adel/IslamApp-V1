@@ -43,7 +43,7 @@ class _SupplierHistoryPageState extends State<SupplierHistoryPage> {
   // الفلاتر
   String? _selectedSupplierCode = 'all';
   String? _filterStore = 'all';
-  DateTime _fromDate = DateTime.now().subtract(const Duration(days: 30));
+  DateTime _fromDate = DateTime(DateTime.now().year, DateTime.now().month, 1);
   DateTime _toDate = DateTime.now();
 
   // القوائم
@@ -58,6 +58,8 @@ class _SupplierHistoryPageState extends State<SupplierHistoryPage> {
   double _totalPurchases = 0.0;
   double _totalSettlements = 0.0;
   double _supplierRemaining = 0.0;
+  double _previousBalance = 0.0;
+double _totalSupplierBalance = 0.0;
 
   @override
   void initState() {
@@ -138,118 +140,168 @@ class _SupplierHistoryPageState extends State<SupplierHistoryPage> {
   // ==========================================================
 
   Future<void> _loadData() async {
-    if (mounted) setState(() => _isLoading = true);
+  if (mounted) setState(() => _isLoading = true);
 
-    try {
-      String? supplierName;
-
-      if (_selectedSupplierCode != null && _selectedSupplierCode != 'all') {
-        final found = _suppliers.firstWhere(
-          (s) => s['code'] == _selectedSupplierCode,
-          orElse: () => {},
-        );
-        supplierName = found['name'];
-      }
-
-      final startDate = DateFormat('yyyy-MM-dd').format(_fromDate);
-      final endDate = DateFormat('yyyy-MM-dd').format(_toDate);
-
-      final transactions = await _supplierService.getSupplierTransactions(
-        companyCode: widget.companyCode,
-        branchCode: _effectiveBranchCode,
-        supplierName: supplierName,
-        startDate: startDate,
-        endDate: endDate,
+  try {
+    String? supplierName;
+    if (_selectedSupplierCode != null && _selectedSupplierCode != 'all') {
+      final found = _suppliers.firstWhere(
+        (s) => s['code'] == _selectedSupplierCode,
+        orElse: () => {},
       );
-
-      List<SupplierTransactionModel> filtered = transactions;
-
-      if (_filterStore != null && _filterStore != 'all') {
-        filtered = filtered.where((t) => t.storeCode == _filterStore).toList();
-      }
-
-      filtered.sort((a, b) {
-        final dateCompare = b.date.compareTo(a.date);
-        if (dateCompare != 0) return dateCompare;
-        return b.serial.compareTo(a.serial);
-      });
-
-      final purchasesTotal = filtered.fold<double>(
-        0.0,
-        (sum, item) => sum + item.totalAmount,
-      );
-
-      final settlementTotal = await _calculateSettlementTotal(
-        supplierName: supplierName,
-      );
-
-      final remaining = purchasesTotal - settlementTotal;
-
-      if (!mounted) return;
-
-      setState(() {
-        _transactions = filtered;
-        _totalPurchases = purchasesTotal;
-        _totalSettlements = settlementTotal;
-        _supplierRemaining = remaining;
-        _isLoading = false;
-      });
-    } catch (e) {
-      print('❌ خطأ في تحميل حركات الموردين: $e');
-
-      if (!mounted) return;
-
-      setState(() {
-        _transactions = [];
-        _totalPurchases = 0.0;
-        _totalSettlements = 0.0;
-        _supplierRemaining = 0.0;
-        _isLoading = false;
-      });
+      supplierName = found['name'];
     }
+
+    final startDate = DateFormat('yyyy-MM-dd').format(_fromDate);
+    final endDate = DateFormat('yyyy-MM-dd').format(_toDate);
+
+    // ==========================================================
+    // 1) مشتريات الفترة
+    // ==========================================================
+
+    final transactions = await _supplierService.getSupplierTransactions(
+      companyCode: widget.companyCode,
+      branchCode: _effectiveBranchCode,
+      supplierName: supplierName,
+      startDate: startDate,
+      endDate: endDate,
+    );
+
+    List<SupplierTransactionModel> filtered = transactions;
+    if (_filterStore != null && _filterStore != 'all') {
+      filtered = filtered.where((t) => t.storeCode == _filterStore).toList();
+    }
+
+    filtered.sort((a, b) {
+      final dateCompare = b.date.compareTo(a.date);
+      if (dateCompare != 0) return dateCompare;
+      return b.serial.compareTo(a.serial);
+    });
+
+    final purchasesTotal = filtered.fold<double>(
+      0.0,
+      (sum, item) => sum + item.totalAmount,
+    );
+
+    // ==========================================================
+    // 2) تسويات الفترة (من _fromDate إلى _toDate)
+    // ==========================================================
+
+    final settlementTotal = await _calculateSettlementTotal(
+      supplierName: supplierName,
+      startDate: _fromDate,
+      endDate: _toDate,
+    );
+
+    // ==========================================================
+    // 3) الرصيد السابق (قبل _fromDate)
+    // ==========================================================
+
+    final previousPurchases = await _supplierService.getSupplierTransactions(
+      companyCode: widget.companyCode,
+      branchCode: _effectiveBranchCode,
+      supplierName: supplierName,
+      startDate: null,
+      endDate: DateFormat('yyyy-MM-dd').format(_fromDate.subtract(const Duration(days: 1))),
+    );
+
+    double prevPurchasesTotal = previousPurchases.fold<double>(0.0, (sum, item) => sum + item.totalAmount);
+
+    // حساب تسويات الرصيد السابق (بدون حد أدنى)
+    double prevSettlementsTotal = await _calculateSettlementTotal(
+      supplierName: supplierName,
+      // startDate غير موجود -> جميع التسويات قبل endDate
+      endDate: _fromDate.subtract(const Duration(days: 1)),
+    );
+
+    // ==========================================================
+    // 4) حساب الإجماليات
+    // ==========================================================
+
+    final remaining = purchasesTotal - settlementTotal;
+    final previousBalance = prevPurchasesTotal - prevSettlementsTotal;
+    final totalBalance = previousBalance + remaining;
+
+    if (!mounted) return;
+
+    setState(() {
+      _transactions = filtered;
+      _totalPurchases = purchasesTotal;
+      _totalSettlements = settlementTotal;
+      _supplierRemaining = remaining;
+      _previousBalance = previousBalance;
+      _totalSupplierBalance = totalBalance;
+      _isLoading = false;
+    });
+  } catch (e) {
+    print('❌ خطأ في تحميل حركات الموردين: $e');
+    if (!mounted) return;
+    setState(() {
+      _transactions = [];
+      _totalPurchases = 0.0;
+      _totalSettlements = 0.0;
+      _supplierRemaining = 0.0;
+      _previousBalance = 0.0;
+      _totalSupplierBalance = 0.0;
+      _isLoading = false;
+    });
   }
+}
 
   // ==========================================================
   // حساب إجمالي تسويات المورد
   // ==========================================================
 
-  Future<double> _calculateSettlementTotal({String? supplierName}) async {
-    double total = 0.0;
-    final box = Hive.box('supplier_settlement_box');
+  Future<double> _calculateSettlementTotal({
+  String? supplierName,
+  DateTime? startDate,
+  DateTime? endDate,
+}) async {
+  double total = 0.0;
+  final box = Hive.box('supplier_settlement_box');
 
-    final from = DateFormat('yyyy-MM-dd').format(_fromDate);
-    final to = DateFormat('yyyy-MM-dd').format(_toDate);
+  final endDateStr = endDate != null
+      ? DateFormat('yyyy-MM-dd').format(endDate)
+      : DateFormat('yyyy-MM-dd').format(_toDate);
 
-    for (final key in box.keys) {
-      final raw = box.get(key);
-      if (raw is! List) continue;
+  final startDateStr = startDate != null
+      ? DateFormat('yyyy-MM-dd').format(startDate)
+      : null; // بدون حد أدنى -> جميع التسويات قبل endDate
 
-      for (final item in raw) {
-        if (item is! Map) continue;
+  for (final key in box.keys) {
+    final raw = box.get(key);
+    if (raw is! List) continue;
 
-        final map = Map<String, dynamic>.from(item);
+    for (final item in raw) {
+      if (item is! Map) continue;
 
-        if (map['is_deleted'] == true) continue;
-        if (map['company_code']?.toString() != widget.companyCode) continue;
+      final map = Map<String, dynamic>.from(item);
 
-        if (!_isAllBranches && map['branch_code']?.toString() != widget.selectedBranchCode) {
-          continue;
-        }
+      if (map['is_deleted'] == true) continue;
+      if (map['company_code']?.toString() != widget.companyCode) continue;
 
-        if (supplierName != null && map['supplier_name']?.toString() != supplierName) {
-          continue;
-        }
-
-        final date = map['date']?.toString() ?? '';
-
-        if (date.compareTo(from) < 0 || date.compareTo(to) > 0) continue;
-
-        total += _toDouble(map['amount']);
+      if (!_isAllBranches && map['branch_code']?.toString() != widget.selectedBranchCode) {
+        continue;
       }
-    }
 
-    return total;
+      if (supplierName != null && map['supplier_name']?.toString() != supplierName) {
+        continue;
+      }
+
+      final date = map['date']?.toString() ?? '';
+      if (date.isEmpty) continue;
+
+      // التحقق من الحد الأدنى (إن وُجد)
+      if (startDateStr != null && date.compareTo(startDateStr) < 0) continue;
+      // التحقق من الحد الأعلى
+      if (date.compareTo(endDateStr) > 0) continue;
+
+      total += _toDouble(map['amount']);
+    }
   }
+
+  return total;
+}
 
   // ==========================================================
   // أسماء البيانات
@@ -1048,39 +1100,55 @@ class _SupplierHistoryPageState extends State<SupplierHistoryPage> {
   // ==========================================================
 
   Widget _buildPeriodSummary() {
-    return GlassCard(
-      child: Padding(
-        padding: const EdgeInsets.all(10),
-        child: Row(
-          children: [
-            Expanded(
-              child: _buildSummaryBox(
-                'إجمالي المشتريات',
-                _formatCurrency(_totalPurchases),
-                Colors.greenAccent,
-              ),
+  return GlassCard(
+    child: Padding(
+      padding: const EdgeInsets.all(10),
+      child: Row(
+        children: [
+          Expanded(
+            child: _buildSummaryBox(
+              'رصيد سابق',
+              _formatCurrency(_previousBalance),
+              Colors.blueAccent,
             ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: _buildSummaryBox(
-                'إجمالي الدفعات',
-                _formatCurrency(_totalSettlements),
-                Colors.redAccent,
-              ),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: _buildSummaryBox(
+              'مشتريات الفترة',
+              _formatCurrency(_totalPurchases),
+              Colors.greenAccent,
             ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: _buildSummaryBox(
-                'المتبقي',
-                _formatCurrency(_supplierRemaining),
-                _supplierRemaining >= 0 ? Colors.cyanAccent : Colors.orangeAccent,
-              ),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: _buildSummaryBox(
+              'دفعات الفترة',
+              _formatCurrency(_totalSettlements),
+              Colors.redAccent,
             ),
-          ],
-        ),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: _buildSummaryBox(
+              'المتبقي',
+              _formatCurrency(_supplierRemaining),
+              _supplierRemaining >= 0 ? Colors.cyanAccent : Colors.orangeAccent,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: _buildSummaryBox(
+              'رصيد المورد',
+              _formatCurrency(_totalSupplierBalance),
+              Colors.purpleAccent,
+            ),
+          ),
+        ],
       ),
-    );
-  }
+    ),
+  );
+}
 
   Widget _buildSummaryBox(String label, String value, Color color) {
     return Container(
@@ -1392,7 +1460,7 @@ class _SupplierHistoryPageState extends State<SupplierHistoryPage> {
     setState(() {
       _selectedSupplierCode = 'all';
       _filterStore = 'all';
-      _fromDate = DateTime.now().subtract(const Duration(days: 30));
+      _fromDate = DateTime(DateTime.now().year, DateTime.now().month, 1);
       _toDate = DateTime.now();
     });
 

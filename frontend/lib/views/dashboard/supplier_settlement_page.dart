@@ -3,7 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../models/supplier_settlement_model.dart';
 import '../../services/supplier_service.dart';
 import '../../services/supplier_settlement_service.dart';
@@ -52,6 +52,7 @@ class _SupplierSettlementPageState
   String? _selectedSupplier;
   String? _selectedTreasury;
   String _selectedPaymentMethod = 'نقدي';
+  String _currentUserName = 'غير محدد';
 
   // ============================================================
   // القوائم
@@ -92,83 +93,79 @@ class _SupplierSettlementPageState
   // ============================================================
 
   Future<void> _loadData() async {
-    try {
-      final box = Hive.box('coding_box');
+  try {
+    // جلب اسم المستخدم من SharedPreferences
+    final prefs = await SharedPreferences.getInstance();
+    _currentUserName = prefs.getString('user_name') ?? 'غير محدد';
 
-      // الموردين
-      final suppliers =
-          box.get('${widget.companyCode}_suppliers') as List? ?? [];
+    final box = Hive.box('coding_box');
 
-      _suppliers = suppliers
-          .whereType<Map>()
-          .map((e) => {
-                'code': e['code']?.toString() ?? '',
-                'name': e['name']?.toString() ?? '',
-              })
-          .where((e) => e['code']!.isNotEmpty && e['name']!.isNotEmpty)
-          .toList();
+    // الموردين
+    final suppliers = box.get('${widget.companyCode}_suppliers') as List? ?? [];
+    _suppliers = suppliers
+        .whereType<Map>()
+        .map((e) => {
+              'code': e['code']?.toString() ?? '',
+              'name': e['name']?.toString() ?? '',
+            })
+        .where((e) => e['code']!.isNotEmpty && e['name']!.isNotEmpty)
+        .toList();
 
-      // الخزائن
-      final treasuries =
-          box.get('${widget.companyCode}_safes') as List? ?? [];
+    // الخزائن
+    final treasuries = box.get('${widget.companyCode}_safes') as List? ?? [];
+    _treasuries = treasuries
+        .whereType<Map>()
+        .map((e) => {
+              'code': e['code']?.toString() ?? '',
+              'name': e['name']?.toString() ?? '',
+            })
+        .where((e) => e['code']!.isNotEmpty && e['name']!.isNotEmpty)
+        .toList();
 
-      _treasuries = treasuries
-          .whereType<Map>()
-          .map((e) => {
-                'code': e['code']?.toString() ?? '',
-                'name': e['name']?.toString() ?? '',
-              })
-          .where((e) => e['code']!.isNotEmpty && e['name']!.isNotEmpty)
-          .toList();
+    // طرق الدفع
+    final paymentMethods = box.get('${widget.companyCode}_payment_methods') as List? ?? [];
+    _paymentMethods = paymentMethods
+        .whereType<Map>()
+        .map((e) => {
+              'code': e['code']?.toString() ?? '',
+              'name': e['name']?.toString() ?? '',
+            })
+        .where((e) => e['code']!.isNotEmpty && e['name']!.isNotEmpty)
+        .toList();
 
-      // طرق الدفع
-      final paymentMethods =
-          box.get('${widget.companyCode}_payment_methods') as List? ?? [];
+    // القيم الافتراضية
+    if (_treasuries.isNotEmpty) {
+      _selectedTreasury = _treasuries.first['name'];
+    }
 
-      _paymentMethods = paymentMethods
-          .whereType<Map>()
-          .map((e) => {
-                'code': e['code']?.toString() ?? '',
-                'name': e['name']?.toString() ?? '',
-              })
-          .where((e) => e['code']!.isNotEmpty && e['name']!.isNotEmpty)
-          .toList();
+    if (_paymentMethods.isNotEmpty) {
+      _selectedPaymentMethod = _paymentMethods.first['name'] ?? 'نقدي';
+    }
 
-      // القيم الافتراضية
-      if (_treasuries.isNotEmpty) {
-        _selectedTreasury = _treasuries.first['name'];
+    // ✅ في حالة التعديل نحمّل بيانات الإذن أولاً
+    if (widget.editItem != null) {
+      _loadEditData(widget.editItem!);
+    } else {
+      // ✅ مورد واحد فقط
+      if (_suppliers.length == 1) {
+        _selectedSupplier = _suppliers.first['name'];
+        await _loadBalance();
       }
 
-      if (_paymentMethods.isNotEmpty) {
-        _selectedPaymentMethod =
-            _paymentMethods.first['name'] ?? 'نقدي';
-      }
+      // ✅ رقم الإذن الجديد
+      _currentSerial = _getNextSerial();
+    }
 
-      // ✅ في حالة التعديل نحمّل بيانات الإذن أولاً
-      if (widget.editItem != null) {
-        _loadEditData(widget.editItem!);
-      } else {
-        // ✅ مورد واحد فقط
-        if (_suppliers.length == 1) {
-          _selectedSupplier = _suppliers.first['name'];
-          await _loadBalance();
-        }
-
-        // ✅ رقم الإذن الجديد
-        _currentSerial = _getNextSerial();
-      }
-
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    } catch (e) {
-      print('❌ خطأ في تحميل التسوية: $e');
-
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+    if (mounted) {
+      setState(() => _isLoading = false);
+    }
+  } catch (e) {
+    print('❌ خطأ في تحميل التسوية: $e');
+    if (mounted) {
+      setState(() => _isLoading = false);
     }
   }
+}
 
   // ============================================================
   // تحميل بيانات الإذن في وضع التعديل
@@ -296,123 +293,107 @@ class _SupplierSettlementPageState
   // ============================================================
 
   Future<void> _handleSave() async {
-    final isEdit = widget.editItem != null;
+  final isEdit = widget.editItem != null;
 
-    // ✅ الإضافة لها صلاحية مستقلة عن التعديل
-    if (isEdit) {
-      if (!PermissionsService().canEditSupplierSettlement) {
-        _showSnackBar(
-          'ليس لديك صلاحية تعديل الدفعة',
-          Colors.orange,
-        );
-        return;
-      }
-    } else {
-      if (!PermissionsService().canAddSupplierSettlement) {
-        _showSnackBar(
-          'ليس لديك صلاحية إضافة دفعة',
-          Colors.orange,
-        );
-        return;
-      }
-    }
-
-    // المورد
-    if (_selectedSupplier == null || _selectedSupplier!.isEmpty) {
-      _showSnackBar('اختر المورد', Colors.orange);
+  // ✅ الإضافة لها صلاحية مستقلة عن التعديل
+  if (isEdit) {
+    if (!PermissionsService().canEditSupplierSettlement) {
+      _showSnackBar('ليس لديك صلاحية تعديل الدفعة', Colors.orange);
       return;
     }
-
-    // المبلغ
-    final amount =
-        double.tryParse(_amountController.text.trim()) ?? 0.0;
-
-    if (amount <= 0) {
-      _showSnackBar('أدخل مبلغ الدفعة', Colors.orange);
+  } else {
+    if (!PermissionsService().canAddSupplierSettlement) {
+      _showSnackBar('ليس لديك صلاحية إضافة دفعة', Colors.orange);
       return;
-    }
-
-    // ✅ في الإضافة نتحقق من الرصيد.
-    // في التعديل نسمح باستخدام الرصيد + مبلغ الدفعة القديمة.
-    final availableBalance =
-        _supplierBalance + (widget.editItem?.amount ?? 0.0);
-
-    if (amount > availableBalance) {
-      _showSnackBar(
-        'مبلغ الدفعة أكبر من رصيد المورد',
-        Colors.orange,
-      );
-      return;
-    }
-
-    setState(() => _isSaving = true);
-
-    try {
-      if (_currentSerial <= 0) {
-        _currentSerial = _getNextSerial();
-      }
-
-      // ✅ إنشاء الموديل بنفس طريقة اليومية:
-      // الشركة + الفرع + رقم الإذن + الموظف + docId في حالة التعديل
-      final model = SupplierSettlementModel(
-        companyCode: widget.companyCode,
-        branchCode: widget.selectedBranchCode ?? 'all',
-        supplierName: _selectedSupplier!,
-        date: _dateController.text,
-        serial: _currentSerial,
-        amount: amount,
-        paymentMethod: _selectedPaymentMethod,
-        treasury: _selectedTreasury ?? '',
-        statement: _statementController.text,
-        employee: widget.userName ?? 'غير محدد',
-        docId: widget.editItem?.docId,
-      );
-
-      final result = await _service.saveSettlement(model);
-
-      if (result['success'] == true) {
-        final savedSerial = result['serial'] is num
-            ? (result['serial'] as num).toInt()
-            : model.serial;
-
-        _showSnackBar(
-          isEdit
-              ? 'تم تعديل الدفعة رقم $savedSerial بنجاح'
-              : 'تم حفظ الدفعة رقم $savedSerial بنجاح',
-          Colors.green,
-        );
-
-        // ✅ في وضع التعديل نرجع للمعاينة بعد الحفظ
-        if (isEdit) {
-          if (mounted) Navigator.pop(context, true);
-          return;
-        }
-
-        // ✅ تنظيف بعد الإضافة
-        _amountController.clear();
-        _statementController.clear();
-
-        await _loadBalance();
-
-        if (mounted) {
-          setState(() {
-            _currentSerial = _getNextSerial();
-          });
-        }
-      } else {
-        _showSnackBar(
-          'فشل الحفظ: ${result['error']}',
-          Colors.red,
-        );
-      }
-    } catch (e) {
-      _showSnackBar('خطأ: $e', Colors.red);
-    } finally {
-      if (mounted) {
-        setState(() => _isSaving = false);
-      }
     }
   }
+
+  // المورد
+  if (_selectedSupplier == null || _selectedSupplier!.isEmpty) {
+    _showSnackBar('اختر المورد', Colors.orange);
+    return;
+  }
+
+  // المبلغ
+  final amount = double.tryParse(_amountController.text.trim()) ?? 0.0;
+  if (amount <= 0) {
+    _showSnackBar('أدخل مبلغ الدفعة', Colors.orange);
+    return;
+  }
+
+  // ✅ في الإضافة نتحقق من الرصيد. في التعديل نسمح باستخدام الرصيد + مبلغ الدفعة القديمة.
+  // final availableBalance = _supplierBalance + (widget.editItem?.amount ?? 0.0);
+  // if (amount > availableBalance) {
+  //   _showSnackBar('مبلغ الدفعة أكبر من رصيد المورد', Colors.orange);
+  //   return;
+  // }
+
+  setState(() => _isSaving = true);
+
+  try {
+    if (_currentSerial <= 0) {
+      _currentSerial = _getNextSerial();
+    }
+
+    // ✅ استخدم اسم المستخدم الحالي (من SharedPreferences أو من widget.userName)
+    final employeeName = widget.userName != null && widget.userName!.trim().isNotEmpty
+        ? widget.userName!.trim()
+        : _currentUserName;
+
+    final model = SupplierSettlementModel(
+      companyCode: widget.companyCode,
+      branchCode: widget.selectedBranchCode ?? 'all',
+      supplierName: _selectedSupplier!,
+      date: _dateController.text,
+      serial: _currentSerial,
+      amount: amount,
+      paymentMethod: _selectedPaymentMethod,
+      treasury: _selectedTreasury ?? '',
+      statement: _statementController.text,
+      employee: employeeName,
+      docId: widget.editItem?.docId,
+    );
+
+    final result = await _service.saveSettlement(model);
+
+    if (result['success'] == true) {
+      final savedSerial = result['serial'] is num
+          ? (result['serial'] as num).toInt()
+          : model.serial;
+
+      _showSnackBar(
+        isEdit ? 'تم تعديل الدفعة رقم $savedSerial بنجاح' : 'تم حفظ الدفعة رقم $savedSerial بنجاح',
+        Colors.green,
+      );
+
+      // ✅ في وضع التعديل نرجع للمعاينة بعد الحفظ
+      if (isEdit) {
+        if (mounted) Navigator.pop(context, true);
+        return;
+      }
+
+      // ✅ تنظيف بعد الإضافة
+      _amountController.clear();
+      _statementController.clear();
+
+      await _loadBalance();
+
+      if (mounted) {
+        setState(() {
+          _currentSerial = _getNextSerial();
+        });
+      }
+    } else {
+      _showSnackBar('فشل الحفظ: ${result['error']}', Colors.red);
+    }
+  } catch (e) {
+    _showSnackBar('خطأ: $e', Colors.red);
+  } finally {
+    if (mounted) {
+      setState(() => _isSaving = false);
+    }
+  }
+}
 
   // ============================================================
   // SnackBar

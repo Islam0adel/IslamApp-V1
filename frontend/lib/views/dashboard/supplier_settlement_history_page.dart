@@ -39,14 +39,14 @@ class _SupplierSettlementHistoryPageState
   List<String> _suppliers = [];
 
   String? _selectedSupplier;
-  DateTime _fromDate = DateTime.now().subtract(
-    const Duration(days: 30),
-  );
+  DateTime _fromDate = DateTime(DateTime.now().year, DateTime.now().month, 1);
   DateTime _toDate = DateTime.now();
 
   double _totalPurchases = 0.0;
   double _totalSettlements = 0.0;
   double _remainingBalance = 0.0;
+  double _previousBalance = 0.0;
+double _totalSupplierBalance = 0.0;
 
   bool _isLoading = true;
 
@@ -123,29 +123,20 @@ class _SupplierSettlementHistoryPageState
   // ============================================================
 
   Future<void> _applyFilters() async {
-    final from = DateFormat('yyyy-MM-dd').format(_fromDate);
-    final to = DateFormat('yyyy-MM-dd').format(_toDate);
+  final from = DateFormat('yyyy-MM-dd').format(_fromDate);
+  final to = DateFormat('yyyy-MM-dd').format(_toDate);
 
-    _filteredSettlements = _allSettlements.where((item) {
-      final date = item['date']?.toString() ?? '';
+  _filteredSettlements = _allSettlements.where((item) {
+    final date = item['date']?.toString() ?? '';
+    if (date.compareTo(from) < 0 || date.compareTo(to) > 0) return false;
+    if (_selectedSupplier != null && _selectedSupplier!.isNotEmpty && item['supplier_name']?.toString() != _selectedSupplier) return false;
+    return true;
+  }).toList();
 
-      if (date.compareTo(from) < 0 || date.compareTo(to) > 0) {
-        return false;
-      }
+  await _calculatePeriodTotals(); // إعادة حساب الإجماليات بعد الفلترة
 
-      if (_selectedSupplier != null &&
-          _selectedSupplier!.isNotEmpty &&
-          item['supplier_name']?.toString() != _selectedSupplier) {
-        return false;
-      }
-
-      return true;
-    }).toList();
-
-    await _calculatePeriodTotals();
-
-    if (mounted) setState(() {});
-  }
+  if (mounted) setState(() {});
+}
 
   // ============================================================
   // حساب:
@@ -155,42 +146,83 @@ class _SupplierSettlementHistoryPageState
   // ============================================================
 
   Future<void> _calculatePeriodTotals() async {
-    try {
-      final purchases =
-          await _supplierService.getSupplierTransactions(
-        companyCode: widget.companyCode,
-        branchCode: widget.selectedBranchCode,
-        supplierName: _selectedSupplier,
-        startDate: DateFormat('yyyy-MM-dd').format(_fromDate),
-        endDate: DateFormat('yyyy-MM-dd').format(_toDate),
-      );
+  try {
+    final fromDateStr = DateFormat('yyyy-MM-dd').format(_fromDate);
+    final toDateStr = DateFormat('yyyy-MM-dd').format(_toDate);
 
-      double purchasesTotal = 0.0;
+    final purchases = await _supplierService.getSupplierTransactions(
+      companyCode: widget.companyCode,
+      branchCode: widget.selectedBranchCode,
+      supplierName: _selectedSupplier,
+      startDate: fromDateStr,
+      endDate: toDateStr,
+    );
 
-      for (final purchase in purchases) {
-        purchasesTotal += purchase.totalAmount;
-      }
-
-      double settlementsTotal = 0.0;
-
-      for (final item in _filteredSettlements) {
-        settlementsTotal += _toDouble(item['amount']);
-      }
-
-      _totalPurchases = purchasesTotal;
-      _totalSettlements = settlementsTotal;
-      _remainingBalance =
-          _totalPurchases - _totalSettlements;
-    } catch (e) {
-      debugPrint(
-        '❌ خطأ في حساب إجماليات المورد: $e',
-      );
-
-      _totalPurchases = 0.0;
-      _totalSettlements = 0.0;
-      _remainingBalance = 0.0;
+    double purchasesTotal = 0.0;
+    for (final purchase in purchases) {
+      purchasesTotal += purchase.totalAmount;
     }
+
+    double settlementsTotal = 0.0;
+    for (final item in _filteredSettlements) {
+      settlementsTotal += _toDouble(item['amount']);
+    }
+
+    // الرصيد السابق (قبل تاريخ البداية)
+    final previousPurchases = await _supplierService.getSupplierTransactions(
+      companyCode: widget.companyCode,
+      branchCode: widget.selectedBranchCode,
+      supplierName: _selectedSupplier,
+      startDate: null,
+      endDate: DateFormat('yyyy-MM-dd').format(_fromDate.subtract(const Duration(days: 1))),
+    );
+
+    double prevPurchasesTotal = 0.0;
+    for (final p in previousPurchases) {
+      prevPurchasesTotal += p.totalAmount;
+    }
+
+    double prevSettlementsTotal = 0.0;
+    final box = Hive.box('supplier_settlement_box');
+    final beforeDate = DateFormat('yyyy-MM-dd').format(_fromDate.subtract(const Duration(days: 1)));
+
+    for (final key in box.keys) {
+      final raw = box.get(key);
+      if (raw is! List) continue;
+
+      for (final item in raw) {
+        if (item is! Map) continue;
+        final map = Map<String, dynamic>.from(item);
+        if (map['is_deleted'] == true) continue;
+        if (map['company_code']?.toString() != widget.companyCode) continue;
+        if (widget.selectedBranchCode != null && widget.selectedBranchCode != 'all' && map['branch_code']?.toString() != widget.selectedBranchCode) continue;
+        if (_selectedSupplier != null && map['supplier_name']?.toString() != _selectedSupplier) continue;
+        final date = map['date']?.toString() ?? '';
+        if (date.compareTo(beforeDate) > 0) continue;
+        prevSettlementsTotal += _toDouble(map['amount']);
+      }
+    }
+
+    final previousBalance = prevPurchasesTotal - prevSettlementsTotal;
+    final remaining = purchasesTotal - settlementsTotal;
+    final totalBalance = previousBalance + remaining;
+
+    _totalPurchases = purchasesTotal;
+    _totalSettlements = settlementsTotal;
+    _remainingBalance = remaining;
+    _previousBalance = previousBalance;
+    _totalSupplierBalance = totalBalance;
+
+    if (mounted) setState(() {});
+  } catch (e) {
+    debugPrint('❌ خطأ في حساب إجماليات المورد: $e');
+    _totalPurchases = 0.0;
+    _totalSettlements = 0.0;
+    _remainingBalance = 0.0;
+    _previousBalance = 0.0;
+    _totalSupplierBalance = 0.0;
   }
+}
 
   double _toDouble(dynamic value) {
     if (value is num) return value.toDouble();
@@ -298,9 +330,7 @@ class _SupplierSettlementHistoryPageState
   Future<void> _clearFilters() async {
     setState(() {
       _selectedSupplier = null;
-      _fromDate = DateTime.now().subtract(
-        const Duration(days: 30),
-      );
+      _fromDate = DateTime(DateTime.now().year, DateTime.now().month, 1);
       _toDate = DateTime.now();
     });
 
@@ -594,45 +624,26 @@ class _SupplierSettlementHistoryPageState
   // ============================================================
 
   Widget _buildTotalsCard() {
-    return GlassCard(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: 8,
-          vertical: 12,
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            _buildTotalItem(
-              'المشتريات',
-              _totalPurchases,
-              Colors.cyanAccent,
-            ),
-            Container(
-              width: 1,
-              height: 42,
-              color: Colors.white24,
-            ),
-            _buildTotalItem(
-              'الدفعات',
-              _totalSettlements,
-              Colors.redAccent,
-            ),
-            Container(
-              width: 1,
-              height: 42,
-              color: Colors.white24,
-            ),
-            _buildTotalItem(
-              'المتبقي',
-              _remainingBalance,
-              Colors.greenAccent,
-            ),
-          ],
-        ),
+  return GlassCard(
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          _buildTotalItem('رصيد سابق', _previousBalance, Colors.blueAccent),
+          Container(width: 1, height: 42, color: Colors.white24),
+          _buildTotalItem('مشتريات الفترة', _totalPurchases, Colors.cyanAccent),
+          Container(width: 1, height: 42, color: Colors.white24),
+          _buildTotalItem('دفعات الفترة', _totalSettlements, Colors.redAccent),
+          Container(width: 1, height: 42, color: Colors.white24),
+          _buildTotalItem('المتبقي', _remainingBalance, Colors.greenAccent),
+          Container(width: 1, height: 42, color: Colors.white24),
+          _buildTotalItem('رصيد المورد', _totalSupplierBalance, Colors.purpleAccent),
+        ],
       ),
-    );
-  }
+    ),
+  );
+}
 
   Widget _buildTotalItem(
     String title,
@@ -1161,7 +1172,7 @@ class _SupplierSettlementHistoryPageState
                     : _filteredSettlements.isEmpty
                         ? const Center(
                             child: Text(
-                              'لا توجد دفعات',
+                              'لا توجد دفعات في الفترة المحددة',
                               style: TextStyle(
                                 color: Colors.white60,
                                 fontFamily: 'Cairo',
