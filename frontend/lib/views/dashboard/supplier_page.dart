@@ -821,45 +821,40 @@ class _SupplierPageState extends State<SupplierPage> {
   // Enter
   // ============================================================
 
-  void _onFieldSubmitted(
-    int rowIndex,
-    int fieldIndex,
-  ) {
-    final next =
-        fieldIndex + 1;
+  void _onFieldSubmitted(int rowIndex, int fieldIndex) {
+  // تحديث القيمة الحالية
+  _updateItem(rowIndex, fieldIndex, _controllers[rowIndex][fieldIndex].text);
 
-    if (next < _fieldOrder.length) {
-      _focusNodes[rowIndex][next]
-          .requestFocus();
-      return;
-    }
-
+  // الحقول: 0=code, 1=name, 2=quantity, 3=price, 4=total (غير قابل للتحرير)
+  // عندما يكون الحقل الحالي هو price (index 3) أو total (index 4)، نضيف صفاً جديداً
+  // ولكن total غير قابل للتحرير، لذا المستخدم لن يصل إليه. نضيف شرطاً للـ price.
+  if (fieldIndex == 3) {
+    // نضيف صفاً جديداً
     _addEmptyRow();
 
-    WidgetsBinding.instance
-        .addPostFrameCallback((_) {
-      if (_focusNodes.length >
-          rowIndex + 1) {
-        _focusNodes[rowIndex + 1][0]
-            .requestFocus();
+    // نقل التركيز إلى الحقل الأول (الكود) في الصف الجديد
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_focusNodes.length > rowIndex + 1) {
+        _focusNodes[rowIndex + 1][0].requestFocus();
 
-        if (_scrollController
-            .hasClients) {
+        if (_scrollController.hasClients) {
           _scrollController.animateTo(
-            _scrollController
-                .position
-                .maxScrollExtent,
-            duration:
-                const Duration(
-              milliseconds: 300,
-            ),
-            curve:
-                Curves.easeOut,
+            _scrollController.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
           );
         }
       }
     });
+    return;
   }
+
+  // إذا كان هناك حقل تالي في نفس الصف، ننتقل إليه
+  final next = fieldIndex + 1;
+  if (next < _fieldOrder.length) {
+    _focusNodes[rowIndex][next].requestFocus();
+  }
+}
 
   // ============================================================
   // اسم الفرع

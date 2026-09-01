@@ -985,11 +985,13 @@ double _totalSupplierBalance = 0.0;
   // ==========================================================
 
   Widget _buildListView() {
-    final bool isMobile = MediaQuery.of(context).size.width < 600;
+  final bool isMobile = MediaQuery.of(context).size.width < 600;
 
-    return Column(
-      children: [
-        GlassCard(
+  return CustomScrollView(
+    slivers: [
+      // الفلاتر
+      SliverToBoxAdapter(
+        child: GlassCard(
           child: Padding(
             padding: const EdgeInsets.all(8),
             child: isMobile
@@ -1072,77 +1074,70 @@ double _totalSupplierBalance = 0.0;
                   ),
           ),
         ),
-        const SizedBox(height: 6),
-        _buildPeriodSummary(),
-        const SizedBox(height: 6),
-        Expanded(
-          child: _transactions.isEmpty
-              ? const Center(
+      ),
+      // الإجماليات
+      SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: _buildPeriodSummary(),
+        ),
+      ),
+      // قائمة الأذون
+      SliverList(
+        delegate: SliverChildBuilderDelegate(
+          (context, index) {
+            if (_transactions.isEmpty) {
+              return const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(20),
                   child: Text(
                     'لا توجد مشتريات',
-                    style: TextStyle(
-                      color: Colors.white70,
-                      fontFamily: 'Cairo',
-                    ),
+                    style: TextStyle(color: Colors.white70, fontFamily: 'Cairo'),
                   ),
-                )
-              : ListView.builder(
-                  itemCount: _transactions.length,
-                  itemBuilder: (c, i) => _buildTransactionCard(_transactions[i]),
                 ),
+              );
+            }
+            return _buildTransactionCard(_transactions[index]);
+          },
+          childCount: _transactions.isEmpty ? 1 : _transactions.length,
         ),
-      ],
-    );
-  }
+      ),
+    ],
+  );
+}
 
   // ==========================================================
   // إجماليات الفترة
   // ==========================================================
 
   Widget _buildPeriodSummary() {
+  // قائمة العناصر الخمسة
+  final items = [
+    _buildSummaryBox('الرصيد السابق', _formatCurrency(_previousBalance), Colors.blueAccent),
+    _buildSummaryBox('مشتريات الفترة', _formatCurrency(_totalPurchases), Colors.greenAccent),
+    _buildSummaryBox('دفعات الفترة', _formatCurrency(_totalSettlements), Colors.redAccent),
+    _buildSummaryBox('المتبقي', _formatCurrency(_supplierRemaining), _supplierRemaining >= 0 ? Colors.cyanAccent : Colors.orangeAccent),
+    _buildSummaryBox('إجمالي رصيد المورد', _formatCurrency(_totalSupplierBalance), Colors.purpleAccent),
+  ];
+
+  // على الشاشات الصغيرة (موبايل): 3 في السطر الأول و 2 في الثاني
+  // نضع الرصيد السابق وإجمالي رصيد المورد في السطر الثاني
+  final firstRowItems = [items[1], items[2], items[3]]; // مشتريات, دفعات, المتبقي
+  final secondRowItems = [items[0], items[4]]; // الرصيد السابق, إجمالي رصيد المورد
+
   return GlassCard(
     child: Padding(
       padding: const EdgeInsets.all(10),
-      child: Row(
+      child: Column(
         children: [
-          Expanded(
-            child: _buildSummaryBox(
-              'رصيد سابق',
-              _formatCurrency(_previousBalance),
-              Colors.blueAccent,
-            ),
+          // السطر الأول (3 عناصر)
+          Row(
+            children: firstRowItems.map((item) => Expanded(child: item)).toList(),
           ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: _buildSummaryBox(
-              'مشتريات الفترة',
-              _formatCurrency(_totalPurchases),
-              Colors.greenAccent,
-            ),
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: _buildSummaryBox(
-              'دفعات الفترة',
-              _formatCurrency(_totalSettlements),
-              Colors.redAccent,
-            ),
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: _buildSummaryBox(
-              'المتبقي',
-              _formatCurrency(_supplierRemaining),
-              _supplierRemaining >= 0 ? Colors.cyanAccent : Colors.orangeAccent,
-            ),
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: _buildSummaryBox(
-              'رصيد المورد',
-              _formatCurrency(_totalSupplierBalance),
-              Colors.purpleAccent,
-            ),
+          const SizedBox(height: 8),
+          // السطر الثاني (2 عناصر)
+          Row(
+            children: secondRowItems.map((item) => Expanded(child: item)).toList(),
           ),
         ],
       ),

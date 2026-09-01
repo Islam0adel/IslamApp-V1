@@ -2219,546 +2219,278 @@ class _InventoryPageState extends State<InventoryPage> {
   // ============================================================
 
   Widget _buildItemsList() {
-    final hasValid =
-        _items.any(
-      (item) =>
-          item.code.isNotEmpty,
-    );
+  final hasValid = _items.any((item) => item.code.isNotEmpty);
+  final isMobile = MediaQuery.of(context).size.width < 600;
 
-    final isMobile =
-        MediaQuery.of(context)
-                .size
-                .width <
-            600;
-
-    return GlassCard(
-      child:
-          isMobile
-              ? _buildMobileTable()
-              : Column(
-                  crossAxisAlignment:
-                      CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                      padding:
-                          const EdgeInsets.symmetric(
-                        vertical:
-                            4,
-                        horizontal:
-                            4,
+  return GlassCard(
+    child: isMobile
+        ? _buildMobileTable()
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+                decoration: BoxDecoration(
+                  color: Colors.white10,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: _buildDesktopHeaders(),
+              ),
+              const SizedBox(height: 4),
+              Expanded(
+                child: _buildDesktopItemsList(),
+              ),
+              if (hasValid)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: InkWell(
+                    onTap: _addEmptyRow,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.white24),
+                        borderRadius: BorderRadius.circular(6),
                       ),
-                      decoration:
-                          BoxDecoration(
-                        color:
-                            Colors.white10,
-                        borderRadius:
-                            BorderRadius.circular(
-                          6,
-                        ),
-                      ),
-                      child:
-                          _buildDesktopHeaders(),
-                    ),
-                    const SizedBox(
-                      height:
-                          4,
-                    ),
-                    Expanded(
-                      child:
-                          _buildDesktopItemsList(),
-                    ),
-                    if (hasValid)
-                      Padding(
-                        padding:
-                            const EdgeInsets.only(
-                          top:
-                              4,
-                        ),
-                        child:
-                            InkWell(
-                          onTap:
-                              _addEmptyRow,
-                          child:
-                              Container(
-                            padding:
-                                const EdgeInsets.symmetric(
-                              vertical:
-                                  4,
-                            ),
-                            decoration:
-                                BoxDecoration(
-                              border:
-                                  Border.all(
-                                color:
-                                    Colors.white24,
-                              ),
-                              borderRadius:
-                                  BorderRadius.circular(
-                                6,
-                              ),
-                            ),
-                            child:
-                                const Center(
-                              child:
-                                  Text(
-                                '+ إضافة صنف جديد',
-                                style:
-                                    TextStyle(
-                                  color:
-                                      Colors.cyanAccent,
-                                  fontFamily:
-                                      'Cairo',
-                                  fontSize:
-                                      13,
-                                ),
-                              ),
-                            ),
+                      child: const Center(
+                        child: Text(
+                          '+ إضافة صنف جديد',
+                          style: TextStyle(
+                            color: Colors.cyanAccent,
+                            fontFamily: 'Cairo',
+                            fontSize: 13,
                           ),
                         ),
                       ),
-                  ],
+                    ),
+                  ),
                 ),
-    );
-  }
+            ],
+          ),
+  );
+}
 
   // ============================================================
   // جدول الموبايل
   // ============================================================
 
-  Widget _buildMobileTable() =>
-      Column(
-        children: [
-          Expanded(
-            child:
-                SingleChildScrollView(
-              scrollDirection:
-                  Axis.horizontal,
-              child:
-                  Container(
-                padding:
-                    const EdgeInsets.symmetric(
-                  horizontal:
-                      4,
+  Widget _buildMobileTable() {
+  // حساب عرض الأعمدة الثابتة
+  const double colWidth = 80.0;
+  const double nameColWidth = 120.0;
+  const double actionWidth = 40.0; // مساحة زر الحذف
+  const double spacing = 4.0;
+  const double padding = 16.0; // padding جانبي
+
+  // عدد الأعمدة: الكود، الصنف، الكمية، سعر الجملة، قيمة الجملة، سعر البيع، قيمة البيع
+  // 7 أعمدة + زر الحذف
+  final double totalWidth = colWidth * 6 + nameColWidth + actionWidth + (7 * spacing) + padding;
+
+  // بناء المحتوى الأفقي
+  Widget horizontalContent = SizedBox(
+    width: totalWidth,
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Header
+        Container(
+          padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+          decoration: BoxDecoration(
+            color: Colors.white10,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: _buildMobileHeaders(),
+        ),
+        const SizedBox(height: 4),
+        // Rows
+        ...List.generate(
+          _items.length,
+          (rowIndex) {
+            final item = _items[rowIndex];
+            final isLast = rowIndex == _items.length - 1;
+            if (item.code.isEmpty && !isLast) {
+              return const SizedBox.shrink();
+            }
+            return Container(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              decoration: BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(
+                    color: Colors.white.withOpacity(0.05),
+                    width: 0.5,
+                  ),
                 ),
-                child:
-                    Column(
-                  crossAxisAlignment:
-                      CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                      padding:
-                          const EdgeInsets.symmetric(
-                        vertical:
-                            4,
-                        horizontal:
-                            4,
-                      ),
-                      decoration:
-                          BoxDecoration(
-                        color:
-                            Colors.white10,
-                        borderRadius:
-                            BorderRadius.circular(
-                          6,
-                        ),
-                      ),
-                      child:
-                          _buildMobileHeaders(),
+              ),
+              child: _buildMobileRow(rowIndex),
+            );
+          },
+        ),
+        // Add button
+        if (_items.any((item) => item.code.isNotEmpty))
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: InkWell(
+              onTap: _addEmptyRow,
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.white24),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Center(
+                  child: Text(
+                    '+ إضافة صنف جديد',
+                    style: TextStyle(
+                      color: Colors.cyanAccent,
+                      fontFamily: 'Cairo',
+                      fontSize: 13,
                     ),
-                    const SizedBox(
-                      height:
-                          4,
-                    ),
-                    ...List.generate(
-                      _items.length,
-                      (rowIndex) {
-                        final item =
-                            _items[rowIndex];
-
-                        final isLast =
-                            rowIndex ==
-                                _items.length -
-                                    1;
-
-                        if (item.code.isEmpty &&
-                            !isLast) {
-                          return const SizedBox
-                              .shrink();
-                        }
-
-                        return Container(
-                          padding:
-                              const EdgeInsets.symmetric(
-                            vertical:
-                                4,
-                          ),
-                          decoration:
-                              BoxDecoration(
-                            border:
-                                Border(
-                              bottom:
-                                  BorderSide(
-                                color:
-                                    Colors.white.withOpacity(
-                                  0.05,
-                                ),
-                                width:
-                                    0.5,
-                              ),
-                            ),
-                          ),
-                          child:
-                              _buildMobileRow(
-                            rowIndex,
-                          ),
-                        );
-                      },
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),
           ),
-          if (_items.any(
-            (item) =>
-                item.code.isNotEmpty,
-          ))
-            Padding(
-              padding:
-                  const EdgeInsets.only(
-                top:
-                    4,
-              ),
-              child:
-                  InkWell(
-                onTap:
-                    _addEmptyRow,
-                child:
-                    Container(
-                  padding:
-                      const EdgeInsets.symmetric(
-                    vertical:
-                        4,
-                  ),
-                  decoration:
-                      BoxDecoration(
-                    border:
-                        Border.all(
-                      color:
-                          Colors.white24,
-                    ),
-                    borderRadius:
-                        BorderRadius.circular(
-                      6,
-                    ),
-                  ),
-                  child:
-                      const Center(
-                    child:
-                        Text(
-                      '+ إضافة صنف جديد',
-                      style:
-                          TextStyle(
-                        color:
-                            Colors.cyanAccent,
-                        fontFamily:
-                            'Cairo',
-                        fontSize:
-                            13,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-        ],
-      );
+      ],
+    ),
+  );
+
+  // لف المحتوى الأفقي في SingleChildScrollView عمودي
+  return SingleChildScrollView(
+    physics: const AlwaysScrollableScrollPhysics(),
+    child: SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      physics: const AlwaysScrollableScrollPhysics(),
+      child: horizontalContent,
+    ),
+  );
+}
 
   // ============================================================
   // Headers
   // ============================================================
 
   Widget _buildMobileHeaders() {
-    const double colWidth =
-        80.0;
-    const double nameColWidth =
-        120.0;
+  const double colWidth = 80.0;
+  const double nameColWidth = 120.0;
 
-    return Row(
-      children: [
-        const SizedBox(
-          width:
-              8,
-        ),
-        _headerCell(
-          'الكود',
-          colWidth,
-          Colors.cyan,
-        ),
-        _headerCell(
-          'الصنف',
-          nameColWidth,
-          Colors.cyan,
-        ),
-        _headerCell(
-          'الكمية',
-          colWidth,
-          Colors.cyan,
-        ),
-        _headerCell(
-          'سعر الجملة',
-          colWidth,
-          Colors.cyan,
-        ),
-        _headerCell(
-          'قيمة الجملة',
-          colWidth,
-          Colors.greenAccent,
-        ),
-        _headerCell(
-          'سعر البيع',
-          colWidth,
-          Colors.cyan,
-        ),
-        _headerCell(
-          'قيمة البيع',
-          colWidth,
-          Colors.amber,
-        ),
-        const SizedBox(
-          width:
-              30,
-        ),
-        const SizedBox(
-          width:
-              8,
-        ),
-      ],
-    );
-  }
+  return Row(
+    mainAxisSize: MainAxisSize.max,
+    children: [
+      _headerCell('الكود', colWidth, Colors.cyan),
+      const SizedBox(width: 4),
+      _headerCell('الصنف', nameColWidth, Colors.cyan),
+      const SizedBox(width: 4),
+      _headerCell('الكمية', colWidth, Colors.cyan),
+      const SizedBox(width: 4),
+      _headerCell('سعر الجملة', colWidth, Colors.cyan),
+      const SizedBox(width: 4),
+      _headerCell('قيمة الجملة', colWidth, Colors.greenAccent),
+      const SizedBox(width: 4),
+      _headerCell('سعر البيع', colWidth, Colors.cyan),
+      const SizedBox(width: 4),
+      _headerCell('قيمة البيع', colWidth, Colors.amber),
+      const SizedBox(width: 4),
+      const SizedBox(width: 40), // مساحة زر الحذف
+    ],
+  );
+}
 
-  Widget _headerCell(
-    String text,
-    double width,
-    Color color,
-  ) =>
-      Padding(
-        padding:
-            const EdgeInsets.symmetric(
-          horizontal:
-              2,
-        ),
-        child:
-            SizedBox(
-          width:
-              width,
-          child:
-              Text(
-            text,
-            textAlign:
-                TextAlign.center,
-            style:
-                TextStyle(
-              color:
-                  color,
-              fontWeight:
-                  FontWeight.bold,
-              fontSize:
-                  11,
-              fontFamily:
-                  'Cairo',
-            ),
-          ),
-        ),
-      );
+  Widget _headerCell(String text, double width, Color color) {
+  return SizedBox(
+    width: width,
+    child: Text(
+      text,
+      textAlign: TextAlign.center,
+      style: TextStyle(
+        color: color,
+        fontWeight: FontWeight.bold,
+        fontSize: 11,
+        fontFamily: 'Cairo',
+      ),
+    ),
+  );
+}
 
   // ============================================================
   // صف الموبايل
   // ============================================================
 
-  Widget _buildMobileRow(
-    int rowIndex,
-  ) {
-    const double colWidth =
-        80.0;
-    const double nameColWidth =
-        120.0;
+  Widget _buildMobileRow(int rowIndex) {
+  const double colWidth = 80.0;
+  const double nameColWidth = 120.0;
+  final item = _items[rowIndex];
 
-    final item =
-        _items[rowIndex];
-
-    return Row(
-      children: [
-        const SizedBox(
-          width:
-              8,
+  return Row(
+    mainAxisSize: MainAxisSize.max,
+    children: [
+      SizedBox(
+        width: colWidth,
+        child: _buildItemField(rowIndex, 0),
+      ),
+      const SizedBox(width: 4),
+      SizedBox(
+        width: nameColWidth,
+        child: _buildItemField(rowIndex, 1),
+      ),
+      const SizedBox(width: 4),
+      SizedBox(
+        width: colWidth,
+        child: _buildItemField(rowIndex, 2),
+      ),
+      const SizedBox(width: 4),
+      SizedBox(
+        width: colWidth,
+        child: _buildItemField(rowIndex, 3),
+      ),
+      const SizedBox(width: 4),
+      _valueCell(item.wholesaleValue, colWidth, Colors.greenAccent),
+      const SizedBox(width: 4),
+      SizedBox(
+        width: colWidth,
+        child: _buildItemField(rowIndex, 4),
+      ),
+      const SizedBox(width: 4),
+      _valueCell(item.retailValue, colWidth, Colors.amber),
+      const SizedBox(width: 4),
+      SizedBox(
+        width: 40,
+        child: IconButton(
+          icon: const Icon(Icons.delete, color: Colors.red, size: 20),
+          onPressed: () => _removeRow(rowIndex),
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(),
         ),
-        SizedBox(
-          width:
-              colWidth,
-          child:
-              _buildItemField(
-            rowIndex,
-            0,
-          ),
-        ),
-        const SizedBox(
-          width:
-              4,
-        ),
-        SizedBox(
-          width:
-              nameColWidth,
-          child:
-              _buildItemField(
-            rowIndex,
-            1,
-          ),
-        ),
-        const SizedBox(
-          width:
-              4,
-        ),
-        SizedBox(
-          width:
-              colWidth,
-          child:
-              _buildItemField(
-            rowIndex,
-            2,
-          ),
-        ),
-        const SizedBox(
-          width:
-              4,
-        ),
-        SizedBox(
-          width:
-              colWidth,
-          child:
-              _buildItemField(
-            rowIndex,
-            3,
-          ),
-        ),
-        const SizedBox(
-          width:
-              4,
-        ),
-        _valueCell(
-          item.wholesaleValue,
-          colWidth,
-          Colors.greenAccent,
-        ),
-        const SizedBox(
-          width:
-              4,
-        ),
-        SizedBox(
-          width:
-              colWidth,
-          child:
-              _buildItemField(
-            rowIndex,
-            4,
-          ),
-        ),
-        const SizedBox(
-          width:
-              4,
-        ),
-        _valueCell(
-          item.retailValue,
-          colWidth,
-          Colors.amber,
-        ),
-        const SizedBox(
-          width:
-              4,
-        ),
-        IconButton(
-          icon:
-              const Icon(
-            Icons.delete,
-            color:
-                Colors.red,
-            size:
-                20,
-          ),
-          onPressed:
-              () =>
-                  _removeRow(
-            rowIndex,
-          ),
-          padding:
-              EdgeInsets.zero,
-          constraints:
-              const BoxConstraints(),
-        ),
-        const SizedBox(
-          width:
-              8,
-        ),
-      ],
-    );
-  }
+      ),
+    ],
+  );
+}
 
   // ============================================================
   // خلية القيمة
   // ============================================================
 
-  Widget _valueCell(
-    double value,
-    double width,
-    Color color,
-  ) =>
-      SizedBox(
-        width:
-            width,
-        child:
-            Container(
-          margin:
-              const EdgeInsets.symmetric(
-            horizontal:
-                2,
-          ),
-          decoration:
-              BoxDecoration(
-            color:
-                color.withOpacity(
-              0.1,
-            ),
-            borderRadius:
-                BorderRadius.circular(
-              4,
-            ),
-            border:
-                Border.all(
-              color:
-                  color.withOpacity(
-                0.3,
-              ),
-            ),
-          ),
-          alignment:
-              Alignment.center,
-          child:
-              Text(
-            _formatDecimal(
-              value,
-            ),
-            style:
-                TextStyle(
-              color:
-                  color,
-              fontSize:
-                  13,
-              fontWeight:
-                  FontWeight.bold,
-            ),
-          ),
+  Widget _valueCell(double value, double width, Color color) {
+  return SizedBox(
+    width: width,
+    child: Container(
+      margin: const EdgeInsets.symmetric(horizontal: 2),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        _formatDecimal(value),
+        style: TextStyle(
+          color: color,
+          fontSize: 13,
+          fontWeight: FontWeight.bold,
         ),
-      );
+      ),
+    ),
+  );
+}
 
   // ============================================================
   // Headers Desktop

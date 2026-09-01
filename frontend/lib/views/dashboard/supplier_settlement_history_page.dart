@@ -624,55 +624,65 @@ double _totalSupplierBalance = 0.0;
   // ============================================================
 
   Widget _buildTotalsCard() {
+  // قائمة العناصر الخمسة
+  final items = [
+    _buildTotalItem('الرصيد السابق', _previousBalance, Colors.blueAccent),
+    _buildTotalItem('مشتريات الفترة', _totalPurchases, Colors.cyanAccent),
+    _buildTotalItem('دفعات الفترة', _totalSettlements, Colors.redAccent),
+    _buildTotalItem('المتبقي', _remainingBalance, Colors.greenAccent),
+    _buildTotalItem('إجمالي رصيد المورد', _totalSupplierBalance, Colors.purpleAccent),
+  ];
+
+  // على الشاشات الصغيرة: 3 في السطر الأول و 2 في الثاني
+  final firstRowItems = [items[1], items[2], items[3]]; // مشتريات, دفعات, المتبقي
+  final secondRowItems = [items[0], items[4]]; // الرصيد السابق, إجمالي رصيد المورد
+
   return GlassCard(
     child: Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
+      child: Column(
         children: [
-          _buildTotalItem('رصيد سابق', _previousBalance, Colors.blueAccent),
-          Container(width: 1, height: 42, color: Colors.white24),
-          _buildTotalItem('مشتريات الفترة', _totalPurchases, Colors.cyanAccent),
-          Container(width: 1, height: 42, color: Colors.white24),
-          _buildTotalItem('دفعات الفترة', _totalSettlements, Colors.redAccent),
-          Container(width: 1, height: 42, color: Colors.white24),
-          _buildTotalItem('المتبقي', _remainingBalance, Colors.greenAccent),
-          Container(width: 1, height: 42, color: Colors.white24),
-          _buildTotalItem('رصيد المورد', _totalSupplierBalance, Colors.purpleAccent),
+          // السطر الأول (3 عناصر)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: firstRowItems.map((item) => Expanded(child: item)).toList(),
+          ),
+          const SizedBox(height: 8),
+          // السطر الثاني (2 عناصر)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: secondRowItems.map((item) => Expanded(child: item)).toList(),
+          ),
         ],
       ),
     ),
   );
 }
 
-  Widget _buildTotalItem(
-    String title,
-    double value,
-    Color color,
-  ) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          title,
-          style: const TextStyle(
-            color: Colors.white60,
-            fontFamily: 'Cairo',
-            fontSize: 10,
-          ),
+  Widget _buildTotalItem(String title, double value, Color color) {
+  return Column(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Text(
+        title,
+        style: const TextStyle(
+          color: Colors.white60,
+          fontFamily: 'Cairo',
+          fontSize: 10,
         ),
-        const SizedBox(height: 3),
-        Text(
-          _formatCurrency(value),
-          style: TextStyle(
-            color: color,
-            fontSize: 15,
-            fontWeight: FontWeight.bold,
-          ),
+      ),
+      const SizedBox(height: 3),
+      Text(
+        _formatCurrency(value),
+        style: TextStyle(
+          color: color,
+          fontSize: 15,
+          fontWeight: FontWeight.bold,
         ),
-      ],
-    );
-  }
+      ),
+    ],
+  );
+}
 
   // ============================================================
   // بطاقة الحركة
@@ -972,265 +982,202 @@ double _totalSupplierBalance = 0.0;
   // ============================================================
 
   @override
-  Widget build(BuildContext context) {
-    if (!PermissionsService().canShowSupplierSettlements) {
-      return Scaffold(
-        appBar: AppBar(
-          title: const Text(
-            'معاينة التسويات',
-            style: TextStyle(
-              color: Colors.white,
-              fontFamily: 'Cairo',
-            ),
-          ),
-          backgroundColor: Colors.transparent,
-        ),
-        body: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [
-                Colors.black,
-                Color(0xFF1A237E),
-                Colors.black,
-              ],
-            ),
-          ),
-          child: const Center(
-            child: Text(
-              'ليس لديك صلاحية لعرض التسويات',
-              style: TextStyle(
-                color: Colors.white70,
-                fontFamily: 'Cairo',
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
+Widget build(BuildContext context) {
+  if (!PermissionsService().canShowSupplierSettlements) {
     return Scaffold(
       appBar: AppBar(
         title: const Text(
-          'معاينة تسويات الموردين',
-          style: TextStyle(
-            color: Colors.white,
-            fontFamily: 'Cairo',
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-          ),
+          'معاينة التسويات',
+          style: TextStyle(color: Colors.white, fontFamily: 'Cairo'),
         ),
         backgroundColor: Colors.transparent,
-        elevation: 0,
-        centerTitle: true,
-        actions: [
-          if (PermissionsService().canExportSupplierSettlement)
-            IconButton(
-              icon: const Icon(
-                Icons.download,
-                color: Colors.blueAccent,
-              ),
-              onPressed: _exportExcel,
-            ),
-          if (PermissionsService().canExportSupplierSettlement)
-            IconButton(
-              icon: const Icon(
-                Icons.picture_as_pdf,
-                color: Colors.redAccent,
-              ),
-              onPressed: _exportPDF,
-            ),
-          IconButton(
-            icon: const Icon(
-              Icons.refresh,
-              color: Colors.white,
-            ),
-            onPressed: _loadData,
-          ),
-        ],
       ),
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            colors: [
-              Colors.black,
-              Color(0xFF1A237E),
-              Colors.black,
-            ],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
+            colors: [Colors.black, Color(0xFF1A237E), Colors.black],
           ),
         ),
-        child: SafeArea(
-          child: Column(
-            children: [
-              // ==================================================
-              // الفلاتر
-              // ==================================================
-
-              GlassCard(
-                child: Padding(
-                  padding: const EdgeInsets.all(8),
-                  child: Column(
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child:
-                                DropdownButtonFormField<String?>(
-                              value: _selectedSupplier,
-                              dropdownColor:
-                                  Colors.indigo.shade900,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 12,
-                              ),
-                              decoration:
-                                  const InputDecoration(
-                                labelText: 'المورد',
-                                labelStyle: TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 10,
-                                ),
-                                isDense: true,
-                              ),
-                              items: [
-                                const DropdownMenuItem<String?>(
-                                  value: null,
-                                  child: Text('كل الموردين'),
-                                ),
-                                ..._suppliers.map(
-                                  (name) =>
-                                      DropdownMenuItem<String?>(
-                                    value: name,
-                                    child: Text(name),
-                                  ),
-                                ),
-                              ],
-                              onChanged: (value) async {
-                                setState(
-                                  () => _selectedSupplier = value,
-                                );
-                                await _applyFilters();
-                              },
-                            ),
-                          ),
-                          IconButton(
-                            icon: const Icon(
-                              Icons.clear,
-                              color: Colors.white70,
-                            ),
-                            onPressed: _clearFilters,
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _dateButton(
-                              'من',
-                              _fromDate,
-                              () => _pickDate(true),
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: _dateButton(
-                              'إلى',
-                              _toDate,
-                              () => _pickDate(false),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 6),
-
-              // ==================================================
-              // إجماليات الفترة
-              // ==================================================
-
-              _buildTotalsCard(),
-
-              const SizedBox(height: 6),
-
-              // ==================================================
-              // قائمة التسويات
-              // ==================================================
-
-              Expanded(
-                child: _isLoading
-                    ? const Center(
-                        child: CircularProgressIndicator(
-                          color: Colors.white,
-                        ),
-                      )
-                    : _filteredSettlements.isEmpty
-                        ? const Center(
-                            child: Text(
-                              'لا توجد دفعات في الفترة المحددة',
-                              style: TextStyle(
-                                color: Colors.white60,
-                                fontFamily: 'Cairo',
-                              ),
-                            ),
-                          )
-                        : ListView.builder(
-                            itemCount:
-                                _filteredSettlements.length,
-                            itemBuilder: (context, index) =>
-                                _buildSettlementCard(
-                              _filteredSettlements[index],
-                            ),
-                          ),
-              ),
-
-              // ==================================================
-              // إجمالي الدفعات
-              // ==================================================
-
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.05),
-                  border: const Border(
-                    top: BorderSide(
-                      color: Colors.white24,
-                    ),
-                  ),
-                ),
-                child: Row(
-                  mainAxisAlignment:
-                      MainAxisAlignment.spaceAround,
-                  children: [
-                    const Text(
-                      'إجمالي الدفعات',
-                      style: TextStyle(
-                        color: Colors.white60,
-                        fontFamily: 'Cairo',
-                      ),
-                    ),
-                    Text(
-                      _formatCurrency(_totalAmount),
-                      style: const TextStyle(
-                        color: Colors.redAccent,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+        child: const Center(
+          child: Text(
+            'ليس لديك صلاحية لعرض التسويات',
+            style: TextStyle(color: Colors.white70, fontFamily: 'Cairo'),
           ),
         ),
       ),
     );
   }
+
+  return Scaffold(
+    appBar: AppBar(
+      title: const Text(
+        'معاينة تسويات الموردين',
+        style: TextStyle(
+          color: Colors.white,
+          fontFamily: 'Cairo',
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      centerTitle: true,
+      actions: [
+        if (PermissionsService().canExportSupplierSettlement)
+          IconButton(
+            icon: const Icon(Icons.download, color: Colors.blueAccent),
+            onPressed: _exportExcel,
+          ),
+        if (PermissionsService().canExportSupplierSettlement)
+          IconButton(
+            icon: const Icon(Icons.picture_as_pdf, color: Colors.redAccent),
+            onPressed: _exportPDF,
+          ),
+        IconButton(
+          icon: const Icon(Icons.refresh, color: Colors.white),
+          onPressed: _loadData,
+        ),
+      ],
+    ),
+    body: Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.black, Color(0xFF1A237E), Colors.black],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: SafeArea(
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator(color: Colors.white))
+            : CustomScrollView(
+                slivers: [
+                  // الفلاتر
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      child: GlassCard(
+                        child: Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: Column(
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: DropdownButtonFormField<String?>(
+                                      value: _selectedSupplier,
+                                      dropdownColor: Colors.indigo.shade900,
+                                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                                      decoration: const InputDecoration(
+                                        labelText: 'المورد',
+                                        labelStyle: TextStyle(color: Colors.white70, fontSize: 10),
+                                        isDense: true,
+                                      ),
+                                      items: [
+                                        const DropdownMenuItem<String?>(
+                                          value: null,
+                                          child: Text('كل الموردين'),
+                                        ),
+                                        ..._suppliers.map(
+                                          (name) => DropdownMenuItem<String?>(
+                                            value: name,
+                                            child: Text(name),
+                                          ),
+                                        ),
+                                      ],
+                                      onChanged: (value) async {
+                                        setState(() => _selectedSupplier = value);
+                                        await _applyFilters();
+                                      },
+                                    ),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.clear, color: Colors.white70),
+                                    onPressed: _clearFilters,
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: _dateButton('من', _fromDate, () => _pickDate(true)),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: _dateButton('إلى', _toDate, () => _pickDate(false)),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  // الإجماليات
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                      child: _buildTotalsCard(),
+                    ),
+                  ),
+                  // قائمة التسويات
+                  SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) {
+                        if (_filteredSettlements.isEmpty) {
+                          return const Center(
+                            child: Padding(
+                              padding: EdgeInsets.all(20),
+                              child: Text(
+                                'لا توجد دفعات',
+                                style: TextStyle(color: Colors.white60, fontFamily: 'Cairo'),
+                              ),
+                            ),
+                          );
+                        }
+                        return _buildSettlementCard(_filteredSettlements[index]);
+                      },
+                      childCount: _filteredSettlements.isEmpty ? 1 : _filteredSettlements.length,
+                    ),
+                  ),
+                  // إجمالي الدفعات في الأسفل
+                  SliverToBoxAdapter(
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.05),
+                        border: const Border(top: BorderSide(color: Colors.white24)),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceAround,
+                        children: [
+                          const Text(
+                            'إجمالي الدفعات',
+                            style: TextStyle(
+                              color: Colors.white60,
+                              fontFamily: 'Cairo',
+                            ),
+                          ),
+                          Text(
+                            _formatCurrency(_totalAmount),
+                            style: const TextStyle(
+                              color: Colors.redAccent,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+      ),
+    ),
+  );
+}
 
   // ============================================================
   // زر التاريخ
