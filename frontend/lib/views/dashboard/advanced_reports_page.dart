@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/export_service.dart';
 import '../../services/permissions_service.dart';
 import '../../views/widgets/glass_card.dart';
@@ -40,6 +41,7 @@ class _AdvancedReportsPageState extends State<AdvancedReportsPage> {
     11: 'تحليل الاتجاهات الموسمية',
     12: 'تحليل هامش الربح الفعلي',
     13: 'تحليل تجميع المنتجات (Basket Analysis)',
+    14: 'تحليل المصروفات بالنسبة للمبيعات', // التقرير الجديد
   };
 
   List<Map<String, dynamic>> _rows = [];
@@ -51,6 +53,56 @@ class _AdvancedReportsPageState extends State<AdvancedReportsPage> {
   late DateTime _toDate;
 
   String get _title => _titles[widget.reportId] ?? 'تقرير تحليلي';
+
+  // ============================================================
+  // دوال مساعدة للحصول على اسم الشركة والفرع
+  // ============================================================
+
+  Future<String> _getCompanyName() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final name = prefs.getString('company_name');
+      if (name != null && name.isNotEmpty) return name;
+    } catch (_) {}
+    final Box codingBox = Hive.box('coding_box');
+    final companyData = codingBox.get("${widget.companyCode}_company");
+    if (companyData is Map) {
+      final name = companyData['name']?.toString() ??
+          companyData['company_name']?.toString() ??
+          companyData['companyName']?.toString();
+      if (name != null && name.isNotEmpty) return name;
+    }
+    final directName = codingBox.get("${widget.companyCode}_name")?.toString() ??
+        codingBox.get("${widget.companyCode}_companyName")?.toString();
+    if (directName != null && directName.isNotEmpty) return directName;
+    return widget.companyCode;
+  }
+
+  String _getBranchName(String? code) {
+    if (code == null || code == 'all' || code.isEmpty) return 'كل الفروع';
+    final Box codingBox = Hive.box('coding_box');
+    final rawData = codingBox.get("${widget.companyCode}_branches", defaultValue: []);
+    for (var item in rawData) {
+      if (item['code']?.toString() == code) return item['name']?.toString() ?? code;
+    }
+    return code;
+  }
+
+  // ============================================================
+  // تنسيق الأرقام
+  // ============================================================
+
+  String _formatNumber(num value) {
+  return NumberFormat('#,##0.00', 'en_US').format(value.toDouble());
+}
+
+String _formatPercent(num value) {
+  return '${NumberFormat('#,##0.00', 'en_US').format(value.toDouble())}%';
+}
+
+  // ============================================================
+  // دوال جلب البيانات (نفسها ولكن تستخدم _fromDate, _toDate)
+  // ============================================================
 
   bool _branchOk(dynamic value) {
     final b = widget.selectedBranchCode;
@@ -163,8 +215,12 @@ class _AdvancedReportsPageState extends State<AdvancedReportsPage> {
           (e) => {'المورد': e.key, 'الرصيد': e.value},
         )
         .toList()
-      ..sort((a, b) => _num(b['الرصيد']).compareTo(_num(a['رصيد'])));
+      ..sort((a, b) => _num(b['الرصيد']).compareTo(_num(a['الرصيد'])));
   }
+
+  // ============================================================
+  // بناء التقرير
+  // ============================================================
 
   void _buildReport() {
     final tx = _transactions();
@@ -180,17 +236,30 @@ class _AdvancedReportsPageState extends State<AdvancedReportsPage> {
           byDay[d] = (byDay[d] ?? 0) + sign * _num(t['amount']);
         }
         rows.addAll(byDay.entries.map<Map<String, dynamic>>((e) => {'التاريخ': e.key, 'صافي التدفق': e.value}).toList()..sort((a, b) => a['التاريخ'].toString().compareTo(b['التاريخ'].toString())));
-        summary = {'صافي التدفق': rows.fold<double>(0.0, (s, r) => s + _num(r['صافي التدفق'])), 'متوسط التدفق اليومي': rows.isEmpty ? 0 : rows.fold<double>(0.0, (s, r) => s + _num(r['صافي التدفق'])) / rows.length};
+        summary = {
+          'صافي التدفق': rows.fold<double>(0.0, (s, r) => s + _num(r['صافي التدفق'])),
+          'متوسط التدفق اليومي': rows.isEmpty ? 0 : rows.fold<double>(0.0, (s, r) => s + _num(r['صافي التدفق'])) / rows.length,
+        };
         break;
+
       case 2:
         final cats = <String, double>{};
         for (final t in tx.where((e) => e['type'] == 'صادر')) {
           final c = t['category']?.toString() ?? 'عام';
           cats[c] = (cats[c] ?? 0) + _num(t['amount']);
         }
-        rows.addAll(cats.entries.map<Map<String, dynamic>>((e) => {'الفئة': e.key, 'المبلغ': e.value, 'النسبة': cats.values.fold<double>(0.0, (s, v) => s + v) == 0 ? 0.0 : e.value / cats.values.fold<double>(0.0, (s, v) => s + v) * 100}).toList()..sort((a, b) => _num(b['المبلغ']).compareTo(_num(a['المبلغ']))));
-        summary = {'إجمالي المصروفات': cats.values.fold<double>(0.0, (s, v) => s + v)};
+        final totalExpenses = cats.values.fold<double>(0.0, (s, v) => s + v);
+        rows.addAll(cats.entries.map<Map<String, dynamic>>((e) => {
+              'الفئة': e.key,
+              'المبلغ': e.value,
+              'النسبة': totalExpenses == 0 ? 0.0 : (e.value / totalExpenses) * 100,
+            }).toList()..sort((a, b) => _num(b['المبلغ']).compareTo(_num(a['المبلغ']))));
+        summary = {
+          'إجمالي المصروفات': totalExpenses,
+          'إجمالي النسبة': 100.0,
+        };
         break;
+
       case 3:
         final branches = <String, double>{};
         for (final t in tx) {
@@ -201,6 +270,7 @@ class _AdvancedReportsPageState extends State<AdvancedReportsPage> {
         rows.addAll(branches.entries.map<Map<String, dynamic>>((e) => {'الفرع': e.key, 'صافي الربح/الخسارة': e.value}));
         summary = {'إجمالي صافي الفروع': branches.values.fold(0.0, (s, v) => s + v)};
         break;
+
       case 4:
         final byDay = <String, double>{};
         final counts = <String, int>{};
@@ -209,9 +279,17 @@ class _AdvancedReportsPageState extends State<AdvancedReportsPage> {
           byDay[d] = (byDay[d] ?? 0) + _num(t['amount']);
           counts[d] = (counts[d] ?? 0) + 1;
         }
-        rows.addAll(byDay.keys.map((d) => {'التاريخ': d, 'عدد الأذون': counts[d] ?? 0, 'إجمالي المبيعات': byDay[d] ?? 0, 'متوسط الإذن': (byDay[d] ?? 0) / ((counts[d] ?? 1))}));
-        summary = {'متوسط قيمة الإذن': rows.isEmpty ? 0 : rows.fold<double>(0.0, (s, r) => s + _num(r['متوسط الإذن'])) / rows.length};
+        rows.addAll(byDay.keys.map((d) => {
+              'التاريخ': d,
+              'عدد الأذون': counts[d] ?? 0,
+              'إجمالي المبيعات': byDay[d] ?? 0,
+              'متوسط الإذن': (byDay[d] ?? 0) / ((counts[d] ?? 1)),
+            }));
+        summary = {
+          'متوسط قيمة الإذن': rows.isEmpty ? 0 : rows.fold<double>(0.0, (s, r) => s + _num(r['متوسط الإذن'])) / rows.length,
+        };
         break;
+
       case 5:
         final safes = <String, double>{};
         for (final t in tx) {
@@ -221,6 +299,7 @@ class _AdvancedReportsPageState extends State<AdvancedReportsPage> {
         rows.addAll(safes.entries.map<Map<String, dynamic>>((e) => {'الخزينة': e.key, 'الرصيد': e.value}));
         summary = {'إجمالي أرصدة الخزائن': safes.values.fold(0.0, (s, v) => s + v)};
         break;
+
       case 6:
         final items = _inventoryItems();
         final coding = _codingItems();
@@ -250,10 +329,12 @@ class _AdvancedReportsPageState extends State<AdvancedReportsPage> {
         }
         summary = {'قيمة المخزون البطيء': rows.fold<double>(0.0, (s, r) => s + _num(r['قيمة الجملة']))};
         break;
+
       case 7:
         rows.add({'الحالة': 'تحتاج بيانات المبيعات التفصيلية للأصناف لحساب النظري مقابل الفعلي بدقة', 'البيانات المتاحة': 'آخر جرد فعلي محفوظ موجود ويمكن عرضه من شاشة رصيد المخزون'});
         summary = {'الحالة': 'غير مكتمل بدون حركات بيع مرتبطة بكود الصنف'};
         break;
+
       case 8:
         final items = _inventoryItems();
         final total = items.fold(0.0, (s, i) => s + _num(i['quantity']) * _num(i['wholesalePrice'] ?? i['wholesale_price']));
@@ -273,10 +354,12 @@ class _AdvancedReportsPageState extends State<AdvancedReportsPage> {
         }
         summary = {'إجمالي قيمة المخزون بالجملة': total};
         break;
+
       case 9:
         rows.addAll(_supplierRows().map((e) => {'المورد': e['المورد'], 'حجم التعامل/الرصيد': e['الرصيد'], 'التقييم': 'يُستكمل تلقائياً مع إضافة بيانات مواعيد التسليم والخصومات'}));
         summary = {'عدد الموردين': rows.length};
         break;
+
       case 10:
         final p = _purchases();
         double discounts = 0, gross = 0;
@@ -288,6 +371,7 @@ class _AdvancedReportsPageState extends State<AdvancedReportsPage> {
         rows.add({'إجمالي المشتريات': gross, 'إجمالي الخصومات المسجلة': discounts, 'التكلفة بعد الخصم': gross - discounts});
         summary = {'أثر الخصم': gross == 0 ? 0 : discounts / gross * 100};
         break;
+
       case 11:
         final months = <int, double>{};
         for (final t in tx.where((e) => e['type'] == 'وارد')) {
@@ -297,6 +381,7 @@ class _AdvancedReportsPageState extends State<AdvancedReportsPage> {
         for (final e in months.entries) rows.add({'الشهر': e.key, 'المبيعات': e.value});
         summary = {'أفضل شهر': rows.isEmpty ? 'لا يوجد' : rows.reduce((a, b) => _num(a['المبيعات']) > _num(b['المبيعات']) ? a : b)['الشهر']};
         break;
+
       case 12:
         final p = _purchases();
         final byCode = <String, double>{};
@@ -325,14 +410,47 @@ class _AdvancedReportsPageState extends State<AdvancedReportsPage> {
         }
         summary = {'عدد الأصناف': rows.length};
         break;
+
       case 13:
         rows.add({'الحالة': 'تحليل التجميع يحتاج حركات مبيعات تحتوي على أصناف كل إذن.', 'المتاح': 'يمكن تشغيل التحليل تلقائياً بعد ربط أصناف المبيعات بكود الصنف.'});
         summary = {'الحالة': 'بانتظار بيانات Basket تفصيلية'};
         break;
+
+      // ========== التقرير الجديد: تحليل المصروفات بالنسبة للمبيعات ==========
+      case 14:
+        final cats = <String, double>{};
+        double totalIncome = 0.0;
+        for (final t in tx) {
+          if (t['type'] == 'وارد') {
+            totalIncome += _num(t['amount']);
+          } else if (t['type'] == 'صادر') {
+            final c = t['category']?.toString() ?? 'عام';
+            cats[c] = (cats[c] ?? 0) + _num(t['amount']);
+          }
+        }
+        final totalExpenses = cats.values.fold<double>(0.0, (s, v) => s + v);
+        // إذا كان إجمالي المبيعات صفراً، نضع النسب صفر
+        final denominator = totalIncome == 0 ? 1.0 : totalIncome;
+        rows.addAll(cats.entries.map<Map<String, dynamic>>((e) => {
+              'الفئة': e.key,
+              'المبلغ': e.value,
+              'النسبة من المبيعات': (e.value / denominator) * 100,
+            }).toList()..sort((a, b) => _num(b['المبلغ']).compareTo(_num(a['المبلغ']))));
+        summary = {
+          'إجمالي المبيعات': totalIncome,
+          'إجمالي المصروفات': totalExpenses,
+          'نسبة المصروفات للمبيعات': totalIncome == 0 ? 0 : (totalExpenses / totalIncome) * 100,
+        };
+        break;
     }
+
     _rows = rows;
     _summary = summary;
   }
+
+  // ============================================================
+  // دورة الحياة
+  // ============================================================
 
   @override
   void initState() {
@@ -343,7 +461,10 @@ class _AdvancedReportsPageState extends State<AdvancedReportsPage> {
     _loading = false;
   }
 
+  // ============================================================
   // دوال اختيار التاريخ
+  // ============================================================
+
   Future<void> _selectDate(BuildContext context, bool isFrom) async {
     final picked = await showDatePicker(
       context: context,
@@ -372,7 +493,7 @@ class _AdvancedReportsPageState extends State<AdvancedReportsPage> {
           if (_fromDate.isAfter(_toDate)) _fromDate = _toDate;
         }
       });
-      _buildReport(); // إعادة بناء التقرير عند تغيير التاريخ
+      _buildReport();
     }
   }
 
@@ -398,30 +519,115 @@ class _AdvancedReportsPageState extends State<AdvancedReportsPage> {
     );
   }
 
-  // دوال التصدير
+  // ============================================================
+  // دوال التصدير (مع إضافة اسم الشركة والفرع)
+  // ============================================================
+
   Future<void> _exportExcel() async {
-    await ExportService.exportToExcel(
-      _rows,
-      _title,
-      _rows.isEmpty ? [] : _rows.first.keys.toList(),
-      _rows.isEmpty ? [] : _rows.first.keys.toList(),
-      branchName: widget.selectedBranchCode ?? 'كل الفروع',
-      period: '${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}',
-      summary: _summary,
-    );
+  final companyName = await _getCompanyName();
+  final branchName = _getBranchName(widget.selectedBranchCode);
+  final period = 'من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}';
+
+  final formattedRows = _rows.map((row) {
+    final newRow = <String, dynamic>{};
+    for (final entry in row.entries) {
+      final key = entry.key;
+      final value = entry.value;
+      if (value is num) {
+        if (key.contains('نسبة')) {
+          newRow[key] = '${NumberFormat('#,##0.00', 'en_US').format(value.toDouble())}%';
+        } else {
+          newRow[key] = NumberFormat('#,##0.00', 'en_US').format(value.toDouble());
+        }
+      } else {
+        newRow[key] = value;
+      }
+    }
+    return newRow;
+  }).toList();
+
+  final formattedSummary = <String, dynamic>{};
+  for (final entry in _summary.entries) {
+    final key = entry.key;
+    final value = entry.value;
+    if (value is num) {
+      if (key.contains('نسبة') || key.contains('%')) {
+        formattedSummary[key] = '${NumberFormat('#,##0.00', 'en_US').format(value.toDouble())}%';
+      } else {
+        formattedSummary[key] = NumberFormat('#,##0.00', 'en_US').format(value.toDouble());
+      }
+    } else {
+      formattedSummary[key] = value;
+    }
   }
 
+  await ExportService.exportToExcel(
+    formattedRows,
+    _title,
+    _rows.isEmpty ? [] : _rows.first.keys.toList(),
+    _rows.isEmpty ? [] : _rows.first.keys.toList(),
+    companyName: companyName,
+    branchName: branchName,
+    period: period,
+    summary: formattedSummary,
+  );
+}
+
   Future<void> _exportPdf() async {
+    final companyName = await _getCompanyName();
+    final branchName = _getBranchName(widget.selectedBranchCode);
+    final period = 'من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}';
+
+    // تحويل الصفوف إلى نصوص منسقة للتصدير (للأرقام فقط)
+    final formattedRows = _rows.map((row) {
+      final newRow = <String, dynamic>{};
+      for (final entry in row.entries) {
+        final key = entry.key;
+        final value = entry.value;
+        if (value is num) {
+          if (key.contains('نسبة')) {
+            newRow[key] = '${NumberFormat('#,##0.00', 'en_US').format(value)}%';
+          } else {
+            newRow[key] = NumberFormat('#,##0.00', 'en_US').format(value);
+          }
+        } else {
+          newRow[key] = value;
+        }
+      }
+      return newRow;
+    }).toList();
+
+    // تحويل الملخص إلى نصوص منسقة
+    final formattedSummary = <String, dynamic>{};
+    for (final entry in _summary.entries) {
+      final key = entry.key;
+      final value = entry.value;
+      if (value is num) {
+        if (key.contains('نسبة') || key.contains('%')) {
+          formattedSummary[key] = '${NumberFormat('#,##0.00', 'en_US').format(value)}%';
+        } else {
+          formattedSummary[key] = NumberFormat('#,##0.00', 'en_US').format(value);
+        }
+      } else {
+        formattedSummary[key] = value;
+      }
+    }
+
     await ExportService.exportToPDF(
-      data: _rows,
+      data: formattedRows,
       title: _title,
       headers: _rows.isEmpty ? [] : _rows.first.keys.toList(),
       keys: _rows.isEmpty ? [] : _rows.first.keys.toList(),
-      branchName: widget.selectedBranchCode ?? 'كل الفروع',
-      period: '${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}',
-      summary: _summary,
+      companyName: companyName,
+      branchName: branchName,
+      period: period,
+      summary: formattedSummary,
     );
   }
+
+  // ============================================================
+  // بناء الواجهة
+  // ============================================================
 
   @override
   Widget build(BuildContext context) {
@@ -487,22 +693,35 @@ class _AdvancedReportsPageState extends State<AdvancedReportsPage> {
                         ],
                       ),
                       const SizedBox(height: 8),
-                      // معلومات الفرع والفترة
+                      // معلومات الفرع والفترة مع اسم الشركة
                       GlassCard(
                         child: Padding(
                           padding: const EdgeInsets.all(10),
                           child: Row(
                             children: [
                               Expanded(
-                                child: Text(
-                                  'من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}',
-                                  style: const TextStyle(color: Colors.white70, fontFamily: 'Cairo'),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    FutureBuilder<String>(
+                                      future: _getCompanyName(),
+                                      builder: (ctx, snapshot) {
+                                        final name = snapshot.data ?? widget.companyCode;
+                                        return Text(
+                                          name,
+                                          style: const TextStyle(color: Colors.white, fontFamily: 'Cairo', fontSize: 14, fontWeight: FontWeight.bold),
+                                        );
+                                      },
+                                    ),
+                                    Text(
+                                      'من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}',
+                                      style: const TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 12),
+                                    ),
+                                  ],
                                 ),
                               ),
                               Text(
-                                widget.selectedBranchCode == null || widget.selectedBranchCode == 'all'
-                                    ? 'كل الفروع'
-                                    : 'الفرع: ${widget.selectedBranchCode}',
+                                'الفرع: ${_getBranchName(widget.selectedBranchCode)}',
                                 style: const TextStyle(color: Colors.cyanAccent, fontFamily: 'Cairo'),
                               ),
                             ],
@@ -536,14 +755,29 @@ class _AdvancedReportsPageState extends State<AdvancedReportsPage> {
                                       rows: _rows
                                           .map(
                                             (r) => DataRow(
-                                              cells: r.values
+                                              cells: r.entries
                                                   .map(
-                                                    (v) => DataCell(
-                                                      Text(
-                                                        v is num ? v.toStringAsFixed(2) : v.toString(),
-                                                        style: const TextStyle(color: Colors.white70, fontFamily: 'Cairo'),
-                                                      ),
-                                                    ),
+                                                    (entry) {
+                                                      final key = entry.key;
+                                                      final value = entry.value;
+                                                      String displayText;
+                                                      if (value is num) {
+                                                        // إذا كان المفتاح يحتوي على 'نسبة' نضيف %
+                                                        if (key.contains('نسبة')) {
+                                                          displayText = _formatPercent(value);
+                                                        } else {
+                                                          displayText = _formatNumber(value);
+                                                        }
+                                                      } else {
+                                                        displayText = value.toString();
+                                                      }
+                                                      return DataCell(
+                                                        Text(
+                                                          displayText,
+                                                          style: const TextStyle(color: Colors.white70, fontFamily: 'Cairo'),
+                                                        ),
+                                                      );
+                                                    },
                                                   )
                                                   .toList(),
                                             ),
@@ -554,6 +788,7 @@ class _AdvancedReportsPageState extends State<AdvancedReportsPage> {
                                 ),
                         ),
                       ),
+                      // الإجماليات
                       if (_summary.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.symmetric(vertical: 8),
@@ -562,17 +797,31 @@ class _AdvancedReportsPageState extends State<AdvancedReportsPage> {
                             runSpacing: 8,
                             children: _summary.entries
                                 .map(
-                                  (e) => Container(
-                                    padding: const EdgeInsets.all(8),
-                                    decoration: BoxDecoration(
-                                      color: Colors.white.withOpacity(.06),
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: Text(
-                                      '${e.key}: ${e.value is num ? e.value.toStringAsFixed(2) : e.value}',
-                                      style: const TextStyle(color: Colors.amber, fontFamily: 'Cairo'),
-                                    ),
-                                  ),
+                                  (e) {
+                                    final key = e.key;
+                                    final value = e.value;
+                                    String displayText;
+                                    if (value is num) {
+                                      if (key.contains('نسبة') || key.contains('%')) {
+                                        displayText = _formatPercent(value);
+                                      } else {
+                                        displayText = _formatNumber(value);
+                                      }
+                                    } else {
+                                      displayText = value.toString();
+                                    }
+                                    return Container(
+                                      padding: const EdgeInsets.all(8),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white.withOpacity(.06),
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: Text(
+                                        '$key: $displayText',
+                                        style: const TextStyle(color: Colors.amber, fontFamily: 'Cairo'),
+                                      ),
+                                    );
+                                  },
                                 )
                                 .toList(),
                           ),

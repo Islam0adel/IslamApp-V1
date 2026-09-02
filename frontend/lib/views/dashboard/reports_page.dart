@@ -9,6 +9,7 @@ import 'package:excel/excel.dart' as excel_lib;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:universal_html/html.dart' as html;
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../services/permissions_service.dart';
 import '../../services/export_service.dart';
@@ -35,10 +36,10 @@ class _ReportsPageState extends State<ReportsPage> {
   // متغيرات جديدة للتقرير الموسع
   Map<String, double> _incomeDetails = {};
   Map<String, double> _expenseDetails = {};
-  // ignore: unused_field
-  double _previousCash = 0.0;
+ 
   double _expensesWithoutGoods = 0.0;
   double _expensesWithoutGoodsAndProfit = 0.0;
+  
 
   @override
   void initState() {
@@ -49,26 +50,26 @@ class _ReportsPageState extends State<ReportsPage> {
   }
 
   void _setDefaultReportType() {
-    // إذا كان النوع الحالي هو 3 (التقرير الموسع)، يجب أن يكون المستخدم لديه صلاحية canViewExtendedReport
-    if (_selectedReportType == 3 && !PermissionsService().canViewExtendedReport) {
-      // إذا لم تكن الصلاحية موجودة، انتقل إلى تقرير آخر
-      if (PermissionsService().canViewReportsSales) {
-        _selectedReportType = 1;
-      } else if (PermissionsService().canViewReportsPeriod) {
-        _selectedReportType = 2;
-      } else {
-        _selectedReportType = 1; // سيتم عرض رسالة
-      }
+    // التحقق من الصلاحيات حسب النوع المطلوب
+    if (widget.initialReportType == 1 && PermissionsService().canViewReportsSales) {
+      _selectedReportType = 1;
       return;
     }
-    // سلوك سابق
-    if (_selectedReportType == 3 && PermissionsService().canViewReportsPeriod) return;
+    if (widget.initialReportType == 2 && PermissionsService().canViewReportsPeriod) {
+      _selectedReportType = 2;
+      return;
+    }
+    if (widget.initialReportType == 3 && PermissionsService().canViewExtendedReport && PermissionsService().canViewReportsPeriod) {
+      _selectedReportType = 3;
+      return;
+    }
+    // fallback
     if (PermissionsService().canViewReportsSales) {
       _selectedReportType = 1;
     } else if (PermissionsService().canViewReportsPeriod) {
       _selectedReportType = 2;
     } else {
-      _selectedReportType = 1; // سيتم عرض رسالة
+      _selectedReportType = 1;
     }
   }
 
@@ -80,6 +81,65 @@ class _ReportsPageState extends State<ReportsPage> {
       if (item['code']?.toString() == code) return item['name']?.toString() ?? "فرع غير معروف";
     }
     return "فرع غير معروف";
+  }
+
+  Future<String> _getCompanyName() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final name = prefs.getString('company_name');
+      if (name != null && name.isNotEmpty) return name;
+    } catch (e) {
+      // ignore
+    }
+    final Box codingBox = Hive.box('coding_box');
+    // 1- البحث في الخريطة المخصصة للشركة
+    final companyData = codingBox.get("${widget.companyCode}_company");
+    if (companyData is Map) {
+      final name = companyData['name']?.toString() ??
+          companyData['company_name']?.toString() ??
+          companyData['companyName']?.toString();
+      if (name != null && name.isNotEmpty) return name;
+    }
+    // 2- البحث عن مفتاح مباشر
+    final directName = codingBox.get("${widget.companyCode}_name")?.toString() ??
+        codingBox.get("${widget.companyCode}_companyName")?.toString();
+    if (directName != null && directName.isNotEmpty) return directName;
+    // 3- البحث في قائمة الشركات
+    final companiesList = codingBox.get('companies');
+    if (companiesList is List) {
+      for (var company in companiesList) {
+        if (company is Map) {
+          final code = company['code']?.toString();
+          if (code == widget.companyCode) {
+            final name = company['name']?.toString() ??
+                company['company_name']?.toString() ??
+                company['companyName']?.toString();
+            if (name != null && name.isNotEmpty) return name;
+          }
+        }
+      }
+    }
+    // 4- البحث في قائمة الشركات (المفتاح "company_list")
+    final companyList2 = codingBox.get('company_list');
+    if (companyList2 is List) {
+      for (var company in companyList2) {
+        if (company is Map) {
+          final code = company['code']?.toString();
+          if (code == widget.companyCode) {
+            final name = company['name']?.toString() ??
+                company['company_name']?.toString() ??
+                company['companyName']?.toString();
+            if (name != null && name.isNotEmpty) return name;
+          }
+        }
+      }
+    }
+    return widget.companyCode;
+  }
+
+  // دالة لتنسيق الأرقام بفاصلة الألف
+  String _formatNumber(double value) {
+    return NumberFormat('#,##0.00', 'en_US').format(value);
   }
 
   List<Map<dynamic, dynamic>> _getFilteredTransactions() {
@@ -97,65 +157,11 @@ class _ReportsPageState extends State<ReportsPage> {
         DateTime from = DateTime(_fromDate.year, _fromDate.month, _fromDate.day);
         DateTime to = DateTime(_toDate.year, _toDate.month, _toDate.day);
         return (txDate.isAtSameMomentAs(from) || txDate.isAfter(from)) &&
-               (txDate.isAtSameMomentAs(to) || txDate.isBefore(to));
+            (txDate.isAtSameMomentAs(to) || txDate.isBefore(to));
       } catch (e) {
         return false;
       }
     }).map((e) => e as Map<dynamic, dynamic>).toList();
-  }
-
-      // دالة محسنة للحصول على اسم الشركة (تبحث في عدة مفاتيح محتملة)
-    String _getCompanyName() {
-    final Box codingBox = Hive.box('coding_box');
-    
-    // 1- البحث في الخريطة المخصصة للشركة (المفتاح: "${code}_company")
-    final companyData = codingBox.get("${widget.companyCode}_companyName");
-    if (companyData is Map) {
-      final name = companyData['name']?.toString() ??
-                   companyData['company_name']?.toString() ??
-                   companyData['companyName']?.toString();
-      if (name != null && name.isNotEmpty) return name;
-    }
-    
-    // 2- البحث عن مفتاح مباشر يحوي الاسم (مثل "code_name" أو "code_companyName")
-    final directName = codingBox.get("${widget.companyCode}_name")?.toString() ??
-                       codingBox.get("${widget.companyCode}_companyName")?.toString();
-    if (directName != null && directName.isNotEmpty) return directName;
-    
-    // 3- البحث في قائمة الشركات العامة (المفتاح "companies")
-    final companiesList = codingBox.get('companies');
-    if (companiesList is List) {
-      for (var company in companiesList) {
-        if (company is Map) {
-          final code = company['code']?.toString();
-          if (code == widget.companyCode) {
-            final name = company['name']?.toString() ??
-                         company['company_name']?.toString() ??
-                         company['companyName']?.toString();
-            if (name != null && name.isNotEmpty) return name;
-          }
-        }
-      }
-    }
-    
-    // 4- البحث في قائمة الشركات (المفتاح "company_list")
-    final companyList2 = codingBox.get('company_list');
-    if (companyList2 is List) {
-      for (var company in companyList2) {
-        if (company is Map) {
-          final code = company['code']?.toString();
-          if (code == widget.companyCode) {
-            final name = company['name']?.toString() ??
-                         company['company_name']?.toString() ??
-                         company['companyName']?.toString();
-            if (name != null && name.isNotEmpty) return name;
-          }
-        }
-      }
-    }
-    
-    // 5- إذا لم يوجد، نرجع الكود نفسه (أو يمكن إرجاع "شركة غير معروفة")
-    return widget.companyCode;
   }
 
   // ===================== تصدير EXCEL =====================
@@ -301,112 +307,124 @@ class _ReportsPageState extends State<ReportsPage> {
 
   // ===================== تصدير PDF =====================
   Future<void> _shareAsPdf() async {
-    if (!PermissionsService().canShareReports) {
-      _showErrorSnackBar("ليس لديك صلاحية لتصدير التقارير");
-      return;
-    }
-    if (_selectedReportType == 3) {
-      await _exportExtendedPdf();
-      return;
-    }
-    final transactions = _getFilteredTransactions();
-    if (transactions.isEmpty) return _showEmptySheetRow();
-
-    try {
-      final pdf = pw.Document();
-      var arabicFont = pw.Font.ttf(await rootBundle.load("assets/fonts/Cairo-Regular.ttf"));
-
-      String branchName = _getBranchName(widget.selectedBranchCode);
-      String dateStr = "من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}";
-      final primaryColor = PdfColor.fromHex('#050F4C');
-      final accentColor = PdfColor.fromHex('#3062F8');
-
-      pdf.addPage(
-        pw.MultiPage(
-          theme: pw.ThemeData.withFont(base: arabicFont),
-          textDirection: pw.TextDirection.rtl,
-          build: (pw.Context context) {
-            return [
-              pw.Container(
-                width: double.infinity,
-                padding: const pw.EdgeInsets.all(15),
-                decoration: pw.BoxDecoration(
-                  color: primaryColor,
-                  borderRadius: pw.BorderRadius.circular(10),
-                ),
-                child: pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.start,
-                  children: [
-                    pw.Text(
-                      _selectedReportType == 1 ? "تقرير المبيعات التفصيلي" : "تقرير الأداء المالي (الفترة)",
-                      style: pw.TextStyle(font: arabicFont, fontSize: 20, color: PdfColors.amber, fontWeight: pw.FontWeight.bold),
-                    ),
-                    pw.SizedBox(height: 5),
-                    pw.Text("الفرع الحالي: $branchName", style: pw.TextStyle(font: arabicFont, fontSize: 13, color: PdfColors.white)),
-                    pw.Text("الفترة الزمنية: $dateStr", style: pw.TextStyle(font: arabicFont, fontSize: 11, color: const PdfColor(1, 1, 1, 0.8))),
-                  ],
-                ),
-              ),
-              pw.SizedBox(height: 20),
-              _selectedReportType == 1
-                  ? _buildPdfSalesReportStructure(transactions, arabicFont, primaryColor)
-                  : _buildPdfFinanceReportStructure(transactions, arabicFont, primaryColor, accentColor),
-            ];
-          },
-        ),
-      );
-
-      final pdfBytes = await pdf.save();
-      String fileName = "تقرير_${DateTime.now().millisecondsSinceEpoch}.pdf";
-
-      if (kIsWeb) {
-        final blob = html.Blob([pdfBytes], 'application/pdf');
-        final url = html.Url.createObjectUrlFromBlob(blob);
-        html.AnchorElement(href: url)
-          ..setAttribute("download", fileName)
-          ..click();
-        html.Url.revokeObjectUrl(url);
-      } else {
-        final xFile = XFile.fromData(pdfBytes, mimeType: 'application/pdf', name: fileName);
-        await Share.shareXFiles([xFile], text: "مرفق لكم تقرير PDF ملون");
-      }
-    } catch (e) {
-      _showErrorSnackBar("تأكد من إعداد ملف الخط بشكل صحيح: $e");
-    }
+  if (!PermissionsService().canShareReports) {
+    _showErrorSnackBar("ليس لديك صلاحية لتصدير التقارير");
+    return;
   }
+  if (_selectedReportType == 1) {
+    await _exportSalesPdf(); // ✅ استخدام الدالة الجديدة
+    return;
+  }
+  if (_selectedReportType == 3) {
+    await _exportExtendedPdf();
+    return;
+  }
+  final transactions = _getFilteredTransactions();
+  if (transactions.isEmpty) return _showEmptySheetRow();
+
+  try {
+    final pdf = pw.Document();
+    var arabicFont = pw.Font.ttf(await rootBundle.load("assets/fonts/Cairo-Regular.ttf"));
+    String companyName = await _getCompanyName();
+
+    String branchName = _getBranchName(widget.selectedBranchCode);
+    String dateStr = "من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}";
+    final primaryColor = PdfColor.fromHex('#050F4C');
+    final accentColor = PdfColor.fromHex('#3062F8');
+
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(32),
+        theme: pw.ThemeData.withFont(base: arabicFont), // ✅ الخط الأساسي
+        textDirection: pw.TextDirection.rtl,
+        build: (pw.Context context) {
+          return [
+            pw.Container(
+              width: double.infinity,
+              padding: const pw.EdgeInsets.all(15),
+              decoration: pw.BoxDecoration(
+                color: primaryColor,
+                borderRadius: pw.BorderRadius.circular(10),
+              ),
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Text(
+                    companyName,
+                    style: pw.TextStyle(font: arabicFont, fontSize: 18, color: PdfColors.white, fontWeight: pw.FontWeight.bold),
+                  ),
+                  pw.SizedBox(height: 5),
+                  pw.Text(
+                    _selectedReportType == 1 ? "تقرير المبيعات التفصيلي" : "تقرير الأداء المالي (الفترة)",
+                    style: pw.TextStyle(font: arabicFont, fontSize: 20, color: PdfColors.amber, fontWeight: pw.FontWeight.bold),
+                  ),
+                  pw.SizedBox(height: 5),
+                  pw.Text("الفرع الحالي: $branchName", style: pw.TextStyle(font: arabicFont, fontSize: 13, color: PdfColors.white)),
+                  pw.Text("الفترة الزمنية: $dateStr", style: pw.TextStyle(font: arabicFont, fontSize: 11, color: const PdfColor(1, 1, 1, 0.8))),
+                ],
+              ),
+            ),
+            pw.SizedBox(height: 20),
+            _selectedReportType == 1
+                ? _buildPdfSalesReportStructure(transactions, arabicFont, primaryColor, companyName)
+                : _buildPdfFinanceReportStructure(transactions, arabicFont, primaryColor, accentColor, companyName),
+          ];
+        },
+      ),
+    );
+
+    final pdfBytes = await pdf.save();
+    String fileName = "تقرير_${DateTime.now().millisecondsSinceEpoch}.pdf";
+
+    if (kIsWeb) {
+      final blob = html.Blob([pdfBytes], 'application/pdf');
+      final url = html.Url.createObjectUrlFromBlob(blob);
+      html.AnchorElement(href: url)
+        ..setAttribute("download", fileName)
+        ..click();
+      html.Url.revokeObjectUrl(url);
+    } else {
+      final xFile = XFile.fromData(pdfBytes, mimeType: 'application/pdf', name: fileName);
+      await Share.shareXFiles([xFile], text: "مرفق لكم تقرير PDF ملون");
+    }
+  } catch (e) {
+    _showErrorSnackBar("تأكد من إعداد ملف الخط بشكل صحيح: $e");
+  }
+}
 
   // ===== دوال التصدير للتقرير الموسع (المعدلة) =====
   Future<void> _exportExtendedExcel() async {
     if (_extendedSummary.isEmpty) await _calculateExtendedReport();
-    
+
     // بناء قائمة التفاصيل للجدول (الإيرادات والمصروفات)
     List<Map<String, dynamic>> detailRows = [];
-    
+
     // تفاصيل الإيرادات
     detailRows.add({'البند': '--- الإيرادات ---', 'القيمة': ''});
     _incomeDetails.forEach((key, value) {
       detailRows.add({'البند': key, 'القيمة': value});
     });
-    
+
     // تفاصيل المصروفات
     detailRows.add({'البند': '--- المصروفات ---', 'القيمة': ''});
     _expenseDetails.forEach((key, value) {
       detailRows.add({'البند': key, 'القيمة': value});
     });
-    
+
     // بناء خريطة الإجماليات مع إضافة السطور الإضافية
     Map<String, dynamic> summaryMap = {
       ..._extendedSummary,
-      'المصروفات بدون بضاعة': _expensesWithoutGoods,
-      'المصروفات بدون بضاعة وأرباح': _expensesWithoutGoodsAndProfit,
     };
-    
+
+    String companyName = await _getCompanyName();
+
     await ExportService.exportToExcel(
       detailRows,
       'التقرير المالي الموسع',
       const ['البند', 'القيمة'],
       const ['البند', 'القيمة'],
-      companyName: _getCompanyName(), // الآن يعرض اسم الشركة بدلاً من الكود
+      companyName: companyName,
       branchName: _getBranchName(widget.selectedBranchCode),
       period: 'من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}',
       summary: summaryMap,
@@ -415,35 +433,35 @@ class _ReportsPageState extends State<ReportsPage> {
 
   Future<void> _exportExtendedPdf() async {
     if (_extendedSummary.isEmpty) await _calculateExtendedReport();
-    
+
     // بناء قائمة التفاصيل للجدول (الإيرادات والمصروفات)
     List<Map<String, dynamic>> detailRows = [];
-    
+
     // تفاصيل الإيرادات
     detailRows.add({'البند': '--- الإيرادات ---', 'القيمة': ''});
     _incomeDetails.forEach((key, value) {
       detailRows.add({'البند': key, 'القيمة': value});
     });
-    
+
     // تفاصيل المصروفات
     detailRows.add({'البند': '--- المصروفات ---', 'القيمة': ''});
     _expenseDetails.forEach((key, value) {
       detailRows.add({'البند': key, 'القيمة': value});
     });
-    
+
     // بناء خريطة الإجماليات مع إضافة السطور الإضافية
     Map<String, dynamic> summaryMap = {
       ..._extendedSummary,
-      'المصروفات بدون بضاعة': _expensesWithoutGoods,
-      'المصروفات بدون بضاعة وأرباح': _expensesWithoutGoodsAndProfit,
     };
-    
+
+    String companyName = await _getCompanyName();
+
     await ExportService.exportToPDF(
       data: detailRows,
       title: 'التقرير المالي الموسع',
       headers: const ['البند', 'القيمة'],
       keys: const ['البند', 'القيمة'],
-      companyName: _getCompanyName(), // الآن يعرض اسم الشركة بدلاً من الكود
+      companyName: companyName,
       branchName: _getBranchName(widget.selectedBranchCode),
       period: 'من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}',
       summary: summaryMap,
@@ -520,7 +538,81 @@ class _ReportsPageState extends State<ReportsPage> {
       ),
     );
   }
-    Future<void> _selectDate(BuildContext context, bool isFrom) async {
+
+  Future<void> _exportSalesPdf() async {
+  final transactions = _getFilteredTransactions();
+  if (transactions.isEmpty) {
+    _showEmptySheetRow();
+    return;
+  }
+
+  // حساب البيانات
+  Map<String, Map<String, double>> dailyData = {};
+  Set<String> allCategories = {};
+  for (var tx in transactions) {
+    if (tx['type'] == 'وارد') {
+      String date = tx['date'].toString().substring(0, 10);
+      String category = tx['category'] ?? 'عام';
+      double amount = double.tryParse(tx['amount'].toString()) ?? 0.0;
+      allCategories.add(category);
+      dailyData.putIfAbsent(date, () => {'total': 0.0});
+      dailyData[date]![category] = (dailyData[date]![category] ?? 0.0) + amount;
+      dailyData[date]!['total'] = dailyData[date]!['total']! + amount;
+    }
+  }
+
+  List<String> sortedDates = dailyData.keys.toList()..sort();
+  List<String> columns = allCategories.toList()..sort();
+
+  // تحويل البيانات إلى قائمة خرائط
+  List<Map<String, dynamic>> rows = [];
+  for (var date in sortedDates) {
+    Map<String, dynamic> row = {'التاريخ': date};
+    for (var cat in columns) {
+      row[cat] = dailyData[date]![cat] ?? 0.0;
+    }
+    row['الإجمالي اليومي'] = dailyData[date]!['total']!;
+    rows.add(row);
+  }
+
+  // حساب الإجماليات
+  Map<String, double> categoryTotals = {};
+  for (var date in sortedDates) {
+    for (var cat in columns) {
+      categoryTotals[cat] = (categoryTotals[cat] ?? 0.0) + (dailyData[date]![cat] ?? 0.0);
+    }
+  }
+  double grandTotal = categoryTotals.values.fold(0.0, (sum, v) => sum + v);
+  double average = rows.isEmpty ? 0 : grandTotal / rows.length;
+
+  Map<String, dynamic> summary = {
+    'إجمالي الفئات': '',
+    ...categoryTotals,
+    'الإجمالي الكلي': grandTotal,
+    'المتوسط اليومي': average,
+  };
+
+  String companyName = await _getCompanyName();
+  String branchName = _getBranchName(widget.selectedBranchCode);
+  String period = 'من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}';
+
+  List<String> headers = ['التاريخ', ...columns, 'الإجمالي اليومي'];
+
+  // ✅ استخدام ExportService.exportToPDF الجاهز
+  await ExportService.exportToPDF(
+    data: rows,
+    title: 'تقرير المبيعات التفصيلي',
+    headers: headers,
+    keys: headers,
+    companyName: companyName,
+    branchName: branchName,
+    period: period,
+    summary: summary,
+    totalAmount: grandTotal,
+  );
+}
+
+  Future<void> _selectDate(BuildContext context, bool isFrom) async {
     final DateTime? picked = await showDatePicker(
       context: context,
       initialDate: isFrom ? _fromDate : _toDate,
@@ -655,88 +747,231 @@ class _ReportsPageState extends State<ReportsPage> {
     );
   }
 
-  pw.Widget _buildPdfSalesReportStructure(List<Map<dynamic, dynamic>> transactions, pw.Font font, PdfColor primaryColor) {
-    Map<String, Map<String, double>> dailyData = {};
-    Set<String> allCategories = {};
-    for (var tx in transactions) {
-      if (tx['type'] == 'وارد') {
-        String date = tx['date'].toString().substring(0, 10);
-        String category = tx['category'] ?? 'عام';
-        double amount = double.tryParse(tx['amount'].toString()) ?? 0.0;
-        allCategories.add(category);
-        dailyData.putIfAbsent(date, () => {'total': 0.0});
-        dailyData[date]![category] = (dailyData[date]![category] ?? 0.0) + amount;
-        dailyData[date]!['total'] = dailyData[date]!['total']! + amount;
-      }
-    }
-    List<String> sortedDates = dailyData.keys.toList()..sort();
-    List<String> columns = allCategories.toList()..sort();
-
-    return pw.Column(children: [
-      pw.Table(
-      border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
-      children: [
-        pw.TableRow(
-          decoration: pw.BoxDecoration(color: primaryColor),
-          children: [
-            pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text("التاريخ", style: pw.TextStyle(font: font, color: PdfColors.white, fontWeight: pw.FontWeight.bold))),
-            ...columns.map((c) => pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text(c, style: pw.TextStyle(font: font, color: PdfColors.white)))),
-            pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text("الإجمالي", style: pw.TextStyle(font: font, color: PdfColors.amber, fontWeight: pw.FontWeight.bold))),
-          ]
-        ),
-        ...sortedDates.map((date) => pw.TableRow(
-          children: [
-            pw.Padding(padding: const pw.EdgeInsets.all(5), child: pw.Text(date)),
-            ...columns.map((c) => pw.Padding(padding: const pw.EdgeInsets.all(5), child: pw.Text((dailyData[date]![c] ?? 0).toStringAsFixed(2)))),
-            pw.Padding(padding: const pw.EdgeInsets.all(5), child: pw.Text(dailyData[date]!['total']!.toStringAsFixed(2), style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
-          ]
-        ))
-      ]
-      ),
-      pw.SizedBox(height: 8),
-      _pdfSummaryRow("الإجمالي الكلي:", dailyData.values.fold<double>(0, (sum, v) => sum + (v['total'] ?? 0)), PdfColors.amber, font, isBold: true),
-      _pdfSummaryRow("المتوسط اليومي:", dailyData.isEmpty ? 0 : dailyData.values.fold<double>(0, (sum, v) => sum + (v['total'] ?? 0)) / dailyData.length, PdfColors.cyan, font),
-    ]);
-  }
-
-  pw.Widget _buildPdfFinanceReportStructure(List<Map<dynamic, dynamic>> transactions, pw.Font font, PdfColor primaryColor, PdfColor accentColor) {
-    double totalIncome = 0; double totalExpenses = 0; double totalGoods = 0;
-    for (var tx in transactions) {
+  pw.Widget _buildPdfSalesReportStructure(
+  List<Map<dynamic, dynamic>> transactions,
+  pw.Font font,
+  PdfColor primaryColor,
+  String companyName,
+) {
+  Map<String, Map<String, double>> dailyData = {};
+  Set<String> allCategories = {};
+  for (var tx in transactions) {
+    if (tx['type'] == 'وارد') {
+      String date = tx['date'].toString().substring(0, 10);
+      String category = tx['category'] ?? 'عام';
       double amount = double.tryParse(tx['amount'].toString()) ?? 0.0;
-      if (tx['type'] == 'وارد') { totalIncome += amount; }
-      else if (tx['type'] == 'صادر') {
-        totalExpenses += amount;
-        if (tx['category'] == 'بضاعة') totalGoods += amount;
-      }
+      allCategories.add(category);
+      dailyData.putIfAbsent(date, () => {'total': 0.0});
+      dailyData[date]![category] = (dailyData[date]![category] ?? 0.0) + amount;
+      dailyData[date]!['total'] = dailyData[date]!['total']! + amount;
     }
-    return pw.Container(
-      padding: const pw.EdgeInsets.all(12),
-      decoration: pw.BoxDecoration(color: PdfColors.grey100, borderRadius: pw.BorderRadius.circular(8)),
-      child: pw.Column(
-        children: [
-          _pdfSummaryRow("إجمالي الإيرادات الكلية:", totalIncome, PdfColors.green, font),
-          pw.Divider(color: PdfColors.grey300),
-          _pdfSummaryRow("إجمالي المصروفات التشغيلية:", totalExpenses - totalGoods, PdfColors.orange, font),
-          _pdfSummaryRow("إجمالي قيمة البضاعة المشتراة:", totalGoods, PdfColors.orange, font),
-          pw.Divider(color: PdfColors.grey400),
-          _pdfSummaryRow("صافي الرصيد المتبقي النهائي:", totalIncome - totalExpenses, (totalIncome - totalExpenses) >= 0 ? PdfColors.blue : PdfColors.red, font, isBold: true),
-        ]
-      )
-    );
   }
+  List<String> sortedDates = dailyData.keys.toList()..sort();
+  List<String> columns = allCategories.toList()..sort();
+
+  Map<String, double> categoryTotals = {};
+  for (var date in sortedDates) {
+    for (var cat in columns) {
+      categoryTotals[cat] = (categoryTotals[cat] ?? 0.0) + (dailyData[date]![cat] ?? 0.0);
+    }
+  }
+  double grandTotal = categoryTotals.values.fold(0.0, (sum, v) => sum + v);
+
+  List<pw.TableRow> rows = [];
+
+  // ------------------- رأس الجدول -------------------
+  rows.add(
+    pw.TableRow(
+      decoration: pw.BoxDecoration(color: primaryColor),
+      children: [
+        pw.Padding(
+          padding: const pw.EdgeInsets.all(6),
+          child: pw.Text(
+            "التاريخ",
+            style: pw.TextStyle(font: font, color: PdfColors.white, fontWeight: pw.FontWeight.bold, fontSize: 11),
+            textAlign: pw.TextAlign.center,
+          ),
+        ),
+        ...columns.map((c) => pw.Padding(
+              padding: const pw.EdgeInsets.all(6),
+              child: pw.Text(
+                c,
+                style: pw.TextStyle(font: font, color: PdfColors.white, fontSize: 11, fontWeight: pw.FontWeight.bold),
+                textAlign: pw.TextAlign.center,
+              ),
+            )),
+        pw.Padding(
+          padding: const pw.EdgeInsets.all(6),
+          child: pw.Text(
+            "الإجمالي",
+            style: pw.TextStyle(font: font, color: PdfColors.amber, fontWeight: pw.FontWeight.bold, fontSize: 11),
+            textAlign: pw.TextAlign.center,
+          ),
+        ),
+      ],
+    ),
+  );
+
+  // ------------------- صفوف البيانات -------------------
+  for (var date in sortedDates) {
+    List<pw.Widget> cells = [];
+    cells.add(pw.Padding(
+      padding: const pw.EdgeInsets.all(5),
+      child: pw.Text(
+        date,
+        style: pw.TextStyle(font: font, fontSize: 10),
+        textAlign: pw.TextAlign.center,
+      ),
+    ));
+    for (var cat in columns) {
+      double val = dailyData[date]![cat] ?? 0.0;
+      cells.add(pw.Padding(
+        padding: const pw.EdgeInsets.all(5),
+        child: pw.Text(
+          _formatNumber(val),
+          style: pw.TextStyle(font: font, fontSize: 10),
+          textAlign: pw.TextAlign.center,
+        ),
+      ));
+    }
+    cells.add(pw.Padding(
+      padding: const pw.EdgeInsets.all(5),
+      child: pw.Text(
+        _formatNumber(dailyData[date]!['total']!),
+        style: pw.TextStyle(font: font, fontSize: 10, fontWeight: pw.FontWeight.bold),
+        textAlign: pw.TextAlign.center,
+      ),
+    ));
+    rows.add(pw.TableRow(children: cells));
+  }
+
+  // ------------------- إجمالي الفئات -------------------
+  List<pw.Widget> totalCells = [];
+  totalCells.add(pw.Padding(
+    padding: const pw.EdgeInsets.all(6),
+    child: pw.Text(
+      "إجمالي الفئات",
+      style: pw.TextStyle(font: font, fontSize: 11, fontWeight: pw.FontWeight.bold, color: primaryColor),
+      textAlign: pw.TextAlign.center,
+    ),
+  ));
+  for (var cat in columns) {
+    totalCells.add(pw.Padding(
+      padding: const pw.EdgeInsets.all(6),
+      child: pw.Text(
+        _formatNumber(categoryTotals[cat] ?? 0.0),
+        style: pw.TextStyle(font: font, fontSize: 11, fontWeight: pw.FontWeight.bold, color: PdfColors.blue800),
+        textAlign: pw.TextAlign.center,
+      ),
+    ));
+  }
+  totalCells.add(pw.Padding(
+    padding: const pw.EdgeInsets.all(6),
+    child: pw.Text(
+      _formatNumber(grandTotal),
+      style: pw.TextStyle(font: font, fontSize: 11, fontWeight: pw.FontWeight.bold, color: PdfColors.amber),
+      textAlign: pw.TextAlign.center,
+    ),
+  ));
+  rows.add(pw.TableRow(
+    decoration: pw.BoxDecoration(color: PdfColors.grey100),
+    children: totalCells,
+  ));
+
+  // ------------------- الإجمالي الكلي -------------------
+  List<pw.Widget> grandCells = [];
+  grandCells.add(pw.Padding(
+    padding: const pw.EdgeInsets.all(6),
+    child: pw.Text(
+      "الإجمالي الكلي",
+      style: pw.TextStyle(font: font, fontSize: 12, fontWeight: pw.FontWeight.bold, color: primaryColor),
+      textAlign: pw.TextAlign.center,
+    ),
+  ));
+  for (var i = 0; i < columns.length; i++) {
+    grandCells.add(pw.Padding(
+      padding: const pw.EdgeInsets.all(6),
+      child: pw.Text("", style: pw.TextStyle(font: font, fontSize: 12)),
+    ));
+  }
+  grandCells.add(pw.Padding(
+    padding: const pw.EdgeInsets.all(6),
+    child: pw.Text(
+      _formatNumber(grandTotal),
+      style: pw.TextStyle(font: font, fontSize: 13, fontWeight: pw.FontWeight.bold, color: primaryColor),
+      textAlign: pw.TextAlign.center,
+    ),
+  ));
+  rows.add(pw.TableRow(children: grandCells));
+
+  // ------------------- الإخراج النهائي -------------------
+  return pw.Column(children: [
+    pw.Table(
+      border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
+      children: rows,
+    ),
+    pw.SizedBox(height: 8),
+    pw.Row(
+      mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+      children: [
+        _pdfSummaryRow("الإجمالي الكلي:", grandTotal, PdfColors.amber, font, isBold: true),
+        _pdfSummaryRow("المتوسط اليومي:", dailyData.isEmpty ? 0 : grandTotal / dailyData.length, PdfColors.cyan, font),
+      ],
+    ),
+  ]);
+}
+
+  pw.Widget _buildPdfFinanceReportStructure(
+  List<Map<dynamic, dynamic>> transactions,
+  pw.Font font,
+  PdfColor primaryColor,
+  PdfColor accentColor,
+  String companyName,
+) {
+  double totalIncome = 0, totalExpenses = 0, totalGoods = 0;
+  for (var tx in transactions) {
+    double amount = double.tryParse(tx['amount'].toString()) ?? 0.0;
+    if (tx['type'] == 'وارد') { totalIncome += amount; }
+    else if (tx['type'] == 'صادر') {
+      totalExpenses += amount;
+      if (tx['category'] == 'بضاعة') totalGoods += amount;
+    }
+  }
+  double netExpenses = totalExpenses - totalGoods;
+  double finalBalance = totalIncome - totalExpenses;
+
+  return pw.Container(
+    padding: const pw.EdgeInsets.all(12),
+    decoration: pw.BoxDecoration(
+      color: PdfColors.grey100,
+      borderRadius: pw.BorderRadius.circular(8),
+      border: pw.Border.all(color: PdfColors.grey300, width: 0.5),
+    ),
+    child: pw.Column(
+      children: [
+        _pdfSummaryRow("إجمالي الإيرادات الكلية:", totalIncome, PdfColors.green, font, isBold: true),
+        pw.Divider(color: PdfColors.grey300),
+        _pdfSummaryRow("إجمالي المصروفات التشغيلية:", netExpenses, PdfColors.orange, font),
+        _pdfSummaryRow("إجمالي قيمة البضاعة المشتراة:", totalGoods, PdfColors.orange, font),
+        pw.Divider(color: PdfColors.grey400),
+        _pdfSummaryRow("صافي الرصيد المتبقي النهائي:", finalBalance, finalBalance >= 0 ? PdfColors.blue : PdfColors.red, font, isBold: true),
+      ],
+    ),
+  );
+}
 
   pw.Widget _pdfSummaryRow(String label, double val, PdfColor col, pw.Font font, {bool isBold = false}) {
-    return pw.Padding(
-      padding: const pw.EdgeInsets.symmetric(vertical: 4),
-      child: pw.Row(
-        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-        children: [
-          pw.Text(label, style: pw.TextStyle(font: font, fontSize: isBold ? 14 : 12, fontWeight: isBold ? pw.FontWeight.bold : pw.FontWeight.normal)),
-          pw.Text(val.toStringAsFixed(2), style: pw.TextStyle(font: font, fontSize: isBold ? 15 : 13, color: col, fontWeight: pw.FontWeight.bold)),
-        ]
-      )
-    );
-  }
+  return pw.Padding(
+    padding: const pw.EdgeInsets.symmetric(vertical: 4),
+    child: pw.Row(
+      mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+      children: [
+        pw.Text(label, style: pw.TextStyle(font: font, fontSize: isBold ? 14 : 12, fontWeight: isBold ? pw.FontWeight.bold : pw.FontWeight.normal)),
+        pw.Text(_formatNumber(val), style: pw.TextStyle(font: font, fontSize: isBold ? 15 : 13, color: col, fontWeight: pw.FontWeight.bold)),
+      ],
+    ),
+  );
+}
 
   void _showEmptySheetRow() => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("لا توجد بيانات للفترة المحددة لتصديرها")));
   void _showErrorSnackBar(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m, textAlign: TextAlign.center), backgroundColor: Colors.red));
@@ -781,7 +1016,6 @@ class _ReportsPageState extends State<ReportsPage> {
     if (PermissionsService().canViewReportsPeriod) {
       buttons.add(_reportButton(2, 'تقرير الفترة'));
     }
-    // إضافة زر التقرير الموسع فقط إذا كانت الصلاحية موجودة
     if (PermissionsService().canViewExtendedReport && PermissionsService().canViewReportsPeriod) {
       buttons.add(_reportButton(3, 'صافي الجرد الحالي'));
     }
@@ -853,8 +1087,8 @@ class _ReportsPageState extends State<ReportsPage> {
                   return DataRow(
                     cells: [
                       DataCell(Text(date, style: const TextStyle(color: Colors.white70))),
-                      ...columns.map((c) => DataCell(Text((dailyData[date]![c] ?? 0).toStringAsFixed(2), style: const TextStyle(color: Colors.white70)))),
-                      DataCell(Text(dailyData[date]!['total']!.toStringAsFixed(2), style: const TextStyle(color: Colors.amber))),
+                      ...columns.map((c) => DataCell(Text(_formatNumber(dailyData[date]![c] ?? 0), style: const TextStyle(color: Colors.white70)))),
+                      DataCell(Text(_formatNumber(dailyData[date]!['total']!), style: const TextStyle(color: Colors.amber))),
                     ],
                   );
                 }).toList(),
@@ -873,11 +1107,11 @@ class _ReportsPageState extends State<ReportsPage> {
               const SizedBox(height: 5),
               Wrap(
                 spacing: 15,
-                children: columns.map((c) => Text("$c: ${categoryTotals[c]!.toStringAsFixed(2)}", style: const TextStyle(color: Colors.white70, fontFamily: 'Cairo'))).toList(),
+                children: columns.map((c) => Text("$c: ${_formatNumber(categoryTotals[c]!)}", style: const TextStyle(color: Colors.white70, fontFamily: 'Cairo'))).toList(),
               ),
               const SizedBox(height: 5),
-              Text("الإجمالي الكلي: ${grandTotal.toStringAsFixed(2)}", style: const TextStyle(color: Colors.amber, fontSize: 16, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
-              Text("المتوسط اليومي: ${(grandTotal / sortedDates.length).toStringAsFixed(2)}", style: const TextStyle(color: Colors.cyanAccent, fontSize: 15, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+              Text("الإجمالي الكلي: ${_formatNumber(grandTotal)}", style: const TextStyle(color: Colors.amber, fontSize: 16, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+              Text("المتوسط اليومي: ${_formatNumber(grandTotal / sortedDates.length)}", style: const TextStyle(color: Colors.cyanAccent, fontSize: 15, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
             ],
           ),
         ),
@@ -911,9 +1145,9 @@ class _ReportsPageState extends State<ReportsPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _buildSummarySection("اجمالي الايراد", safeIncomes, totalIncome, Colors.green),
+          _buildSummarySection("اجمالي الايراد", safeIncomes, totalIncome, Colors.green, showTotal: false),
           const SizedBox(height: 15),
-          _buildSummarySection("المصروفات", expenseCategories, totalExpenses, Colors.redAccent),
+          _buildSummarySection("المصروفات", expenseCategories, totalExpenses, Colors.redAccent, showTotal: false),
           const SizedBox(height: 15),
           Container(
             padding: const EdgeInsets.all(15),
@@ -986,22 +1220,19 @@ class _ReportsPageState extends State<ReportsPage> {
     final profitDistributed = expenseByCategory['ارباح'] ?? expenseByCategory['أرباح'] ?? 0.0;
     final remainingAfterProfit = netProfit - profitDistributed;
 
-    // حساب المصروفات بدون بضاعة وبدون بضاعة وأرباح
     final expensesWithoutGoods = expenses - goods;
     final expensesWithoutGoodsAndProfit = expensesWithoutGoods - profitDistributed;
 
-    // نسبة الربح: (صافي الربح + المصروفات بدون بضاعة وأرباح) / إجمالي الإيرادات
     final profitRatio = income == 0 ? 0.0 : ((netProfit + expensesWithoutGoodsAndProfit) / income) * 100;
 
     if (!mounted) return;
     setState(() {
-      // تخزين التفاصيل للعرض
       _incomeDetails = {
         'الرصيد السابق': previousCash,
         ...incomeByTreasury,
       };
       _expenseDetails = expenseByCategory;
-      _previousCash = previousCash;
+     
       _expensesWithoutGoods = expensesWithoutGoods;
       _expensesWithoutGoodsAndProfit = expensesWithoutGoodsAndProfit;
 
@@ -1089,34 +1320,43 @@ class _ReportsPageState extends State<ReportsPage> {
 
     return SingleChildScrollView(
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        // ===== قسم تفاصيل الإيرادات (جديد) =====
+        // ===== قسم تفاصيل الإيرادات =====
         _buildDetailSection('تفاصيل الإيرادات (الواردات)', _incomeDetails, Colors.green),
         const SizedBox(height: 10),
 
-        // ===== قسم تفاصيل المصروفات (جديد) =====
+        // ===== قسم تفاصيل المصروفات =====
         _buildDetailSection('تفاصيل المصروفات', _expenseDetails, Colors.redAccent),
         const SizedBox(height: 10),
 
-        // ===== الأقسام الأصلية (بدون تغيير) =====
-        _buildSummarySection('الإجمالي المالي', {
-          'الإيراد': _extendedSummary['إجمالي الإيراد'] as double,
-          'المصروفات': _extendedSummary['المصروفات'] as double,
-          'الرصيد المتبقي': _extendedSummary['الرصيد المتبقي'] as double,
-        }, _extendedSummary['إجمالي الإيراد'] as double, Colors.green),
+        // ===== الإجمالي المالي (معدل) =====
+        _buildSummarySection(
+          'الإجمالي المالي',
+          {
+            'الإيراد': _extendedSummary['إجمالي الإيراد'] as double,
+            'المصروفات': _extendedSummary['المصروفات'] as double,
+            'الرصيد المتبقي': _extendedSummary['الرصيد المتبقي'] as double,
+            'إجمالي المصروفات (بدون بضاعة)': _expensesWithoutGoods,
+            'إجمالي المصروفات (بدون بضاعة وأرباح)': _expensesWithoutGoodsAndProfit,
+          },
+          _extendedSummary['إجمالي الإيراد'] as double,
+          Colors.green,
+          showTotal: false, // لا نعرض الإجمالي
+        ),
         const SizedBox(height: 10),
 
+        // ===== الأصول المملوكة للشركة =====
         _buildSummarySection('الأصول المملوكة للشركة', {
           'الجرد الفعلي بسعر الجملة': _extendedSummary['الجرد الفعلي بسعر الجملة'] as double,
           'رصيد الخزينة': _extendedSummary['الرصيد المتبقي'] as double,
           'أرصدة العملاء غير المحصلة': _extendedSummary['أرصدة العملاء غير المحصلة'] as double,
           'الإجمالي': _extendedSummary['إجمالي ملك الشركة'] as double,
-        }, _extendedSummary['إجمالي ملك الشركة'] as double, Colors.cyanAccent),
+        }, _extendedSummary['إجمالي ملك الشركة'] as double, Colors.cyanAccent, showTotal: false),
         const SizedBox(height: 10),
 
         _buildSupplierBalanceSection(),
         const SizedBox(height: 10),
 
-        // ===== الملخص النهائي (مع إضافة السطور الجديدة) =====
+        // ===== الملخص النهائي (بدون السطور المكررة) =====
         Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
@@ -1133,11 +1373,6 @@ class _ReportsPageState extends State<ReportsPage> {
             _summaryRow('صافي الجرد السابق:', _extendedSummary['صافي الجرد السابق'] as double, Colors.white70),
             _summaryRow('الفرق / صافي الأرباح:', _extendedSummary['الفرق / صافي الأرباح'] as double, Colors.greenAccent, isBold: true),
             _summaryRow('المتبقي بعد توزيع الأرباح:', _extendedSummary['المتبقي بعد توزيع الأرباح'] as double, Colors.cyanAccent),
-
-            // السطور الجديدة (مضافة)
-            const Divider(color: Colors.white24),
-            _summaryRow('إجمالي المصروفات (بدون بضاعة):', _expensesWithoutGoods, Colors.orangeAccent),
-            _summaryRow('إجمالي المصروفات (بدون بضاعة وأرباح):', _expensesWithoutGoodsAndProfit, Colors.orangeAccent.shade100),
             _summaryRow('نسبة الربح:', _extendedSummary['نسبة الربح'] as double, Colors.amber, isBold: true, suffix: '%'),
           ]),
         ),
@@ -1152,14 +1387,14 @@ class _ReportsPageState extends State<ReportsPage> {
       const Divider(color: Colors.white10),
       ..._extendedSupplierBalances.map((e) => Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
         Text(e['المورد'].toString(), style: const TextStyle(color: Colors.white70, fontFamily: 'Cairo')),
-        Text((e['الرصيد'] as double).toStringAsFixed(2), style: TextStyle(color: (e['الرصيد'] as double) >= 0 ? Colors.redAccent : Colors.greenAccent, fontFamily: 'Cairo')),
+        Text(_formatNumber(e['الرصيد'] as double), style: TextStyle(color: (e['الرصيد'] as double) >= 0 ? Colors.redAccent : Colors.greenAccent, fontFamily: 'Cairo')),
       ]))),
       const Divider(color: Colors.white10),
       _summaryRow('الإجمالي', total, Colors.redAccent, isBold: true),
     ]));
   }
 
-  // قسم عرض التفاصيل (جديد للإيرادات والمصروفات)
+  // قسم عرض التفاصيل (للإيرادات والمصروفات)
   Widget _buildDetailSection(String title, Map<String, double> items, Color titleColor) {
     if (items.isEmpty) return const SizedBox.shrink();
     return Container(
@@ -1180,7 +1415,7 @@ class _ReportsPageState extends State<ReportsPage> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(e.key, style: const TextStyle(color: Colors.white70, fontFamily: 'Cairo')),
-                Text(e.value.toStringAsFixed(2), style: const TextStyle(color: Colors.white, fontFamily: 'Cairo')),
+                Text(_formatNumber(e.value), style: const TextStyle(color: Colors.white, fontFamily: 'Cairo')),
               ],
             ),
           )),
@@ -1189,7 +1424,7 @@ class _ReportsPageState extends State<ReportsPage> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               const Text("الإجمالي", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
-              Text(items.values.fold(0.0, (sum, v) => sum + v).toStringAsFixed(2),
+              Text(_formatNumber(items.values.fold(0.0, (sum, v) => sum + v)),
                   style: TextStyle(color: titleColor, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
             ],
           ),
@@ -1198,8 +1433,7 @@ class _ReportsPageState extends State<ReportsPage> {
     );
   }
 
-  // دالة _buildSummarySection (موجودة سابقاً)
-  Widget _buildSummarySection(String title, Map<String, double> items, double total, Color titleColor) {
+  Widget _buildSummarySection(String title, Map<String, double> items, double total, Color titleColor, {bool showTotal = true}) {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -1218,30 +1452,31 @@ class _ReportsPageState extends State<ReportsPage> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(e.key, style: const TextStyle(color: Colors.white70, fontFamily: 'Cairo')),
-                Text(e.value.toStringAsFixed(2), style: const TextStyle(color: Colors.white, fontFamily: 'Cairo')),
+                Text(_formatNumber(e.value), style: const TextStyle(color: Colors.white, fontFamily: 'Cairo')),
               ],
             ),
           )),
-          const Divider(color: Colors.white10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text("الإجمالي", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
-              Text(total.toStringAsFixed(2), style: TextStyle(color: titleColor, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
-            ],
-          ),
+          if (showTotal) ...[
+            const Divider(color: Colors.white10),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text("الإجمالي", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+                Text(_formatNumber(total), style: TextStyle(color: titleColor, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+              ],
+            ),
+          ],
         ],
       ),
     );
   }
 
-  // دالة _summaryRow مع إضافة معامل suffix
   Widget _summaryRow(String label, double amount, Color color, {bool isBold = false, String suffix = ''}) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text(label, style: TextStyle(color: Colors.white, fontSize: isBold ? 16 : 14, fontWeight: isBold ? FontWeight.bold : FontWeight.normal, fontFamily: 'Cairo')),
-        Text('${amount.toStringAsFixed(2)}$suffix', style: TextStyle(color: color, fontSize: isBold ? 18 : 16, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+        Text('${_formatNumber(amount)}$suffix', style: TextStyle(color: color, fontSize: isBold ? 18 : 16, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
       ],
     );
   }

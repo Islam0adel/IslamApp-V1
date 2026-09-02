@@ -13,6 +13,7 @@ class ReportsDashboardPage extends StatelessWidget {
   // تعريف التقارير التحليلية مع معرف كل تقرير واسمه وصلاحيته
   static final List<Map<String, dynamic>> _advancedReports = [
     {'id': 1, 'name': 'بيان التدفق النقدي', 'permission': (PermissionsService p) => p.canViewAdvancedReport1},
+    {'id': 14, 'name': 'تحليل المصروفات بالنسبة للمبيعات', 'permission': (PermissionsService p) => p.canViewAdvancedReport14},
     {'id': 2, 'name': 'تحليل هيكل المصروفات', 'permission': (PermissionsService p) => p.canViewAdvancedReport2},
     {'id': 3, 'name': 'الربحية الصافية لكل فرع', 'permission': (PermissionsService p) => p.canViewAdvancedReport3},
     {'id': 4, 'name': 'تحليل حجم الفاتورة', 'permission': (PermissionsService p) => p.canViewAdvancedReport4},

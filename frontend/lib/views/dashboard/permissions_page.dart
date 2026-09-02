@@ -186,6 +186,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
         'تقرير فترة': false,
         'مشاركة': false,
         'تقرير التدفق النقدي': false,
+        'تحليل المصروفات بالنسبة للمبيعات': false, 
   'تحليل هيكل المصروفات': false,
   'الربحية الصافية لكل فرع': false,
   'تحليل حجم الفاتورة': false,

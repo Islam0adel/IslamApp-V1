@@ -498,6 +498,7 @@ class PermissionsService {
 
         'تقرير التدفق النقدي': false,
   'تحليل هيكل المصروفات': false,
+  'تحليل المصروفات بالنسبة للمبيعات': false,
   'الربحية الصافية لكل فرع': false,
   'تحليل حجم الفاتورة': false,
   'تحليل الخزائن النقدية': false,
@@ -847,6 +848,7 @@ bool get canViewAdvancedReport10 => hasPermission('التقارير', 'تحلي�
 bool get canViewAdvancedReport11 => hasPermission('التقارير', 'تحليل الاتجاهات الموسمية');
 bool get canViewAdvancedReport12 => hasPermission('التقارير', 'تحليل هامش الربح الفعلي');
 bool get canViewAdvancedReport13 => hasPermission('التقارير', 'تحليل تجميع المنتجات');
+bool get canViewAdvancedReport14 => hasPermission('التقارير', 'تحليل المصروفات بالنسبة للمبيعات');
 
 // صلاحية التقرير الموسع (صافي الجرد الحالي)
 bool get canViewExtendedReport => hasPermission('التقارير', 'التقرير الموسع (صافي الجرد)');
