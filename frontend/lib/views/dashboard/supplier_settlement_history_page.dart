@@ -225,9 +225,18 @@ double _totalSupplierBalance = 0.0;
 }
 
   double _toDouble(dynamic value) {
-    if (value is num) return value.toDouble();
-    return double.tryParse(value?.toString() ?? '0') ?? 0.0;
+  double result;
+  if (value is num) {
+    result = value.toDouble();
+  } else {
+    result = double.tryParse(value?.toString() ?? '0') ?? 0.0;
   }
+  // تصحيح الصفر السالب
+  if (result.abs() < 0.0001) {
+    result = 0.0;
+  }
+  return result;
+}
 
   // ============================================================
   // اسم الخزينة
@@ -292,11 +301,13 @@ double _totalSupplierBalance = 0.0;
   // ============================================================
 
   String _formatCurrency(dynamic value) {
-    return NumberFormat(
-      '#,##0.00',
-      'en_US',
-    ).format(_toDouble(value));
+  double numValue = _toDouble(value);
+  // تصحيح الصفر السالب
+  if (numValue.abs() < 0.0001) {
+    numValue = 0.0;
   }
+  return NumberFormat('#,##0.00', 'en_US').format(numValue);
+}
 
   // ============================================================
   // اختيار التاريخ
@@ -342,7 +353,7 @@ double _totalSupplierBalance = 0.0;
   // ============================================================
 
   double get _totalAmount => _totalSettlements;
-
+  
   // ============================================================
   // تعديل التسوية
   // ============================================================

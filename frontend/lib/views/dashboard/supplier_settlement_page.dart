@@ -274,19 +274,21 @@ class _SupplierSettlementPageState
   // ============================================================
 
   void _updateExpectedBalance() {
-    final amount =
-        double.tryParse(_amountController.text) ?? 0.0;
+  final amount = double.tryParse(_amountController.text) ?? 0.0;
+  final oldAmount = widget.editItem?.amount ?? 0.0;
 
-    if (!mounted) return;
+  double newBalance = _supplierBalance + oldAmount - amount;
+  // تصحيح الصفر السالب
+  if (newBalance.abs() < 0.0001) {
+    newBalance = 0.0;
+  }
 
-    final oldAmount =
-        widget.editItem?.amount ?? 0.0;
-
+  if (mounted) {
     setState(() {
-      _expectedBalance =
-          _supplierBalance + oldAmount - amount;
+      _expectedBalance = newBalance;
     });
   }
+}
 
   // ============================================================
   // حفظ / تعديل الدفعة
@@ -614,48 +616,37 @@ class _SupplierSettlementPageState
   // ============================================================
 
   Widget _buildBalanceCard() {
-    return GlassCard(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          children: [
-            const Text(
-              'رصيد المورد',
-              style: TextStyle(
-                color: Colors.white70,
-                fontFamily: 'Cairo',
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              _supplierBalance.toStringAsFixed(2),
-              style: const TextStyle(
-                color: Colors.amber,
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const Divider(color: Colors.white24),
-            const Text(
-              'الرصيد بعد الدفعة',
-              style: TextStyle(
-                color: Colors.white70,
-                fontFamily: 'Cairo',
-              ),
-            ),
-            Text(
-              _expectedBalance.toStringAsFixed(2),
-              style: const TextStyle(
-                color: Colors.greenAccent,
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
+  double balance = _supplierBalance.abs() < 0.0001 ? 0.0 : _supplierBalance;
+  double expected = _expectedBalance.abs() < 0.0001 ? 0.0 : _expectedBalance;
+
+  return GlassCard(
+    child: Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        children: [
+          const Text(
+            'رصيد المورد',
+            style: TextStyle(color: Colors.white70, fontFamily: 'Cairo'),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            balance.toStringAsFixed(2),
+            style: const TextStyle(color: Colors.amber, fontSize: 24, fontWeight: FontWeight.bold),
+          ),
+          const Divider(color: Colors.white24),
+          const Text(
+            'الرصيد بعد الدفعة',
+            style: TextStyle(color: Colors.white70, fontFamily: 'Cairo'),
+          ),
+          Text(
+            expected.toStringAsFixed(2),
+            style: const TextStyle(color: Colors.greenAccent, fontSize: 20, fontWeight: FontWeight.bold),
+          ),
+        ],
       ),
-    );
-  }
+    ),
+  );
+}
 
   // ============================================================
   // الفورم

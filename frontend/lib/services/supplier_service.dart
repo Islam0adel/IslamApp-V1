@@ -427,49 +427,31 @@ class SupplierService {
   // مستقل لكل شركة + فرع
   // ============================================================
 
-  int _getNextSerial(
-    String companyCode,
-    String branchCode,
-  ) {
-    int maxSerial = 0;
+  // lib/services/supplier_service.dart
 
-    for (final key in _supplierBox.keys) {
-      final raw =
-          _supplierBox.get(key);
+int _getNextSerial(String companyCode, String branchCode) {
+  int maxSerial = 0;
 
-      if (raw is! List) {
+  for (final key in _supplierBox.keys) {
+    final raw = _supplierBox.get(key);
+    if (raw is! List) continue;
+
+    for (final item in raw) {
+      final map = _toMapString(item);
+      if (map.isEmpty) continue; // تشمل السجلات المحذوفة
+
+      if (map['company_code']?.toString() != companyCode ||
+          map['branch_code']?.toString() != branchCode) {
         continue;
       }
 
-      for (final item in raw) {
-        final map =
-            _toMapString(item);
-
-        if (map.isEmpty ||
-            map['is_deleted'] == true) {
-          continue;
-        }
-
-        if (map['company_code']
-                    ?.toString() !=
-                companyCode ||
-            map['branch_code']
-                    ?.toString() !=
-                branchCode) {
-          continue;
-        }
-
-        final serial =
-            _toInt(map['serial']);
-
-        if (serial > maxSerial) {
-          maxSerial = serial;
-        }
-      }
+      final serial = _toInt(map['serial']);
+      if (serial > maxSerial) maxSerial = serial;
     }
-
-    return maxSerial + 1;
   }
+
+  return maxSerial + 1;
+}
 
   // ============================================================
   // 5. تحديث التكويد من فاتورة المورد
@@ -1085,233 +1067,174 @@ class SupplierService {
   // 11. Incremental Sync
   // ============================================================
 
-  Future<void> syncChangesFromServer(
-    String companyCode, [
-    String? lastSync,
-  ]) async {
-    final prefs =
-        await SharedPreferences
-            .getInstance();
+  // lib/services/supplier_service.dart
 
-    final String lastSyncKey =
-        '${ApiConstants.LAST_SYNC_SUPPLIER}'
-        '$companyCode';
+Future<void> syncChangesFromServer(
+  String companyCode, [
+  String? lastSync,
+]) async {
+  final prefs = await SharedPreferences.getInstance();
+  final String lastSyncKey =
+      '${ApiConstants.LAST_SYNC_SUPPLIER}$companyCode';
+  final String? lastSyncValue =
+      lastSync ?? prefs.getString(lastSyncKey);
 
-    final String? lastSyncValue =
-        lastSync ??
-        prefs.getString(
-          lastSyncKey,
-        );
+  // ==========================================================
+  // لا يوجد lastSync → Full Sync
+  // ==========================================================
 
-    // ----------------------------------------------------------
-    // لا يوجد lastSync
-    // ----------------------------------------------------------
+  if (lastSyncValue == null || lastSyncValue.isEmpty) {
+    print('📥 الموردين: لا يوجد lastSync → FULL SYNC');
+    await fetchAllSupplier(companyCode);
+    await prefs.setString(
+      lastSyncKey,
+      DateTime.now().toUtc().toIso8601String(),
+    );
+    return;
+  }
 
-    if (lastSyncValue == null ||
-        lastSyncValue.isEmpty) {
-      print(
-        '📥 الموردين: لا يوجد lastSync → FULL SYNC',
+  try {
+    final DateTime syncStartedAt = DateTime.now().toUtc();
+    DateTime since = DateTime.parse(lastSyncValue).toUtc();
+    since = since.subtract(const Duration(minutes: 1));
+
+    final response = await http.get(
+      Uri.parse(
+        '$baseUrl/supplier/changes/$companyCode'
+        '?since=${since.toIso8601String()}',
+      ),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'HTTP ${response.statusCode}: ${response.body}',
       );
-
-      await fetchAllSupplier(
-        companyCode,
-      );
-
-      await prefs.setString(
-        lastSyncKey,
-        DateTime.now()
-            .toUtc()
-            .toIso8601String(),
-      );
-
-      return;
     }
 
-    try {
-      // --------------------------------------------------------
-      // وقت بدء المزامنة
-      // --------------------------------------------------------
+    final List<dynamic> changes = jsonDecode(response.body);
 
-      final DateTime
-          syncStartedAt =
-          DateTime.now().toUtc();
+    for (final item in changes) {
+      if (item is! Map) continue;
 
-      // --------------------------------------------------------
-      // آخر مزامنة
-      // --------------------------------------------------------
+      final map = _toMapString(item);
+      final docId = map['doc_id']?.toString();
 
-      DateTime since =
-          DateTime.parse(
-        lastSyncValue,
-      ).toUtc();
+      if (docId == null || docId.isEmpty) continue;
 
-      // نرجع دقيقة للخلف
-      // لتقليل احتمال فقد تحديثات قريبة.
-      since = since.subtract(
-        const Duration(
-          minutes: 1,
-        ),
-      );
+      final action = map['action']?.toString() ??
+          (map['is_deleted'] == true ? 'delete' : 'update');
 
-      // --------------------------------------------------------
-      // جلب التغييرات
-      // --------------------------------------------------------
+      // ========================================================
+      // الخطوة 1: حذف doc_id من جميع المفاتيح (لأي فرع/تاريخ قديم)
+      // ========================================================
 
-      final response =
-          await http.get(
-        Uri.parse(
-          '$baseUrl/supplier/changes/'
-          '$companyCode'
-          '?since=${since.toIso8601String()}',
-        ),
-      );
+      final keys = _supplierBox.keys.toList();
 
-      if (response.statusCode !=
-          200) {
-        throw Exception(
-          'HTTP ${response.statusCode}: '
-          '${response.body}',
-        );
-      }
+      for (final oldKey in keys) {
+        final raw = _supplierBox.get(oldKey);
 
-      final List<dynamic> changes =
-          jsonDecode(
-        response.body,
-      );
+        if (raw is! List) continue;
 
-      // --------------------------------------------------------
-      // تطبيق التغييرات
-      // --------------------------------------------------------
+        final List<Map<String, dynamic>> updatedList = [];
 
-      for (final item in changes) {
-        if (item is! Map) {
-          continue;
-        }
+        bool found = false;
 
-        final map =
-            _toMapString(item);
+        for (final value in raw) {
+          if (value is! Map) continue;
 
-        final docId =
-            map['doc_id']?.toString();
+          final mapItem = _toMapString(value);
 
-        if (docId == null ||
-            docId.isEmpty) {
-          continue;
-        }
+          if (mapItem.isEmpty) continue;
 
-        final action =
-            map['action']?.toString() ??
-            (
-              map['is_deleted'] ==
-                      true
-                  ? 'delete'
-                  : 'update'
-            );
-
-        final key =
-            '${map['company_code']}_'
-            '${map['branch_code']}_'
-            '${map['date']}';
-
-        List<
-                Map<String, dynamic>>
-            list = [];
-
-        final raw =
-            _supplierBox.get(key);
-
-        if (raw is List) {
-          list = raw
-              .whereType<Map>()
-              .map(_toMapString)
-              .where(
-                (e) =>
-                    e.isNotEmpty &&
-                    e['is_deleted'] !=
-                        true,
-              )
-              .toList();
-        }
-
-        // ------------------------------------------------------
-        // إزالة النسخة القديمة
-        // ------------------------------------------------------
-
-        list.removeWhere(
-          (e) =>
-              e['doc_id']
-                  ?.toString() ==
-              docId,
-        );
-
-        // ------------------------------------------------------
-        // DELETE
-        // ------------------------------------------------------
-
-        if (action == 'delete' ||
-            map['is_deleted'] ==
-                true) {
-          if (list.isEmpty) {
-            await _supplierBox.delete(
-              key,
-            );
-          } else {
-            await _supplierBox.put(
-              key,
-              list,
-            );
+          if (mapItem['doc_id']?.toString() == docId) {
+            found = true;
+            continue;
           }
 
-          print(
-            '🗑️ حذف حركة المورد [$docId]',
-          );
+          if (mapItem['is_deleted'] == true) continue;
 
-          continue;
+          updatedList.add(mapItem);
         }
 
-        // ------------------------------------------------------
-        // INSERT / UPDATE
-        // ------------------------------------------------------
+        if (!found) continue;
 
-        map.remove('action');
-        map['is_deleted'] =
-            false;
-
-        list.add(map);
-
-        await _supplierBox.put(
-          key,
-          list,
-        );
-
-        print(
-          '✅ تم تحديث حركة المورد [$docId]',
-        );
+        if (updatedList.isEmpty) {
+          await _supplierBox.delete(oldKey);
+        } else {
+          await _supplierBox.put(oldKey, updatedList);
+        }
       }
 
-      // --------------------------------------------------------
-      // حفظ وقت المزامنة الجديد
-      // --------------------------------------------------------
+      // ========================================================
+      // الخطوة 2: لو الحذف، نوقف هنا
+      // ========================================================
 
-      await prefs.setString(
-        lastSyncKey,
-        syncStartedAt
-            .toIso8601String(),
+      if (action == 'delete' || map['is_deleted'] == true) {
+        print('🗑️ تم حذف حركة المورد [$docId] من Hive (Incremental Sync)');
+        continue;
+      }
+
+      // ========================================================
+      // الخطوة 3: إضافة أو تحديث في المفتاح الجديد
+      // ========================================================
+
+      final company = map['company_code']?.toString() ?? companyCode;
+      final branch = map['branch_code']?.toString() ?? 'all';
+      final date = map['date']?.toString() ?? '';
+
+      if (company.isEmpty || branch.isEmpty || date.isEmpty) {
+        print('⚠️ بيانات المفتاح ناقصة للمورد [$docId]');
+        continue;
+      }
+
+      final newKey = '${company}_${branch}_$date';
+
+      List<Map<String, dynamic>> list = [];
+
+      final raw = _supplierBox.get(newKey);
+
+      if (raw is List) {
+        list = raw
+            .whereType<Map>()
+            .map(_toMapString)
+            .where(
+              (e) => e.isNotEmpty && e['is_deleted'] != true,
+            )
+            .toList();
+      }
+
+      // منع التكرار (مرة أخرى للتأكيد)
+      list.removeWhere(
+        (item) => item['doc_id']?.toString() == docId,
       );
 
-      print(
-        '✅ تمت مزامنة '
-        '${changes.length} تحديث للموردين',
-      );
-    } catch (e) {
-      print(
-        '❌ فشل مزامنة الموردين: $e',
-      );
+      map.remove('action');
+      map['is_deleted'] = false;
 
-      // لا نغير lastSync عند الفشل
-      rethrow;
+      list.add(map);
+
+      await _supplierBox.put(newKey, list);
+
+      print('✅ تم تحديث حركة المورد [$docId] في المفتاح [$newKey]');
     }
+
+    // ========================================================
+    // تحديث lastSync فقط بعد نجاح الكل
+    // ========================================================
+
+    await prefs.setString(
+      lastSyncKey,
+      syncStartedAt.toIso8601String(),
+    );
+
+    print(
+      '✅ تمت مزامنة ${changes.length} تحديث للموردين (Incremental Sync)',
+    );
+  } catch (e) {
+    print('❌ فشل مزامنة الموردين: $e');
+    rethrow;
   }
+}
 
   // ============================================================
   // Helpers

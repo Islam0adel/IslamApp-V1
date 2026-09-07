@@ -48,6 +48,7 @@ class _SupplierPageState extends State<SupplierPage> {
   // إضافة البضاعة للمخزن
   bool _isAddToStore = false;
   bool _isReturn = false;
+  bool _isUpdating = false;
 
   // تحديث / إضافة الصنف في التكويد
   bool _isAddToCoding = false;
@@ -97,6 +98,8 @@ class _SupplierPageState extends State<SupplierPage> {
   final TextEditingController _discountAmountController =
       TextEditingController();
 
+  int _discountSource = 0;
+
   // ===================== الحالة =====================
 
   bool _isLoading = false;
@@ -109,13 +112,7 @@ class _SupplierPageState extends State<SupplierPage> {
     _selectedBranchCode =
         widget.selectedBranchCode ?? 'all';
 
-    _discountPercentController.addListener(
-      _onDiscountPercentChanged,
-    );
-
-    _discountAmountController.addListener(
-      _onDiscountAmountChanged,
-    );
+    
 
     _isReturn = widget.startAsReturn;
     if (_isReturn) _isAddToStore = true;
@@ -188,80 +185,91 @@ class _SupplierPageState extends State<SupplierPage> {
   // ============================================================
 
   void _onDiscountPercentChanged() {
-    final value = double.tryParse(
-      _discountPercentController.text,
-    );
+  if (_isUpdating) return;
+  final value = double.tryParse(_discountPercentController.text);
+  if (value == null || value < 0) {
+    _isUpdating = true;
+    _discountPercentController.text = '0';
+    _isUpdating = false;
+    return;
+  }
 
-    if (value == null) return;
-    if (value == _discountPercent) return;
-
+  if (value > 100) {
+    _isUpdating = true;
+    _discountPercentController.text = '100';
+    _isUpdating = false;
+    _discountPercent = 100;
+  } else {
     _discountPercent = value;
-
-    _discountAmount =
-        _totalAmount * (_discountPercent / 100);
-
-    if (_discountAmountController.text !=
-        _discountAmount.toStringAsFixed(2)) {
-      _discountAmountController.text =
-          _discountAmount.toStringAsFixed(2);
-    }
-
-    _updateExpectedBalance();
   }
 
-  void _onDiscountAmountChanged() {
-    final value = double.tryParse(
-      _discountAmountController.text,
-    );
+  _discountSource = 0; // نسبة
+  _applyDiscount();
+}
 
-    if (value == null) return;
-    if (value == _discountAmount) return;
+void _onDiscountAmountChanged() {
+  if (_isUpdating) return;
+  final value = double.tryParse(_discountAmountController.text);
+  if (value == null || value < 0) {
+    _isUpdating = true;
+    _discountAmountController.text = '0.00';
+    _isUpdating = false;
+    return;
+  }
 
+  if (value > _totalAmount) {
+    _isUpdating = true;
+    _discountAmountController.text = _totalAmount.toStringAsFixed(2);
+    _isUpdating = false;
+    _discountAmount = _totalAmount;
+  } else {
     _discountAmount = value;
+  }
 
-    if (_totalAmount > 0) {
-      _discountPercent =
-          (_discountAmount / _totalAmount) * 100;
+  _discountSource = 1; // مبلغ
+  _applyDiscount();
+}
 
-      final percentText =
-          _discountPercent.toStringAsFixed(1);
 
-      if (_discountPercentController.text !=
-          percentText) {
-        _discountPercentController.text =
-            percentText;
-      }
-    }
-
+void _applyDiscount() {
+  if (_totalAmount == 0) {
+    _isUpdating = true;
+    _discountPercent = 0;
+    _discountAmount = 0;
+    _discountPercentController.text = '0';
+    _discountAmountController.text = '0.00';
+    _isUpdating = false;
     _updateExpectedBalance();
+    return;
   }
 
-  void _updateDiscountFields() {
-    if (_discountAmount > 0) {
-      _discountAmountController.text =
-          _discountAmount.toStringAsFixed(2);
-
-      if (_totalAmount > 0) {
-        _discountPercent =
-            (_discountAmount / _totalAmount) * 100;
-
-        _discountPercentController.text =
-            _discountPercent.toStringAsFixed(1);
-      }
-    } else if (_discountPercent > 0) {
-      _discountPercentController.text =
-          _discountPercent.toStringAsFixed(1);
-
-      _discountAmount =
-          _totalAmount * (_discountPercent / 100);
-
-      _discountAmountController.text =
-          _discountAmount.toStringAsFixed(2);
-    } else {
-      _discountPercentController.text = '0';
-      _discountAmountController.text = '0.00';
+  if (_discountSource == 0) {
+    // المصدر: نسبة الخصم
+    _discountAmount = _totalAmount * (_discountPercent / 100);
+    if (_discountAmount > _totalAmount) {
+      _discountAmount = _totalAmount;
+      _discountPercent = 100;
+      _discountPercentController.text = '100';
     }
+    _isUpdating = true;
+    _discountAmountController.text = _discountAmount.toStringAsFixed(2);
+    _isUpdating = false;
+  } else {
+    // المصدر: مبلغ الخصم
+    _discountPercent = (_discountAmount / _totalAmount) * 100;
+    if (_discountPercent > 100) {
+      _discountPercent = 100;
+      _discountAmount = _totalAmount;
+      _discountAmountController.text = _totalAmount.toStringAsFixed(2);
+    }
+    _isUpdating = true;
+    _discountPercentController.text = _discountPercent.toStringAsFixed(1);
+    _isUpdating = false;
   }
+
+  _updateExpectedBalance();
+}
+
 
   // ============================================================
   // تحميل القوائم
@@ -346,87 +354,69 @@ class _SupplierPageState extends State<SupplierPage> {
   }
 
   // ============================================================
-  // تحميل التعديل
-  // ============================================================
+// تحميل التعديل
+// ============================================================
 
-  void _loadEditData() {
-    final model = widget.editItem!;
+void _loadEditData() {
+  final model = widget.editItem!;
+  setState(() {
+    _selectedSupplier = model.supplierName;
+    _selectedStoreCode = model.storeCode;
+    _selectedDate = model.date;
+    _currentSerial = model.serial;
+    _isAddToStore = model.isAddToStore;
+    _isReturn = model.paymentMethod == 'مرتجع' || model.totalAmount < 0;
+    _isAddToCoding = model.isAddToCoding;
+    _editDocId = model.docId;
 
-    setState(() {
-      _selectedSupplier =
-          model.supplierName;
-
-      _selectedStoreCode =
-          model.storeCode;
-
-      _selectedDate =
-          model.date;
-
-      _currentSerial =
-          model.serial;
-
-      _isAddToStore =
-          model.isAddToStore;
-      _isReturn =
-          model.paymentMethod == 'مرتجع' ||
-          model.totalAmount < 0;
-
-      _isAddToCoding =
-          model.isAddToCoding;
-
-      _editDocId =
-          model.docId;
-
-      _items =
-          List<SupplierItem>.from(
-        model.items.map(
-          (item) => SupplierItem(
-            code: item.code,
-            name: item.name,
-            quantity: _isReturn ? item.quantity.abs() : item.quantity,
-            price: item.price,
-            type: item.type,
-            discountRate: 0,
-            discountAmount: 0,
-            total:
-                item.quantity * item.price,
-          ),
-        ),
-      );
-
-      _items.add(
-        SupplierItem(
-          code: '',
-          name: '',
-          quantity: 0,
-          price: 0,
-          type: 'وارد (دخول بضاعة)',
+    _items = List<SupplierItem>.from(
+      model.items.map(
+        (item) => SupplierItem(
+          code: item.code,
+          name: item.name,
+          quantity: _isReturn ? item.quantity.abs() : item.quantity,
+          price: item.price,
+          type: item.type,
           discountRate: 0,
           discountAmount: 0,
-          total: 0,
+          total: item.quantity * item.price,
         ),
-      );
+      ),
+    );
 
-      _rebuildControllersAndFocus();
+    _items.add(
+      SupplierItem(
+        code: '',
+        name: '',
+        quantity: 0,
+        price: 0,
+        type: 'وارد (دخول بضاعة)',
+        discountRate: 0,
+        discountAmount: 0,
+        total: 0,
+      ),
+    );
 
-      _totalAmount = _items.fold(
-        0.0,
-        (sum, item) => sum + item.total.abs(),
-      );
+    _rebuildControllersAndFocus();
 
-      _discountAmount = 0;
-      _discountPercent = 0;
+    _totalAmount = _items.fold(0.0, (sum, item) => sum + item.total.abs());
 
-      _updateDiscountFields();
+    // إعادة تعيين الخصم
+    _isUpdating = true;
+    _discountAmount = 0;
+    _discountPercent = 0;
+    _discountSource = 0;
+    _discountPercentController.text = '0';
+    _discountAmountController.text = '0.00';
+    _isUpdating = false;
 
-      if (_selectedSupplier != null &&
-          _selectedSupplier!.isNotEmpty) {
-        _loadSupplierBalance(
-          _selectedSupplier!,
-        );
-      }
-    });
-  }
+    if (_selectedSupplier != null && _selectedSupplier!.isNotEmpty) {
+      _loadSupplierBalance(_selectedSupplier!);
+    }
+
+    _applyDiscount(); // الآن سيكون آمنًا
+  });
+}
 
   // ============================================================
   // آخر سيريال
@@ -528,19 +518,11 @@ class _SupplierPageState extends State<SupplierPage> {
   }
 
   void _updateExpectedBalance() {
-    final oldAmount =
-        widget.editItem?.totalAmount ?? 0.0;
-
-    final currentAmount = _totalAmount - _discountAmount;
-    _expectedBalance =
-        _supplierBalance -
-        oldAmount +
-        (_isReturn ? -currentAmount : currentAmount);
-
-    if (mounted) {
-      setState(() {});
-    }
-  }
+  final oldAmount = widget.editItem?.totalAmount ?? 0.0;
+  final currentAmount = _totalAmount - _discountAmount;
+  _expectedBalance = _supplierBalance - oldAmount + (_isReturn ? -currentAmount : currentAmount);
+  if (mounted) setState(() {});
+}
 
   // ============================================================
   // الأصناف
@@ -682,18 +664,11 @@ class _SupplierPageState extends State<SupplierPage> {
   }
 
   void _recalcTotals() {
-    _totalAmount = _items.fold(
-      0.0,
-      (sum, item) => sum + item.total,
-    );
-
-    _updateDiscountFields();
-    _updateExpectedBalance();
-
-    if (mounted) {
-      setState(() {});
-    }
-  }
+  _totalAmount = _items.fold(0.0, (sum, item) => sum + item.total);
+  // تطبيق الخصم بناءً على المصدر الحالي
+  _applyDiscount();
+  if (mounted) setState(() {});
+}
 
   // ============================================================
   // تعبئة الصنف تلقائياً من التكويد
@@ -920,6 +895,8 @@ class _SupplierPageState extends State<SupplierPage> {
     }
   }
 
+  
+
   // ============================================================
   // الحفظ
   // ============================================================
@@ -1104,24 +1081,22 @@ class _SupplierPageState extends State<SupplierPage> {
       // فاتورة جديدة
       // ========================================================
 
-      setState(() {
-        _items.clear();
+      // داخل _handleSave بعد الحفظ الناجح
+setState(() {
+  _items.clear();
+  _controllers.clear();
+  _focusNodes.clear();
 
-        _controllers.clear();
-        _focusNodes.clear();
+  _totalAmount = 0;
+  _isUpdating = true;
+  _discountPercent = 0;
+  _discountAmount = 0;
+  _discountPercentController.text = '0';
+  _discountAmountController.text = '0.00';
+  _isUpdating = false;
 
-        _totalAmount = 0;
-        _discountPercent = 0;
-        _discountAmount = 0;
-
-        _discountPercentController
-            .text = '0';
-
-        _discountAmountController
-            .text = '0.00';
-
-        _editDocId = null;
-      });
+  _editDocId = null;
+});
 
       _addEmptyRow();
 
@@ -2748,8 +2723,8 @@ class _SupplierPageState extends State<SupplierPage> {
                                           Column(
                                         children: [
                                           TextFormField(
-                                            controller:
-                                                _discountPercentController,
+                                            controller: _discountPercentController,
+  onChanged: (_) => _onDiscountPercentChanged(),
                                             style:
                                                 const TextStyle(
                                               color:
@@ -2797,8 +2772,8 @@ class _SupplierPageState extends State<SupplierPage> {
                                           ),
 
                                           TextFormField(
-                                            controller:
-                                                _discountAmountController,
+                                            controller: _discountAmountController,
+  onChanged: (_) => _onDiscountAmountChanged(),
                                             style:
                                                 const TextStyle(
                                               color:
