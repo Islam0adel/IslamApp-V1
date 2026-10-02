@@ -104,7 +104,8 @@ async def verify_user(
 
     try:
         token = authorization.split("Bearer ")[1]
-        decoded_token = admin_auth.verify_id_token(token)
+        decoded_token = admin_auth.verify_id_token(token,
+    clock_skew_seconds=60,)
         email = decoded_token.get("email")
 
         # ✅ قراءة بيانات المستخدم من Firestore

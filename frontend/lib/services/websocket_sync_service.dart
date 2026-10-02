@@ -462,11 +462,13 @@ _dailySummaryTimer = null;
         // ======================================================
 
         case 'inventory':
-          _updateInventoryBox(
-            payload,
-            isDelete
-                ? 'delete'
-                : action,
+          unawaited(
+            _updateInventoryBox(
+              payload,
+              isDelete
+                  ? 'delete'
+                  : action,
+            ),
           );
 
           break;
@@ -770,15 +772,17 @@ void _scheduleDailySummaryRefresh({
 
   // ============================================================
   // 8. تحديث الجرد
+  //
+  // ✅ تم تعديل المنطق لضمان حذف النسخة القديمة
+  // من جميع المفاتيح (حتى لو تغير التاريخ/الفرع/المخزن)
   // ============================================================
 
-  void _updateInventoryBox(
+  Future<void> _updateInventoryBox(
     Map<String, dynamic> payload,
     String action,
-  ) {
+  ) async {
     final String? docId =
         payload['doc_id']?.toString();
-
 
     if (docId == null ||
         docId.isEmpty) {
@@ -788,92 +792,62 @@ void _scheduleDailySummaryRefresh({
       return;
     }
 
+    // ========================================================
+    // الخطوة 1: حذف doc_id من جميع المفاتيح
+    // ========================================================
 
-    final String companyCode =
-        payload['company_code']
-                ?.toString() ??
-            '';
+    final keys = _inventoryBox.keys.toList();
 
+    for (final oldKey in keys) {
+      final raw = _inventoryBox.get(oldKey);
 
-    final String branchCode =
-        payload['branch_code']
-                ?.toString() ??
-            '';
+      if (raw is! List) {
+        continue;
+      }
 
+      final List<Map<String, dynamic>> updatedList = [];
+      bool found = false;
 
-    final String storeCode =
-        payload['store_code']
-                ?.toString() ??
-            '';
+      for (final value in raw) {
+        if (value is! Map) {
+          continue;
+        }
 
+        final map = Map<String, dynamic>.from(value);
 
-    final String date =
-        payload['date']
-                ?.toString() ??
-            '';
+        if (map.isEmpty) {
+          continue;
+        }
 
+        if (map['doc_id']?.toString() == docId) {
+          found = true;
+          continue;
+        }
 
-    final String key =
-        "${companyCode}_${branchCode}_${storeCode}_$date";
+        if (map['is_deleted'] == true) {
+          continue;
+        }
 
+        updatedList.add(map);
+      }
 
-    List<Map<String, dynamic>>
-        list = [];
+      if (!found) {
+        continue;
+      }
 
-
-    if (_inventoryBox.containsKey(key)) {
-      final raw =
-          _inventoryBox.get(key);
-
-
-      if (raw is List) {
-        list = raw
-            .whereType<Map>()
-            .map(
-              (e) =>
-                  Map<String, dynamic>
-                      .from(e),
-            )
-            .where(
-              (e) =>
-                  e['is_deleted'] !=
-                  true,
-            )
-            .toList();
+      if (updatedList.isEmpty) {
+        await _inventoryBox.delete(oldKey);
+      } else {
+        await _inventoryBox.put(oldKey, updatedList);
       }
     }
 
+    // ========================================================
+    // الخطوة 2: لو حذف، توقف هنا
+    // ========================================================
 
-    // ----------------------------------------------------------
-    // إزالة النسخة القديمة
-    // ----------------------------------------------------------
-
-    list.removeWhere(
-      (item) =>
-          item['doc_id']?.toString() ==
-          docId,
-    );
-
-
-    // ----------------------------------------------------------
-    // DELETE
-    // ----------------------------------------------------------
-
-    if (action == 'delete') {
-      if (list.isEmpty) {
-        unawaited(
-          _inventoryBox.delete(key),
-        );
-      } else {
-        unawaited(
-          _inventoryBox.put(
-            key,
-            list,
-          ),
-        );
-      }
-
-
+    if (action == 'delete' ||
+        payload['is_deleted'] == true) {
       print(
         "🗑️ تم حذف الجرد [$docId] من Hive",
       );
@@ -881,27 +855,61 @@ void _scheduleDailySummaryRefresh({
       return;
     }
 
+    // ========================================================
+    // الخطوة 3: إضافة في المفتاح الجديد
+    // ========================================================
 
-    // ----------------------------------------------------------
-    // INSERT / UPDATE
-    // ----------------------------------------------------------
+    final String companyCode =
+        payload['company_code']?.toString() ?? '';
+    final String branchCode =
+        payload['branch_code']?.toString() ?? '';
+    final String storeCode =
+        payload['store_code']?.toString() ?? '';
+    final String date =
+        payload['date']?.toString() ?? '';
 
-    payload['is_deleted'] =
-        false;
+    if (companyCode.isEmpty ||
+        branchCode.isEmpty ||
+        storeCode.isEmpty ||
+        date.isEmpty) {
+      print(
+        "⚠️ بيانات المفتاح ناقصة للجرد [$docId]",
+      );
+      return;
+    }
 
+    final String newKey =
+        "${companyCode}_${branchCode}_${storeCode}_$date";
+
+    List<Map<String, dynamic>> list = [];
+
+    final raw = _inventoryBox.get(newKey);
+
+    if (raw is List) {
+      list = raw
+          .whereType<Map>()
+          .map(
+            (e) => Map<String, dynamic>.from(e),
+          )
+          .where(
+            (e) => e['is_deleted'] != true,
+          )
+          .toList();
+    }
+
+    // منع التكرار (مرة أخرى للتأكيد)
+    list.removeWhere(
+      (item) =>
+          item['doc_id']?.toString() == docId,
+    );
+
+    payload['is_deleted'] = false;
 
     list.add(
-      payload,
+      Map<String, dynamic>.from(payload),
     );
 
-
-    unawaited(
-      _inventoryBox.put(
-        key,
-        list,
-      ),
-    );
-
+    await _inventoryBox.put(newKey, list);
 
     print(
       "✅ تم تحديث الجرد [$docId] في Hive",
@@ -1088,7 +1096,8 @@ void _scheduleDailySummaryRefresh({
   // ============================================================
   // 10. تحديث التسويات
   //
-  // حاليًا احتفظنا بها كما هي للتوافق.
+  // ✅ تم تعديل المنطق لضمان حذف النسخة القديمة
+  // من جميع المفاتيح (حتى لو تغير التاريخ/الفرع)
   // ============================================================
 
   Future<void> _updateSettlementBox(
@@ -1098,7 +1107,6 @@ void _scheduleDailySummaryRefresh({
     final String? docId =
         payload['doc_id']?.toString();
 
-
     if (docId == null ||
         docId.isEmpty) {
       print(
@@ -1107,78 +1115,62 @@ void _scheduleDailySummaryRefresh({
       return;
     }
 
+    // ========================================================
+    // الخطوة 1: حذف doc_id من جميع المفاتيح
+    // ========================================================
 
-    final String companyCode =
-        payload['company_code']
-                ?.toString() ??
-            '';
+    final keys = _settlementBox.keys.toList();
 
+    for (final oldKey in keys) {
+      final raw = _settlementBox.get(oldKey);
 
-    final String branchCode =
-        payload['branch_code']
-                ?.toString() ??
-            '';
+      if (raw is! List) {
+        continue;
+      }
 
+      final List<Map<String, dynamic>> updatedList = [];
+      bool found = false;
 
-    final String date =
-        payload['date']
-                ?.toString() ??
-            '';
+      for (final value in raw) {
+        if (value is! Map) {
+          continue;
+        }
 
+        final map = Map<String, dynamic>.from(value);
 
-    final String key =
-        "${companyCode}_${branchCode}_$date";
+        if (map.isEmpty) {
+          continue;
+        }
 
+        if (map['doc_id']?.toString() == docId) {
+          found = true;
+          continue;
+        }
 
-    List<Map<String, dynamic>>
-        list = [];
+        if (map['is_deleted'] == true) {
+          continue;
+        }
 
+        updatedList.add(map);
+      }
 
-    if (_settlementBox.containsKey(key)) {
-      final raw =
-          _settlementBox.get(key);
+      if (!found) {
+        continue;
+      }
 
-
-      if (raw is List) {
-        list = raw
-            .whereType<Map>()
-            .map(
-              (e) =>
-                  Map<String, dynamic>
-                      .from(e),
-            )
-            .where(
-              (e) =>
-                  e['is_deleted'] !=
-                  true,
-            )
-            .toList();
+      if (updatedList.isEmpty) {
+        await _settlementBox.delete(oldKey);
+      } else {
+        await _settlementBox.put(oldKey, updatedList);
       }
     }
 
+    // ========================================================
+    // الخطوة 2: لو حذف، توقف هنا
+    // ========================================================
 
-    // إزالة النسخة القديمة
-    list.removeWhere(
-      (item) =>
-          item['doc_id']?.toString() ==
-          docId,
-    );
-
-
-    // DELETE
-    if (action == 'delete') {
-      if (list.isEmpty) {
-        await _settlementBox.delete(
-          key,
-        );
-      } else {
-        await _settlementBox.put(
-          key,
-          list,
-        );
-      }
-
-
+    if (action == 'delete' ||
+        payload['is_deleted'] == true) {
       print(
         "🗑️ تم حذف التسوية [$docId] من Hive",
       );
@@ -1186,28 +1178,58 @@ void _scheduleDailySummaryRefresh({
       return;
     }
 
+    // ========================================================
+    // الخطوة 3: إضافة في المفتاح الجديد
+    // ========================================================
 
-    // INSERT / UPDATE
-    payload['is_deleted'] =
-        false;
+    final String companyCode =
+        payload['company_code']?.toString() ?? '';
+    final String branchCode =
+        payload['branch_code']?.toString() ?? '';
+    final String date =
+        payload['date']?.toString() ?? '';
 
-
-    list.add(
-      payload,
-    );
-
-
-    if (list.isEmpty) {
-      await _settlementBox.delete(
-        key,
+    if (companyCode.isEmpty ||
+        branchCode.isEmpty ||
+        date.isEmpty) {
+      print(
+        "⚠️ بيانات المفتاح ناقصة للتسوية [$docId]",
       );
-    } else {
-      await _settlementBox.put(
-        key,
-        list,
-      );
+      return;
     }
 
+    final String newKey =
+        "${companyCode}_${branchCode}_$date";
+
+    List<Map<String, dynamic>> list = [];
+
+    final raw = _settlementBox.get(newKey);
+
+    if (raw is List) {
+      list = raw
+          .whereType<Map>()
+          .map(
+            (e) => Map<String, dynamic>.from(e),
+          )
+          .where(
+            (e) => e['is_deleted'] != true,
+          )
+          .toList();
+    }
+
+    // منع التكرار (مرة أخرى للتأكيد)
+    list.removeWhere(
+      (item) =>
+          item['doc_id']?.toString() == docId,
+    );
+
+    payload['is_deleted'] = false;
+
+    list.add(
+      Map<String, dynamic>.from(payload),
+    );
+
+    await _settlementBox.put(newKey, list);
 
     print(
       "✅ تم تحديث التسوية [$docId] في Hive",

@@ -41,6 +41,7 @@ def serialize_supplier(
         "items": doc.items,
         "total_amount": doc.total_amount,
         "paid_amount": doc.paid_amount,
+        "is_add_to_coding": bool(doc.is_add_to_coding),
         "updated_at": (
             doc.updated_at.isoformat()
             if doc.updated_at
@@ -155,7 +156,7 @@ async def save_supplier_transaction(
             existing.items = items_json
             existing.total_amount = data.total_amount
             existing.paid_amount = data.paid_amount
-
+            existing.is_add_to_coding = data.is_add_to_coding
             existing.updated_at = (
                 datetime.datetime.utcnow()
             )
@@ -196,6 +197,7 @@ async def save_supplier_transaction(
                 total_amount=data.total_amount,
                 paid_amount=data.paid_amount,
                 updated_at=datetime.datetime.utcnow(),
+                is_add_to_coding=data.is_add_to_coding,
                 is_deleted=False,
             )
 

@@ -8,6 +8,7 @@ from sqlalchemy import (
     JSON,
     Text,
     Index,
+    text,
 )
 from sqlalchemy.sql import func
 
@@ -408,6 +409,11 @@ class InventoryRecord(Base):
         nullable=True,
     )
 
+    employee = Column(
+        String(255),
+        default="غير محدد",
+    )
+
     # وقت آخر تعديل
     updated_at = Column(
         DateTime,
@@ -424,12 +430,17 @@ class InventoryRecord(Base):
     )
 
     __table_args__ = (
+        # ✅ Partial Unique Index
+        # يمنع وجود سجلين نشطين بنفس المفتاح
+        # لكن يسمح بوجود سجلات محذوفة متعددة
         Index(
-            'idx_inventory_company_branch_store_date',
+            'idx_inventory_unique_active',
             'company_code',
             'branch_code',
             'store_code',
             'date',
+            unique=True,
+            postgresql_where=text('is_deleted = FALSE'),
         ),
 
         Index(
@@ -518,6 +529,11 @@ class SupplierRecord(Base):
         default=False,
     )
 
+    is_add_to_coding = Column(
+    Boolean,
+    default=False,
+)
+
     employee = Column(
         String(255),
         default="غير محدد",
@@ -554,42 +570,44 @@ class SupplierRecord(Base):
     )
 
     __table_args__ = (
-        Index(
-            'idx_supplier_company_branch_serial',
-            'company_code',
-            'branch_code',
-            'serial',
-            unique=True,
-        ),
+    # ✅ Partial Unique Index
+    # يمنع وجود سجلين نشطين بنفس المفتاح
+    # لكن يسمح بوجود سجلات محذوفة متعددة
+    Index(
+        'idx_supplier_company_branch_serial_active',
+        'company_code',
+        'branch_code',
+        'serial',
+        unique=True,
+        postgresql_where=text('is_deleted = FALSE'),
+    ),
 
-        Index(
-            'idx_supplier_company_supplier_name',
-            'company_code',
-            'supplier_name',
-        ),
+    Index(
+        'idx_supplier_company_supplier_name',
+        'company_code',
+        'supplier_name',
+    ),
 
-        Index(
-            'idx_supplier_company_date',
-            'company_code',
-            'date',
-        ),
+    Index(
+        'idx_supplier_company_date',
+        'company_code',
+        'date',
+    ),
 
-        # مهم للمزامنة
-        Index(
-            'idx_supplier_changes',
-            'company_code',
-            'updated_at',
-        ),
+    Index(
+        'idx_supplier_changes',
+        'company_code',
+        'updated_at',
+    ),
 
-        # مهم لاستعلامات البيانات العادية
-        Index(
-            'idx_supplier_active',
-            'company_code',
-            'branch_code',
-            'store_code',
-            'is_deleted',
-        ),
-    )
+    Index(
+        'idx_supplier_active',
+        'company_code',
+        'branch_code',
+        'store_code',
+        'is_deleted',
+    ),
+)
 
 # ==========================================
 # 7. تسويات الموردين
@@ -672,30 +690,32 @@ class SupplierSettlementRecord(Base):
     )
 
     __table_args__ = (
-        Index(
-            'idx_settlement_company_branch_serial',
-            'company_code',
-            'branch_code',
-            'serial',
-            unique=True,
-        ),
+    # ✅ Partial Unique Index
+    Index(
+        'idx_settlement_company_branch_serial_active',
+        'company_code',
+        'branch_code',
+        'serial',
+        unique=True,
+        postgresql_where=text('is_deleted = FALSE'),
+    ),
 
-        Index(
-            'idx_settlement_company_supplier',
-            'company_code',
-            'supplier_name',
-        ),
+    Index(
+        'idx_settlement_company_supplier',
+        'company_code',
+        'supplier_name',
+    ),
 
-        Index(
-            'idx_settlement_changes',
-            'company_code',
-            'updated_at',
-        ),
+    Index(
+        'idx_settlement_changes',
+        'company_code',
+        'updated_at',
+    ),
 
-        Index(
-            'idx_settlement_active',
-            'company_code',
-            'branch_code',
-            'is_deleted',
-        ),
-    )
+    Index(
+        'idx_settlement_active',
+        'company_code',
+        'branch_code',
+        'is_deleted',
+    ),
+)

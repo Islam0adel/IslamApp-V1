@@ -872,97 +872,94 @@ int _getNextSerial(String companyCode, String branchCode) {
   // 9. حذف حركة مورد
   // ============================================================
 
-  Future<bool>
-      deleteSupplierTransaction(
-    String companyCode,
-    String docId,
-  ) async {
-    try {
-      final response =
-          await http.delete(
-        Uri.parse(
-          '$baseUrl/supplier/delete/'
-          '$companyCode/$docId',
-        ),
-      );
+  Future<bool> deleteSupplierTransaction(
+  String companyCode,
+  String docId,
+) async {
+  try {
+    final response = await http.delete(
+      Uri.parse(
+        '$baseUrl/supplier/delete/'
+        '$companyCode/$docId',
+      ),
+    );
 
-      if (response.statusCode !=
-          200) {
-        print(
-          '❌ فشل حذف حركة المورد: '
-          '${response.statusCode}',
-        );
-
-        return false;
-      }
-
-      final keys =
-          _supplierBox.keys.toList();
-
-      for (final key in keys) {
-        final raw =
-            _supplierBox.get(key);
-
-        if (raw is! List) {
-          continue;
-        }
-
-        final List<
-                Map<String, dynamic>>
-            updated = [];
-
-        bool found = false;
-
-        for (final item in raw) {
-          final map =
-              _toMapString(item);
-
-          if (map.isEmpty) {
-            continue;
-          }
-
-          if (map['doc_id']
-                  ?.toString() ==
-              docId.toString()) {
-            found = true;
-            continue;
-          }
-
-          if (map['is_deleted'] ==
-              true) {
-            continue;
-          }
-
-          updated.add(map);
-        }
-
-        if (!found) {
-          continue;
-        }
-
-        if (updated.isEmpty) {
-          await _supplierBox.delete(
-            key,
-          );
-        } else {
-          await _supplierBox.put(
-            key,
-            updated,
-          );
-        }
-
-        break;
-      }
-
-      return true;
-    } catch (e) {
+    if (response.statusCode != 200) {
       print(
-        '❌ خطأ أثناء حذف حركة المورد: $e',
+        '❌ فشل حذف حركة المورد: '
+        '${response.statusCode}',
       );
 
       return false;
     }
+
+    // ============================================================
+    // Soft Delete محلياً
+    //
+    // نحتفظ بالسجل في Hive مع is_deleted = true
+    // حتى لا يُعاد استخدام رقم الإذن
+    // ============================================================
+
+    final keys = _supplierBox.keys.toList();
+
+    for (final key in keys) {
+      final raw = _supplierBox.get(key);
+
+      if (raw is! List) {
+        continue;
+      }
+
+      final List<Map<String, dynamic>> updated = [];
+      bool found = false;
+
+      for (final item in raw) {
+        final map = _toMapString(item);
+
+        if (map.isEmpty) {
+          continue;
+        }
+
+        if (map['doc_id']?.toString() == docId.toString()) {
+          found = true;
+
+          // ✅ نحتفظ به لكن مع علامة محذوف
+          map['is_deleted'] = true;
+          map['updated_at'] = DateTime.now().toUtc().toIso8601String();
+
+          updated.add(map);
+          continue;
+        }
+
+        // تنظيف أي سجل محذوف سابق
+        if (map['is_deleted'] == true) {
+          continue;
+        }
+
+        updated.add(map);
+      }
+
+      if (!found) {
+        continue;
+      }
+
+      if (updated.isEmpty) {
+        await _supplierBox.delete(key);
+      } else {
+        await _supplierBox.put(key, updated);
+      }
+
+      break;
+    }
+
+    return true;
+  } catch (e) {
+    print(
+      '❌ خطأ أثناء حذف حركة المورد: $e',
+    );
+
+    return false;
   }
+}
 
   // ============================================================
   // 10. Full Sync

@@ -311,74 +311,95 @@ class InventoryService {
       // تحديث Hive
       // --------------------------------------------------------
 
-      final String localKey =
+      final String newKey =
           '${model.companyCode}_'
           '${model.branchCode}_'
           '${model.storeCode}_'
           '${model.date}';
 
+      // ========================================================
+      // الخطوة 1: حذف النسخة القديمة من جميع المفاتيح
+      // ========================================================
 
-      List<Map<String, dynamic>>
-          currentList = [];
+      final keys = _inventoryBox.keys.toList();
 
+      for (final oldKey in keys) {
+        final raw = _inventoryBox.get(oldKey);
 
-      if (_inventoryBox.containsKey(
-        localKey,
-      )) {
-        final raw =
-            _inventoryBox.get(localKey);
+        if (raw is! List) {
+          continue;
+        }
 
+        final List<Map<String, dynamic>> updatedList = [];
+        bool found = false;
 
-        if (raw is List) {
-          currentList = raw
-              .whereType<Map>()
-              .map(
-                (e) =>
-                    Map<String, dynamic>
-                        .from(e),
-              )
-              .where(
-                (e) =>
-                    e['is_deleted'] !=
-                    true,
-              )
-              .toList();
+        for (final value in raw) {
+          if (value is! Map) {
+            continue;
+          }
+
+          final map = Map<String, dynamic>.from(value);
+
+          if (map.isEmpty) {
+            continue;
+          }
+
+          if (map['doc_id']?.toString() == docId) {
+            found = true;
+            continue;
+          }
+
+          if (map['is_deleted'] == true) {
+            continue;
+          }
+
+          updatedList.add(map);
+        }
+
+        if (!found) {
+          continue;
+        }
+
+        if (updatedList.isEmpty) {
+          await _inventoryBox.delete(oldKey);
+        } else {
+          await _inventoryBox.put(oldKey, updatedList);
         }
       }
 
+      // ========================================================
+      // الخطوة 2: قراءة المفتاح الجديد
+      // ========================================================
 
-      final Map<String, dynamic>
-          localItem =
-          Map<String, dynamic>.from(
-        model.toMap(),
-      );
+      List<Map<String, dynamic>> currentList = [];
 
+      final raw = _inventoryBox.get(newKey);
 
-      localItem['doc_id'] =
-          docId;
+      if (raw is List) {
+        currentList = raw
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .where((e) => e['is_deleted'] != true)
+            .toList();
+      }
 
-      localItem['is_deleted'] =
-          false;
+      // ========================================================
+      // الخطوة 3: تجهيز السجل الجديد
+      // ========================================================
 
+      final Map<String, dynamic> localItem =
+          Map<String, dynamic>.from(model.toMap());
 
-      // إزالة النسخة القديمة
+      localItem['doc_id'] = docId;
+      localItem['is_deleted'] = false;
+
       currentList.removeWhere(
-        (e) =>
-            e['doc_id']?.toString() ==
-            docId,
+        (e) => e['doc_id']?.toString() == docId,
       );
 
+      currentList.add(localItem);
 
-      // إضافة النسخة الجديدة
-      currentList.add(
-        localItem,
-      );
-
-
-      await _inventoryBox.put(
-        localKey,
-        currentList,
-      );
+      await _inventoryBox.put(newKey, currentList);
 
 
       // ========================================================
@@ -849,56 +870,67 @@ class InventoryService {
         }
 
 
-        final String key =
-            '${map['company_code']}_'
-            '${map['branch_code']}_'
-            '${map['store_code']}_'
-            '${map['date']}';
+        // ======================================================
+        // الخطوة 1: حذف doc_id من جميع المفاتيح
+        //
+        // مهم جدًا لو تم تعديل:
+        // - التاريخ
+        // - الفرع
+        // - المخزن
+        //
+        // لأن المفتاح نفسه ممكن يتغير.
+        // ======================================================
 
+        final allKeys = _inventoryBox.keys.toList();
 
-        List<Map<String, dynamic>>
-            list = [];
+        for (final oldKey in allKeys) {
+          final raw = _inventoryBox.get(oldKey);
 
+          if (raw is! List) {
+            continue;
+          }
 
-        if (_inventoryBox.containsKey(
-          key,
-        )) {
-          final raw =
-              _inventoryBox.get(key);
+          final List<Map<String, dynamic>> updatedList = [];
+          bool found = false;
 
+          for (final value in raw) {
+            if (value is! Map) {
+              continue;
+            }
 
-          if (raw is List) {
-            list = raw
-                .whereType<Map>()
-                .map(
-                  (e) =>
-                      Map<String, dynamic>
-                          .from(e),
-                )
-                .where(
-                  (e) =>
-                      e['is_deleted'] !=
-                      true,
-                )
-                .toList();
+            final mapItem = Map<String, dynamic>.from(value);
+
+            if (mapItem.isEmpty) {
+              continue;
+            }
+
+            if (mapItem['doc_id']?.toString() == docId) {
+              found = true;
+              continue;
+            }
+
+            if (mapItem['is_deleted'] == true) {
+              continue;
+            }
+
+            updatedList.add(mapItem);
+          }
+
+          if (!found) {
+            continue;
+          }
+
+          if (updatedList.isEmpty) {
+            await _inventoryBox.delete(oldKey);
+          } else {
+            await _inventoryBox.put(oldKey, updatedList);
           }
         }
 
 
-        // ------------------------------------------------------
-        // إزالة النسخة القديمة أولًا
-        // ------------------------------------------------------
-
-        list.removeWhere(
-          (e) =>
-              e['doc_id']?.toString() ==
-              docId,
-        );
-
-
-        // ------------------------------------------------------
-        // DELETE
-        // ------------------------------------------------------
+        // ======================================================
+        // الخطوة 2: لو حذف، توقف هنا
+        // ======================================================
 
         if (action == 'delete' ||
             map['is_deleted'] == true) {
@@ -906,47 +938,75 @@ class InventoryService {
             "🗑️ حذف جرد [$docId] من Hive",
           );
 
-          if (list.isEmpty) {
-            await _inventoryBox.delete(
-              key,
-            );
-          } else {
-            await _inventoryBox.put(
-              key,
-              list,
-            );
-          }
-
-
           continue;
         }
 
 
-        // ------------------------------------------------------
-        // INSERT / UPDATE
-        // ------------------------------------------------------
+        // ======================================================
+        // الخطوة 3: إضافة السجل الجديد في المفتاح الصحيح
+        // ======================================================
 
-        map.remove('action');
+        final String company =
+            map['company_code']?.toString() ??
+                companyCode;
 
-        map['is_deleted'] =
-            false;
+        final String branch =
+            map['branch_code']?.toString() ?? '';
+
+        final String store =
+            map['store_code']?.toString() ?? '';
+
+        final String date =
+            map['date']?.toString() ?? '';
+
+        if (company.isEmpty ||
+            branch.isEmpty ||
+            store.isEmpty ||
+            date.isEmpty) {
+          print(
+            '⚠️ بيانات المفتاح ناقصة للجرد [$docId]',
+          );
+          continue;
+        }
+
+        final String newKey =
+            '${company}_${branch}_${store}_$date';
 
 
-        list.add(
-          map,
+        List<Map<String, dynamic>> list = [];
+
+        final rawNew = _inventoryBox.get(newKey);
+
+        if (rawNew is List) {
+          list = rawNew
+              .whereType<Map>()
+              .map(
+                (e) => Map<String, dynamic>.from(e),
+              )
+              .where(
+                (e) => e['is_deleted'] != true,
+              )
+              .toList();
+        }
+
+
+        // منع التكرار (مرة أخرى للتأكيد)
+        list.removeWhere(
+          (e) => e['doc_id']?.toString() == docId,
         );
 
 
-        if (list.isEmpty) {
-          await _inventoryBox.delete(
-            key,
-          );
-        } else {
-          await _inventoryBox.put(
-            key,
-            list,
-          );
-        }
+        map.remove('action');
+
+        map['is_deleted'] = false;
+
+        list.add(map);
+
+
+        await _inventoryBox.put(
+          newKey,
+          list,
+        );
 
 
         print(

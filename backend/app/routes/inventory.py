@@ -38,6 +38,7 @@ def serialize_inventory(
         "total_wholesale": doc.total_wholesale,
         "total_retail": doc.total_retail,
         "serial": doc.serial,
+        "employee": doc.employee or "غير محدد",
         "updated_at": (
             doc.updated_at.isoformat()
             if doc.updated_at
@@ -98,7 +99,8 @@ async def save_inventory(
                 select(InventoryRecord)
                 .where(
                     InventoryRecord.id
-                    == doc_id_int
+                    == doc_id_int,
+                    InventoryRecord.company_code == data.company_code,
                 )
             )
 
@@ -115,6 +117,34 @@ async def save_inventory(
                     ),
                 )
         else:
+            # ✅ لا يوجد doc_id → جرد جديد
+            # لكن قبل الإنشاء، تحقق إن كان هناك جرد نشط بنفس المفتاح
+            stmt = (
+                select(InventoryRecord)
+                .where(
+                    InventoryRecord.company_code == data.company_code,
+                    InventoryRecord.branch_code == data.branch_code,
+                    InventoryRecord.store_code == data.store_code,
+                    InventoryRecord.date == data.date,
+                    InventoryRecord.is_deleted.is_(False),
+                )
+            )
+
+            result = await db.execute(stmt)
+            conflicting = result.scalar_one_or_none()
+
+            if conflicting:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "INVENTORY_EXISTS",
+                        "message": "يوجد جرد بالفعل لهذا التاريخ بنفس الفرع والمخزن",
+                        "existing_doc_id": str(conflicting.id),
+                        "existing_serial": conflicting.serial,
+                        "existing_date": conflicting.date,
+                    },
+                )
+
             existing = None
 
         # ------------------------------------------------------
@@ -130,6 +160,7 @@ async def save_inventory(
             existing.total_wholesale = data.total_wholesale
             existing.total_retail = data.total_retail
             existing.serial = data.serial
+            existing.employee = data.employee
 
             existing.updated_at = (
                 datetime.datetime.utcnow()
@@ -167,6 +198,7 @@ async def save_inventory(
                 serial=data.serial,
                 updated_at=datetime.datetime.utcnow(),
                 is_deleted=False,
+                employee=data.employee,
             )
 
             db.add(new_record)

@@ -46,7 +46,7 @@ class _SupplierPageState extends State<SupplierPage> {
   String? _selectedSupplier;
 
   // إضافة البضاعة للمخزن
-  bool _isAddToStore = false;
+  bool _isAddToStore = true;
   bool _isReturn = false;
   bool _isUpdating = false;
 

@@ -115,6 +115,8 @@ class InventoryModel(BaseModel):
 
     serial: Optional[int] = None
 
+    employee: Optional[str] = "غير محدد"
+
 
 # ============================================================
 # نموذج استجابة/مزامنة الجرد
@@ -180,6 +182,7 @@ class SupplierTransactionModel(BaseModel):
     treasury: str
 
     is_add_to_store: bool
+    is_add_to_coding: Optional[bool] = False
 
     employee: str
 

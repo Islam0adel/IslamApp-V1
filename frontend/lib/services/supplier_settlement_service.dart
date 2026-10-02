@@ -297,69 +297,79 @@ int _getNextSerial(String companyCode, String branchCode) {
   // ============================================================
 
   Future<bool> deleteSettlement(
-    String companyCode,
-    String docId,
-  ) async {
-    try {
-      final response = await http.delete(
-        Uri.parse(
-          '$baseUrl/supplier-settlement/delete/'
-          '$companyCode/$docId',
-        ),
-      );
+  String companyCode,
+  String docId,
+) async {
+  try {
+    final response = await http.delete(
+      Uri.parse(
+        '$baseUrl/supplier-settlement/delete/'
+        '$companyCode/$docId',
+      ),
+    );
 
-      if (response.statusCode != 200) {
-        print(
-          '❌ فشل حذف التسوية: ${response.statusCode}',
-        );
-        return false;
-      }
-
-      final keys = _box.keys.toList();
-
-      for (final key in keys) {
-        final raw = _box.get(key);
-        if (raw is! List) continue;
-
-        final List<Map<String, dynamic>> updated = [];
-        bool found = false;
-
-        for (final item in raw) {
-          final map = _toMap(item);
-
-          if (map.isEmpty) continue;
-
-          if (map['doc_id']?.toString() == docId.toString()) {
-            found = true;
-            continue;
-          }
-
-          if (map['is_deleted'] == true) {
-            continue;
-          }
-
-          updated.add(map);
-        }
-
-        if (!found) continue;
-
-        if (updated.isEmpty) {
-          await _box.delete(key);
-        } else {
-          await _box.put(key, updated);
-        }
-
-        break;
-      }
-
-      return true;
-    } catch (e) {
+    if (response.statusCode != 200) {
       print(
-        '❌ خطأ حذف التسوية: $e',
+        '❌ فشل حذف التسوية: ${response.statusCode}',
       );
       return false;
     }
+
+    // ============================================================
+    // Soft Delete محلياً
+    // ============================================================
+
+    final keys = _box.keys.toList();
+
+    for (final key in keys) {
+      final raw = _box.get(key);
+      if (raw is! List) continue;
+
+      final List<Map<String, dynamic>> updated = [];
+      bool found = false;
+
+      for (final item in raw) {
+        final map = _toMap(item);
+
+        if (map.isEmpty) continue;
+
+        if (map['doc_id']?.toString() == docId.toString()) {
+          found = true;
+
+          // ✅ نحتفظ به مع علامة محذوف
+          map['is_deleted'] = true;
+          map['updated_at'] = DateTime.now().toUtc().toIso8601String();
+
+          updated.add(map);
+          continue;
+        }
+
+        if (map['is_deleted'] == true) {
+          continue;
+        }
+
+        updated.add(map);
+      }
+
+      if (!found) continue;
+
+      if (updated.isEmpty) {
+        await _box.delete(key);
+      } else {
+        await _box.put(key, updated);
+      }
+
+      break;
+    }
+
+    return true;
+  } catch (e) {
+    print(
+      '❌ خطأ حذف التسوية: $e',
+    );
+    return false;
   }
+}
 
   // ============================================================
   // Full Sync

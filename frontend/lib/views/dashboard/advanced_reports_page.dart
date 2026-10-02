@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/export_service.dart';
 import '../../services/permissions_service.dart';
 import '../../views/widgets/glass_card.dart';
+import '../../services/stock_balance_service.dart';
 
 class AdvancedReportsPage extends StatefulWidget {
   final String companyCode;
@@ -42,6 +43,7 @@ class _AdvancedReportsPageState extends State<AdvancedReportsPage> {
     12: 'تحليل هامش الربح الفعلي',
     13: 'تحليل تجميع المنتجات (Basket Analysis)',
     14: 'تحليل المصروفات بالنسبة للمبيعات', // التقرير الجديد
+    15: 'صافي ربح الفترة', // ✅ التقرير الجديد
   };
 
   List<Map<String, dynamic>> _rows = [];
@@ -177,6 +179,102 @@ String _formatPercent(num value) {
     return latest.values.where((e) => e['code']?.toString().isNotEmpty == true).toList();
   }
 
+  // ============================================================
+// ============================================================
+// حساب قيمة المخزون الإجمالية بسعر الجملة في تاريخ محدد
+// (نفس منطق صفحة البالانس - يأخذ في الاعتبار الجرد + المشتريات
+//  + المرتجعات + الأسعار التاريخية)
+// ============================================================
+Future<double> _inventoryValueAt(DateTime date) async {
+  final codingBox = Hive.box('coding_box');
+
+  // 1) جلب كل المخازن
+  final rawStores = codingBox.get(
+    '${widget.companyCode}_stores',
+    defaultValue: [],
+  );
+  final List<String> stores = [];
+  if (rawStores is List) {
+    for (final s in rawStores.whereType<Map>()) {
+      final code = s['code']?.toString() ?? '';
+      if (code.isNotEmpty) stores.add(code);
+    }
+  }
+
+  // 2) جلب الفروع المطلوبة
+  final List<String> branches = [];
+  final selectedBranch = widget.selectedBranchCode;
+  if (selectedBranch != null &&
+      selectedBranch != 'all' &&
+      selectedBranch != '') {
+    branches.add(selectedBranch);
+  } else {
+    final rawBranches = codingBox.get(
+      '${widget.companyCode}_branches',
+      defaultValue: [],
+    );
+    if (rawBranches is List) {
+      for (final b in rawBranches.whereType<Map>()) {
+        final code = b['code']?.toString() ?? '';
+        if (code.isNotEmpty) branches.add(code);
+      }
+    }
+  }
+
+  // 3) جمع الإجمالي من كل فرع × كل مخزن
+  double total = 0.0;
+  for (final branchCode in branches) {
+    for (final storeCode in stores) {
+      final value = await StockBalanceService.calculateTotalWholesale(
+        companyCode: widget.companyCode,
+        branchCode: branchCode,
+        storeCode: storeCode,
+        toDate: date,
+      );
+      total += value;
+    }
+  }
+
+  return total;
+}
+
+// ============================================================
+// حساب إجمالي أرصدة الموردين في تاريخ محدد
+// ============================================================
+Future<double> _supplierBalanceAt(DateTime date) async {
+  double total = 0.0;
+  final purchases = Hive.box('supplier_box');
+  final settlements = Hive.box('supplier_settlement_box');
+
+  // المشتريات
+  for (final rawList in purchases.values) {
+    if (rawList is! List) continue;
+    for (final raw in rawList.whereType<Map>()) {
+      if (raw['is_deleted'] == true) continue;
+      if (raw['company_code']?.toString() != widget.companyCode) continue;
+      if (!_branchOk(raw['branch_code'])) continue;
+      final d = DateTime.tryParse(raw['date']?.toString() ?? '');
+      if (d == null || d.isAfter(date)) continue;
+      total += _num(raw['total_amount']);
+    }
+  }
+
+  // التسويات
+  for (final rawList in settlements.values) {
+    if (rawList is! List) continue;
+    for (final raw in rawList.whereType<Map>()) {
+      if (raw['is_deleted'] == true) continue;
+      if (raw['company_code']?.toString() != widget.companyCode) continue;
+      if (!_branchOk(raw['branch_code'])) continue;
+      final d = DateTime.tryParse(raw['date']?.toString() ?? '');
+      if (d == null || d.isAfter(date)) continue;
+      total -= _num(raw['amount']);
+    }
+  }
+
+  return total;
+}
+
   List<Map<String, dynamic>> _codingItems() {
     final box = Hive.box('coding_box');
     final raw = box.get('${widget.companyCode}_items', defaultValue: []);
@@ -222,7 +320,7 @@ String _formatPercent(num value) {
   // بناء التقرير
   // ============================================================
 
-  void _buildReport() {
+  Future<void> _buildReport() async {
     final tx = _transactions();
     final rows = <Map<String, dynamic>>[];
     Map<String, dynamic> summary = {};
@@ -242,21 +340,42 @@ String _formatPercent(num value) {
         };
         break;
 
-      case 2:
+            case 2:
         final cats = <String, double>{};
         for (final t in tx.where((e) => e['type'] == 'صادر')) {
           final c = t['category']?.toString() ?? 'عام';
           cats[c] = (cats[c] ?? 0) + _num(t['amount']);
         }
-        final totalExpenses = cats.values.fold<double>(0.0, (s, v) => s + v);
+
+        // ✅ إجمالي كل المصروفات (شامل بضاعة وأرباح) لحساب النسب في الجدول
+        final totalAllExpenses = cats.values.fold<double>(0.0, (s, v) => s + v);
+
+        // ✅ إجمالي المصروفات بدون بضاعة وأرباح
+        final totalExpensesWithoutGoodsAndProfit = cats.entries
+            .where((e) =>
+                e.key != 'بضاعة' &&
+                e.key != 'أرباح' &&
+                e.key != 'ارباح')
+            .fold<double>(0.0, (s, e) => s + e.value);
+
+        // ✅ إجمالي النسبة = مجموع نسب الفئات المتبقية (بدون بضاعة وأرباح)
+        final totalPercentWithoutGoodsAndProfit = totalAllExpenses == 0
+            ? 0.0
+            : (totalExpensesWithoutGoodsAndProfit / totalAllExpenses) * 100;
+
+        // ✅ ترتيب الأعمدة: الفئة -> النسبة -> المبلغ
         rows.addAll(cats.entries.map<Map<String, dynamic>>((e) => {
               'الفئة': e.key,
+              'النسبة': totalAllExpenses == 0
+                  ? 0.0
+                  : (e.value / totalAllExpenses) * 100,
               'المبلغ': e.value,
-              'النسبة': totalExpenses == 0 ? 0.0 : (e.value / totalExpenses) * 100,
-            }).toList()..sort((a, b) => _num(b['المبلغ']).compareTo(_num(a['المبلغ']))));
+            }).toList()
+          ..sort((a, b) => _num(b['المبلغ']).compareTo(_num(a['المبلغ']))));
+
         summary = {
-          'إجمالي المصروفات': totalExpenses,
-          'إجمالي النسبة': 100.0,
+          'إجمالي المصروفات': totalExpensesWithoutGoodsAndProfit,
+          'إجمالي النسبة': totalPercentWithoutGoodsAndProfit,
         };
         break;
 
@@ -417,9 +536,11 @@ String _formatPercent(num value) {
         break;
 
       // ========== التقرير الجديد: تحليل المصروفات بالنسبة للمبيعات ==========
+            // ========== التقرير الجديد: تحليل المصروفات بالنسبة للمبيعات ==========
       case 14:
         final cats = <String, double>{};
         double totalIncome = 0.0;
+
         for (final t in tx) {
           if (t['type'] == 'وارد') {
             totalIncome += _num(t['amount']);
@@ -428,18 +549,150 @@ String _formatPercent(num value) {
             cats[c] = (cats[c] ?? 0) + _num(t['amount']);
           }
         }
-        final totalExpenses = cats.values.fold<double>(0.0, (s, v) => s + v);
-        // إذا كان إجمالي المبيعات صفراً، نضع النسب صفر
+
         final denominator = totalIncome == 0 ? 1.0 : totalIncome;
+
+        // ✅ إجمالي المصروفات بدون بضاعة وأرباح
+        final totalExpensesWithoutGoodsAndProfit = cats.entries
+            .where((e) =>
+                e.key != 'بضاعة' &&
+                e.key != 'أرباح' &&
+                e.key != 'ارباح')
+            .fold<double>(0.0, (s, e) => s + e.value);
+
+        // ✅ ترتيب الأعمدة: الفئة -> النسبة من المبيعات -> المبلغ
         rows.addAll(cats.entries.map<Map<String, dynamic>>((e) => {
               'الفئة': e.key,
-              'المبلغ': e.value,
               'النسبة من المبيعات': (e.value / denominator) * 100,
-            }).toList()..sort((a, b) => _num(b['المبلغ']).compareTo(_num(a['المبلغ']))));
+              'المبلغ': e.value,
+            }).toList()
+          ..sort((a, b) => _num(b['المبلغ']).compareTo(_num(a['المبلغ']))));
+
         summary = {
           'إجمالي المبيعات': totalIncome,
-          'إجمالي المصروفات': totalExpenses,
-          'نسبة المصروفات للمبيعات': totalIncome == 0 ? 0 : (totalExpenses / totalIncome) * 100,
+          'إجمالي المصروفات': totalExpensesWithoutGoodsAndProfit,
+          'نسبة المصروفات للمبيعات': totalIncome == 0
+              ? 0
+              : (totalExpensesWithoutGoodsAndProfit / totalIncome) * 100,
+        };
+        break;
+
+            // ========== التقرير الجديد: صافي ربح الفترة ==========
+            // ========== التقرير الجديد: صافي ربح الفترة ==========
+      case 15:
+        final from = DateTime(_fromDate.year, _fromDate.month, _fromDate.day);
+        final to = DateTime(_toDate.year, _toDate.month, _toDate.day);
+
+        // =========================================================
+        // 1) حساب مبيعات وأرباح الفترة
+        // =========================================================
+        double totalSales = 0.0;    // إجمالي المبيعات
+        double totalProfits = 0.0;  // الأرباح الموزّعة (تصنيف أرباح)
+        double periodIncome = 0.0;
+        double periodExpenses = 0.0;
+
+        for (final t in tx) {
+          final amt = _num(t['amount']);
+          if (t['type'] == 'وارد') {
+            totalSales += amt;
+            periodIncome += amt;
+          } else if (t['type'] == 'صادر') {
+            periodExpenses += amt;
+            final c = t['category']?.toString() ?? '';
+            if (c == 'أرباح' || c == 'ارباح') {
+              totalProfits += amt;
+            }
+          }
+        }
+        final currentCash = periodIncome - periodExpenses;
+
+        // =========================================================
+        // 2) حساب الحركات قبل بداية الفترة (للحصول على الرصيد السابق)
+        // =========================================================
+        final previousTx = _transactions(before: from);
+        double previousIncome = 0.0;
+        double previousExpenses = 0.0;
+        for (final t in previousTx) {
+          final amt = _num(t['amount']);
+          if (t['type'] == 'وارد') previousIncome += amt;
+          else if (t['type'] == 'صادر') previousExpenses += amt;
+        }
+        final previousCash = previousIncome - previousExpenses;
+
+        // =========================================================
+        // 3) قيمة المخزون بداية ونهاية الفترة
+        // =========================================================
+        final startInvValue = await _inventoryValueAt(
+          from.subtract(const Duration(days: 1)),
+        );
+        final endInvValue = await _inventoryValueAt(to);
+
+        // =========================================================
+        // 4) أرصدة الموردين بداية ونهاية الفترة
+        // =========================================================
+        final currentSupplierBalance = await _supplierBalanceAt(to);
+        final previousSupplierBalance = await _supplierBalanceAt(
+          from.subtract(const Duration(days: 1)),
+        );
+
+        // =========================================================
+        // 5) صافي الجرد (الحالي والسابق) وصافي الأرباح
+        // =========================================================
+        final currentNet = endInvValue + currentCash - currentSupplierBalance;
+        final previousNet = startInvValue + previousCash - previousSupplierBalance;
+        final netProfit = currentNet - previousNet;
+
+        // =========================================================
+        // 6) زيادة الجرد = المتبقي بعد توزيع الأرباح
+        //    (نفس منطق التقرير الموسع: صافي الأرباح - الأرباح الموزعة)
+        // =========================================================
+        final inventoryIncrease = netProfit - totalProfits;
+
+        // =========================================================
+        // 7) إجمالي الأرباح = الأرباح الموزعة + زيادة الجرد
+        //    (= صافي الأرباح)
+        // =========================================================
+        final totalProfit = totalProfits + inventoryIncrease;
+
+        // =========================================================
+        // 8) النسب من إجمالي المبيعات
+        // =========================================================
+        final profitPercentOfSales =
+            totalSales == 0 ? 0.0 : (totalProfit / totalSales) * 100;
+
+        // =========================================================
+        // 9) بناء الصفوف (5 صفوف موحدة بـ 3 أعمدة)
+        // =========================================================
+        rows.add({
+          'البند': 'إجمالي مبيعات الفترة',
+          'القيمة': totalSales,
+          'النسبة': '',
+        });
+        rows.add({
+          'البند': 'إجمالي أرباح (تصنيف أرباح)',
+          'القيمة': totalProfits,
+          'النسبة': '',
+        });
+        rows.add({
+          'البند': 'إجمالي زيادة الجرد',
+          'القيمة': inventoryIncrease,
+          'النسبة': '',
+        });
+        rows.add({
+          'البند': 'إجمالي الأرباح',
+          'القيمة': totalProfit,
+          'النسبة': '',
+        });
+        rows.add({
+          'البند': 'نسبة الأرباح من المبيعات',
+          'القيمة': 0.0,
+          'النسبة': profitPercentOfSales,
+        });
+
+        summary = {
+          'إجمالي المبيعات': totalSales,
+          'إجمالي الأرباح': totalProfit,
+          'نسبة الأرباح من المبيعات': profitPercentOfSales,
         };
         break;
     }
@@ -457,8 +710,12 @@ String _formatPercent(num value) {
     super.initState();
     _fromDate = widget.fromDate;
     _toDate = widget.toDate;
-    _buildReport();
-    _loading = false;
+    _buildReport(); // ← غيّرها إلى:
+  // _buildReport().then((_) { if (mounted) setState(() { _loading = false; }); });
+  _buildReport().then((_) {
+    if (mounted) setState(() => _loading = false);
+  });
+   
   }
 
   // ============================================================
@@ -493,7 +750,9 @@ String _formatPercent(num value) {
           if (_fromDate.isAfter(_toDate)) _fromDate = _toDate;
         }
       });
-      _buildReport();
+      _buildReport(); // ← غيّرها إلى:
+await _buildReport();
+if (mounted) setState(() {});
     }
   }
 
