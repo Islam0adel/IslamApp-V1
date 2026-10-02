@@ -6,8 +6,9 @@ google-cloud-firestore
 python-multipart
 pydantic[email]>=2.0.0
 python-dotenv
-sqlalchemy
+sqlalchemy[asyncio]
 asyncpg==0.29.0
 psycopg2-binary
 websockets>=12.0
 wsproto>=1.2
+greenlet
