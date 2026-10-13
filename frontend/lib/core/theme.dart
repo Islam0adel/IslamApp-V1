@@ -384,7 +384,7 @@ class AppTheme {
     // لون الفواصل
     dividerColor: lightBorder,
     // التبويبات: المختار / غير المختار / المؤشر
-    tabBarTheme: const TabBarTheme(labelColor: primaryLight, unselectedLabelColor: lightTextSecondary, indicatorColor: primaryLight),
+    tabBarTheme: const TabBarThemeData(labelColor: primaryLight, unselectedLabelColor: lightTextSecondary, indicatorColor: primaryLight),
     // أزرار النص
     textButtonTheme: TextButtonThemeData(style: TextButton.styleFrom(foregroundColor: primaryLight)),
     // أزرار الحدود: لون النص + لون الحد
