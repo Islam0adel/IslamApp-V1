@@ -1,6 +1,7 @@
 // lib/views/dashboard/supplier_history_page.dart
 
 import 'package:flutter/material.dart';
+import '../../core/theme.dart';
 import 'package:intl/intl.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -387,26 +388,26 @@ double _totalSupplierBalance = 0.0;
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: Colors.indigo.shade900,
-        title: const Text(
+        backgroundColor: AppTheme.dialogBackground(context),
+        title: Text(
           'تأكيد الحذف',
-          style: TextStyle(color: Colors.white, fontFamily: 'Cairo'),
+          style: TextStyle(color: AppTheme.textMainFor(context), fontFamily: 'Cairo'),
         ),
         content: Text(
           'هل أنت متأكد من حذف فاتورة المورد رقم ${model.serial}؟',
-          style: const TextStyle(color: Colors.white70, fontFamily: 'Cairo'),
+          style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo'),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('إلغاء', style: TextStyle(color: Colors.white, fontFamily: 'Cairo')),
+            child: Text('إلغاء', style: TextStyle(color: AppTheme.textMainFor(context), fontFamily: 'Cairo')),
           ),
           TextButton(
             onPressed: () async {
               Navigator.pop(ctx);
 
               if (model.docId == null) {
-                _showSnackBar('رقم الحركة غير موجود', Colors.red);
+                _showSnackBar('رقم الحركة غير موجود', AppTheme.dangerStrongFor(context));
                 return;
               }
 
@@ -416,13 +417,13 @@ double _totalSupplierBalance = 0.0;
               );
 
               if (deleted) {
-                _showSnackBar('تم حذف الفاتورة بنجاح', Colors.green);
+                _showSnackBar('تم حذف الفاتورة بنجاح', AppTheme.successStrongFor(context));
                 await _loadData();
               } else {
-                _showSnackBar('فشل حذف الفاتورة', Colors.red);
+                _showSnackBar('فشل حذف الفاتورة', AppTheme.dangerStrongFor(context));
               }
             },
-            child: const Text('حذف', style: TextStyle(color: Colors.red, fontFamily: 'Cairo')),
+            child: Text('حذف', style: TextStyle(color: AppTheme.dangerStrongFor(context), fontFamily: 'Cairo')),
           ),
         ],
       ),
@@ -435,7 +436,7 @@ double _totalSupplierBalance = 0.0;
 
   Future<void> _exportExcel() async {
     if (_transactions.isEmpty) {
-      _showSnackBar('لا توجد بيانات للتصدير', Colors.orange);
+      _showSnackBar('لا توجد بيانات للتصدير', AppTheme.warningOrangeFor(context));
       return;
     }
 
@@ -484,15 +485,15 @@ double _totalSupplierBalance = 0.0;
         },
       );
 
-      _showSnackBar('تم تصدير Excel بنجاح', Colors.green);
+      _showSnackBar('تم تصدير Excel بنجاح', AppTheme.successStrongFor(context));
     } catch (e) {
-      _showSnackBar('فشل التصدير: $e', Colors.red);
+      _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
     }
   }
 
   Future<void> _exportPDF() async {
     if (_transactions.isEmpty) {
-      _showSnackBar('لا توجد بيانات للتصدير', Colors.orange);
+      _showSnackBar('لا توجد بيانات للتصدير', AppTheme.warningOrangeFor(context));
       return;
     }
 
@@ -542,9 +543,9 @@ double _totalSupplierBalance = 0.0;
         totalAmount: _totalPurchases,
       );
 
-      _showSnackBar('تم تصدير PDF بنجاح', Colors.green);
+      _showSnackBar('تم تصدير PDF بنجاح', AppTheme.successStrongFor(context));
     } catch (e) {
-      _showSnackBar('فشل التصدير: $e', Colors.red);
+      _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
     }
   }
 
@@ -608,9 +609,9 @@ double _totalSupplierBalance = 0.0;
         },
       );
 
-      _showSnackBar('تم تصدير الإذن بنجاح', Colors.green);
+      _showSnackBar('تم تصدير الإذن بنجاح', AppTheme.successStrongFor(context));
     } catch (e) {
-      _showSnackBar('فشل التصدير: $e', Colors.red);
+      _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
     }
   }
 
@@ -660,9 +661,9 @@ double _totalSupplierBalance = 0.0;
         totalAmount: inv.totalAmount,
       );
 
-      _showSnackBar('تم تصدير الإذن بنجاح', Colors.green);
+      _showSnackBar('تم تصدير الإذن بنجاح', AppTheme.successStrongFor(context));
     } catch (e) {
-      _showSnackBar('فشل التصدير: $e', Colors.red);
+      _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
     }
   }
 
@@ -693,7 +694,7 @@ double _totalSupplierBalance = 0.0;
 
   Future<void> _exportSupplierItemReport({required bool pdf}) async {
     if (_transactions.isEmpty) {
-      _showSnackBar('لا توجد بيانات للتقرير', Colors.orange);
+      _showSnackBar('لا توجد بيانات للتقرير', AppTheme.warningOrangeFor(context));
       return;
     }
 
@@ -739,9 +740,9 @@ double _totalSupplierBalance = 0.0;
         );
       }
 
-      _showSnackBar(pdf ? 'تم تصدير PDF بنجاح' : 'تم تصدير Excel بنجاح', Colors.green);
+      _showSnackBar(pdf ? 'تم تصدير PDF بنجاح' : 'تم تصدير Excel بنجاح', AppTheme.successStrongFor(context));
     } catch (e) {
-      _showSnackBar('فشل التصدير: $e', Colors.red);
+      _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
     }
   }
 
@@ -749,17 +750,17 @@ double _totalSupplierBalance = 0.0;
     final data = _getSupplierReportData();
 
     if (data.isEmpty) {
-      _showSnackBar('لا توجد بيانات للتقرير', Colors.orange);
+      _showSnackBar('لا توجد بيانات للتقرير', AppTheme.warningOrangeFor(context));
       return;
     }
 
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: Colors.indigo.shade900,
+        backgroundColor: AppTheme.dialogBackground(context),
         title: Text(
           'تقرير مشتريات المورد',
-          style: const TextStyle(color: Colors.white, fontFamily: 'Cairo'),
+          style: TextStyle(color: AppTheme.textMainFor(context), fontFamily: 'Cairo'),
         ),
         content: SizedBox(
           width: 1100,
@@ -768,11 +769,11 @@ double _totalSupplierBalance = 0.0;
             children: [
               Row(
                 children: [
-                  Expanded(child: _buildSummaryBox('إجمالي المشتريات', _formatCurrency(_totalPurchases), Colors.greenAccent)),
+                  Expanded(child: _buildSummaryBox('إجمالي المشتريات', _formatCurrency(_totalPurchases), AppTheme.successFor(context))),
                   const SizedBox(width: 6),
-                  Expanded(child: _buildSummaryBox('إجمالي الدفعات', _formatCurrency(_totalSettlements), Colors.redAccent)),
+                  Expanded(child: _buildSummaryBox('إجمالي الدفعات', _formatCurrency(_totalSettlements), AppTheme.dangerFor(context))),
                   const SizedBox(width: 6),
-                  Expanded(child: _buildSummaryBox('المتبقي للمورد', _formatCurrency(_supplierRemaining), _supplierRemaining >= 0 ? Colors.cyanAccent : Colors.orangeAccent)),
+                  Expanded(child: _buildSummaryBox('المتبقي للمورد', _formatCurrency(_supplierRemaining), _supplierRemaining >= 0 ? AppTheme.accentFor(context) : AppTheme.warningOrangeSoftFor(context))),
                 ],
               ),
               const SizedBox(height: 8),
@@ -781,26 +782,26 @@ double _totalSupplierBalance = 0.0;
                   scrollDirection: Axis.horizontal,
                   child: SingleChildScrollView(
                     child: DataTable(
-                      headingRowColor: MaterialStateProperty.all(Colors.white10),
-                      columns: const [
-                        DataColumn(label: Text('التاريخ', style: TextStyle(color: Colors.cyanAccent))),
-                        DataColumn(label: Text('الإذن', style: TextStyle(color: Colors.cyanAccent))),
-                        DataColumn(label: Text('المورد', style: TextStyle(color: Colors.cyanAccent))),
-                        DataColumn(label: Text('الكود', style: TextStyle(color: Colors.cyanAccent))),
-                        DataColumn(label: Text('الصنف', style: TextStyle(color: Colors.cyanAccent))),
-                        DataColumn(label: Text('الكمية', style: TextStyle(color: Colors.cyanAccent))),
-                        DataColumn(label: Text('السعر', style: TextStyle(color: Colors.greenAccent))),
-                        DataColumn(label: Text('الإجمالي', style: TextStyle(color: Colors.greenAccent))),
+                      headingRowColor: MaterialStateProperty.all(GlassStyle.fill10For(context)),
+                      columns: [
+                        DataColumn(label: Text('التاريخ', style: TextStyle(color: AppTheme.accentFor(context)))),
+                        DataColumn(label: Text('الإذن', style: TextStyle(color: AppTheme.accentFor(context)))),
+                        DataColumn(label: Text('المورد', style: TextStyle(color: AppTheme.accentFor(context)))),
+                        DataColumn(label: Text('الكود', style: TextStyle(color: AppTheme.accentFor(context)))),
+                        DataColumn(label: Text('الصنف', style: TextStyle(color: AppTheme.accentFor(context)))),
+                        DataColumn(label: Text('الكمية', style: TextStyle(color: AppTheme.accentFor(context)))),
+                        DataColumn(label: Text('السعر', style: TextStyle(color: AppTheme.successFor(context)))),
+                        DataColumn(label: Text('الإجمالي', style: TextStyle(color: AppTheme.successFor(context)))),
                       ],
                       rows: data.map((row) => DataRow(cells: [
-                        DataCell(Text(row['التاريخ'].toString(), style: const TextStyle(color: Colors.white70))),
-                        DataCell(Text(row['رقم الإذن'].toString(), style: const TextStyle(color: Colors.white70))),
-                        DataCell(Text(row['المورد'].toString(), style: const TextStyle(color: Colors.white))),
-                        DataCell(Text(row['الكود'].toString(), style: const TextStyle(color: Colors.white70))),
-                        DataCell(Text(row['الصنف'].toString(), style: const TextStyle(color: Colors.white))),
-                        DataCell(Text(row['الكمية'].toString(), style: const TextStyle(color: Colors.white70))),
-                        DataCell(Text(_formatCurrency(_toDouble(row['السعر'])), style: const TextStyle(color: Colors.greenAccent))),
-                        DataCell(Text(_formatCurrency(_toDouble(row['الإجمالي'])), style: const TextStyle(color: Colors.greenAccent))),
+                        DataCell(Text(row['التاريخ'].toString(), style: TextStyle(color: AppTheme.textSoftFor(context)))),
+                        DataCell(Text(row['رقم الإذن'].toString(), style: TextStyle(color: AppTheme.textSoftFor(context)))),
+                        DataCell(Text(row['المورد'].toString(), style: TextStyle(color: AppTheme.textMainFor(context)))),
+                        DataCell(Text(row['الكود'].toString(), style: TextStyle(color: AppTheme.textSoftFor(context)))),
+                        DataCell(Text(row['الصنف'].toString(), style: TextStyle(color: AppTheme.textMainFor(context)))),
+                        DataCell(Text(row['الكمية'].toString(), style: TextStyle(color: AppTheme.textSoftFor(context)))),
+                        DataCell(Text(_formatCurrency(_toDouble(row['السعر'])), style: TextStyle(color: AppTheme.successFor(context)))),
+                        DataCell(Text(_formatCurrency(_toDouble(row['الإجمالي'])), style: TextStyle(color: AppTheme.successFor(context)))),
                       ])).toList(),
                     ),
                   ),
@@ -813,18 +814,18 @@ double _totalSupplierBalance = 0.0;
           if (PermissionsService().canExportSupplier)
             TextButton.icon(
               onPressed: () => _exportSupplierItemReport(pdf: false),
-              icon: const Icon(Icons.download, color: Colors.blueAccent),
-              label: const Text('Excel', style: TextStyle(color: Colors.blueAccent)),
+              icon: Icon(Icons.download, color: AppTheme.infoFor(context)),
+              label: Text('Excel', style: TextStyle(color: AppTheme.infoFor(context))),
             ),
           if (PermissionsService().canExportSupplier)
             TextButton.icon(
               onPressed: () => _exportSupplierItemReport(pdf: true),
-              icon: const Icon(Icons.picture_as_pdf, color: Colors.redAccent),
-              label: const Text('PDF', style: TextStyle(color: Colors.redAccent)),
+              icon: Icon(Icons.picture_as_pdf, color: AppTheme.dangerFor(context)),
+              label: Text('PDF', style: TextStyle(color: AppTheme.dangerFor(context))),
             ),
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('إغلاق', style: TextStyle(color: Colors.white)),
+            child: Text('إغلاق', style: TextStyle(color: AppTheme.textMainFor(context))),
           ),
         ],
       ),
@@ -860,29 +861,29 @@ double _totalSupplierBalance = 0.0;
     if (!PermissionsService().canViewSupplierHistory) {
       return Scaffold(
         appBar: AppBar(
-          title: const Text(
+          title: Text(
             'معاينة المشتريات',
             style: TextStyle(
-              color: Colors.white,
+              color: AppTheme.textMainFor(context),
               fontFamily: 'Cairo',
             ),
           ),
-          backgroundColor: Colors.transparent,
+          backgroundColor: AppTheme.appBarBg,
           elevation: 0,
         ),
         body: Container(
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: [Colors.black, Color(0xFF1A237E), Colors.black],
+              colors: AppTheme.dashGradientMain(context),
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
           ),
-          child: const Center(
+          child: Center(
             child: Text(
               'ليس لديك صلاحية لعرض المشتريات',
               style: TextStyle(
-                color: Colors.white70,
+                color: AppTheme.textSoftFor(context),
                 fontFamily: 'Cairo',
                 fontSize: 16,
               ),
@@ -896,33 +897,33 @@ double _totalSupplierBalance = 0.0;
       appBar: AppBar(
         title: Text(
           _showDetails ? 'تفاصيل الحركة' : 'معاينة المشتريات',
-          style: const TextStyle(
-            color: Colors.white,
+          style: TextStyle(
+            color: AppTheme.textMainFor(context),
             fontFamily: 'Cairo',
           ),
         ),
-        backgroundColor: Colors.transparent,
+        backgroundColor: AppTheme.appBarBg,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          icon: Icon(Icons.arrow_back, color: AppTheme.textMainFor(context)),
           onPressed: _showDetails ? _goBackToList : () => Navigator.pop(context),
         ),
         actions: [
           if (!_showDetails && PermissionsService().canExportSupplier)
             IconButton(
-              icon: const Icon(Icons.download, color: Colors.blueAccent),
+              icon: Icon(Icons.download, color: AppTheme.infoFor(context)),
               onPressed: _exportExcel,
               tooltip: 'تصدير Excel',
             ),
           if (!_showDetails && PermissionsService().canExportSupplier)
             IconButton(
-              icon: const Icon(Icons.picture_as_pdf, color: Colors.redAccent),
+              icon: Icon(Icons.picture_as_pdf, color: AppTheme.dangerFor(context)),
               onPressed: _exportPDF,
               tooltip: 'تصدير PDF',
             ),
           if (!_showDetails && PermissionsService().canAddSupplierTransaction)
             IconButton(
-              icon: const Icon(Icons.assignment_return, color: Colors.redAccent),
+              icon: Icon(Icons.assignment_return, color: AppTheme.dangerFor(context)),
               onPressed: () => Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -938,13 +939,13 @@ double _totalSupplierBalance = 0.0;
             ),
           if (!_showDetails)
             IconButton(
-              icon: const Icon(Icons.summarize, color: Colors.cyanAccent),
+              icon: Icon(Icons.summarize, color: AppTheme.accentFor(context)),
               onPressed: _showSupplierItemReport,
               tooltip: 'تقرير تفصيلي',
             ),
           if (!_showDetails)
             IconButton(
-              icon: const Icon(Icons.refresh, color: Colors.white),
+              icon: Icon(Icons.refresh, color: AppTheme.textMainFor(context)),
               onPressed: () async {
                 setState(() => _isLoading = true);
 
@@ -952,7 +953,7 @@ double _totalSupplierBalance = 0.0;
                   await _supplierService.syncChangesFromServer(widget.companyCode);
                   await _loadData();
                 } catch (e) {
-                  _showSnackBar('فشل التحديث: $e', Colors.red);
+                  _showSnackBar('فشل التحديث: $e', AppTheme.dangerStrongFor(context));
                 } finally {
                   if (mounted) setState(() => _isLoading = false);
                 }
@@ -962,16 +963,16 @@ double _totalSupplierBalance = 0.0;
         ],
       ),
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [Colors.black, Color(0xFF1A237E), Colors.black],
+            colors: AppTheme.dashGradientMain(context),
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
         ),
         child: SafeArea(
           child: _isLoading
-              ? const Center(child: CircularProgressIndicator(color: Colors.white))
+              ? Center(child: CircularProgressIndicator(color: AppTheme.textMainFor(context)))
               : _showDetails && _selectedTransaction != null
                   ? _buildDetailsView(_selectedTransaction!)
                   : _buildListView(),
@@ -1029,7 +1030,7 @@ double _totalSupplierBalance = 0.0;
                           ),
                         ),
                         IconButton(
-                          icon: const Icon(Icons.clear, color: Colors.white70, size: 18),
+                          icon: Icon(Icons.clear, color: AppTheme.textSoftFor(context), size: 18),
                           onPressed: _clearFilters,
                           padding: EdgeInsets.zero,
                           constraints: const BoxConstraints(),
@@ -1067,7 +1068,7 @@ double _totalSupplierBalance = 0.0;
                         ),
                       ),
                       IconButton(
-                        icon: const Icon(Icons.clear, color: Colors.white70),
+                        icon: Icon(Icons.clear, color: AppTheme.textSoftFor(context)),
                         onPressed: _clearFilters,
                       ),
                     ],
@@ -1087,12 +1088,12 @@ double _totalSupplierBalance = 0.0;
         delegate: SliverChildBuilderDelegate(
           (context, index) {
             if (_transactions.isEmpty) {
-              return const Center(
+              return Center(
                 child: Padding(
                   padding: EdgeInsets.all(20),
                   child: Text(
                     'لا توجد مشتريات',
-                    style: TextStyle(color: Colors.white70, fontFamily: 'Cairo'),
+                    style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo'),
                   ),
                 ),
               );
@@ -1113,11 +1114,11 @@ double _totalSupplierBalance = 0.0;
   Widget _buildPeriodSummary() {
   // قائمة العناصر الخمسة
   final items = [
-    _buildSummaryBox('الرصيد السابق', _formatCurrency(_previousBalance), Colors.blueAccent),
-    _buildSummaryBox('مشتريات الفترة', _formatCurrency(_totalPurchases), Colors.greenAccent),
-    _buildSummaryBox('دفعات الفترة', _formatCurrency(_totalSettlements), Colors.redAccent),
-    _buildSummaryBox('المتبقي', _formatCurrency(_supplierRemaining), _supplierRemaining >= 0 ? Colors.cyanAccent : Colors.orangeAccent),
-    _buildSummaryBox('إجمالي رصيد المورد', _formatCurrency(_totalSupplierBalance), Colors.purpleAccent),
+    _buildSummaryBox('الرصيد السابق', _formatCurrency(_previousBalance), AppTheme.infoFor(context)),
+    _buildSummaryBox('مشتريات الفترة', _formatCurrency(_totalPurchases), AppTheme.successFor(context)),
+    _buildSummaryBox('دفعات الفترة', _formatCurrency(_totalSettlements), AppTheme.dangerFor(context)),
+    _buildSummaryBox('المتبقي', _formatCurrency(_supplierRemaining), _supplierRemaining >= 0 ? AppTheme.accentFor(context) : AppTheme.warningOrangeSoftFor(context)),
+    _buildSummaryBox('إجمالي رصيد المورد', _formatCurrency(_totalSupplierBalance), AppTheme.extraPurpleFor(context)),
   ];
 
   // على الشاشات الصغيرة (موبايل): 3 في السطر الأول و 2 في الثاني
@@ -1158,8 +1159,8 @@ double _totalSupplierBalance = 0.0;
           Text(
             label,
             textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white60,
+            style: TextStyle(
+              color: AppTheme.textMutedFor(context),
               fontSize: 9,
               fontFamily: 'Cairo',
             ),
@@ -1185,7 +1186,7 @@ double _totalSupplierBalance = 0.0;
 
   Widget _buildTransactionCard(SupplierTransactionModel t) {
     return Card(
-      color: Colors.white.withOpacity(0.05),
+      color: GlassStyle.fill05For(context),
       margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       child: InkWell(
@@ -1200,11 +1201,11 @@ double _totalSupplierBalance = 0.0;
                 children: [
                   CircleAvatar(
                     radius: 16,
-                    backgroundColor: Colors.cyanAccent.withOpacity(0.15),
+                    backgroundColor: GlassStyle.accentFill15For(context),
                     child: Text(
                       '${t.serial}',
-                      style: const TextStyle(
-                        color: Colors.cyanAccent,
+                      style: TextStyle(
+                        color: AppTheme.accentFor(context),
                         fontSize: 10,
                         fontWeight: FontWeight.bold,
                       ),
@@ -1217,39 +1218,39 @@ double _totalSupplierBalance = 0.0;
                       children: [
                         Text(
                           t.supplierName,
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: AppTheme.textMainFor(context),
                             fontSize: 14,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
                         Text(
                           'إذن رقم: ${t.serial}',
-                          style: const TextStyle(
-                            color: Colors.cyanAccent,
+                          style: TextStyle(
+                            color: AppTheme.accentFor(context),
                             fontSize: 10,
                             fontFamily: 'Cairo',
                           ),
                         ),
                         Text(
                           'التاريخ: ${t.date}',
-                          style: const TextStyle(
-                            color: Colors.white60,
+                          style: TextStyle(
+                            color: AppTheme.textMutedFor(context),
                             fontSize: 10,
                           ),
                         ),
                         Text(
                           'الفرع: ${_getBranchName(t.branchCode)}',
-                          style: const TextStyle(
-                            color: Colors.greenAccent,
+                          style: TextStyle(
+                            color: AppTheme.successFor(context),
                             fontSize: 10,
                             fontFamily: 'Cairo',
                           ),
                         ),
                         Text(
                           'الموظف: ${t.employee.isEmpty ? 'غير محدد' : t.employee}',
-                          style: const TextStyle(
-                            color: Colors.white54,
+                          style: TextStyle(
+                            color: AppTheme.textHintFor(context),
                             fontSize: 10,
                             fontFamily: 'Cairo',
                           ),
@@ -1260,16 +1261,16 @@ double _totalSupplierBalance = 0.0;
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     decoration: BoxDecoration(
-                      color: t.isAddToStore ? Colors.greenAccent.withOpacity(0.15) : Colors.grey.withOpacity(0.15),
+                      color: t.isAddToStore ? GlassStyle.successFill15For(context) : GlassStyle.neutralFill15For(context),
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(
-                        color: t.isAddToStore ? Colors.greenAccent.withOpacity(0.3) : Colors.grey.withOpacity(0.3),
+                        color: t.isAddToStore ? GlassStyle.successBorder30For(context) : GlassStyle.neutralBorder30For(context),
                       ),
                     ),
                     child: Text(
                       t.isAddToStore ? 'مضاف للمخزن' : 'بدون إضافة',
                       style: TextStyle(
-                        color: t.isAddToStore ? Colors.greenAccent : Colors.grey,
+                        color: t.isAddToStore ? AppTheme.successFor(context) : AppTheme.neutralFor(context),
                         fontSize: 8,
                         fontWeight: FontWeight.bold,
                       ),
@@ -1281,9 +1282,9 @@ double _totalSupplierBalance = 0.0;
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
-                  _buildInfoChip('المخزن', _getStoreName(t.storeCode), Colors.blueAccent, false),
-                  _buildInfoChip('الإجمالي', _formatCurrency(t.totalAmount), Colors.greenAccent, false),
-                  _buildInfoChip('الأصناف', t.items.length.toString(), Colors.orange, false),
+                  _buildInfoChip('المخزن', _getStoreName(t.storeCode), AppTheme.infoFor(context), false),
+                  _buildInfoChip('الإجمالي', _formatCurrency(t.totalAmount), AppTheme.successFor(context), false),
+                  _buildInfoChip('الأصناف', t.items.length.toString(), AppTheme.warningOrangeFor(context), false),
                 ],
               ),
               const SizedBox(height: 4),
@@ -1292,20 +1293,20 @@ double _totalSupplierBalance = 0.0;
                 children: [
                   if (PermissionsService().canEditSupplierTransaction)
                     IconButton(
-                      icon: const Icon(Icons.edit, color: Colors.orange, size: 18),
+                      icon: Icon(Icons.edit, color: AppTheme.warningOrangeFor(context), size: 18),
                       onPressed: () => _editTransaction(t),
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(),
                     ),
                   if (PermissionsService().canDeleteSupplierTransaction)
                     IconButton(
-                      icon: const Icon(Icons.delete, color: Colors.red, size: 18),
+                      icon: Icon(Icons.delete, color: AppTheme.dangerStrongFor(context), size: 18),
                       onPressed: () => _confirmDelete(t),
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(),
                     ),
                   IconButton(
-                    icon: const Icon(Icons.arrow_forward_ios, color: Colors.cyanAccent, size: 16),
+                    icon: Icon(Icons.arrow_forward_ios, color: AppTheme.accentFor(context), size: 16),
                     onPressed: () => _showTransactionDetails(t),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
@@ -1334,7 +1335,7 @@ double _totalSupplierBalance = 0.0;
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(label, style: TextStyle(color: Colors.white60, fontSize: isMobile ? 8 : 10)),
+          Text(label, style: TextStyle(color: AppTheme.textMutedFor(context), fontSize: isMobile ? 8 : 10)),
           const SizedBox(width: 4),
           Text(value, style: TextStyle(color: color, fontSize: isMobile ? 9 : 11, fontWeight: FontWeight.bold)),
         ],
@@ -1349,16 +1350,16 @@ double _totalSupplierBalance = 0.0;
   Widget _buildSupplierFilter() {
     return DropdownButtonFormField<String?>(
       value: _selectedSupplierCode,
-      dropdownColor: Colors.indigo.shade900,
-      style: const TextStyle(color: Colors.white, fontSize: 12),
-      decoration: const InputDecoration(
+      dropdownColor: AppTheme.dropdownBackground(context),
+      style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 12),
+      decoration: InputDecoration(
         labelText: 'المورد',
-        labelStyle: TextStyle(color: Colors.white70, fontSize: 10),
+        labelStyle: TextStyle(color: AppTheme.textSoftFor(context), fontSize: 10),
         isDense: true,
         contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-        border: OutlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
-        enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
-        focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.cyanAccent)),
+        border: OutlineInputBorder(borderSide: BorderSide(color: GlassStyle.line24For(context))),
+        enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: GlassStyle.line24For(context))),
+        focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: AppTheme.accentFor(context))),
       ),
       items: _suppliers.map(
         (s) => DropdownMenuItem<String?>(
@@ -1380,16 +1381,16 @@ double _totalSupplierBalance = 0.0;
   Widget _buildStoreFilter() {
     return DropdownButtonFormField<String?>(
       value: _filterStore,
-      dropdownColor: Colors.indigo.shade900,
-      style: const TextStyle(color: Colors.white, fontSize: 12),
-      decoration: const InputDecoration(
+      dropdownColor: AppTheme.dropdownBackground(context),
+      style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 12),
+      decoration: InputDecoration(
         labelText: 'المخزن',
-        labelStyle: TextStyle(color: Colors.white70, fontSize: 10),
+        labelStyle: TextStyle(color: AppTheme.textSoftFor(context), fontSize: 10),
         isDense: true,
         contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-        border: OutlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
-        enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
-        focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.cyanAccent)),
+        border: OutlineInputBorder(borderSide: BorderSide(color: GlassStyle.line24For(context))),
+        enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: GlassStyle.line24For(context))),
+        focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: AppTheme.accentFor(context))),
       ),
       items: _stores.map(
         (s) => DropdownMenuItem<String?>(
@@ -1427,20 +1428,20 @@ double _totalSupplierBalance = 0.0;
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.05),
+          color: GlassStyle.fill05For(context),
           borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: Colors.white24),
+          border: Border.all(color: GlassStyle.line24For(context)),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('$label: ', style: const TextStyle(color: Colors.white60, fontSize: 10)),
+            Text('$label: ', style: TextStyle(color: AppTheme.textMutedFor(context), fontSize: 10)),
             const SizedBox(width: 4),
             Text(
               DateFormat('yyyy-MM-dd').format(date),
-              style: const TextStyle(color: Colors.white, fontSize: 11),
+              style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 11),
             ),
-            const Icon(Icons.calendar_today, color: Colors.amber, size: 12),
+            Icon(Icons.calendar_today, color: AppTheme.warningFor(context), size: 12),
           ],
         ),
       ),
@@ -1488,8 +1489,8 @@ double _totalSupplierBalance = 0.0;
                           children: [
                             Text(
                               'إذن رقم ${t.serial}',
-                              style: const TextStyle(
-                                color: Colors.white,
+                              style: TextStyle(
+                                color: AppTheme.textMainFor(context),
                                 fontSize: 18,
                                 fontWeight: FontWeight.bold,
                                 fontFamily: 'Cairo',
@@ -1497,40 +1498,40 @@ double _totalSupplierBalance = 0.0;
                             ),
                             Text(
                               'المورد: ${t.supplierName}',
-                              style: const TextStyle(
-                                color: Colors.white70,
+                              style: TextStyle(
+                                color: AppTheme.textSoftFor(context),
                                 fontSize: 14,
                                 fontFamily: 'Cairo',
                               ),
                             ),
                             Text(
                               'الفرع: ${_getBranchName(t.branchCode)}',
-                              style: const TextStyle(
-                                color: Colors.greenAccent,
+                              style: TextStyle(
+                                color: AppTheme.successFor(context),
                                 fontSize: 12,
                                 fontFamily: 'Cairo',
                               ),
                             ),
                             Text(
                               'المخزن: ${_getStoreName(t.storeCode)}',
-                              style: const TextStyle(
-                                color: Colors.white60,
+                              style: TextStyle(
+                                color: AppTheme.textMutedFor(context),
                                 fontSize: 12,
                                 fontFamily: 'Cairo',
                               ),
                             ),
                             Text(
                               'التاريخ: ${t.date}',
-                              style: const TextStyle(
-                                color: Colors.white60,
+                              style: TextStyle(
+                                color: AppTheme.textMutedFor(context),
                                 fontSize: 12,
                                 fontFamily: 'Cairo',
                               ),
                             ),
                             Text(
                               'الموظف: ${t.employee.isEmpty ? 'غير محدد' : t.employee}',
-                              style: const TextStyle(
-                                color: Colors.white54,
+                              style: TextStyle(
+                                color: AppTheme.textHintFor(context),
                                 fontSize: 11,
                                 fontFamily: 'Cairo',
                               ),
@@ -1541,16 +1542,16 @@ double _totalSupplierBalance = 0.0;
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
-                          color: t.isAddToStore ? Colors.greenAccent.withOpacity(0.15) : Colors.grey.withOpacity(0.15),
+                          color: t.isAddToStore ? GlassStyle.successFill15For(context) : GlassStyle.neutralFill15For(context),
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(
-                            color: t.isAddToStore ? Colors.greenAccent.withOpacity(0.3) : Colors.grey.withOpacity(0.3),
+                            color: t.isAddToStore ? GlassStyle.successBorder30For(context) : GlassStyle.neutralBorder30For(context),
                           ),
                         ),
                         child: Text(
                           t.isAddToStore ? 'مضاف للمخزن' : 'بدون إضافة',
                           style: TextStyle(
-                            color: t.isAddToStore ? Colors.greenAccent : Colors.grey,
+                            color: t.isAddToStore ? AppTheme.successFor(context) : AppTheme.neutralFor(context),
                             fontSize: 11,
                             fontWeight: FontWeight.bold,
                           ),
@@ -1558,12 +1559,12 @@ double _totalSupplierBalance = 0.0;
                       ),
                     ],
                   ),
-                  const Divider(color: Colors.white24, height: 16),
+                  Divider(color: GlassStyle.line24For(context), height: 16),
                   Row(
                     children: [
                       Expanded(child: _buildDetailItem('المخزن', _getStoreName(t.storeCode), Icons.store)),
-                      Expanded(child: _buildDetailItem('الإجمالي', _formatCurrency(t.totalAmount), Icons.attach_money, color: Colors.greenAccent)),
-                      Expanded(child: _buildDetailItem('عدد الأصناف', t.items.length.toString(), Icons.list_alt, color: Colors.blueAccent)),
+                      Expanded(child: _buildDetailItem('الإجمالي', _formatCurrency(t.totalAmount), Icons.attach_money, color: AppTheme.successFor(context))),
+                      Expanded(child: _buildDetailItem('عدد الأصناف', t.items.length.toString(), Icons.list_alt, color: AppTheme.infoFor(context))),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -1573,26 +1574,26 @@ double _totalSupplierBalance = 0.0;
                       if (PermissionsService().canEditSupplierTransaction)
                         TextButton.icon(
                           onPressed: () => _editTransaction(t),
-                          icon: const Icon(Icons.edit, color: Colors.orange, size: 16),
-                          label: const Text('تعديل', style: TextStyle(color: Colors.orange, fontSize: 12, fontFamily: 'Cairo')),
+                          icon: Icon(Icons.edit, color: AppTheme.warningOrangeFor(context), size: 16),
+                          label: Text('تعديل', style: TextStyle(color: AppTheme.warningOrangeFor(context), fontSize: 12, fontFamily: 'Cairo')),
                         ),
                       if (PermissionsService().canDeleteSupplierTransaction)
                         TextButton.icon(
                           onPressed: () => _confirmDelete(t),
-                          icon: const Icon(Icons.delete, color: Colors.red, size: 16),
-                          label: const Text('حذف', style: TextStyle(color: Colors.red, fontSize: 12, fontFamily: 'Cairo')),
+                          icon: Icon(Icons.delete, color: AppTheme.dangerStrongFor(context), size: 16),
+                          label: Text('حذف', style: TextStyle(color: AppTheme.dangerStrongFor(context), fontSize: 12, fontFamily: 'Cairo')),
                         ),
                       if (PermissionsService().canExportSupplier)
                         TextButton.icon(
                           onPressed: () => _exportSingleExcel(t),
-                          icon: const Icon(Icons.download, color: Colors.blueAccent, size: 16),
-                          label: const Text('Excel', style: TextStyle(color: Colors.blueAccent, fontSize: 12)),
+                          icon: Icon(Icons.download, color: AppTheme.infoFor(context), size: 16),
+                          label: Text('Excel', style: TextStyle(color: AppTheme.infoFor(context), fontSize: 12)),
                         ),
                       if (PermissionsService().canExportSupplier)
                         TextButton.icon(
                           onPressed: () => _exportSinglePDF(t),
-                          icon: const Icon(Icons.picture_as_pdf, color: Colors.redAccent, size: 16),
-                          label: const Text('PDF', style: TextStyle(color: Colors.redAccent, fontSize: 12)),
+                          icon: Icon(Icons.picture_as_pdf, color: AppTheme.dangerFor(context), size: 16),
+                          label: Text('PDF', style: TextStyle(color: AppTheme.dangerFor(context), fontSize: 12)),
                         ),
                     ],
                   ),
@@ -1607,10 +1608,10 @@ double _totalSupplierBalance = 0.0;
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
+                  Text(
                     'تفاصيل الأصناف',
                     style: TextStyle(
-                      color: Colors.cyanAccent,
+                      color: AppTheme.accentFor(context),
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
                       fontFamily: 'Cairo',
@@ -1620,7 +1621,7 @@ double _totalSupplierBalance = 0.0;
                   Container(
                     padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
                     decoration: BoxDecoration(
-                      color: Colors.white10,
+                      color: GlassStyle.fill10For(context),
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: isMobile ? _buildMobileItemsTable(t) : _buildDesktopItemsTable(t),
@@ -1638,39 +1639,39 @@ double _totalSupplierBalance = 0.0;
                 children: [
                   Column(
                     children: [
-                      const Text(
+                      Text(
                         'إجمالي الكميات',
                         style: TextStyle(
-                          color: Colors.white60,
+                          color: AppTheme.textMutedFor(context),
                           fontSize: 11,
                           fontFamily: 'Cairo',
                         ),
                       ),
                       Text(
                         NumberFormat('0.########', 'en_US').format(t.items.fold<double>(0.0, (sum, i) => sum + i.quantity)),
-                        style: const TextStyle(
-                          color: Colors.cyanAccent,
+                        style: TextStyle(
+                          color: AppTheme.accentFor(context),
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
                     ],
                   ),
-                  Container(width: 1, height: 30, color: Colors.white24),
+                  Container(width: 1, height: 30, color: GlassStyle.line24For(context)),
                   Column(
                     children: [
-                      const Text(
+                      Text(
                         'إجمالي المشتريات',
                         style: TextStyle(
-                          color: Colors.white60,
+                          color: AppTheme.textMutedFor(context),
                           fontSize: 11,
                           fontFamily: 'Cairo',
                         ),
                       ),
                       Text(
                         _formatCurrency(t.totalAmount),
-                        style: const TextStyle(
-                          color: Colors.greenAccent,
+                        style: TextStyle(
+                          color: AppTheme.successFor(context),
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
                         ),
@@ -1701,14 +1702,14 @@ double _totalSupplierBalance = 0.0;
         children: [
           Row(
             children: [
-              _tableHeader('#', 30, Colors.cyan),
-              _tableHeader('الكود', colWidth, Colors.cyan),
-              _tableHeader('الصنف', nameWidth, Colors.cyan),
-              _tableHeader('الكمية', colWidth, Colors.cyan),
-              _tableHeader('السعر', colWidth, Colors.greenAccent),
-              _tableHeader('الخصم%', colWidth, Colors.amber),
-              _tableHeader('مبلغ الخصم', colWidth, Colors.amber),
-              _tableHeader('الإجمالي', colWidth, Colors.greenAccent),
+              _tableHeader('#', 30, AppTheme.accentAltFor(context)),
+              _tableHeader('الكود', colWidth, AppTheme.accentAltFor(context)),
+              _tableHeader('الصنف', nameWidth, AppTheme.accentAltFor(context)),
+              _tableHeader('الكمية', colWidth, AppTheme.accentAltFor(context)),
+              _tableHeader('السعر', colWidth, AppTheme.successFor(context)),
+              _tableHeader('الخصم%', colWidth, AppTheme.warningFor(context)),
+              _tableHeader('مبلغ الخصم', colWidth, AppTheme.warningFor(context)),
+              _tableHeader('الإجمالي', colWidth, AppTheme.successFor(context)),
             ],
           ),
           const SizedBox(height: 4),
@@ -1718,14 +1719,14 @@ double _totalSupplierBalance = 0.0;
 
             return Row(
               children: [
-                _tableCell('${index + 1}', 30, Colors.white54),
-                _tableCell(item.code, colWidth, Colors.white70),
-                _tableCell(item.name, nameWidth, Colors.white),
-                _tableCell(NumberFormat('0.########', 'en_US').format(item.quantity), colWidth, Colors.white70),
-                _tableCell(_formatCurrency(item.price), colWidth, Colors.greenAccent),
-                _tableCell(item.discountRate.toStringAsFixed(1), colWidth, Colors.amber),
-                _tableCell(_formatCurrency(item.discountAmount), colWidth, Colors.amber),
-                _tableCell(_formatCurrency(item.total), colWidth, Colors.greenAccent),
+                _tableCell('${index + 1}', 30, AppTheme.textHintFor(context)),
+                _tableCell(item.code, colWidth, AppTheme.textSoftFor(context)),
+                _tableCell(item.name, nameWidth, AppTheme.textMainFor(context)),
+                _tableCell(NumberFormat('0.########', 'en_US').format(item.quantity), colWidth, AppTheme.textSoftFor(context)),
+                _tableCell(_formatCurrency(item.price), colWidth, AppTheme.successFor(context)),
+                _tableCell(item.discountRate.toStringAsFixed(1), colWidth, AppTheme.warningFor(context)),
+                _tableCell(_formatCurrency(item.discountAmount), colWidth, AppTheme.warningFor(context)),
+                _tableCell(_formatCurrency(item.total), colWidth, AppTheme.successFor(context)),
               ],
             );
           }),
@@ -1741,43 +1742,43 @@ double _totalSupplierBalance = 0.0;
   Widget _buildDesktopItemsTable(SupplierTransactionModel t) {
     return Column(
       children: [
-        const Row(
+        Row(
           children: [
             Expanded(
               flex: 1,
-              child: Text('#', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 9)),
+              child: Text('#', textAlign: TextAlign.center, style: TextStyle(color: AppTheme.accentAltFor(context), fontWeight: FontWeight.bold, fontSize: 9)),
             ),
             Expanded(
               flex: 1,
-              child: Text('الكود', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 9)),
+              child: Text('الكود', textAlign: TextAlign.center, style: TextStyle(color: AppTheme.accentAltFor(context), fontWeight: FontWeight.bold, fontSize: 9)),
             ),
             Expanded(
               flex: 2,
-              child: Text('الصنف', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 9)),
+              child: Text('الصنف', textAlign: TextAlign.center, style: TextStyle(color: AppTheme.accentAltFor(context), fontWeight: FontWeight.bold, fontSize: 9)),
             ),
             Expanded(
               flex: 1,
-              child: Text('الكمية', textAlign: TextAlign.center, style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold, fontSize: 9)),
+              child: Text('الكمية', textAlign: TextAlign.center, style: TextStyle(color: AppTheme.accentAltFor(context), fontWeight: FontWeight.bold, fontSize: 9)),
             ),
             Expanded(
               flex: 1,
-              child: Text('السعر', textAlign: TextAlign.center, style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 9)),
+              child: Text('السعر', textAlign: TextAlign.center, style: TextStyle(color: AppTheme.successFor(context), fontWeight: FontWeight.bold, fontSize: 9)),
             ),
             Expanded(
               flex: 1,
-              child: Text('الخصم%', textAlign: TextAlign.center, style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 9)),
+              child: Text('الخصم%', textAlign: TextAlign.center, style: TextStyle(color: AppTheme.warningFor(context), fontWeight: FontWeight.bold, fontSize: 9)),
             ),
             Expanded(
               flex: 1,
-              child: Text('مبلغ الخصم', textAlign: TextAlign.center, style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 9)),
+              child: Text('مبلغ الخصم', textAlign: TextAlign.center, style: TextStyle(color: AppTheme.warningFor(context), fontWeight: FontWeight.bold, fontSize: 9)),
             ),
             Expanded(
               flex: 1,
-              child: Text('الإجمالي', textAlign: TextAlign.center, style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 9)),
+              child: Text('الإجمالي', textAlign: TextAlign.center, style: TextStyle(color: AppTheme.successFor(context), fontWeight: FontWeight.bold, fontSize: 9)),
             ),
           ],
         ),
-        const Divider(color: Colors.white10),
+        Divider(color: GlassStyle.line10For(context)),
         ...t.items.asMap().entries.map((entry) {
           final index = entry.key;
           final item = entry.value;
@@ -1786,14 +1787,14 @@ double _totalSupplierBalance = 0.0;
             padding: const EdgeInsets.symmetric(vertical: 4),
             child: Row(
               children: [
-                Expanded(flex: 1, child: _tableDesktopText('${index + 1}', Colors.white54)),
-                Expanded(flex: 1, child: _tableDesktopText(item.code, Colors.white70)),
-                Expanded(flex: 2, child: _tableDesktopText(item.name, Colors.white)),
-                Expanded(flex: 1, child: _tableDesktopText(NumberFormat('0.########', 'en_US').format(item.quantity), Colors.white70)),
-                Expanded(flex: 1, child: _tableDesktopText(_formatCurrency(item.price), Colors.greenAccent)),
-                Expanded(flex: 1, child: _tableDesktopText(item.discountRate.toStringAsFixed(1), Colors.amber)),
-                Expanded(flex: 1, child: _tableDesktopText(_formatCurrency(item.discountAmount), Colors.amber)),
-                Expanded(flex: 1, child: _tableDesktopText(_formatCurrency(item.total), Colors.greenAccent)),
+                Expanded(flex: 1, child: _tableDesktopText('${index + 1}', AppTheme.textHintFor(context))),
+                Expanded(flex: 1, child: _tableDesktopText(item.code, AppTheme.textSoftFor(context))),
+                Expanded(flex: 2, child: _tableDesktopText(item.name, AppTheme.textMainFor(context))),
+                Expanded(flex: 1, child: _tableDesktopText(NumberFormat('0.########', 'en_US').format(item.quantity), AppTheme.textSoftFor(context))),
+                Expanded(flex: 1, child: _tableDesktopText(_formatCurrency(item.price), AppTheme.successFor(context))),
+                Expanded(flex: 1, child: _tableDesktopText(item.discountRate.toStringAsFixed(1), AppTheme.warningFor(context))),
+                Expanded(flex: 1, child: _tableDesktopText(_formatCurrency(item.discountAmount), AppTheme.warningFor(context))),
+                Expanded(flex: 1, child: _tableDesktopText(_formatCurrency(item.total), AppTheme.successFor(context))),
               ],
             ),
           );
@@ -1857,7 +1858,7 @@ double _totalSupplierBalance = 0.0;
   }) {
     return Row(
       children: [
-        Icon(icon, color: Colors.cyanAccent, size: 14),
+        Icon(icon, color: AppTheme.accentFor(context), size: 14),
         const SizedBox(width: 4),
         Expanded(
           child: Column(
@@ -1865,8 +1866,8 @@ double _totalSupplierBalance = 0.0;
             children: [
               Text(
                 label,
-                style: const TextStyle(
-                  color: Colors.white60,
+                style: TextStyle(
+                  color: AppTheme.textMutedFor(context),
                   fontSize: 9,
                   fontFamily: 'Cairo',
                 ),
@@ -1874,7 +1875,7 @@ double _totalSupplierBalance = 0.0;
               Text(
                 value,
                 style: TextStyle(
-                  color: color ?? Colors.white,
+                  color: color ?? AppTheme.textMainFor(context),
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
                   fontFamily: 'Cairo',

@@ -1,6 +1,7 @@
 // import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import '../../core/theme.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -668,7 +669,7 @@ class _ReportsPageState extends State<ReportsPage> {
     }
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color.fromARGB(255, 11, 20, 78),
+      backgroundColor: AppTheme.sheetBackground(context),
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (context) {
         return SafeArea(
@@ -679,7 +680,7 @@ class _ReportsPageState extends State<ReportsPage> {
               children: [
                 Text(
                   kIsWeb ? "تحميل التقرير الحالي على جهازك" : "مشاركة التقرير عبر تطبيقات الهاتف",
-                  style: const TextStyle(fontFamily: 'Cairo', color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                  style: TextStyle(fontFamily: 'Cairo', color: AppTheme.textMainFor(context), fontSize: 15, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 20),
                 Row(
@@ -687,13 +688,13 @@ class _ReportsPageState extends State<ReportsPage> {
                   children: [
                     _buildShareOptionItem(
                       icon: Icons.table_chart,
-                      color: Colors.greenAccent,
+                      color: AppTheme.successFor(context),
                       label: "ملف Excel",
                       onTap: () { Navigator.pop(context); _shareAsExcel(); }
                     ),
                     _buildShareOptionItem(
                       icon: Icons.picture_as_pdf,
-                      color: Colors.redAccent,
+                      color: AppTheme.dangerFor(context),
                       label: "تقرير PDF ملون",
                       onTap: () { Navigator.pop(context); _shareAsPdf(); }
                     ),
@@ -715,7 +716,7 @@ class _ReportsPageState extends State<ReportsPage> {
         width: 100,
         padding: const EdgeInsets.symmetric(vertical: 16),
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.05),
+          color: GlassStyle.fill05For(context),
           borderRadius: BorderRadius.circular(15),
           border: Border.all(color: color.withOpacity(0.3)),
         ),
@@ -723,7 +724,7 @@ class _ReportsPageState extends State<ReportsPage> {
           children: [
             Icon(icon, color: color, size: 32),
             const SizedBox(height: 8),
-            Text(label, style: const TextStyle(color: Colors.white, fontSize: 12, fontFamily: 'Cairo', fontWeight: FontWeight.w500)),
+            Text(label, style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 12, fontFamily: 'Cairo', fontWeight: FontWeight.w500)),
           ],
         ),
       ),
@@ -809,10 +810,10 @@ class _ReportsPageState extends State<ReportsPage> {
         return Theme(
           data: Theme.of(context).copyWith(
             colorScheme: const ColorScheme.dark(
-              primary: Colors.blueAccent,
-              onPrimary: Colors.white,
-              surface: Color.fromARGB(255, 30, 30, 30),
-              onSurface: Colors.white,
+              primary: AppTheme.datePickerPrimary,
+              onPrimary: AppTheme.datePickerOnPrimary,
+              surface: AppTheme.datePickerSurface,
+              onSurface: AppTheme.datePickerOnSurface,
             ),
           ),
           child: child!,
@@ -851,7 +852,7 @@ class _ReportsPageState extends State<ReportsPage> {
 
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: const Color.fromARGB(149, 5, 15, 76),
+        backgroundColor: AppTheme.appBarBgTint,
         elevation: 0,
         actions: [
           if (PermissionsService().canShareReports)
@@ -859,12 +860,12 @@ class _ReportsPageState extends State<ReportsPage> {
               padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 8.0),
               child: Container(
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.12),
+                  color: GlassStyle.fill12For(context),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.cyanAccent.withOpacity(0.4)),
+                  border: Border.all(color: GlassStyle.accentBorder40For(context)),
                 ),
                 child: IconButton(
-                  icon: const Icon(Icons.share, color: Colors.cyanAccent, size: 22),
+                  icon: Icon(Icons.share, color: AppTheme.accentFor(context), size: 22),
                   onPressed: _showShareBottomSheet,
                 ),
               ),
@@ -877,12 +878,12 @@ class _ReportsPageState extends State<ReportsPage> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
               decoration: BoxDecoration(
-                color: Colors.cyanAccent.withOpacity(0.1),
+                color: GlassStyle.accentFill10For(context),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Text(
                 "فرع: ${_getBranchName(widget.selectedBranchCode)}",
-                style: const TextStyle(fontFamily: 'Cairo', fontSize: 12, color: Colors.cyanAccent),
+                style: TextStyle(fontFamily: 'Cairo', fontSize: 12, color: AppTheme.accentFor(context)),
               ),
             ),
           ],
@@ -893,7 +894,7 @@ class _ReportsPageState extends State<ReportsPage> {
       body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [Theme.of(context).scaffoldBackgroundColor, const Color.fromARGB(238, 48, 98, 248)],
+            colors: AppTheme.dashGradientBlue(context),
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
           ),
@@ -910,10 +911,10 @@ class _ReportsPageState extends State<ReportsPage> {
                 Expanded(
                   child: GlassCard(
                     child: (!canSales && !canPeriod)
-                        ? const Center(
+                        ? Center(
                             child: Text(
                               'لا توجد تقارير متاحة لك',
-                              style: TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 16),
+                              style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo', fontSize: 16),
                             ),
                           )
                         : _selectedReportType == 1
@@ -1289,7 +1290,7 @@ class _ReportsPageState extends State<ReportsPage> {
   }
 
   void _showEmptySheetRow() => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("لا توجد بيانات للفترة المحددة لتصديرها")));
-  void _showErrorSnackBar(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m, textAlign: TextAlign.center), backgroundColor: Colors.red));
+  void _showErrorSnackBar(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m, textAlign: TextAlign.center), backgroundColor: AppTheme.dangerStrongFor(context)));
 
   Widget _buildDateFilters() {
     return Row(
@@ -1308,15 +1309,15 @@ class _ReportsPageState extends State<ReportsPage> {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.05),
+          color: GlassStyle.fill05For(context),
           borderRadius: BorderRadius.circular(15),
-          border: Border.all(color: Colors.white.withOpacity(0.2)),
+          border: Border.all(color: GlassStyle.line20For(context)),
         ),
         child: Column(
           children: [
-            Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12, fontFamily: 'Cairo')),
+            Text(label, style: TextStyle(color: AppTheme.textSoftFor(context), fontSize: 12, fontFamily: 'Cairo')),
             const SizedBox(height: 4),
-            Text(DateFormat('yyyy-MM-dd').format(date), style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+            Text(DateFormat('yyyy-MM-dd').format(date), style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 14, fontWeight: FontWeight.bold)),
           ],
         ),
       ),
@@ -1335,10 +1336,10 @@ class _ReportsPageState extends State<ReportsPage> {
       buttons.add(_reportButton(3, 'صافي الجرد الحالي'));
     }
     if (buttons.isEmpty) {
-      return const Center(
+      return Center(
         child: Text(
           'ليس لديك صلاحية لعرض أي تقرير',
-          style: TextStyle(color: Colors.white70, fontFamily: 'Cairo'),
+          style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo'),
         ),
       );
     }
@@ -1347,7 +1348,7 @@ class _ReportsPageState extends State<ReportsPage> {
 
   Widget _reportButton(int type, String label) => ElevatedButton(
     style: ElevatedButton.styleFrom(
-      backgroundColor: _selectedReportType == type ? Theme.of(context).primaryColor : Colors.white.withOpacity(0.1),
+      backgroundColor: _selectedReportType == type ? Theme.of(context).primaryColor : GlassStyle.fill10For(context),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
     ),
@@ -1380,7 +1381,7 @@ class _ReportsPageState extends State<ReportsPage> {
     List<String> columns = allCategories.toList()..sort();
 
     if (dailyData.isEmpty) {
-      return const Center(child: Text("لا توجد مبيعات في هذه الفترة", style: TextStyle(color: Colors.white, fontFamily: 'Cairo')));
+      return Center(child: Text("لا توجد مبيعات في هذه الفترة", style: TextStyle(color: AppTheme.textMainFor(context), fontFamily: 'Cairo')));
     }
 
     return Column(
@@ -1392,18 +1393,18 @@ class _ReportsPageState extends State<ReportsPage> {
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: DataTable(
-                headingRowColor: MaterialStateProperty.all(Colors.white.withOpacity(0.1)),
+                headingRowColor: MaterialStateProperty.all(GlassStyle.fill10For(context)),
                 columns: [
-                  const DataColumn(label: Text('التاريخ', style: TextStyle(color: Colors.white, fontFamily: 'Cairo'))),
-                  ...columns.map((c) => DataColumn(label: Text(c, style: const TextStyle(color: Colors.white, fontFamily: 'Cairo')))),
-                  const DataColumn(label: Text('إجمالي اليوم', style: TextStyle(color: Colors.amber, fontFamily: 'Cairo', fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('التاريخ', style: TextStyle(color: AppTheme.textMainFor(context), fontFamily: 'Cairo'))),
+                  ...columns.map((c) => DataColumn(label: Text(c, style: TextStyle(color: AppTheme.textMainFor(context), fontFamily: 'Cairo')))),
+                  DataColumn(label: Text('إجمالي اليوم', style: TextStyle(color: AppTheme.warningFor(context), fontFamily: 'Cairo', fontWeight: FontWeight.bold))),
                 ],
                 rows: sortedDates.map((date) {
                   return DataRow(
                     cells: [
-                      DataCell(Text(date, style: const TextStyle(color: Colors.white70))),
-                      ...columns.map((c) => DataCell(Text(_formatNumber(dailyData[date]![c] ?? 0), style: const TextStyle(color: Colors.white70)))),
-                      DataCell(Text(_formatNumber(dailyData[date]!['total']!), style: const TextStyle(color: Colors.amber))),
+                      DataCell(Text(date, style: TextStyle(color: AppTheme.textSoftFor(context)))),
+                      ...columns.map((c) => DataCell(Text(_formatNumber(dailyData[date]![c] ?? 0), style: TextStyle(color: AppTheme.textSoftFor(context))))),
+                      DataCell(Text(_formatNumber(dailyData[date]!['total']!), style: TextStyle(color: AppTheme.warningFor(context)))),
                     ],
                   );
                 }).toList(),
@@ -1411,22 +1412,22 @@ class _ReportsPageState extends State<ReportsPage> {
             ),
           ),
         ),
-        const Divider(color: Colors.white24),
+        Divider(color: GlassStyle.line24For(context)),
         Container(
           padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(10)),
+          decoration: BoxDecoration(color: GlassStyle.fill05For(context), borderRadius: BorderRadius.circular(10)),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text("الإجماليات للفترة المحددة:", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+              Text("الإجماليات للفترة المحددة:", style: TextStyle(color: AppTheme.textMainFor(context), fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
               const SizedBox(height: 5),
               Wrap(
                 spacing: 15,
-                children: columns.map((c) => Text("$c: ${_formatNumber(categoryTotals[c]!)}", style: const TextStyle(color: Colors.white70, fontFamily: 'Cairo'))).toList(),
+                children: columns.map((c) => Text("$c: ${_formatNumber(categoryTotals[c]!)}", style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo'))).toList(),
               ),
               const SizedBox(height: 5),
-              Text("الإجمالي الكلي: ${_formatNumber(grandTotal)}", style: const TextStyle(color: Colors.amber, fontSize: 16, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
-              Text("المتوسط اليومي: ${_formatNumber(grandTotal / sortedDates.length)}", style: const TextStyle(color: Colors.cyanAccent, fontSize: 15, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+              Text("الإجمالي الكلي: ${_formatNumber(grandTotal)}", style: TextStyle(color: AppTheme.warningFor(context), fontSize: 16, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+              Text("المتوسط اليومي: ${_formatNumber(grandTotal / sortedDates.length)}", style: TextStyle(color: AppTheme.accentFor(context), fontSize: 15, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
             ],
           ),
         ),
@@ -1460,9 +1461,9 @@ class _ReportsPageState extends State<ReportsPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _buildSummarySection("اجمالي الايراد", safeIncomes, totalIncome, Colors.green, showTotal: false),
+          _buildSummarySection("اجمالي الايراد", safeIncomes, totalIncome, AppTheme.successStrongFor(context), showTotal: false),
           const SizedBox(height: 15),
-          _buildSummarySection("المصروفات", expenseCategories, totalExpenses, Colors.redAccent, showTotal: false),
+          _buildSummarySection("المصروفات", expenseCategories, totalExpenses, AppTheme.dangerFor(context), showTotal: false),
           const SizedBox(height: 15),
           Container(
             padding: const EdgeInsets.all(15),
@@ -1473,11 +1474,11 @@ class _ReportsPageState extends State<ReportsPage> {
             ),
             child: Column(
               children: [
-                _summaryRow("إجمالي المصروفات (بدون البضاعة):", netExpenses, Colors.orangeAccent),
-                const Divider(color: Colors.white24),
-                _summaryRow("إجمالي المصروفات:", totalExpenses, Colors.redAccent.shade100),
-                const Divider(color: Colors.white24),
-                _summaryRow("الرصيد المتبقي:", finalBalance, finalBalance >= 0 ? Colors.greenAccent : Colors.redAccent, isBold: true),
+                _summaryRow("إجمالي المصروفات (بدون البضاعة):", netExpenses, AppTheme.warningOrangeSoftFor(context)),
+                Divider(color: GlassStyle.line24For(context)),
+                _summaryRow("إجمالي المصروفات:", totalExpenses, AppTheme.dangerSoftFor(context)),
+                Divider(color: GlassStyle.line24For(context)),
+                _summaryRow("الرصيد المتبقي:", finalBalance, finalBalance >= 0 ? AppTheme.successFor(context) : AppTheme.dangerFor(context), isBold: true),
               ],
             ),
           )
@@ -1652,14 +1653,14 @@ class _ReportsPageState extends State<ReportsPage> {
   }
 
   Widget _buildExtendedReport() {
-    if (_extendedSummary.isEmpty) return const Center(child: CircularProgressIndicator(color: Colors.white));
+    if (_extendedSummary.isEmpty) return Center(child: CircularProgressIndicator(color: AppTheme.textMainFor(context)));
 
     return SingleChildScrollView(
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        _buildDetailSection('تفاصيل الإيرادات (الواردات)', _incomeDetails, Colors.green),
+        _buildDetailSection('تفاصيل الإيرادات (الواردات)', _incomeDetails, AppTheme.successStrongFor(context)),
         const SizedBox(height: 10),
 
-        _buildDetailSection('تفاصيل المصروفات', _expenseDetails, Colors.redAccent),
+        _buildDetailSection('تفاصيل المصروفات', _expenseDetails, AppTheme.dangerFor(context)),
         const SizedBox(height: 10),
 
         _buildSummarySection(
@@ -1672,7 +1673,7 @@ class _ReportsPageState extends State<ReportsPage> {
             'إجمالي المصروفات (بدون بضاعة وأرباح)': _expensesWithoutGoodsAndProfit,
           },
           _extendedSummary['إجمالي الإيراد'] as double,
-          Colors.green,
+          AppTheme.successStrongFor(context),
           showTotal: false,
         ),
         const SizedBox(height: 10),
@@ -1682,7 +1683,7 @@ class _ReportsPageState extends State<ReportsPage> {
           'رصيد الخزينة': _extendedSummary['الرصيد المتبقي'] as double,
           'أرصدة العملاء غير المحصلة': _extendedSummary['أرصدة العملاء غير المحصلة'] as double,
           'الإجمالي': _extendedSummary['إجمالي ملك الشركة'] as double,
-        }, _extendedSummary['إجمالي ملك الشركة'] as double, Colors.cyanAccent, showTotal: false),
+        }, _extendedSummary['إجمالي ملك الشركة'] as double, AppTheme.accentFor(context), showTotal: false),
         const SizedBox(height: 10),
 
         _buildSupplierBalanceSection(),
@@ -1691,20 +1692,20 @@ class _ReportsPageState extends State<ReportsPage> {
         Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(.05),
+            color: GlassStyle.fill05For(context),
             borderRadius: BorderRadius.circular(15),
-            border: Border.all(color: Colors.white24),
+            border: Border.all(color: GlassStyle.line24For(context)),
           ),
           child: Column(children: [
-            _summaryRow('إجمالي المدين / ملك الشركة:', _extendedSummary['إجمالي ملك الشركة'] as double, Colors.cyanAccent),
-            const Divider(color: Colors.white24),
-            _summaryRow('إجمالي الدائن / على الشركة:', _extendedSummary['إجمالي ما على الشركة'] as double, Colors.redAccent),
-            const Divider(color: Colors.white24),
-            _summaryRow('صافي الجرد الحالي:', _extendedSummary['صافي الجرد الحالي'] as double, Colors.amber, isBold: true),
-            _summaryRow('صافي الجرد السابق:', _extendedSummary['صافي الجرد السابق'] as double, Colors.white70),
-            _summaryRow('الفرق / صافي الأرباح:', _extendedSummary['الفرق / صافي الأرباح'] as double, Colors.greenAccent, isBold: true),
-            _summaryRow('المتبقي بعد توزيع الأرباح:', _extendedSummary['المتبقي بعد توزيع الأرباح'] as double, Colors.cyanAccent),
-            _summaryRow('نسبة الربح:', _extendedSummary['نسبة الربح'] as double, Colors.amber, isBold: true, suffix: '%'),
+            _summaryRow('إجمالي المدين / ملك الشركة:', _extendedSummary['إجمالي ملك الشركة'] as double, AppTheme.accentFor(context)),
+            Divider(color: GlassStyle.line24For(context)),
+            _summaryRow('إجمالي الدائن / على الشركة:', _extendedSummary['إجمالي ما على الشركة'] as double, AppTheme.dangerFor(context)),
+            Divider(color: GlassStyle.line24For(context)),
+            _summaryRow('صافي الجرد الحالي:', _extendedSummary['صافي الجرد الحالي'] as double, AppTheme.warningFor(context), isBold: true),
+            _summaryRow('صافي الجرد السابق:', _extendedSummary['صافي الجرد السابق'] as double, AppTheme.textSoftFor(context)),
+            _summaryRow('الفرق / صافي الأرباح:', _extendedSummary['الفرق / صافي الأرباح'] as double, AppTheme.successFor(context), isBold: true),
+            _summaryRow('المتبقي بعد توزيع الأرباح:', _extendedSummary['المتبقي بعد توزيع الأرباح'] as double, AppTheme.accentFor(context)),
+            _summaryRow('نسبة الربح:', _extendedSummary['نسبة الربح'] as double, AppTheme.warningFor(context), isBold: true, suffix: '%'),
           ]),
         ),
       ]),
@@ -1713,15 +1714,15 @@ class _ReportsPageState extends State<ReportsPage> {
 
   Widget _buildSupplierBalanceSection() {
     final total = _extendedSupplierBalances.fold<double>(0, (s, e) => s + (e['الرصيد'] as double));
-    return Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.white.withOpacity(.03), borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.white10)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const Text('مديونيات الموردين', style: TextStyle(color: Colors.redAccent, fontSize: 16, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
-      const Divider(color: Colors.white10),
+    return Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: GlassStyle.fill03For(context), borderRadius: BorderRadius.circular(15), border: Border.all(color: GlassStyle.line10For(context))), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('مديونيات الموردين', style: TextStyle(color: AppTheme.dangerFor(context), fontSize: 16, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+      Divider(color: GlassStyle.line10For(context)),
       ..._extendedSupplierBalances.map((e) => Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Text(e['المورد'].toString(), style: const TextStyle(color: Colors.white70, fontFamily: 'Cairo')),
-        Text(_formatNumber(e['الرصيد'] as double), style: TextStyle(color: (e['الرصيد'] as double) >= 0 ? Colors.redAccent : Colors.greenAccent, fontFamily: 'Cairo')),
+        Text(e['المورد'].toString(), style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo')),
+        Text(_formatNumber(e['الرصيد'] as double), style: TextStyle(color: (e['الرصيد'] as double) >= 0 ? AppTheme.dangerFor(context) : AppTheme.successFor(context), fontFamily: 'Cairo')),
       ]))),
-      const Divider(color: Colors.white10),
-      _summaryRow('الإجمالي', total, Colors.redAccent, isBold: true),
+      Divider(color: GlassStyle.line10For(context)),
+      _summaryRow('الإجمالي', total, AppTheme.dangerFor(context), isBold: true),
     ]));
   }
 
@@ -1730,30 +1731,30 @@ class _ReportsPageState extends State<ReportsPage> {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.03),
+        color: GlassStyle.fill03For(context),
         borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: Colors.white.withOpacity(0.1)),
+        border: Border.all(color: GlassStyle.line10For(context)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(title, style: TextStyle(color: titleColor, fontSize: 16, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
-          const Divider(color: Colors.white10),
+          Divider(color: GlassStyle.line10For(context)),
           ...items.entries.map((e) => Padding(
             padding: const EdgeInsets.symmetric(vertical: 4),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(e.key, style: const TextStyle(color: Colors.white70, fontFamily: 'Cairo')),
-                Text(_formatNumber(e.value), style: const TextStyle(color: Colors.white, fontFamily: 'Cairo')),
+                Text(e.key, style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo')),
+                Text(_formatNumber(e.value), style: TextStyle(color: AppTheme.textMainFor(context), fontFamily: 'Cairo')),
               ],
             ),
           )),
-          const Divider(color: Colors.white10),
+          Divider(color: GlassStyle.line10For(context)),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text("الإجمالي", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+              Text("الإجمالي", style: TextStyle(color: AppTheme.textMainFor(context), fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
               Text(_formatNumber(items.values.fold(0.0, (sum, v) => sum + v)),
                   style: TextStyle(color: titleColor, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
             ],
@@ -1767,15 +1768,15 @@ class _ReportsPageState extends State<ReportsPage> {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.03),
+        color: GlassStyle.fill03For(context),
         borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: Colors.white.withOpacity(0.1)),
+        border: Border.all(color: GlassStyle.line10For(context)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(title, style: TextStyle(color: titleColor, fontSize: 16, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
-          const Divider(color: Colors.white10),
+          Divider(color: GlassStyle.line10For(context)),
           ...items.entries.map((e) {
             final isTotalRow = e.key == 'الإجمالي';
             return Padding(
@@ -1786,7 +1787,7 @@ class _ReportsPageState extends State<ReportsPage> {
                   Text(
                     e.key,
                     style: TextStyle(
-                      color: isTotalRow ? Colors.white : Colors.white70,
+                      color: isTotalRow ? AppTheme.textMainFor(context) : AppTheme.textSoftFor(context),
                       fontWeight: isTotalRow ? FontWeight.bold : FontWeight.normal,
                       fontFamily: 'Cairo',
                     ),
@@ -1794,7 +1795,7 @@ class _ReportsPageState extends State<ReportsPage> {
                   Text(
                     _formatNumber(e.value),
                     style: TextStyle(
-                      color: isTotalRow ? titleColor : Colors.white,
+                      color: isTotalRow ? titleColor : AppTheme.textMainFor(context),
                       fontWeight: isTotalRow ? FontWeight.bold : FontWeight.normal,
                       fontFamily: 'Cairo',
                     ),
@@ -1804,11 +1805,11 @@ class _ReportsPageState extends State<ReportsPage> {
             );
           }),
           if (showTotal) ...[
-            const Divider(color: Colors.white10),
+            Divider(color: GlassStyle.line10For(context)),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text("الإجمالي", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+                Text("الإجمالي", style: TextStyle(color: AppTheme.textMainFor(context), fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
                 Text(_formatNumber(total), style: TextStyle(color: titleColor, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
               ],
             ),
@@ -1822,7 +1823,7 @@ class _ReportsPageState extends State<ReportsPage> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label, style: TextStyle(color: Colors.white, fontSize: isBold ? 16 : 14, fontWeight: isBold ? FontWeight.bold : FontWeight.normal, fontFamily: 'Cairo')),
+        Text(label, style: TextStyle(color: AppTheme.textMainFor(context), fontSize: isBold ? 16 : 14, fontWeight: isBold ? FontWeight.bold : FontWeight.normal, fontFamily: 'Cairo')),
         Text('${_formatNumber(amount)}$suffix', style: TextStyle(color: color, fontSize: isBold ? 18 : 16, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
       ],
     );

@@ -1,6 +1,7 @@
 // lib/views/dashboard/supplier_settlement_page.dart
 
 import 'package:flutter/material.dart';
+import '../../core/theme.dart';
 import 'package:intl/intl.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -300,33 +301,33 @@ class _SupplierSettlementPageState
   // ✅ الإضافة لها صلاحية مستقلة عن التعديل
   if (isEdit) {
     if (!PermissionsService().canEditSupplierSettlement) {
-      _showSnackBar('ليس لديك صلاحية تعديل الدفعة', Colors.orange);
+      _showSnackBar('ليس لديك صلاحية تعديل الدفعة', AppTheme.warningOrangeFor(context));
       return;
     }
   } else {
     if (!PermissionsService().canAddSupplierSettlement) {
-      _showSnackBar('ليس لديك صلاحية إضافة دفعة', Colors.orange);
+      _showSnackBar('ليس لديك صلاحية إضافة دفعة', AppTheme.warningOrangeFor(context));
       return;
     }
   }
 
   // المورد
   if (_selectedSupplier == null || _selectedSupplier!.isEmpty) {
-    _showSnackBar('اختر المورد', Colors.orange);
+    _showSnackBar('اختر المورد', AppTheme.warningOrangeFor(context));
     return;
   }
 
   // المبلغ
   final amount = double.tryParse(_amountController.text.trim()) ?? 0.0;
   if (amount <= 0) {
-    _showSnackBar('أدخل مبلغ الدفعة', Colors.orange);
+    _showSnackBar('أدخل مبلغ الدفعة', AppTheme.warningOrangeFor(context));
     return;
   }
 
   // ✅ في الإضافة نتحقق من الرصيد. في التعديل نسمح باستخدام الرصيد + مبلغ الدفعة القديمة.
   // final availableBalance = _supplierBalance + (widget.editItem?.amount ?? 0.0);
   // if (amount > availableBalance) {
-  //   _showSnackBar('مبلغ الدفعة أكبر من رصيد المورد', Colors.orange);
+  //   _showSnackBar('مبلغ الدفعة أكبر من رصيد المورد', AppTheme.warningOrangeFor(context));
   //   return;
   // }
 
@@ -365,7 +366,7 @@ class _SupplierSettlementPageState
 
       _showSnackBar(
         isEdit ? 'تم تعديل الدفعة رقم $savedSerial بنجاح' : 'تم حفظ الدفعة رقم $savedSerial بنجاح',
-        Colors.green,
+        AppTheme.successStrongFor(context),
       );
 
       // ✅ في وضع التعديل نرجع للمعاينة بعد الحفظ
@@ -386,10 +387,10 @@ class _SupplierSettlementPageState
         });
       }
     } else {
-      _showSnackBar('فشل الحفظ: ${result['error']}', Colors.red);
+      _showSnackBar('فشل الحفظ: ${result['error']}', AppTheme.dangerStrongFor(context));
     }
   } catch (e) {
-    _showSnackBar('خطأ: $e', Colors.red);
+    _showSnackBar('خطأ: $e', AppTheme.dangerStrongFor(context));
   } finally {
     if (mounted) {
       setState(() => _isSaving = false);
@@ -451,12 +452,12 @@ class _SupplierSettlementPageState
     final isEdit = widget.editItem != null;
 
     if (!PermissionsService().canShowSupplierSettlements) {
-      return const Scaffold(
+      return Scaffold(
         body: Center(
           child: Text(
             'ليس لديك صلاحية لعرض التسويات',
             style: TextStyle(
-              color: Colors.white70,
+              color: AppTheme.textSoftFor(context),
               fontFamily: 'Cairo',
             ),
           ),
@@ -471,8 +472,8 @@ class _SupplierSettlementPageState
           children: [
             Text(
               isEdit ? 'تعديل تسوية مورد' : 'تسويات الموردين',
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: AppTheme.textMainFor(context),
                 fontFamily: 'Cairo',
                 fontSize: 15,
                 fontWeight: FontWeight.bold,
@@ -480,8 +481,8 @@ class _SupplierSettlementPageState
             ),
             Text(
               'إذن رقم: $_currentSerial',
-              style: const TextStyle(
-                color: Colors.cyanAccent,
+              style: TextStyle(
+                color: AppTheme.accentFor(context),
                 fontFamily: 'Cairo',
                 fontSize: 12,
                 fontWeight: FontWeight.bold,
@@ -489,34 +490,30 @@ class _SupplierSettlementPageState
             ),
             Text(
               _getBranchName(widget.selectedBranchCode),
-              style: const TextStyle(
-                color: Colors.white70,
+              style: TextStyle(
+                color: AppTheme.textSoftFor(context),
                 fontFamily: 'Cairo',
                 fontSize: 10,
               ),
             ),
           ],
         ),
-        backgroundColor: Colors.transparent,
+        backgroundColor: AppTheme.appBarBg,
         elevation: 0,
         centerTitle: true,
       ),
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [
-              Colors.black,
-              Color(0xFF1A237E),
-              Colors.black,
-            ],
+            colors: AppTheme.dashGradientMain(context),
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
         ),
         child: SafeArea(
           child: _isLoading
-              ? const Center(
-                  child: CircularProgressIndicator(color: Colors.white),
+              ? Center(
+                  child: CircularProgressIndicator(color: AppTheme.textMainFor(context)),
                 )
               : SingleChildScrollView(
                   padding: const EdgeInsets.all(12),
@@ -537,9 +534,9 @@ class _SupplierSettlementPageState
                           style: ElevatedButton.styleFrom(
                             backgroundColor:
                                 isEdit
-                                    ? Colors.orangeAccent
-                                    : Colors.greenAccent,
-                            foregroundColor: Colors.black,
+                                    ? AppTheme.warningOrangeSoftFor(context)
+                                    : AppTheme.successFor(context),
+                            foregroundColor: AppTheme.onAccentFor(context),
                           ),
                           child: Text(
                             _isSaving
@@ -577,29 +574,29 @@ class _SupplierSettlementPageState
                                 ),
                               );
                             },
-                            icon: const Icon(
+                            icon: Icon(
                               Icons.history_rounded,
-                              color: Colors.cyanAccent,
+                              color: AppTheme.accentFor(context),
                             ),
-                            label: const Text(
+                            label: Text(
                               'معاينة التسويات',
                               style: TextStyle(
-                                color: Colors.cyanAccent,
+                                color: AppTheme.accentFor(context),
                                 fontFamily: 'Cairo',
                                 fontWeight: FontWeight.bold,
                                 fontSize: 14,
                               ),
                             ),
                             style: OutlinedButton.styleFrom(
-                              side: const BorderSide(
-                                color: Colors.cyanAccent,
+                              side: BorderSide(
+                                color: AppTheme.accentFor(context),
                               ),
                               shape: RoundedRectangleBorder(
                                 borderRadius:
                                     BorderRadius.circular(10),
                               ),
                               backgroundColor:
-                                  Colors.white.withOpacity(0.03),
+                                  GlassStyle.fill03For(context),
                             ),
                           ),
                         ),
@@ -624,23 +621,23 @@ class _SupplierSettlementPageState
       padding: const EdgeInsets.all(12),
       child: Column(
         children: [
-          const Text(
+          Text(
             'رصيد المورد',
-            style: TextStyle(color: Colors.white70, fontFamily: 'Cairo'),
+            style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo'),
           ),
           const SizedBox(height: 4),
           Text(
             balance.toStringAsFixed(2),
-            style: const TextStyle(color: Colors.amber, fontSize: 24, fontWeight: FontWeight.bold),
+            style: TextStyle(color: AppTheme.warningFor(context), fontSize: 24, fontWeight: FontWeight.bold),
           ),
-          const Divider(color: Colors.white24),
-          const Text(
+          Divider(color: GlassStyle.line24For(context)),
+          Text(
             'الرصيد بعد الدفعة',
-            style: TextStyle(color: Colors.white70, fontFamily: 'Cairo'),
+            style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo'),
           ),
           Text(
             expected.toStringAsFixed(2),
-            style: const TextStyle(color: Colors.greenAccent, fontSize: 20, fontWeight: FontWeight.bold),
+            style: TextStyle(color: AppTheme.successFor(context), fontSize: 20, fontWeight: FontWeight.bold),
           ),
         ],
       ),
@@ -666,11 +663,11 @@ class _SupplierSettlementPageState
             // المورد
             DropdownButtonFormField<String>(
               value: _selectedSupplier,
-              dropdownColor: Colors.indigo.shade900,
-              style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(
+              dropdownColor: AppTheme.dropdownBackground(context),
+              style: TextStyle(color: AppTheme.textMainFor(context)),
+              decoration: InputDecoration(
                 labelText: 'المورد',
-                labelStyle: TextStyle(color: Colors.white70),
+                labelStyle: TextStyle(color: AppTheme.textSoftFor(context)),
               ),
               items: _suppliers.map(
                 (s) => DropdownMenuItem<String>(
@@ -694,10 +691,10 @@ class _SupplierSettlementPageState
               enabled: enabled,
               keyboardType:
                   const TextInputType.numberWithOptions(decimal: true),
-              style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(
+              style: TextStyle(color: AppTheme.textMainFor(context)),
+              decoration: InputDecoration(
                 labelText: 'مبلغ الدفعة',
-                labelStyle: TextStyle(color: Colors.white70),
+                labelStyle: TextStyle(color: AppTheme.textSoftFor(context)),
               ),
             ),
 
@@ -709,8 +706,8 @@ class _SupplierSettlementPageState
                 Expanded(
                   child: DropdownButtonFormField<String>(
                     value: _selectedPaymentMethod,
-                    dropdownColor: Colors.indigo.shade900,
-                    style: const TextStyle(color: Colors.white),
+                    dropdownColor: AppTheme.dropdownBackground(context),
+                    style: TextStyle(color: AppTheme.textMainFor(context)),
                     decoration: const InputDecoration(
                       labelText: 'طريقة الدفع',
                     ),
@@ -735,8 +732,8 @@ class _SupplierSettlementPageState
                 Expanded(
                   child: DropdownButtonFormField<String>(
                     value: _selectedTreasury,
-                    dropdownColor: Colors.indigo.shade900,
-                    style: const TextStyle(color: Colors.white),
+                    dropdownColor: AppTheme.dropdownBackground(context),
+                    style: TextStyle(color: AppTheme.textMainFor(context)),
                     decoration:
                         const InputDecoration(labelText: 'الخزينة'),
                     items: _treasuries.map(
@@ -759,10 +756,10 @@ class _SupplierSettlementPageState
             TextFormField(
               controller: _statementController,
               enabled: enabled,
-              style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(
+              style: TextStyle(color: AppTheme.textMainFor(context)),
+              decoration: InputDecoration(
                 labelText: 'البيان',
-                labelStyle: TextStyle(color: Colors.white70),
+                labelStyle: TextStyle(color: AppTheme.textSoftFor(context)),
               ),
             ),
 
@@ -773,11 +770,11 @@ class _SupplierSettlementPageState
               controller: _dateController,
               readOnly: true,
               enabled: enabled,
-              style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(
+              style: TextStyle(color: AppTheme.textMainFor(context)),
+              decoration: InputDecoration(
                 labelText: 'التاريخ',
                 suffixIcon:
-                    Icon(Icons.calendar_today, color: Colors.amber),
+                    Icon(Icons.calendar_today, color: AppTheme.warningFor(context)),
               ),
               onTap: enabled ? _pickDate : null,
             ),

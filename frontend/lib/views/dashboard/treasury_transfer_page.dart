@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../core/theme.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
 import '../../views/widgets/glass_card.dart';
@@ -95,11 +96,11 @@ class _TreasuryTransferPageState extends State<TreasuryTransferPage> {
     final double amount = double.tryParse(_amountController.text) ?? 0.0;
     
     if (amount <= 0) {
-      _showSnackBar("الرجاء إدخال مبلغ صحيح أكبر من الصفر", Colors.orange);
+      _showSnackBar("الرجاء إدخال مبلغ صحيح أكبر من الصفر", AppTheme.warningOrangeFor(context));
       return;
     }
     if (_fromTreasury == _toTreasury) {
-      _showSnackBar("لا يمكن التحويل لنفس الخزينة!", Colors.orange);
+      _showSnackBar("لا يمكن التحويل لنفس الخزينة!", AppTheme.warningOrangeFor(context));
       return;
     }
 
@@ -153,7 +154,7 @@ class _TreasuryTransferPageState extends State<TreasuryTransferPage> {
           _amountController.clear();
           _statementController.clear();
         });
-        _showSnackBar("تم التحويل بنجاح!", Colors.green);
+        _showSnackBar("تم التحويل بنجاح!", AppTheme.successStrongFor(context));
         Future.delayed(const Duration(seconds: 1), () {
           if (mounted) Navigator.pop(context);
         });
@@ -161,7 +162,7 @@ class _TreasuryTransferPageState extends State<TreasuryTransferPage> {
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
-        _showSnackBar("حدث خطأ أثناء التحويل: $e", Colors.red);
+        _showSnackBar("حدث خطأ أثناء التحويل: $e", AppTheme.dangerStrongFor(context));
       }
     }
   }
@@ -182,7 +183,7 @@ class _TreasuryTransferPageState extends State<TreasuryTransferPage> {
       appBar: AppBar(
         title: const Text("تحويل بين الخزائن", style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
         centerTitle: true,
-        backgroundColor: const Color.fromARGB(149, 5, 15, 76),
+        backgroundColor: AppTheme.appBarBgTint,
         elevation: 0,
       ),
       extendBodyBehindAppBar: true,
@@ -191,7 +192,7 @@ class _TreasuryTransferPageState extends State<TreasuryTransferPage> {
         height: double.infinity,
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [Theme.of(context).scaffoldBackgroundColor, const Color.fromARGB(238, 48, 98, 248)],
+            colors: AppTheme.dashGradientBlue(context),
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
           ),
@@ -207,28 +208,29 @@ class _TreasuryTransferPageState extends State<TreasuryTransferPage> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(Icons.sync_alt, color: Colors.cyanAccent, size: 50),
+                        Icon(Icons.sync_alt, color: AppTheme.accentFor(context), size: 50),
                         const SizedBox(height: 15),
-                        const Text(
+                        Text(
                           "تحويل مالي داخلي",
-                          style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, fontFamily: 'Cairo'),
+                          style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 18, fontWeight: FontWeight.bold, fontFamily: 'Cairo'),
                         ),
                         const SizedBox(height: 25),
 
                         // من خزينة
-                        _buildDropdownField("تحويل مـن", _fromTreasury, (val) {
+                        _buildDropdownField(context, "تحويل مـن", _fromTreasury, (val) {
                           setState(() => _fromTreasury = val!);
                         }),
                         const SizedBox(height: 15),
 
                         // إلى خزينة
-                        _buildDropdownField("تحويل إلـى", _toTreasury, (val) {
+                        _buildDropdownField(context, "تحويل إلـى", _toTreasury, (val) {
                           setState(() => _toTreasury = val!);
                         }),
                         const SizedBox(height: 15),
 
                         // المبلغ
                         _buildTextField(
+                          context: context,
                           controller: _amountController,
                           label: "المبلغ المحول",
                           icon: Icons.monetization_on_outlined,
@@ -238,6 +240,7 @@ class _TreasuryTransferPageState extends State<TreasuryTransferPage> {
 
                         // البيان
                         _buildTextField(
+                          context: context,
                           controller: _statementController,
                           label: "البيان / ملاحظات",
                           icon: Icons.edit_note,
@@ -250,15 +253,15 @@ class _TreasuryTransferPageState extends State<TreasuryTransferPage> {
                           height: 50,
                           child: ElevatedButton(
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.greenAccent.shade700,
+                              backgroundColor: AppTheme.successDeepFor(context),
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                             ),
                             onPressed: _isLoading ? null : _executeTransfer,
                             child: _isLoading
-                                ? const CircularProgressIndicator(color: Colors.white)
-                                : const Text(
+                                ? CircularProgressIndicator(color: Theme.of(context).colorScheme.onPrimary)
+                                : Text(
                                     "تنفيذ التحويل",
-                                    style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold, fontFamily: 'Cairo'),
+                                    style: TextStyle(color: Theme.of(context).colorScheme.onPrimary, fontSize: 16, fontWeight: FontWeight.bold, fontFamily: 'Cairo'),
                                   ),
                           ),
                         ),
@@ -275,26 +278,26 @@ class _TreasuryTransferPageState extends State<TreasuryTransferPage> {
   }
 
   // ==================== دوال بناء الحقول ====================
-  Widget _buildDropdownField(String label, String value, void Function(String?) onChanged) {
+  Widget _buildDropdownField(BuildContext context, String label, String value, void Function(String?) onChanged) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(color: Colors.cyanAccent, fontSize: 12, fontFamily: 'Cairo')),
+        Text(label, style: TextStyle(color: AppTheme.accentFor(context), fontSize: 12, fontFamily: 'Cairo')),
         const SizedBox(height: 5),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.05),
+            color: GlassStyle.fill05For(context),
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: Colors.white.withOpacity(0.2)),
+            border: Border.all(color: GlassStyle.line20For(context)),
           ),
           child: DropdownButtonHideUnderline(
             child: DropdownButton<String>(
               value: _treasuriesList.contains(value) ? value : null,
-              dropdownColor: const Color.fromARGB(255, 11, 20, 78),
+              dropdownColor: AppTheme.dropdownBackground(context),
               isExpanded: true,
-              style: const TextStyle(color: Colors.white, fontFamily: 'Cairo', fontSize: 14),
-              icon: const Icon(Icons.arrow_drop_down, color: Colors.white70),
+              style: TextStyle(color: AppTheme.textMainFor(context), fontFamily: 'Cairo', fontSize: 14),
+              icon: Icon(Icons.arrow_drop_down, color: AppTheme.textSoftFor(context)),
               items: _treasuriesList.map((String t) {
                 return DropdownMenuItem(value: t, child: Text(t));
               }).toList(),
@@ -306,24 +309,24 @@ class _TreasuryTransferPageState extends State<TreasuryTransferPage> {
     );
   }
 
-  Widget _buildTextField({required TextEditingController controller, required String label, required IconData icon, bool isNumber = false}) {
+  Widget _buildTextField({required BuildContext context, required TextEditingController controller, required String label, required IconData icon, bool isNumber = false}) {
     return TextField(
       controller: controller,
       keyboardType: isNumber ? const TextInputType.numberWithOptions(decimal: true) : TextInputType.text,
-      style: const TextStyle(color: Colors.white, fontFamily: 'Cairo'),
+      style: TextStyle(color: AppTheme.textMainFor(context), fontFamily: 'Cairo'),
       decoration: InputDecoration(
         labelText: label,
-        labelStyle: const TextStyle(color: Colors.white54, fontFamily: 'Cairo', fontSize: 12),
-        prefixIcon: Icon(icon, color: Colors.cyanAccent, size: 20),
+        labelStyle: TextStyle(color: AppTheme.textHintFor(context), fontFamily: 'Cairo', fontSize: 12),
+        prefixIcon: Icon(icon, color: AppTheme.accentFor(context), size: 20),
         filled: true,
-        fillColor: Colors.white.withOpacity(0.05),
+        fillColor: GlassStyle.fill05For(context),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: Colors.white.withOpacity(0.2)),
+          borderSide: BorderSide(color: GlassStyle.line20For(context)),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: Colors.cyanAccent),
+          borderSide: BorderSide(color: AppTheme.accentFor(context)),
         ),
       ),
     );

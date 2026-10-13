@@ -1,6 +1,7 @@
 // lib/views/dashboard/daily_history_page.dart
 import 'dart:io';
 import 'package:flutter/material.dart';
+import '../../core/theme.dart';
 import 'package:intl/intl.dart';
 import 'package:file_picker/file_picker.dart';
 // import 'package:shared_preferences/shared_preferences.dart'; // ✅ إضافة الاستيراد
@@ -233,7 +234,7 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
     }
 
     if (allCategories.isEmpty) {
-      _showSnackBar("لا توجد تصنيفات لعرضها في النطاق الزمني الحالي", Colors.orange);
+      _showSnackBar("لا توجد تصنيفات لعرضها في النطاق الزمني الحالي", AppTheme.warningOrangeFor(context));
       return;
     }
 
@@ -295,8 +296,8 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
                                 }
                               });
                             },
-                            activeColor: Colors.cyanAccent,
-                            checkColor: Colors.black,
+                            activeColor: AppTheme.accentFor(context),
+                            checkColor: AppTheme.onAccentFor(context),
                           );
                         }).toList(),
                       ),
@@ -328,12 +329,12 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
 
   Future<void> _exportToPDF(List<Map<String, dynamic>> currentData) async {
     if (!PermissionsService().canExport) {
-      _showSnackBar("ليس لديك صلاحية للتصدير", Colors.orange);
+      _showSnackBar("ليس لديك صلاحية للتصدير", AppTheme.warningOrangeFor(context));
       return;
     }
 
     if (currentData.isEmpty) {
-      _showSnackBar("لا توجد بيانات لتصديرها", Colors.orange);
+      _showSnackBar("لا توجد بيانات لتصديرها", AppTheme.warningOrangeFor(context));
       return;
     }
 
@@ -365,21 +366,21 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
         summary: null, // لا نحتاج summary هنا لأننا نمرر totalAmount
       );
 
-      _showSnackBar("تم تصدير PDF بنجاح", Colors.green);
+      _showSnackBar("تم تصدير PDF بنجاح", AppTheme.successStrongFor(context));
     } catch (e) {
-      _showSnackBar("فشل التصدير: $e", Colors.red);
+      _showSnackBar("فشل التصدير: $e", AppTheme.dangerStrongFor(context));
     }
   }
 
   Future<void> _exportToExcel(List<Map<String, dynamic>> currentData) async {
     // ✅ التحقق من صلاحية التصدير
     if (!PermissionsService().canExport) {
-      _showSnackBar("ليس لديك صلاحية لتصدير البيانات", Colors.orange);
+      _showSnackBar("ليس لديك صلاحية لتصدير البيانات", AppTheme.warningOrangeFor(context));
       return;
     }
 
     if (currentData.isEmpty) {
-      _showSnackBar("لا توجد بيانات لتصديرها", Colors.orange);
+      _showSnackBar("لا توجد بيانات لتصديرها", AppTheme.warningOrangeFor(context));
       return;
     }
 
@@ -439,7 +440,7 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
         anchor.click();
         anchor.remove();
         html.Url.revokeObjectUrl(url);
-        _showSnackBar("تم تحميل $fileName بنجاح", Colors.green);
+        _showSnackBar("تم تحميل $fileName بنجاح", AppTheme.successStrongFor(context));
       } else {
         String? selectedPath = await FilePicker.platform.saveFile(
           dialogTitle: 'اختر مكان حفظ ملف الإكسيل',
@@ -452,11 +453,11 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
           if (!selectedPath.endsWith('.xlsx')) selectedPath += '.xlsx';
           final file = File(selectedPath);
           await file.writeAsBytes(fileBytes);
-          _showSnackBar("تم حفظ الملف في: $selectedPath", Colors.green);
+          _showSnackBar("تم حفظ الملف في: $selectedPath", AppTheme.successStrongFor(context));
         }
       }
     } catch (e) {
-      _showSnackBar("فشل التصدير: $e", Colors.red);
+      _showSnackBar("فشل التصدير: $e", AppTheme.dangerStrongFor(context));
     }
   }
 
@@ -467,21 +468,21 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
       return Scaffold(
         extendBodyBehindAppBar: true,
         appBar: AppBar(
-          title: const Text("سجل الحركات", style: TextStyle(fontFamily: 'Cairo', color: Colors.white)),
-          backgroundColor: Colors.transparent,
+          title: Text("سجل الحركات", style: TextStyle(fontFamily: 'Cairo', color: AppTheme.textMainFor(context))),
+          backgroundColor: AppTheme.appBarBg,
           elevation: 0,
         ),
         body: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: [Colors.black, Colors.indigo.shade900, Colors.black],
+              colors: AppTheme.dashGradientMain(context),
               begin: Alignment.topLeft, end: Alignment.bottomRight,
             ),
           ),
-          child: const Center(
+          child: Center(
             child: Text(
               "ليس لديك صلاحية لعرض سجل الحركات",
-              style: TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 16),
+              style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo', fontSize: 16),
             ),
           ),
         ),
@@ -554,18 +555,18 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                     decoration: BoxDecoration(
-                      color: Colors.cyanAccent.withOpacity(0.1),
+                      color: GlassStyle.accentFill10For(context),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
                       _getBranchName(widget.selectedBranchCode),
-                      style: const TextStyle(fontFamily: 'Cairo', fontSize: 12, color: Colors.cyanAccent),
+                      style: TextStyle(fontFamily: 'Cairo', fontSize: 12, color: AppTheme.accentFor(context)),
                     ),
                   ),
                 ],
               ),
               centerTitle: true,
-              backgroundColor: Colors.transparent,
+              backgroundColor: AppTheme.appBarBg,
               elevation: 0,
               toolbarHeight: 70,
               actions: [
@@ -580,13 +581,13 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
                       child: Container(
                         decoration: BoxDecoration(
                           color: _selectedCategories.isNotEmpty
-                              ? Colors.orange.withOpacity(0.2)
-                              : Colors.white.withOpacity(0.12),
+                              ? GlassStyle.warningOrangeFill20For(context)
+                              : GlassStyle.fill12For(context),
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(
                             color: _selectedCategories.isNotEmpty
-                                ? Colors.orangeAccent.withOpacity(0.6)
-                                : Colors.purpleAccent.withOpacity(0.3),
+                                ? GlassStyle.warningOrangeSoftBorder60For(context)
+                                : GlassStyle.extraPurpleBorder30For(context),
                           ),
                         ),
                         child: IconButton(
@@ -595,8 +596,8 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
                                 ? Icons.filter_list
                                 : Icons.filter_list_outlined,
                             color: _selectedCategories.isNotEmpty
-                                ? Colors.orangeAccent
-                                : Colors.purpleAccent,
+                                ? AppTheme.warningOrangeSoftFor(context)
+                                : AppTheme.extraPurpleFor(context),
                             size: 22,
                           ),
                           onPressed: () {
@@ -616,12 +617,12 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
                       message: "تصدير البيانات المعروضة لإكسيل",
                       child: Container(
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.12),
+                          color: GlassStyle.fill12For(context),
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.greenAccent.withOpacity(0.4)),
+                          border: Border.all(color: GlassStyle.successBorder40For(context)),
                         ),
                         child: IconButton(
-                          icon: const Icon(Icons.file_download, color: Colors.greenAccent, size: 22),
+                          icon: Icon(Icons.file_download, color: AppTheme.successFor(context), size: 22),
                           onPressed: () {
                             _exportToExcel(displayList);
                           },
@@ -640,12 +641,12 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
                       message: "تصدير البيانات المعروضة PDF",
                       child: Container(
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.12),
+                          color: GlassStyle.fill12For(context),
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.redAccent.withOpacity(0.4)),
+                          border: Border.all(color: GlassStyle.dangerBorder40For(context)),
                         ),
                         child: IconButton(
-                          icon: const Icon(Icons.picture_as_pdf, color: Colors.redAccent, size: 22),
+                          icon: Icon(Icons.picture_as_pdf, color: AppTheme.dangerFor(context), size: 22),
                           onPressed: () {
                             _exportToPDF(displayList);
                           },
@@ -661,7 +662,7 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
               height: double.infinity,
               decoration: BoxDecoration(
                 gradient: LinearGradient(
-                  colors: [Colors.black, Colors.indigo.shade900, Colors.black],
+                  colors: AppTheme.dashGradientMain(context),
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
@@ -678,14 +679,14 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
                         _buildTableHeader(),
                         Expanded(
                           child: _isLoading
-                              ? const Center(
-                                  child: CircularProgressIndicator(color: Colors.white))
+                              ? Center(
+                                  child: CircularProgressIndicator(color: AppTheme.textMainFor(context)))
                               : displayList.isEmpty
-                                  ? const Center(
+                                  ? Center(
                                       child: Text(
                                         "لا توجد بيانات",
                                         style: TextStyle(
-                                          color: Colors.white38,
+                                          color: AppTheme.textFaintFor(context),
                                           fontFamily: 'Cairo',
                                           fontSize: 14,
                                         ),
@@ -705,25 +706,25 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
                             padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
                             margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                             decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.08),
+                              color: GlassStyle.fill08For(context),
                               borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: Colors.cyanAccent.withOpacity(0.3)),
+                              border: Border.all(color: GlassStyle.accentBorder30For(context)),
                             ),
                             child: Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
                                 Text(
                                   'عدد الحركات: ${displayList.length}',
-                                  style: const TextStyle(
-                                    color: Colors.white70,
+                                  style: TextStyle(
+                                    color: AppTheme.textSoftFor(context),
                                     fontSize: 13,
                                     fontFamily: 'Cairo',
                                   ),
                                 ),
                                 Text(
                                   'الإجمالي: ${_calculateTotal(displayList).toStringAsFixed(2)}',
-                                  style: const TextStyle(
-                                    color: Colors.cyanAccent,
+                                  style: TextStyle(
+                                    color: AppTheme.accentFor(context),
                                     fontSize: 16,
                                     fontWeight: FontWeight.bold,
                                     fontFamily: 'Cairo',
@@ -758,7 +759,7 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
                 _fetchData();
               }),
               const Icon(Icons.arrow_forward_ios,
-                  color: Colors.white24, size: 10),
+                  color: AppTheme.iconGhost, size: 10),
               _datePickerBtn("إلى", _toDate, (d) {
                 setState(() => _toDate = d!);
                 _fetchData();
@@ -785,11 +786,11 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
       child: Column(
         children: [
           Text(label,
-              style: const TextStyle(
-                  color: Colors.white60, fontSize: 10, fontFamily: 'Cairo')),
+              style: TextStyle(
+                  color: AppTheme.textMutedFor(context), fontSize: 10, fontFamily: 'Cairo')),
           Text(DateFormat('yyyy-MM-dd').format(date),
-              style: const TextStyle(
-                  color: Colors.white,
+              style: TextStyle(
+                  color: AppTheme.textMainFor(context),
                   fontWeight: FontWeight.bold,
                   fontSize: 12)),
         ],
@@ -802,16 +803,16 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
-          color: Colors.white10, borderRadius: BorderRadius.circular(8)),
+          color: GlassStyle.fill10For(context), borderRadius: BorderRadius.circular(8)),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center, // ✅ توسيط الأعمدة
-        children: const [
+        children: [
           Expanded(
               flex: 2,
               child: Text("المبلغ",
                   textAlign: TextAlign.center, // ✅ توسيط النص
                   style: TextStyle(
-                      color: Colors.cyan,
+                      color: AppTheme.accentAltFor(context),
                       fontWeight: FontWeight.bold,
                       fontSize: 12,
                       fontFamily: 'Cairo'))),
@@ -820,7 +821,7 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
               child: Text("البيان",
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                      color: Colors.cyan,
+                      color: AppTheme.accentAltFor(context),
                       fontWeight: FontWeight.bold,
                       fontSize: 12,
                       fontFamily: 'Cairo'))),
@@ -829,7 +830,7 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
               child: Text("التصنيف",
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                      color: Colors.cyan,
+                      color: AppTheme.accentAltFor(context),
                       fontWeight: FontWeight.bold,
                       fontSize: 12,
                       fontFamily: 'Cairo'))),
@@ -838,7 +839,7 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
               child: Text("التاريخ",
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                      color: Colors.cyan,
+                      color: AppTheme.accentAltFor(context),
                       fontWeight: FontWeight.bold,
                       fontSize: 12,
                       fontFamily: 'Cairo'))),
@@ -853,8 +854,8 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
         margin: const EdgeInsets.symmetric(horizontal: 8),
-        decoration: const BoxDecoration(
-          border: Border(bottom: BorderSide(color: Colors.white10, width: 0.5)),
+        decoration: BoxDecoration(
+          border: Border(bottom: BorderSide(color: GlassStyle.line10For(context), width: 0.5)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -867,16 +868,16 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
                     flex: 2,
                     child: Text("${item['amount'] ?? 0.0}",
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
-                            color: Colors.white,
+                        style: TextStyle(
+                            color: AppTheme.textMainFor(context),
                             fontSize: 11,
                             fontWeight: FontWeight.w600))),
                 Expanded(
                     flex: 3,
                     child: Text("${item['statement'] ?? ''}",
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
-                            color: Colors.white70,
+                        style: TextStyle(
+                            color: AppTheme.textSoftFor(context),
                             fontSize: 11,
                             fontFamily: 'Cairo'),
                         overflow: TextOverflow.ellipsis)),
@@ -884,8 +885,8 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
                     flex: 2,
                     child: Text("${item['category'] ?? ''}",
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
-                            color: Colors.white70,
+                        style: TextStyle(
+                            color: AppTheme.textSoftFor(context),
                             fontSize: 11,
                             fontFamily: 'Cairo'),
                         overflow: TextOverflow.ellipsis)),
@@ -893,8 +894,8 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
                     flex: 2,
                     child: Text("${item['date'] ?? ''}",
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
-                            color: Colors.white60, fontSize: 10))),
+                        style: TextStyle(
+                            color: AppTheme.textMutedFor(context), fontSize: 10))),
               ],
             ),
 
@@ -909,12 +910,12 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.numbers, color: Colors.orange, size: 12),
+                      Icon(Icons.numbers, color: AppTheme.warningOrangeFor(context), size: 12),
                       const SizedBox(width: 4),
                       Text(
                         "اذن: ${item['serial'] ?? ''}",
-                        style: const TextStyle(
-                            color: Colors.white38,
+                        style: TextStyle(
+                            color: AppTheme.textFaintFor(context),
                             fontSize: 9,
                             fontFamily: 'Cairo'),
                       ),
@@ -926,13 +927,13 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.account_balance,
-                          color: Colors.purple, size: 12),
+                      Icon(Icons.account_balance,
+                          color: AppTheme.extraPurpleDeepFor(context), size: 12),
                       const SizedBox(width: 4),
                       Text(
                         "${_getTreasuryName(item['treasury'])}",
-                        style: const TextStyle(
-                            color: Colors.white38,
+                        style: TextStyle(
+                            color: AppTheme.textFaintFor(context),
                             fontSize: 9,
                             fontFamily: 'Cairo'),
                       ),
@@ -945,13 +946,13 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.person_rounded,
-                          color: Colors.amber, size: 12),
+                      Icon(Icons.person_rounded,
+                          color: AppTheme.warningFor(context), size: 12),
                       const SizedBox(width: 4),
                       Text(
                         "${item['employee'] ?? 'غير معروف'}",
-                        style: const TextStyle(
-                            color: Colors.white38,
+                        style: TextStyle(
+                            color: AppTheme.textFaintFor(context),
                             fontSize: 9,
                             fontFamily: 'Cairo'),
                       ),
@@ -963,12 +964,12 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.store_rounded,
-                          color: Colors.cyan, size: 12),
+                      Icon(Icons.store_rounded,
+                          color: AppTheme.accentAltFor(context), size: 12),
                       const SizedBox(width: 4),
                       Text(
                         "${_getBranchName(item['branch_code']?.toString())}",
-                        style: const TextStyle(color: Colors.white38, fontSize: 9, fontFamily: 'Cairo'),
+                        style: TextStyle(color: AppTheme.textFaintFor(context), fontSize: 9, fontFamily: 'Cairo'),
                       ),
                     ],
                   ),
@@ -984,7 +985,7 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
   void _editTransaction(Map<String, dynamic> item) async {
     // 🌟 منع التعديل لحركات التحويل المزدوجة لحماية الأرصدة
     if (item['category'] == 'تحويل خزائن') {
-      _showSnackBar("لا يمكن تعديل إذن التحويل المزدوج! الرجاء حذفه وإنشاء تحويل جديد.", Colors.orange);
+      _showSnackBar("لا يمكن تعديل إذن التحويل المزدوج! الرجاء حذفه وإنشاء تحويل جديد.", AppTheme.warningOrangeFor(context));
       return;
     }
 
@@ -1009,13 +1010,13 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
 
     // إذا لم تكن هناك صلاحية للتعديل ولا للحذف، نخرج بدون عرض القائمة
     if (!canEdit && !canDelete) {
-      _showSnackBar("ليس لديك صلاحية لتعديل أو حذف الحركات", Colors.orange);
+      _showSnackBar("ليس لديك صلاحية لتعديل أو حذف الحركات", AppTheme.warningOrangeFor(context));
       return;
     }
 
     showModalBottomSheet(
       context: context,
-      backgroundColor: Colors.indigo.shade900,
+      backgroundColor: AppTheme.sheetBackground(context),
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(15))),
       builder: (context) => Column(
@@ -1024,10 +1025,10 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
           // ✅ خيار التعديل يظهر فقط إذا كانت الصلاحية موجودة
           if (canEdit)
             ListTile(
-              leading: const Icon(Icons.edit, color: Colors.orange, size: 20),
-              title: const Text("تعديل الإذن",
+              leading: Icon(Icons.edit, color: AppTheme.warningOrangeFor(context), size: 20),
+              title: Text("تعديل الإذن",
                   style: TextStyle(
-                      color: Colors.white, fontFamily: 'Cairo', fontSize: 14)),
+                      color: AppTheme.textMainFor(context), fontFamily: 'Cairo', fontSize: 14)),
               onTap: () {
                 Navigator.pop(context);
                 _editTransaction(item);
@@ -1036,10 +1037,10 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
           // ✅ خيار الحذف يظهر فقط إذا كانت الصلاحية موجودة
           if (canDelete)
             ListTile(
-              leading: const Icon(Icons.delete, color: Colors.red, size: 20),
-              title: const Text("حذف الإذن",
+              leading: Icon(Icons.delete, color: AppTheme.dangerStrongFor(context), size: 20),
+              title: Text("حذف الإذن",
                   style: TextStyle(
-                      color: Colors.white, fontFamily: 'Cairo', fontSize: 14)),
+                      color: AppTheme.textMainFor(context), fontFamily: 'Cairo', fontSize: 14)),
               onTap: () {
                 Navigator.pop(context);
                 _confirmDelete(item);
@@ -1054,20 +1055,20 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
   void _confirmDelete(Map<String, dynamic> item) {
     // ✅ التحقق من صلاحية الحذف مرة أخرى قبل التأكيد
     if (!PermissionsService().canDeleteTransaction) {
-      _showSnackBar("ليس لديك صلاحية للحذف", Colors.orange);
+      _showSnackBar("ليس لديك صلاحية للحذف", AppTheme.warningOrangeFor(context));
       return;
     }
 
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: Colors.indigo.shade900,
-        title: const Text("تأكيد الحذف", style: TextStyle(color: Colors.white, fontFamily: 'Cairo', fontSize: 15)),
+        backgroundColor: AppTheme.dialogBackground(context),
+        title: Text("تأكيد الحذف", style: TextStyle(color: AppTheme.textMainFor(context), fontFamily: 'Cairo', fontSize: 15)),
         content: Text(
           item['category'] == 'تحويل خزائن' 
               ? "هل أنت متأكد من حذف هذا التحويل؟\n(سيقوم النظام آلياً بحذف حركة الصادر والوارد معاً لضبط الأرصدة)" 
               : "حذف إذن رقم ${item['serial']}؟", 
-          style: const TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 13),
+          style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo', fontSize: 13),
         ),
         actions: [
           TextButton(
@@ -1111,7 +1112,7 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
                     item['category'] == 'تحويل خزائن' 
                         ? "تم حذف حركتي التحويل (الصادر والوارد) بنجاح لضبط ميزان الخزائن"
                         : "تم حذف الإذن بنجاح وتحديث الأرصدة محلياً", 
-                    Colors.green
+                    AppTheme.successStrongFor(context)
                   );
                   // ✅ إعادة تحميل البيانات بعد الحذف
                   _fetchData();
@@ -1119,11 +1120,11 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
               } catch (e) {
                 if (mounted) {
                   Navigator.pop(context); 
-                  _showSnackBar("فشل الحذف: ${e.toString()}", Colors.red); 
+                  _showSnackBar("فشل الحذف: ${e.toString()}", AppTheme.dangerStrongFor(context)); 
                 }
               }
             },
-            child: const Text("حذف", style: TextStyle(color: Colors.redAccent, fontFamily: 'Cairo', fontSize: 13, fontWeight: FontWeight.bold)),
+            child: Text("حذف", style: TextStyle(color: AppTheme.dangerFor(context), fontFamily: 'Cairo', fontSize: 13, fontWeight: FontWeight.bold)),
           ),
         ],
       ),

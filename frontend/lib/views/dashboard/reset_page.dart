@@ -1,5 +1,7 @@
 // frontend/lib/views/dashboard/reset_page.dart
 import 'package:flutter/material.dart';
+import '../../views/widgets/glass_card.dart';
+import '../../core/theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/reset_data_service.dart';
 
@@ -34,12 +36,12 @@ class _ResetPageState extends State<ResetPage> {
   ) async {
     if (_companyCode.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text(
             'لم يتم العثور على كود الشركة',
             style: TextStyle(fontFamily: 'Cairo'),
           ),
-          backgroundColor: Colors.orange,
+          backgroundColor: AppTheme.warningOrangeFor(context),
         ),
       );
       return;
@@ -66,13 +68,13 @@ class _ResetPageState extends State<ResetPage> {
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
+              backgroundColor: AppTheme.dangerStrongFor(context),
             ),
             onPressed: () => Navigator.pop(context, true),
-            child: const Text(
+            child: Text(
               'تأكيد',
               style: TextStyle(
-                color: Colors.white,
+                color: Theme.of(context).colorScheme.onPrimary,
                 fontFamily: 'Cairo',
               ),
             ),
@@ -88,12 +90,12 @@ class _ResetPageState extends State<ResetPage> {
       await resetAction();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text(
               'تم إعادة التعيين بنجاح',
               style: TextStyle(fontFamily: 'Cairo'),
             ),
-            backgroundColor: Colors.green,
+            backgroundColor: AppTheme.successStrongFor(context),
           ),
         );
       }
@@ -105,7 +107,7 @@ class _ResetPageState extends State<ResetPage> {
               'فشل إعادة التعيين: $e',
               style: TextStyle(fontFamily: 'Cairo'),
             ),
-            backgroundColor: Colors.red,
+            backgroundColor: AppTheme.dangerStrongFor(context),
           ),
         );
       }
@@ -118,33 +120,30 @@ class _ResetPageState extends State<ResetPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
+        title: Text(
           'إعادة تعيين البيانات',
           style: TextStyle(
-            color: Colors.white,
+            color: AppTheme.textMainFor(context),
             fontFamily: 'Cairo',
           ),
         ),
-        backgroundColor: Colors.transparent,
+        backgroundColor: AppTheme.appBarBg,
         elevation: 0,
       ),
       extendBodyBehindAppBar: true,
       body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [
-              Colors.indigo.shade900,
-              Colors.black,
-            ],
+            colors: AppTheme.dashGradientIndigo(context),
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
         ),
         child: SafeArea(
           child: _isLoading
-              ? const Center(
+              ? Center(
                   child: CircularProgressIndicator(
-                    color: Colors.white,
+                    color: AppTheme.textMainFor(context),
                   ),
                 )
               : Padding(
@@ -155,7 +154,7 @@ class _ResetPageState extends State<ResetPage> {
                       _buildResetButton(
                         icon: Icons.account_balance_wallet,
                         label: 'إعادة تعيين اليوميات والخزائن',
-                        color: Colors.cyan,
+                        color: AppTheme.accentAltFor(context),
                         onPressed: () => _resetWithConfirmation(
                           'إعادة تعيين اليوميات',
                           () => _resetService.resetDailyTransactions(
@@ -167,7 +166,7 @@ class _ResetPageState extends State<ResetPage> {
                       _buildResetButton(
                         icon: Icons.code,
                         label: 'إعادة تعيين التكويد',
-                        color: Colors.cyan,
+                        color: AppTheme.accentAltFor(context),
                         onPressed: () => _resetWithConfirmation(
                           'إعادة تعيين التكويد',
                           () => _resetService.resetCoding(_companyCode),
@@ -177,7 +176,7 @@ class _ResetPageState extends State<ResetPage> {
                       _buildResetButton(
                         icon: Icons.inventory_2,
                         label: 'إعادة تعيين الجرد والمخازن',
-                        color: Colors.cyan,
+                        color: AppTheme.accentAltFor(context),
                         onPressed: () => _resetWithConfirmation(
                           'إعادة تعيين الجرد',
                           () => _resetService.resetInventory(_companyCode),
@@ -187,19 +186,19 @@ class _ResetPageState extends State<ResetPage> {
                       _buildResetButton(
                         icon: Icons.people,
                         label: 'إعادة تعيين الموردين',
-                        color: Colors.cyan,
+                        color: AppTheme.accentAltFor(context),
                         onPressed: () => _resetWithConfirmation(
                           'إعادة تعيين الموردين',
                           () => _resetService.resetSupplier(_companyCode),
                         ),
                       ),
                       const SizedBox(height: 25),
-                      const Divider(color: Colors.white24),
+                      Divider(color: GlassStyle.line24For(context)),
                       const SizedBox(height: 25),
                       _buildResetButton(
                         icon: Icons.delete_forever,
                         label: 'إعادة تعيين الكل (جميع البيانات)',
-                        color: Colors.red,
+                        color: AppTheme.dangerStrongFor(context),
                         onPressed: () => _resetWithConfirmation(
                           'إعادة تعيين جميع البيانات',
                           () => _resetService.resetAll(_companyCode),
@@ -224,7 +223,7 @@ class _ResetPageState extends State<ResetPage> {
       child: ElevatedButton.icon(
         style: ElevatedButton.styleFrom(
           backgroundColor: color.withOpacity(0.2),
-          foregroundColor: Colors.white,
+          foregroundColor: Theme.of(context).colorScheme.onPrimary,
           padding: const EdgeInsets.symmetric(vertical: 16),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),

@@ -1,5 +1,6 @@
 // lib/views/dashboard/suppliers_dashboard_page.dart
 import 'package:flutter/material.dart';
+import '../../core/theme.dart';
 import '../../views/widgets/glass_card.dart';
 import 'supplier_page.dart';
 import 'supplier_history_page.dart';
@@ -23,31 +24,27 @@ class SuppliersDashboardPage extends StatelessWidget {
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
-        title: const Text(
+        title: Text(
           'المشتريات والموردين',
           style: TextStyle(
-            color: Colors.white,
+            color: AppTheme.textMainFor(context),
             fontFamily: 'Cairo',
             fontSize: 18,
             fontWeight: FontWeight.bold,
           ),
         ),
-        backgroundColor: Colors.transparent,
+        backgroundColor: AppTheme.appBarBg,
         elevation: 0,
         centerTitle: true,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          icon: Icon(Icons.arrow_back, color: AppTheme.textMainFor(context)),
           onPressed: () => Navigator.pop(context),
         ),
       ),
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [
-              Color(0xFF020617),
-              Color.fromARGB(255, 47, 54, 190),
-              Color(0xFF020617),
-            ],
+            colors: AppTheme.dashGradientDeep(context),
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
@@ -64,7 +61,7 @@ class SuppliersDashboardPage extends StatelessWidget {
                   icon: Icons.local_shipping_rounded,
                   title: 'المشتريات',
                   subtitle: 'إضافة فواتير المشتريات من الموردين',
-                  color: Colors.lightBlueAccent,
+                  color: AppTheme.infoSoftFor(context),
                   onTap: () {
                     Navigator.push(
                       context,
@@ -85,7 +82,7 @@ class SuppliersDashboardPage extends StatelessWidget {
                   icon: Icons.history_rounded,
                   title: 'معاينة المشتريات',
                   subtitle: 'عرض فواتير المشتريات السابقة',
-                  color: Colors.cyanAccent,
+                  color: AppTheme.accentFor(context),
                   onTap: () {
                     Navigator.push(
                       context,
@@ -106,7 +103,7 @@ class SuppliersDashboardPage extends StatelessWidget {
                   icon: Icons.account_balance_rounded,
                   title: 'تسويات الموردين',
                   subtitle: 'تسوية حسابات الموردين والدفعات',
-                  color: Colors.amber,
+                  color: AppTheme.warningFor(context),
                   onTap: () {
                     Navigator.push(
                       context,
@@ -126,7 +123,7 @@ _buildDashboardCard(
   icon: Icons.history_rounded,
   title: 'معاينة التسويات',
   subtitle: 'عرض دفعات وتسويات الموردين',
-  color: Colors.cyanAccent,
+  color: AppTheme.accentFor(context),
   onTap: () {
     Navigator.push(
       context,
@@ -180,8 +177,8 @@ _buildDashboardCard(
                   children: [
                     Text(
                       title,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: AppTheme.textMainFor(context),
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
                         fontFamily: 'Cairo',
@@ -190,7 +187,7 @@ _buildDashboardCard(
                     Text(
                       subtitle,
                       style: TextStyle(
-                        color: Colors.white60,
+                        color: AppTheme.textMutedFor(context),
                         fontSize: 13,
                         fontFamily: 'Cairo',
                       ),
@@ -200,7 +197,7 @@ _buildDashboardCard(
               ),
               Icon(
                 Icons.arrow_forward_ios_rounded,
-                color: Colors.white30,
+                color: AppTheme.iconFaint,
                 size: 18,
               ),
             ],
@@ -218,7 +215,7 @@ _buildDashboardCard(
           textAlign: TextAlign.center,
           style: const TextStyle(fontFamily: 'Cairo'),
         ),
-        backgroundColor: Colors.orange,
+        backgroundColor: AppTheme.warningOrangeFor(context),
         duration: const Duration(seconds: 3),
       ),
     );

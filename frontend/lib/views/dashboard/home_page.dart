@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../../core/theme.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../views/widgets/glass_card.dart';
@@ -366,12 +367,12 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       context: context,
       barrierDismissible: _selectedBranchCode != "all",
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF0F172A),
+        backgroundColor: AppTheme.dialogBackground(context),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-        title: const Text(
+        title: Text(
           "اختر فرع العمل الحالي",
           textAlign: TextAlign.center,
-          style: TextStyle(color: Colors.white, fontFamily: 'Cairo', fontSize: 16, fontWeight: FontWeight.bold),
+          style: TextStyle(color: AppTheme.textMainFor(context), fontFamily: 'Cairo', fontSize: 16, fontWeight: FontWeight.bold),
         ),
         content: SizedBox(
           width: double.maxFinite,
@@ -383,13 +384,13 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               String branchCode = _branches[index]['code']!;
               bool isCurrent = _selectedBranchCode == branchCode;
               return Card(
-                color: isCurrent ? Colors.amber.withOpacity(0.2) : Colors.white.withOpacity(0.05),
+                color: isCurrent ? GlassStyle.warningFill20For(context) : GlassStyle.fill05For(context),
                 margin: const EdgeInsets.symmetric(vertical: 5),
                 child: ListTile(
                   title: Text(
                     branchName,
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: isCurrent ? Colors.amber : Colors.white, fontFamily: 'Cairo', fontSize: 14),
+                    style: TextStyle(color: isCurrent ? AppTheme.warningFor(context) : AppTheme.textMainFor(context), fontFamily: 'Cairo', fontSize: 14),
                   ),
                   onTap: () async {
                     final prefs = await SharedPreferences.getInstance();
@@ -426,13 +427,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       body: Container(
         width: double.infinity,
         height: double.infinity,
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [
-              Color(0xFF020617),
-              Color.fromARGB(255, 47, 54, 190),
-              Color(0xFF020617)
-            ],
+            colors: AppTheme.dashGradientDeep(context),
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
@@ -445,7 +442,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 const Text(
                   "IslamApp V1.0",
                   style: TextStyle(
-                      color: Color.fromARGB(213, 123, 248, 51),
+                      color: AppTheme.brandVersionText,
                       fontSize: 12,
                       fontWeight: FontWeight.bold,
                       letterSpacing: 1.2),
@@ -456,16 +453,16 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(Icons.timer, color: Colors.redAccent, size: 16),
+                    Icon(Icons.timer, color: AppTheme.dangerFor(context), size: 16),
                     const SizedBox(width: 5),
-                    const Text("وقت النشاط: ",
+                    Text("وقت النشاط: ",
                         style: TextStyle(
-                            color: Colors.white70,
+                            color: AppTheme.textSoftFor(context),
                             fontSize: 13,
                             fontFamily: 'Cairo')),
                     Text(_formatDuration(_secondsElapsed),
-                        style: const TextStyle(
-                            color: Colors.redAccent,
+                        style: TextStyle(
+                            color: AppTheme.dangerFor(context),
                             fontSize: 14,
                             fontWeight: FontWeight.bold,
                             fontFamily: 'monospace')),
@@ -477,9 +474,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                   runSpacing: 10,
                   alignment: WrapAlignment.center,
                   children: [
-                    _buildSmallInfo("الوقت", _currentTime, Icons.access_time, Colors.amber),
-                    _buildSmallInfo("التاريخ", _currentDate, Icons.calendar_today, Colors.lightBlueAccent),
-                    _buildSmallInfo("الفرع النشط", _selectedBranchName, Icons.storefront, Colors.greenAccent),
+                    _buildSmallInfo("الوقت", _currentTime, Icons.access_time, AppTheme.warningFor(context)),
+                    _buildSmallInfo("التاريخ", _currentDate, Icons.calendar_today, AppTheme.infoSoftFor(context)),
+                    _buildSmallInfo("الفرع النشط", _selectedBranchName, Icons.storefront, AppTheme.successFor(context)),
                   ],
                 ),
                 const SizedBox(height: 20),
@@ -498,21 +495,21 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   return GlassCard(
     child: Row(
       children: [
-        const Icon(Icons.business, color: Colors.amber, size: 30),
+        Icon(Icons.business, color: AppTheme.warningFor(context), size: 30),
         const SizedBox(width: 12),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(widget.companyName,
-                  style: const TextStyle(
-                      color: Colors.white,
+                  style: TextStyle(
+                      color: AppTheme.textMainFor(context),
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
                       fontFamily: 'Cairo')),
               Text("مرحبا: ${widget.userName}",
-                  style: const TextStyle(
-                      color: Colors.white60,
+                  style: TextStyle(
+                      color: AppTheme.textMutedFor(context),
                       fontSize: 12,
                       fontFamily: 'Cairo')),
             ],
@@ -528,17 +525,17 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
-                color: Colors.amber.withOpacity(0.15),
-                border: Border.all(color: Colors.amber.withOpacity(0.5)),
+                color: GlassStyle.warningFill15For(context),
+                border: Border.all(color: GlassStyle.warningBorder50For(context)),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: const Row(
+              child: Row(
                 children: [
-                  Icon(Icons.swap_horiz, color: Colors.amber, size: 16),
+                  Icon(Icons.swap_horiz, color: AppTheme.warningFor(context), size: 16),
                   SizedBox(width: 4),
                   Text("تغيير الفرع",
                       style: TextStyle(
-                          color: Colors.amber,
+                          color: AppTheme.warningFor(context),
                           fontSize: 11,
                           fontFamily: 'Cairo',
                           fontWeight: FontWeight.bold)),
@@ -555,9 +552,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.05),
+        color: GlassStyle.fill05For(context),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.white10),
+        border: Border.all(color: GlassStyle.line10For(context)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -565,11 +562,11 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           Icon(icon, color: color, size: 16),
           const SizedBox(width: 6),
           Text("$label: ",
-              style: const TextStyle(
-                  color: Colors.white70, fontSize: 11, fontFamily: 'Cairo')),
+              style: TextStyle(
+                  color: AppTheme.textSoftFor(context), fontSize: 11, fontFamily: 'Cairo')),
           Text(value,
-              style: const TextStyle(
-                  color: Colors.white,
+              style: TextStyle(
+                  color: AppTheme.textMainFor(context),
                   fontSize: 12,
                   fontWeight: FontWeight.bold,
                   fontFamily: 'Cairo')),
@@ -585,7 +582,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     if (_permissionsLoaded &&
     PermissionsService().canShowTreasury) {
       menuItems.add(
-        _menuItem("حركة الخزينة", Icons.account_balance_wallet_rounded, Colors.greenAccent, () {
+        _menuItem("حركة الخزينة", Icons.account_balance_wallet_rounded, AppTheme.successFor(context), () {
           Navigator.push(
             context,
             MaterialPageRoute(
@@ -604,7 +601,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     if (_permissionsLoaded &&
     PermissionsService().canShowCoding) {
       menuItems.add(
-        _menuItem("التكويد", Icons.code_rounded, Colors.amber, () {
+        _menuItem("التكويد", Icons.code_rounded, AppTheme.warningFor(context), () {
           Navigator.push(
             context,
             MaterialPageRoute(builder: (c) => CodingPage(companyCode: widget.companyCode)),
@@ -621,7 +618,7 @@ if (_permissionsLoaded &&PermissionsService().canShowSuppliers) {
     _menuItem(
       "المشتريات والموردين",
       Icons.shopping_cart_rounded, // تغيير الأيقونة لأيقونة مشتريات
-      Colors.lightBlueAccent,
+      AppTheme.infoSoftFor(context),
       () {
         Navigator.push(
           context,
@@ -642,7 +639,7 @@ if (_permissionsLoaded &&PermissionsService().canShowSuppliers) {
 // داخل HomePage - _buildMenuGrid()
 if (_permissionsLoaded &&PermissionsService().canShowInventory) {
   menuItems.add(
-    _menuItem("حركة الجرد", Icons.inventory_2_rounded, Colors.orangeAccent, () {
+    _menuItem("حركة الجرد", Icons.inventory_2_rounded, AppTheme.warningOrangeSoftFor(context), () {
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -658,7 +655,7 @@ if (_permissionsLoaded &&PermissionsService().canShowInventory) {
 // 5. 🔥 رصيد المخزون
 if (_permissionsLoaded &&PermissionsService().canShowInventory) { // أو يمكنك إنشاء صلاحية جديدة canShowStock
   menuItems.add(
-    _menuItem("رصيد المخزون", Icons.storage_rounded, Colors.tealAccent, () {
+    _menuItem("رصيد المخزون", Icons.storage_rounded, AppTheme.extraTealFor(context), () {
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -675,7 +672,7 @@ if (_permissionsLoaded &&PermissionsService().canShowInventory) { // أو يمك
     // 5. التقارير
     if (_permissionsLoaded &&PermissionsService().canShowReports) {
       menuItems.add(
-        _menuItem("التقارير", Icons.analytics_rounded, Colors.purpleAccent, () {
+        _menuItem("التقارير", Icons.analytics_rounded, AppTheme.extraPurpleFor(context), () {
           Navigator.push(
             context,
             MaterialPageRoute(
@@ -691,7 +688,7 @@ if (_permissionsLoaded &&PermissionsService().canShowInventory) { // أو يمك
 
     // 6. الإعدادات (دائماً ظاهرة)
     menuItems.add(
-      _menuItem("الاعدادات", Icons.settings_rounded, Colors.blueGrey, () async {
+      _menuItem("الاعدادات", Icons.settings_rounded, AppTheme.extraBlueGreyFor(context), () async {
         await Navigator.push(context, MaterialPageRoute(builder: (c) => const SettingsPage()));
         await PermissionsService().loadPermissions();
 
@@ -704,10 +701,10 @@ if (mounted) {
     );
 
     if (menuItems.isEmpty) {
-      return const Center(
+      return Center(
         child: Text(
           "لا توجد صلاحيات متاحة لك",
-          style: TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 14),
+          style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo', fontSize: 14),
         ),
       );
     }
@@ -759,8 +756,8 @@ if (mounted) {
             Text(
               title,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                  color: Colors.white,
+              style: TextStyle(
+                  color: AppTheme.textMainFor(context),
                   fontSize: 13,
                   fontWeight: FontWeight.bold,
                   fontFamily: 'Cairo'),
@@ -778,11 +775,11 @@ if (mounted) {
           children: [
             Expanded(
                 child: _bottomBtn("الدعم الفني", Icons.headset_mic_rounded,
-                    Colors.white60, () {})),
+                    AppTheme.textMutedFor(context), () {})),
             const SizedBox(width: 12),
             Expanded(
                 child: _bottomBtn("تسجيل الخروج", Icons.logout_rounded,
-                    Colors.redAccent, _handleLogout)),
+                    AppTheme.dangerFor(context), _handleLogout)),
           ],
         ),
         const SizedBox(height: 15),
@@ -796,9 +793,9 @@ if (mounted) {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 10),
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.03),
+          color: GlassStyle.fill03For(context),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.white10),
+          border: Border.all(color: GlassStyle.line10For(context)),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -850,7 +847,7 @@ if (mounted) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message, textAlign: TextAlign.center, style: const TextStyle(fontFamily: 'Cairo')),
-        backgroundColor: Colors.orange,
+        backgroundColor: AppTheme.warningOrangeFor(context),
         duration: const Duration(seconds: 2),
       ),
     );

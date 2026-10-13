@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../../views/widgets/glass_card.dart';
+import '../../core/theme.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -317,10 +319,10 @@ class _PermissionsPageState extends State<PermissionsPage> {
   Future<void> savePermissions() async {
     if (selectedUserId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content:
               Text('برجاء اختيار الموظف أولاً'),
-          backgroundColor: Colors.orange,
+          backgroundColor: AppTheme.warningOrangeFor(context),
         ),
       );
       return;
@@ -336,11 +338,11 @@ class _PermissionsPageState extends State<PermissionsPage> {
 
       if (allowedBranches.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text(
               'يرجى اختيار فرع واحد على الأقل أو "كل الفروع"',
             ),
-            backgroundColor: Colors.orange,
+            backgroundColor: AppTheme.warningOrangeFor(context),
           ),
         );
         return;
@@ -356,22 +358,22 @@ class _PermissionsPageState extends State<PermissionsPage> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content:
                 Text('تم حفظ الصلاحيات بنجاح!'),
-            backgroundColor: Colors.green,
+            backgroundColor: AppTheme.successStrongFor(context),
           ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text(
               'تم الحفظ محلياً (وضع عدم الاتصال)',
             ),
             backgroundColor:
-                Colors.orangeAccent,
+                AppTheme.warningOrangeSoftFor(context),
           ),
         );
       }
@@ -380,9 +382,9 @@ class _PermissionsPageState extends State<PermissionsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark =
-        Theme.of(context).brightness ==
-            Brightness.dark;
+    // final isDark =
+    //     Theme.of(context).brightness ==
+    //         Brightness.dark;
 
     return Directionality(
       textDirection: TextDirection.rtl,
@@ -399,40 +401,18 @@ class _PermissionsPageState extends State<PermissionsPage> {
                     gradient: LinearGradient(
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
-                      colors: isDark
-                          ? [
-                              const Color.fromARGB(
-                                255,
-                                33,
-                                31,
-                                147,
-                              ),
-                              const Color(
-                                0xFF161B22,
-                              ),
-                            ]
-                          : [
-                              const Color.fromARGB(
-                                255,
-                                33,
-                                44,
-                                159,
-                              ),
-                              const Color(
-                                0xFF3949AB,
-                              ),
-                            ],
+                      colors: AppTheme.permissionsGradient(context),
                     ),
                   ),
                 ),
               ),
               SafeArea(
                 child: _isLoading
-                    ? const Center(
+                    ? Center(
                         child:
                             CircularProgressIndicator(
                           color:
-                              Colors.cyanAccent,
+                              AppTheme.accentFor(context),
                         ),
                       )
                     : Column(
@@ -446,24 +426,24 @@ class _PermissionsPageState extends State<PermissionsPage> {
                               children: [
                                 IconButton(
                                   icon:
-                                      const Icon(
+                                      Icon(
                                     Icons
                                         .arrow_back_ios_new_rounded,
                                     color:
-                                        Colors.white,
+                                        AppTheme.textMainFor(context),
                                   ),
                                   onPressed: () =>
                                       Navigator.pop(
                                     context,
                                   ),
                                 ),
-                                const Expanded(
+                                Expanded(
                                   child: Text(
                                     'إدارة الصلاحيات',
                                     style:
                                         TextStyle(
                                       color:
-                                          Colors.white,
+                                          AppTheme.textMainFor(context),
                                       fontSize:
                                           22,
                                       fontWeight:
@@ -479,11 +459,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
                                 Container(
                                   decoration:
                                       BoxDecoration(
-                                    color: Colors
-                                        .white
-                                        .withOpacity(
-                                      0.1,
-                                    ),
+                                    color: GlassStyle.fill10For(context),
                                     borderRadius:
                                         BorderRadius
                                             .circular(
@@ -493,11 +469,11 @@ class _PermissionsPageState extends State<PermissionsPage> {
                                   child:
                                       IconButton(
                                     icon:
-                                        const Icon(
+                                        Icon(
                                       Icons
                                           .save_rounded,
                                       color:
-                                          Colors.cyanAccent,
+                                          AppTheme.accentFor(context),
                                     ),
                                     onPressed:
                                         savePermissions,
@@ -521,20 +497,14 @@ class _PermissionsPageState extends State<PermissionsPage> {
                               ),
                               decoration:
                                   BoxDecoration(
-                                color: Colors.white
-                                    .withOpacity(
-                                  0.05,
-                                ),
+                                color: GlassStyle.fill05For(context),
                                 borderRadius:
                                     BorderRadius
                                         .circular(
                                   15,
                                 ),
                                 border: Border.all(
-                                  color: Colors.white
-                                      .withOpacity(
-                                    0.1,
-                                  ),
+                                  color: GlassStyle.line10For(context),
                                 ),
                               ),
                               child:
@@ -551,7 +521,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
                                           .connectionState ==
                                       ConnectionState
                                           .waiting) {
-                                    return const Padding(
+                                    return Padding(
                                       padding:
                                           EdgeInsets.all(
                                         12.0,
@@ -561,7 +531,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
                                         style:
                                             TextStyle(
                                           color:
-                                              Colors.white70,
+                                              AppTheme.textSoftFor(context),
                                           fontFamily:
                                               'Cairo',
                                         ),
@@ -573,7 +543,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
                                           .hasData ||
                                       snapshot.data!
                                           .docs.isEmpty) {
-                                    return const Padding(
+                                    return Padding(
                                       padding:
                                           EdgeInsets.all(
                                         12.0,
@@ -583,7 +553,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
                                         style:
                                             TextStyle(
                                           color:
-                                              Colors.white70,
+                                              AppTheme.textSoftFor(context),
                                           fontFamily:
                                               'Cairo',
                                         ),
@@ -601,18 +571,16 @@ class _PermissionsPageState extends State<PermissionsPage> {
                                         DropdownButton<
                                             String>(
                                       dropdownColor:
-                                          const Color(
-                                        0xFF2D2D44,
-                                      ),
+                                          AppTheme.dropdownBackground(context),
                                       isExpanded:
                                           true,
                                       hint:
-                                          const Text(
+                                          Text(
                                         'اختر الموظف',
                                         style:
                                             TextStyle(
                                           color:
-                                              Colors.white70,
+                                              AppTheme.textSoftFor(context),
                                           fontFamily:
                                               'Cairo',
                                         ),
@@ -620,16 +588,16 @@ class _PermissionsPageState extends State<PermissionsPage> {
                                       value:
                                           selectedUserId,
                                       icon:
-                                          const Icon(
+                                          Icon(
                                         Icons
                                             .keyboard_arrow_down_rounded,
                                         color:
-                                            Colors.cyanAccent,
+                                            AppTheme.accentFor(context),
                                       ),
                                       style:
-                                          const TextStyle(
+                                          TextStyle(
                                         color:
-                                            Colors.white,
+                                            AppTheme.textMainFor(context),
                                         fontSize:
                                             16,
                                         fontFamily:
@@ -710,15 +678,15 @@ class _PermissionsPageState extends State<PermissionsPage> {
                               ),
                             ),
                           ),
-                          const TabBar(
+                          TabBar(
                             isScrollable:
                                 true,
                             indicatorColor:
-                                Colors.cyanAccent,
+                                AppTheme.accentFor(context),
                             labelColor:
-                                Colors.cyanAccent,
+                                AppTheme.accentFor(context),
                             unselectedLabelColor:
-                                Colors.white54,
+                                AppTheme.textHintFor(context),
                             labelStyle:
                                 TextStyle(
                               fontFamily:
@@ -828,35 +796,29 @@ class _PermissionsPageState extends State<PermissionsPage> {
                 ),
                 decoration:
                     BoxDecoration(
-                  color: Colors.white
-                      .withOpacity(
-                    0.05,
-                  ),
+                  color: GlassStyle.fill05For(context),
                   borderRadius:
                       BorderRadius.circular(
                     15,
                   ),
                   border:
                       Border.all(
-                    color: Colors.white
-                        .withOpacity(
-                      0.1,
-                    ),
+                    color: GlassStyle.line10For(context),
                   ),
                 ),
                 child:
                     SwitchListTile(
                   activeColor:
-                      Colors.cyanAccent,
+                      AppTheme.accentFor(context),
                   inactiveTrackColor:
-                      Colors.white24,
+                      GlassStyle.switchTrackOffFor(context),
                   title:
                       Text(
                     entry.key,
                     style:
-                        const TextStyle(
+                        TextStyle(
                       color:
-                          Colors.white,
+                          AppTheme.textMainFor(context),
                       fontSize:
                           16,
                       fontFamily:
@@ -880,10 +842,10 @@ class _PermissionsPageState extends State<PermissionsPage> {
               );
             },
           ).toList(),
-          const Divider(
-            color: Colors.white24,
+          Divider(
+            color: GlassStyle.line24For(context),
           ),
-          const Padding(
+          Padding(
             padding:
                 EdgeInsets.symmetric(
               vertical: 12,
@@ -892,7 +854,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
               'الفروع المسموح بها',
               style:
                   TextStyle(
-                color: Colors.white,
+                color: AppTheme.textMainFor(context),
                 fontSize: 18,
                 fontWeight:
                     FontWeight.bold,
@@ -908,35 +870,29 @@ class _PermissionsPageState extends State<PermissionsPage> {
             ),
             decoration:
                 BoxDecoration(
-              color: Colors.white
-                  .withOpacity(
-                0.05,
-              ),
+              color: GlassStyle.fill05For(context),
               borderRadius:
                   BorderRadius.circular(
                 15,
               ),
               border:
                   Border.all(
-                color: Colors.white
-                    .withOpacity(
-                  0.1,
-                ),
+                color: GlassStyle.line10For(context),
               ),
             ),
             child:
                 CheckboxListTile(
               activeColor:
-                  Colors.cyanAccent,
+                  AppTheme.accentFor(context),
               checkColor:
-                  Colors.black,
+                  AppTheme.onAccentFor(context),
               title:
-                  const Text(
+                  Text(
                 'كل الفروع',
                 style:
                     TextStyle(
                   color:
-                      Colors.white,
+                      AppTheme.textMainFor(context),
                   fontSize:
                       16,
                   fontFamily:
@@ -978,35 +934,29 @@ class _PermissionsPageState extends State<PermissionsPage> {
                   ),
                   decoration:
                       BoxDecoration(
-                    color: Colors.white
-                        .withOpacity(
-                      0.05,
-                    ),
+                    color: GlassStyle.fill05For(context),
                     borderRadius:
                         BorderRadius.circular(
                       12,
                     ),
                     border:
                         Border.all(
-                      color: Colors.white
-                          .withOpacity(
-                        0.1,
-                      ),
+                      color: GlassStyle.line10For(context),
                     ),
                   ),
                   child:
                       CheckboxListTile(
                     activeColor:
-                        Colors.cyanAccent,
+                        AppTheme.accentFor(context),
                     checkColor:
-                        Colors.black,
+                        AppTheme.onAccentFor(context),
                     title:
                         Text(
                       branch['name'] ?? '',
                       style:
-                          const TextStyle(
+                          TextStyle(
                         color:
-                            Colors.white,
+                            AppTheme.textMainFor(context),
                         fontSize:
                             14,
                         fontFamily:
@@ -1041,7 +991,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
             ).toList(),
           if (!_allowAllBranches &&
               _selectedBranchCodes.isEmpty)
-            const Padding(
+            Padding(
               padding:
                   EdgeInsets.only(
                 top: 8,
@@ -1051,7 +1001,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
                 style:
                     TextStyle(
                   color:
-                      Colors.orangeAccent,
+                      AppTheme.warningOrangeSoftFor(context),
                   fontFamily:
                       'Cairo',
                 ),
@@ -1083,35 +1033,29 @@ class _PermissionsPageState extends State<PermissionsPage> {
           ),
           decoration:
               BoxDecoration(
-            color: Colors.white
-                .withOpacity(
-              0.05,
-            ),
+            color: GlassStyle.fill05For(context),
             borderRadius:
                 BorderRadius.circular(
               15,
             ),
             border:
                 Border.all(
-              color: Colors.white
-                  .withOpacity(
-                0.1,
-              ),
+              color: GlassStyle.line10For(context),
             ),
           ),
           child:
               SwitchListTile(
             activeColor:
-                Colors.cyanAccent,
+                AppTheme.accentFor(context),
             inactiveTrackColor:
-                Colors.white24,
+                GlassStyle.switchTrackOffFor(context),
             title:
                 Text(
               key,
               style:
-                  const TextStyle(
+                  TextStyle(
                 color:
-                    Colors.white,
+                    AppTheme.textMainFor(context),
                 fontSize:
                     16,
                 fontFamily:

@@ -1,3 +1,4 @@
+import '../../core/theme.dart';
 // frontend\lib\views\auth\forgot_password_screen.dart
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart'; // هتحتاج تضيفها في pubspec.yaml لفتح الرابط
@@ -27,7 +28,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
   void _handleVerify() async {
     if (_emailController.text.isEmpty || _compCodeController.text.isEmpty || _jobCodeController.text.isEmpty) {
-      _showSnackBar('برجاء إدخال كافة البيانات المطلوبة', Colors.orange);
+      _showSnackBar('برجاء إدخال كافة البيانات المطلوبة', AppTheme.warningOrangeFor(context));
       return;
     }
 
@@ -42,9 +43,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       setState(() {
         _resetLink = result['reset_link'];
       });
-      _showSnackBar('تم التحقق بنجاح، اضغط على الرابط بالأسفل', Colors.green);
+      _showSnackBar('تم التحقق بنجاح، اضغط على الرابط بالأسفل', AppTheme.successStrongFor(context));
     } catch (e) {
-      _showSnackBar(e.toString(), Colors.redAccent);
+      _showSnackBar(e.toString(), AppTheme.dangerFor(context));
     } finally {
       setState(() => _isLoading = false);
     }
@@ -63,7 +64,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
         width: double.infinity,
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [Colors.black, Colors.indigo.shade900, Colors.black],
+            colors: AppTheme.authGradient(context),
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
@@ -73,16 +74,16 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 25),
             child: Column(
               children: [
-                const Icon(Icons.security_rounded, size: 80, color: Colors.white),
+                Icon(Icons.security_rounded, size: 80, color: AppTheme.textMainFor(context)),
                 const SizedBox(height: 20),
-                const Text(
+                Text(
                   'استعادة الحساب',
-                  style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold),
+                  style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 28, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 10),
-                const Text(
+                Text(
                   'أدخل البيانات بدقة',
-                  style: TextStyle(color: Colors.white70, fontSize: 14),
+                  style: TextStyle(color: AppTheme.textSoftFor(context), fontSize: 14),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 30),
@@ -115,41 +116,41 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                       const SizedBox(height: 25),
 
                       _isLoading
-                          ? const CircularProgressIndicator(color: Colors.white)
+                          ? CircularProgressIndicator(color: Theme.of(context).colorScheme.onPrimary)
                           : SizedBox(
                               width: double.infinity,
                               child: ElevatedButton(
                                 style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.white.withOpacity(0.2),
+                                  backgroundColor: AppTheme.authActionBackground(context),
                                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                                   padding: const EdgeInsets.symmetric(vertical: 15),
                                 ),
                                 onPressed: _handleVerify,
-                                child: const Text('تحقق من البيانات', style: TextStyle(color: Colors.white, fontSize: 18)),
+                                child: Text('تحقق من البيانات', style: TextStyle(color: Theme.of(context).colorScheme.onPrimary, fontSize: 18)),
                               ),
                             ),
                       
                       // ظهور الرابط فقط بعد التحقق الناجح
                       if (_resetLink != null) ...[
                         const SizedBox(height: 20),
-                        const Divider(color: Colors.white24),
+                        Divider(color: AppTheme.border(context)),
                         const SizedBox(height: 10),
-                        const Text(
+                        Text(
                           'تم التحقق! اضغط على الزر بالأسفل لتغيير كلمة المرور:',
-                          style: TextStyle(color: Colors.greenAccent, fontSize: 13),
+                          style: TextStyle(color: AppTheme.successStrongFor(context), fontSize: 13),
                           textAlign: TextAlign.center,
                         ),
                         const SizedBox(height: 15),
                         ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(backgroundColor: Colors.green.withOpacity(0.3)),
+                          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.successStrongFor(context).withOpacity(0.85)),
                           onPressed: () async {
                               final Uri url = Uri.parse(_resetLink!); // تحويل النص لـ Uri
                               if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
-                                _showSnackBar('تعذر فتح الرابط', Colors.red);
+                                _showSnackBar('تعذر فتح الرابط', AppTheme.dangerFor(context));
                               }
                             },
-                          icon: const Icon(Icons.link, color: Colors.white),
-                          label: const Text('فتح رابط التغيير', style: TextStyle(color: Colors.white)),
+                          icon: Icon(Icons.link, color: Theme.of(context).colorScheme.onPrimary),
+                          label: Text('فتح رابط التغيير', style: TextStyle(color: Theme.of(context).colorScheme.onPrimary)),
                         ),
                       ],
                     ],
@@ -158,7 +159,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                 const SizedBox(height: 20),
                 TextButton(
                   onPressed: () => Navigator.pop(context),
-                  child: const Text('رجوع لتسجيل الدخول', style: TextStyle(color: Colors.white70)),
+                  child: Text('رجوع لتسجيل الدخول', style: TextStyle(color: AppTheme.textSoftFor(context))),
                 ),
               ],
             ),
@@ -181,17 +182,17 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       child: TextField(
         controller: controller,
         focusNode: node,
-        style: const TextStyle(color: Colors.white),
+        style: TextStyle(color: AppTheme.textMainFor(context)),
         textInputAction: isLast ? TextInputAction.done : TextInputAction.next,
         onSubmitted: (_) => isLast ? _handleVerify() : FocusScope.of(context).requestFocus(nextNode),
         decoration: InputDecoration(
-          prefixIcon: Icon(icon, color: Colors.white70),
+          prefixIcon: Icon(icon, color: AppTheme.textSoftFor(context)),
           labelText: label,
-          labelStyle: const TextStyle(color: Colors.white70, fontSize: 14),
+          labelStyle: TextStyle(color: AppTheme.textSoftFor(context), fontSize: 14),
           filled: true,
-          fillColor: Colors.white.withOpacity(0.05),
-          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide(color: Colors.white.withOpacity(0.1))),
-          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: const BorderSide(color: Colors.white)),
+          fillColor: AppTheme.inputFill(context),
+          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide(color: AppTheme.inputBorder(context))),
+          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide(color: AppTheme.inputFocus(context))),
         ),
       ),
     );

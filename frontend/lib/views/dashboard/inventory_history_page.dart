@@ -1,6 +1,7 @@
 // lib/views/dashboard/inventory_history_page.dart
 
 import 'package:flutter/material.dart';
+import '../../core/theme.dart';
 import 'package:intl/intl.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -233,11 +234,11 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
       await _loadData();
 
       if (mounted) {
-        _showSnackBar('تم تحديث الجرد بنجاح', Colors.green);
+        _showSnackBar('تم تحديث الجرد بنجاح', AppTheme.successStrongFor(context));
       }
     } catch (e) {
       if (mounted) {
-        _showSnackBar('فشل التحديث: $e', Colors.red);
+        _showSnackBar('فشل التحديث: $e', AppTheme.dangerStrongFor(context));
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -347,27 +348,27 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: Colors.indigo.shade900,
-        title: const Text(
+        backgroundColor: AppTheme.dialogBackground(context),
+        title: Text(
           'تأكيد الحذف',
           style: TextStyle(
-            color: Colors.white,
+            color: AppTheme.textMainFor(context),
             fontFamily: 'Cairo',
           ),
         ),
         content: Text(
           'هل أنت متأكد من حذف جرد ${model.date} - إذن ${model.serial ?? ''}؟',
-          style: const TextStyle(
-            color: Colors.white70,
+          style: TextStyle(
+            color: AppTheme.textSoftFor(context),
             fontFamily: 'Cairo',
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text(
+            child: Text(
               'إلغاء',
-              style: TextStyle(color: Colors.white),
+              style: TextStyle(color: AppTheme.textMainFor(context)),
             ),
           ),
           TextButton(
@@ -375,7 +376,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
               Navigator.pop(ctx);
 
               if (model.docId == null) {
-                _showSnackBar('رقم الجرد غير موجود', Colors.red);
+                _showSnackBar('رقم الجرد غير موجود', AppTheme.dangerStrongFor(context));
                 return;
               }
 
@@ -385,15 +386,15 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
               );
 
               if (deleted) {
-                _showSnackBar('تم الحذف بنجاح', Colors.green);
+                _showSnackBar('تم الحذف بنجاح', AppTheme.successStrongFor(context));
                 await _loadData();
               } else {
-                _showSnackBar('فشل الحذف', Colors.red);
+                _showSnackBar('فشل الحذف', AppTheme.dangerStrongFor(context));
               }
             },
-            child: const Text(
+            child: Text(
               'حذف',
-              style: TextStyle(color: Colors.red),
+              style: TextStyle(color: AppTheme.dangerStrongFor(context)),
             ),
           ),
         ],
@@ -448,9 +449,9 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
         },
       );
 
-      _showSnackBar('تم تصدير الإذن بنجاح', Colors.green);
+      _showSnackBar('تم تصدير الإذن بنجاح', AppTheme.successStrongFor(context));
     } catch (e) {
-      _showSnackBar('فشل التصدير: $e', Colors.red);
+      _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
     }
   }
 
@@ -482,9 +483,9 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
         totalAmount: inv.totalWholesale,
       );
 
-      _showSnackBar('تم تصدير الإذن بنجاح', Colors.green);
+      _showSnackBar('تم تصدير الإذن بنجاح', AppTheme.successStrongFor(context));
     } catch (e) {
-      _showSnackBar('فشل التصدير: $e', Colors.red);
+      _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
     }
   }
 
@@ -494,7 +495,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
 
   Future<void> _exportAllExcel() async {
     if (_inventories.isEmpty) {
-      _showSnackBar('لا توجد بيانات للتصدير', Colors.orange);
+      _showSnackBar('لا توجد بيانات للتصدير', AppTheme.warningOrangeFor(context));
       return;
     }
 
@@ -557,9 +558,9 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
         },
       );
 
-      _showSnackBar('تم تصدير جميع الجردات بنجاح', Colors.green);
+      _showSnackBar('تم تصدير جميع الجردات بنجاح', AppTheme.successStrongFor(context));
     } catch (e) {
-      _showSnackBar('فشل التصدير: $e', Colors.red);
+      _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
     }
   }
 
@@ -569,7 +570,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
 
   Future<void> _exportAllPDF() async {
     if (_inventories.isEmpty) {
-      _showSnackBar('لا توجد بيانات للتصدير', Colors.orange);
+      _showSnackBar('لا توجد بيانات للتصدير', AppTheme.warningOrangeFor(context));
       return;
     }
 
@@ -636,9 +637,9 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
         ),
       );
 
-      _showSnackBar('تم تصدير جميع الجردات بنجاح', Colors.green);
+      _showSnackBar('تم تصدير جميع الجردات بنجاح', AppTheme.successStrongFor(context));
     } catch (e) {
-      _showSnackBar('فشل التصدير: $e', Colors.red);
+      _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
     }
   }
 
@@ -671,20 +672,20 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
     if (!PermissionsService().canViewInventory) {
       return Scaffold(
         appBar: AppBar(
-          title: const Text(
+          title: Text(
             'معاينة الجرد',
             style: TextStyle(
-              color: Colors.white,
+              color: AppTheme.textMainFor(context),
               fontFamily: 'Cairo',
             ),
           ),
-          backgroundColor: Colors.transparent,
+          backgroundColor: AppTheme.appBarBg,
         ),
-        body: const Center(
+        body: Center(
           child: Text(
             'ليس لديك صلاحية لعرض الجرد',
             style: TextStyle(
-              color: Colors.white70,
+              color: AppTheme.textSoftFor(context),
               fontFamily: 'Cairo',
             ),
           ),
@@ -696,15 +697,15 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
       appBar: AppBar(
         title: Text(
           _showDetails ? 'تفاصيل الجرد' : 'معاينة الجرد',
-          style: const TextStyle(
-            color: Colors.white,
+          style: TextStyle(
+            color: AppTheme.textMainFor(context),
             fontFamily: 'Cairo',
           ),
         ),
-        backgroundColor: Colors.transparent,
+        backgroundColor: AppTheme.appBarBg,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          icon: Icon(Icons.arrow_back, color: AppTheme.textMainFor(context)),
           onPressed: _showDetails
               ? _goBackToList
               : () => Navigator.pop(context),
@@ -713,9 +714,9 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
           if (!_showDetails &&
               PermissionsService().canExportInventory)
             IconButton(
-              icon: const Icon(
+              icon: Icon(
                 Icons.download,
-                color: Colors.blueAccent,
+                color: AppTheme.infoFor(context),
               ),
               onPressed: _exportAllExcel,
               tooltip: 'تصدير Excel',
@@ -723,18 +724,18 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
           if (!_showDetails &&
               PermissionsService().canExportInventory)
             IconButton(
-              icon: const Icon(
+              icon: Icon(
                 Icons.picture_as_pdf,
-                color: Colors.redAccent,
+                color: AppTheme.dangerFor(context),
               ),
               onPressed: _exportAllPDF,
               tooltip: 'تصدير PDF',
             ),
           if (!_showDetails)
             IconButton(
-              icon: const Icon(
+              icon: Icon(
                 Icons.refresh,
-                color: Colors.white,
+                color: AppTheme.textMainFor(context),
               ),
               onPressed: _refreshFromServer,
               tooltip: 'تحديث من السيرفر',
@@ -742,22 +743,18 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
         ],
       ),
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [
-              Colors.black,
-              Color(0xFF1A237E),
-              Colors.black,
-            ],
+            colors: AppTheme.dashGradientMain(context),
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
         ),
         child: SafeArea(
           child: _isLoading
-              ? const Center(
+              ? Center(
                   child: CircularProgressIndicator(
-                    color: Colors.white,
+                    color: AppTheme.textMainFor(context),
                   ),
                 )
               : _showDetails &&
@@ -787,17 +784,17 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
             padding: const EdgeInsets.all(8),
             child: Row(
               children: [
-                const Icon(
+                Icon(
                   Icons.storefront,
-                  color: Colors.cyanAccent,
+                  color: AppTheme.accentFor(context),
                   size: 20,
                 ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     'الفرع الحالي: $displayBranchName',
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: AppTheme.textMainFor(context),
                       fontSize: 14,
                       fontWeight: FontWeight.bold,
                       fontFamily: 'Cairo',
@@ -817,8 +814,8 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                 Expanded(
                   child: DropdownButtonFormField<String?>(
                     value: _filterStoreCode,
-                    dropdownColor: Colors.indigo.shade900,
-                    style: const TextStyle(color: Colors.white),
+                    dropdownColor: AppTheme.dropdownBackground(context),
+                    style: TextStyle(color: AppTheme.textMainFor(context)),
                     decoration: const InputDecoration(
                       labelText: 'المخزن',
                       isDense: true,
@@ -871,9 +868,9 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                   ),
                 ),
                 IconButton(
-                  icon: const Icon(
+                  icon: Icon(
                     Icons.clear,
-                    color: Colors.white70,
+                    color: AppTheme.textSoftFor(context),
                   ),
                   onPressed: () {
                     setState(() {
@@ -891,11 +888,11 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
         const SizedBox(height: 6),
         Expanded(
           child: _inventories.isEmpty
-              ? const Center(
+              ? Center(
                   child: Text(
                     'لا توجد جردات',
                     style: TextStyle(
-                      color: Colors.white70,
+                      color: AppTheme.textSoftFor(context),
                       fontFamily: 'Cairo',
                     ),
                   ),
@@ -922,7 +919,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
     bool isMobile,
   ) {
     return Card(
-      color: Colors.white.withOpacity(0.05),
+      color: GlassStyle.fill05For(context),
       margin: const EdgeInsets.symmetric(
         horizontal: 6,
         vertical: 4,
@@ -943,11 +940,11 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                   CircleAvatar(
                     radius: isMobile ? 16 : 20,
                     backgroundColor:
-                        Colors.cyanAccent.withOpacity(0.2),
+                        GlassStyle.accentFill20For(context),
                     child: Text(
                       '${inv.serial ?? ''}',
                       style: TextStyle(
-                        color: Colors.cyanAccent,
+                        color: AppTheme.accentFor(context),
                         fontWeight: FontWeight.bold,
                         fontSize: isMobile ? 10 : 12,
                       ),
@@ -962,7 +959,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                         Text(
                           '${_getBranchName(inv.branchCode)} - ${_getStoreName(inv.storeCode)}',
                           style: TextStyle(
-                            color: Colors.white,
+                            color: AppTheme.textMainFor(context),
                             fontSize: isMobile ? 12 : 14,
                             fontWeight: FontWeight.bold,
                             fontFamily: 'Cairo',
@@ -971,7 +968,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                         Text(
                           'إذن رقم: ${inv.serial ?? ''}',
                           style: TextStyle(
-                            color: Colors.cyanAccent,
+                            color: AppTheme.accentFor(context),
                             fontSize: isMobile ? 10 : 11,
                             fontFamily: 'Cairo',
                           ),
@@ -979,7 +976,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                         Text(
                           'التاريخ: ${inv.date}',
                           style: TextStyle(
-                            color: Colors.white60,
+                            color: AppTheme.textMutedFor(context),
                             fontSize: isMobile ? 10 : 12,
                             fontFamily: 'Cairo',
                           ),
@@ -994,8 +991,8 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                     ),
                     decoration: BoxDecoration(
                       color: inv.inventoryType == 'general'
-                          ? Colors.greenAccent.withOpacity(0.15)
-                          : Colors.orangeAccent.withOpacity(0.15),
+                          ? GlassStyle.successFill15For(context)
+                          : GlassStyle.warningOrangeSoftFill15For(context),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
@@ -1004,8 +1001,8 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                           : 'جرد محدد',
                       style: TextStyle(
                         color: inv.inventoryType == 'general'
-                            ? Colors.greenAccent
-                            : Colors.orangeAccent,
+                            ? AppTheme.successFor(context)
+                            : AppTheme.warningOrangeSoftFor(context),
                         fontSize: isMobile ? 8 : 10,
                         fontWeight: FontWeight.bold,
                         fontFamily: 'Cairo',
@@ -1022,25 +1019,25 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                   _buildInfoChip(
                     'الأصناف',
                     inv.items.length.toString(),
-                    Colors.blueAccent,
+                    AppTheme.infoFor(context),
                     isMobile,
                   ),
                   _buildInfoChip(
                     'إجمالي الكمية',
                     _formatQuantity(_getTotalQuantity(inv)),
-                    Colors.cyanAccent,
+                    AppTheme.accentFor(context),
                     isMobile,
                   ),
                   _buildInfoChip(
                     'إجمالي الجملة',
                     _formatCurrency(inv.totalWholesale),
-                    Colors.greenAccent,
+                    AppTheme.successFor(context),
                     isMobile,
                   ),
                   _buildInfoChip(
                     'إجمالي البيع',
                     _formatCurrency(inv.totalRetail),
-                    Colors.amber,
+                    AppTheme.warningFor(context),
                     isMobile,
                   ),
                 ],
@@ -1051,9 +1048,9 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                 children: [
                   if (PermissionsService().canEditInventory)
                     IconButton(
-                      icon: const Icon(
+                      icon: Icon(
                         Icons.edit,
-                        color: Colors.orange,
+                        color: AppTheme.warningOrangeFor(context),
                         size: 18,
                       ),
                       onPressed: () => _editInventory(inv),
@@ -1062,9 +1059,9 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                     ),
                   if (PermissionsService().canDeleteInventory)
                     IconButton(
-                      icon: const Icon(
+                      icon: Icon(
                         Icons.delete,
-                        color: Colors.red,
+                        color: AppTheme.dangerStrongFor(context),
                         size: 18,
                       ),
                       onPressed: () => _confirmDelete(inv),
@@ -1072,9 +1069,9 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                       constraints: const BoxConstraints(),
                     ),
                   IconButton(
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.arrow_forward_ios,
-                      color: Colors.cyanAccent,
+                      color: AppTheme.accentFor(context),
                       size: 16,
                     ),
                     onPressed: () =>
@@ -1119,7 +1116,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
           Text(
             label,
             style: TextStyle(
-              color: Colors.white60,
+              color: AppTheme.textMutedFor(context),
               fontSize: isMobile ? 8 : 10,
               fontFamily: 'Cairo',
             ),
@@ -1169,7 +1166,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                             Text(
                               'إذن جرد رقم ${inv.serial ?? ''}',
                               style: TextStyle(
-                                color: Colors.white,
+                                color: AppTheme.textMainFor(context),
                                 fontSize: isMobile ? 16 : 18,
                                 fontWeight: FontWeight.bold,
                                 fontFamily: 'Cairo',
@@ -1178,22 +1175,22 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                             const SizedBox(height: 2),
                             Text(
                               'الفرع: ${_getBranchName(inv.branchCode)}',
-                              style: const TextStyle(
-                                color: Colors.greenAccent,
+                              style: TextStyle(
+                                color: AppTheme.successFor(context),
                                 fontFamily: 'Cairo',
                               ),
                             ),
                             Text(
                               'المخزن: ${_getStoreName(inv.storeCode)}',
-                              style: const TextStyle(
-                                color: Colors.white60,
+                              style: TextStyle(
+                                color: AppTheme.textMutedFor(context),
                                 fontFamily: 'Cairo',
                               ),
                             ),
                             Text(
                               'التاريخ: ${inv.date}',
-                              style: const TextStyle(
-                                color: Colors.white60,
+                              style: TextStyle(
+                                color: AppTheme.textMutedFor(context),
                                 fontFamily: 'Cairo',
                               ),
                             ),
@@ -1206,8 +1203,8 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                             : 'جرد محدد',
                         style: TextStyle(
                           color: inv.inventoryType == 'general'
-                              ? Colors.greenAccent
-                              : Colors.orangeAccent,
+                              ? AppTheme.successFor(context)
+                              : AppTheme.warningOrangeSoftFor(context),
                           fontWeight: FontWeight.bold,
                           fontSize: isMobile ? 10 : 12,
                           fontFamily: 'Cairo',
@@ -1215,7 +1212,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                       ),
                     ],
                   ),
-                  const Divider(color: Colors.white24),
+                  Divider(color: GlassStyle.line24For(context)),
                   Row(
                     children: [
                       Expanded(
@@ -1267,14 +1264,14 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                         TextButton.icon(
                           onPressed: () =>
                               _editInventory(inv),
-                          icon: const Icon(
+                          icon: Icon(
                             Icons.edit,
-                            color: Colors.orange,
+                            color: AppTheme.warningOrangeFor(context),
                           ),
-                          label: const Text(
+                          label: Text(
                             'تعديل',
                             style: TextStyle(
-                              color: Colors.orange,
+                              color: AppTheme.warningOrangeFor(context),
                               fontFamily: 'Cairo',
                             ),
                           ),
@@ -1284,14 +1281,14 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                         TextButton.icon(
                           onPressed: () =>
                               _confirmDelete(inv),
-                          icon: const Icon(
+                          icon: Icon(
                             Icons.delete,
-                            color: Colors.red,
+                            color: AppTheme.dangerStrongFor(context),
                           ),
-                          label: const Text(
+                          label: Text(
                             'حذف',
                             style: TextStyle(
-                              color: Colors.red,
+                              color: AppTheme.dangerStrongFor(context),
                               fontFamily: 'Cairo',
                             ),
                           ),
@@ -1301,14 +1298,14 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                         TextButton.icon(
                           onPressed: () =>
                               _exportSingleExcel(inv),
-                          icon: const Icon(
+                          icon: Icon(
                             Icons.download,
-                            color: Colors.blueAccent,
+                            color: AppTheme.infoFor(context),
                           ),
-                          label: const Text(
+                          label: Text(
                             'Excel',
                             style: TextStyle(
-                              color: Colors.blueAccent,
+                              color: AppTheme.infoFor(context),
                             ),
                           ),
                         ),
@@ -1317,14 +1314,14 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                         TextButton.icon(
                           onPressed: () =>
                               _exportSinglePDF(inv),
-                          icon: const Icon(
+                          icon: Icon(
                             Icons.picture_as_pdf,
-                            color: Colors.redAccent,
+                            color: AppTheme.dangerFor(context),
                           ),
-                          label: const Text(
+                          label: Text(
                             'PDF',
                             style: TextStyle(
-                              color: Colors.redAccent,
+                              color: AppTheme.dangerFor(context),
                             ),
                           ),
                         ),
@@ -1342,10 +1339,10 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                 crossAxisAlignment:
                     CrossAxisAlignment.start,
                 children: [
-                  const Text(
+                  Text(
                     'تفاصيل الأصناف',
                     style: TextStyle(
-                      color: Colors.cyanAccent,
+                      color: AppTheme.accentFor(context),
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
                       fontFamily: 'Cairo',
@@ -1370,7 +1367,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                     _formatQuantity(
                       _getTotalQuantity(inv),
                     ),
-                    Colors.cyanAccent,
+                    AppTheme.accentFor(context),
                   ),
                   _buildVerticalDivider(),
                   _buildTotalBox(
@@ -1378,7 +1375,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                     _formatCurrency(
                       inv.totalWholesale,
                     ),
-                    Colors.greenAccent,
+                    AppTheme.successFor(context),
                   ),
                   _buildVerticalDivider(),
                   _buildTotalBox(
@@ -1386,7 +1383,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                     _formatCurrency(
                       inv.totalRetail,
                     ),
-                    Colors.amber,
+                    AppTheme.warningFor(context),
                   ),
                 ],
               ),
@@ -1418,29 +1415,29 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
           children: [
             Row(
               children: [
-                _tableHeader('#', 30, Colors.cyan),
-                _tableHeader('الكود', codeWidth, Colors.cyan),
-                _tableHeader('الصنف', nameWidth, Colors.cyan),
-                _tableHeader('الكمية', qtyWidth, Colors.cyan),
+                _tableHeader('#', 30, AppTheme.accentAltFor(context)),
+                _tableHeader('الكود', codeWidth, AppTheme.accentAltFor(context)),
+                _tableHeader('الصنف', nameWidth, AppTheme.accentAltFor(context)),
+                _tableHeader('الكمية', qtyWidth, AppTheme.accentAltFor(context)),
                 _tableHeader(
                   'سعر الجملة',
                   valueWidth,
-                  Colors.greenAccent,
+                  AppTheme.successFor(context),
                 ),
                 _tableHeader(
                   'قيمة الجملة',
                   valueWidth,
-                  Colors.greenAccent,
+                  AppTheme.successFor(context),
                 ),
                 _tableHeader(
                   'سعر البيع',
                   valueWidth,
-                  Colors.amber,
+                  AppTheme.warningFor(context),
                 ),
                 _tableHeader(
                   'قيمة البيع',
                   valueWidth,
-                  Colors.amber,
+                  AppTheme.warningFor(context),
                 ),
               ],
             ),
@@ -1451,52 +1448,52 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                   _tableCell(
                     '${entry.key + 1}',
                     30,
-                    Colors.white54,
+                    AppTheme.textHintFor(context),
                   ),
                   _tableCell(
                     entry.value.code,
                     codeWidth,
-                    Colors.white70,
+                    AppTheme.textSoftFor(context),
                   ),
                   _tableCell(
                     entry.value.name,
                     nameWidth,
-                    Colors.white,
+                    AppTheme.textMainFor(context),
                   ),
                   _tableCell(
                     _formatQuantity(
                       entry.value.quantity,
                     ),
                     qtyWidth,
-                    Colors.white70,
+                    AppTheme.textSoftFor(context),
                   ),
                   _tableCell(
                     _formatCurrency(
                       entry.value.wholesalePrice,
                     ),
                     valueWidth,
-                    Colors.greenAccent,
+                    AppTheme.successFor(context),
                   ),
                   _tableCell(
                     _formatCurrency(
                       entry.value.wholesaleValue,
                     ),
                     valueWidth,
-                    Colors.greenAccent,
+                    AppTheme.successFor(context),
                   ),
                   _tableCell(
                     _formatCurrency(
                       entry.value.retailPrice,
                     ),
                     valueWidth,
-                    Colors.amber,
+                    AppTheme.warningFor(context),
                   ),
                   _tableCell(
                     _formatCurrency(
                       entry.value.retailValue,
                     ),
                     valueWidth,
-                    Colors.amber,
+                    AppTheme.warningFor(context),
                   ),
                 ],
               ),
@@ -1520,7 +1517,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
             Expanded(child: Text('قيمة البيع', textAlign: TextAlign.center)),
           ],
         ),
-        const Divider(color: Colors.white10),
+        Divider(color: GlassStyle.line10For(context)),
         ...inv.items.asMap().entries.map(
           (entry) {
             final item = entry.value;
@@ -1532,26 +1529,26 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                   Expanded(
                     child: _tableDesktopText(
                       '${entry.key + 1}',
-                      Colors.white54,
+                      AppTheme.textHintFor(context),
                     ),
                   ),
                   Expanded(
                     child: _tableDesktopText(
                       item.code,
-                      Colors.white70,
+                      AppTheme.textSoftFor(context),
                     ),
                   ),
                   Expanded(
                     flex: 2,
                     child: _tableDesktopText(
                       item.name,
-                      Colors.white,
+                      AppTheme.textMainFor(context),
                     ),
                   ),
                   Expanded(
                     child: _tableDesktopText(
                       _formatQuantity(item.quantity),
-                      Colors.white70,
+                      AppTheme.textSoftFor(context),
                     ),
                   ),
                   Expanded(
@@ -1559,7 +1556,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                       _formatCurrency(
                         item.wholesalePrice,
                       ),
-                      Colors.greenAccent,
+                      AppTheme.successFor(context),
                     ),
                   ),
                   Expanded(
@@ -1567,7 +1564,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                       _formatCurrency(
                         item.wholesaleValue,
                       ),
-                      Colors.greenAccent,
+                      AppTheme.successFor(context),
                     ),
                   ),
                   Expanded(
@@ -1575,7 +1572,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                       _formatCurrency(
                         item.retailPrice,
                       ),
-                      Colors.amber,
+                      AppTheme.warningFor(context),
                     ),
                   ),
                   Expanded(
@@ -1583,7 +1580,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                       _formatCurrency(
                         item.retailValue,
                       ),
-                      Colors.amber,
+                      AppTheme.warningFor(context),
                     ),
                   ),
                 ],
@@ -1608,8 +1605,8 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
       children: [
         Text(
           label,
-          style: const TextStyle(
-            color: Colors.white60,
+          style: TextStyle(
+            color: AppTheme.textMutedFor(context),
             fontSize: 10,
             fontFamily: 'Cairo',
           ),
@@ -1631,7 +1628,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
     return Container(
       width: 1,
       height: 30,
-      color: Colors.white24,
+      color: GlassStyle.line24For(context),
     );
   }
 
@@ -1713,7 +1710,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
       children: [
         Icon(
           icon,
-          color: Colors.cyanAccent,
+          color: AppTheme.accentFor(context),
           size: isMobile ? 14 : 16,
         ),
         const SizedBox(width: 4),
@@ -1725,7 +1722,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
               Text(
                 label,
                 style: TextStyle(
-                  color: Colors.white60,
+                  color: AppTheme.textMutedFor(context),
                   fontSize: isMobile ? 8 : 10,
                   fontFamily: 'Cairo',
                 ),
@@ -1733,7 +1730,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
               Text(
                 value,
                 style: TextStyle(
-                  color: Colors.white,
+                  color: AppTheme.textMainFor(context),
                   fontSize: isMobile ? 10 : 12,
                   fontFamily: 'Cairo',
                 ),

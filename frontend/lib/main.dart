@@ -396,6 +396,8 @@ Future<void> main() async {
 
   final String? companyCode =
       prefs.getString('company_code');
+  
+  final String savedTheme = prefs.getString('theme_mode') ?? 'dark';
 
 
   // ==========================================================
@@ -445,10 +447,13 @@ Future<void> main() async {
   // تشغيل التطبيق
   // ==========================================================
 
-  runApp(
+    runApp(
     IslamApp(
       initialScreen:
           initialScreen,
+      initialThemeMode: savedTheme == 'light'
+          ? ThemeMode.light
+          : ThemeMode.dark,
     ),
   );
 }
@@ -460,10 +465,11 @@ Future<void> main() async {
 
 class IslamApp extends StatefulWidget {
   final Widget initialScreen;
-
+  final ThemeMode initialThemeMode;
   const IslamApp({
     super.key,
     required this.initialScreen,
+    this.initialThemeMode = ThemeMode.dark,
   });
 
   static _IslamAppState of(
@@ -488,8 +494,7 @@ class _IslamAppState
     extends State<IslamApp>
     with WidgetsBindingObserver {
 
-  ThemeMode _themeMode =
-      ThemeMode.dark;
+  late ThemeMode _themeMode; // ✅ بدون قيمة ابتدائية
 
 
   // ==========================================================
@@ -499,6 +504,9 @@ class _IslamAppState
   @override
   void initState() {
     super.initState();
+
+    // ✅ استخدام الثيم المحفوظ من SharedPreferences
+    _themeMode = widget.initialThemeMode;
 
     WidgetsBinding.instance
         .addObserver(this);
@@ -541,6 +549,7 @@ class _IslamAppState
         prefs.getString(
       'company_code',
     );
+    
 
 
     if (!rememberMe ||
@@ -587,13 +596,28 @@ class _IslamAppState
   // Theme
   // ==========================================================
 
-  void changeTheme(
+    void changeTheme(
     ThemeMode themeMode,
-  ) {
+  ) async {
     setState(() {
       _themeMode =
           themeMode;
     });
+
+    // ✅ حفظ الاختيار على الجهاز
+    try {
+      final prefs =
+          await SharedPreferences.getInstance();
+
+      await prefs.setString(
+        'theme_mode',
+        themeMode == ThemeMode.light
+            ? 'light'
+            : 'dark',
+      );
+    } catch (e) {
+      print("⚠️ فشل حفظ الثيم: $e");
+    }
   }
 
 

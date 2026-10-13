@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../core/theme.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../services/coding_service.dart';
 import '../../models/coding_model.dart';
@@ -106,22 +107,22 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
     if (!canView && !canAdd) {
       return Scaffold(
         appBar: AppBar(
-          title: const Text("شاشة التكويد", style: TextStyle(fontFamily: 'Cairo', color: Colors.white)),
-          backgroundColor: Colors.transparent,
+          title: Text("شاشة التكويد", style: TextStyle(fontFamily: 'Cairo', color: AppTheme.textMainFor(context))),
+          backgroundColor: AppTheme.appBarBg,
           elevation: 0,
         ),
         extendBodyBehindAppBar: true,
         body: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: [Colors.black, Colors.indigo.shade900, Colors.black],
+              colors: AppTheme.dashGradientMain(context),
               begin: Alignment.topLeft, end: Alignment.bottomRight,
             ),
           ),
-          child: const Center(
+          child: Center(
             child: Text(
               "ليس لديك صلاحية للوصول إلى التكويد",
-              style: TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 16),
+              style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo', fontSize: 16),
             ),
           ),
         ),
@@ -137,8 +138,8 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
       child: Scaffold(
         extendBodyBehindAppBar: true,
         appBar: AppBar(
-          title: const Text("شاشة التكويد", style: TextStyle(fontFamily: 'Cairo', color: Colors.white)),
-          backgroundColor: Colors.transparent,
+          title: Text("شاشة التكويد", style: TextStyle(fontFamily: 'Cairo', color: AppTheme.textMainFor(context))),
+          backgroundColor: AppTheme.appBarBg,
           elevation: 0,
         ),
         body: Container(
@@ -146,13 +147,13 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
           height: double.infinity,
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: [Colors.black, Colors.indigo.shade900, Colors.black],
+              colors: AppTheme.dashGradientMain(context),
               begin: Alignment.topLeft, end: Alignment.bottomRight,
             ),
           ),
           child: SafeArea(
             child: _isLoading
-                ? const Center(child: CircularProgressIndicator(color: Colors.white))
+                ? Center(child: CircularProgressIndicator(color: AppTheme.textMainFor(context)))
                 : SingleChildScrollView(
                     padding: const EdgeInsets.all(15),
                     child: Column(
@@ -161,7 +162,7 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
                         GlassCard(
                           child: Column(
                             children: [
-                              const Align(alignment: Alignment.centerRight, child: Text("اختر القسم", style: TextStyle(color: Colors.amber, fontSize: 14, fontFamily: 'Cairo'))),
+                              Align(alignment: Alignment.centerRight, child: Text("اختر القسم", style: TextStyle(color: AppTheme.warningFor(context), fontSize: 14, fontFamily: 'Cairo'))),
                               const SizedBox(height: 15),
                               Wrap(
                                 spacing: 8, runSpacing: 8, alignment: WrapAlignment.center,
@@ -205,13 +206,13 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
                                   const SizedBox(height: 10),
                                   DropdownButtonFormField<String>(
                                     value: _selectedType,
-                                    dropdownColor: Colors.indigo.shade900,
-                                    style: const TextStyle(color: Colors.white, fontSize: 14, fontFamily: 'Cairo'),
+                                    dropdownColor: AppTheme.dropdownBackground(context),
+                                    style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 14, fontFamily: 'Cairo'),
                                     decoration: InputDecoration(
                                       labelText: "نوع التصنيف (وارد / صادر)",
-                                      labelStyle: const TextStyle(color: Colors.white70, fontSize: 12, fontFamily: 'Cairo'),
-                                      prefixIcon: const Icon(Icons.swap_horiz, color: Colors.amber, size: 18),
-                                      filled: true, fillColor: Colors.white.withOpacity(0.03),
+                                      labelStyle: TextStyle(color: AppTheme.textSoftFor(context), fontSize: 12, fontFamily: 'Cairo'),
+                                      prefixIcon: Icon(Icons.swap_horiz, color: AppTheme.warningFor(context), size: 18),
+                                      filled: true, fillColor: GlassStyle.fill03For(context),
                                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
                                       contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
                                     ),
@@ -249,11 +250,11 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
                           ),
                         // إذا لم تكن صلاحية الإضافة موجودة، نعرض رسالة
                         if (!canAdd)
-                          const Padding(
+                          Padding(
                             padding: EdgeInsets.all(20.0),
                             child: Text(
                               "ليس لديك صلاحية لإضافة أو تعديل التكويدات",
-                              style: TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 14),
+                              style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo', fontSize: 14),
                             ),
                           ),
                       ],
@@ -280,16 +281,16 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
-          color: isSelected ? Colors.amber : Colors.white.withOpacity(0.05),
+          color: isSelected ? AppTheme.warningFor(context) : GlassStyle.fill05For(context),
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: isSelected ? Colors.amber : Colors.white10),
+          border: Border.all(color: isSelected ? AppTheme.warningFor(context) : GlassStyle.line10For(context)),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 14, color: isSelected ? Colors.black : Colors.white70),
+            Icon(icon, size: 14, color: isSelected ? AppTheme.onAccentFor(context) : AppTheme.textSoftFor(context)),
             const SizedBox(width: 4),
-            Text(title, style: TextStyle(color: isSelected ? Colors.black : Colors.white, fontSize: 11, fontFamily: 'Cairo')),
+            Text(title, style: TextStyle(color: isSelected ? AppTheme.onAccentFor(context) : AppTheme.textMainFor(context), fontSize: 11, fontFamily: 'Cairo')),
           ],
         ),
       ),
@@ -300,13 +301,13 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
     return TextField(
       controller: ctrl,
       enabled: enabled,
-      style: const TextStyle(color: Colors.white, fontSize: 14),
+      style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 14),
       decoration: InputDecoration(
         labelText: lbl,
-        labelStyle: const TextStyle(color: Colors.white70, fontSize: 12),
-        prefixIcon: Icon(ico, color: Colors.amber, size: 18),
+        labelStyle: TextStyle(color: AppTheme.textSoftFor(context), fontSize: 12),
+        prefixIcon: Icon(ico, color: AppTheme.warningFor(context), size: 18),
         filled: true,
-        fillColor: Colors.white.withOpacity(0.03),
+        fillColor: GlassStyle.fill03For(context),
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
         contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
       ),
@@ -326,7 +327,7 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
               onPressed: _handleSave,
               icon: Icon(_isEditMode ? Icons.update : Icons.save, size: 18),
               label: Text(_isEditMode ? "تحديث" : "حفظ", style: const TextStyle(fontFamily: 'Cairo')),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.amber, foregroundColor: Colors.black),
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.warningFor(context), foregroundColor: AppTheme.onAccentFor(context)),
             ),
           ),
         // زر المعاينة (يظهر فقط إذا كانت صلاحية المعاينة موجودة)
@@ -336,7 +337,7 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
               onPressed: _showItemsModal,
               icon: const Icon(Icons.visibility, size: 18),
               label: const Text("معاينة", style: TextStyle(fontFamily: 'Cairo')),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.white10, foregroundColor: Colors.white),
+              style: ElevatedButton.styleFrom(backgroundColor: GlassStyle.fill10For(context), foregroundColor: Theme.of(context).colorScheme.onPrimary),
             ),
           ),
         // زر التحديث (Refresh) يظهر دائماً لإعادة تحميل الكود القادم
@@ -345,7 +346,7 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
             _clearControllers();
             _loadNextCode();
           },
-          icon: const Icon(Icons.refresh, color: Colors.white60),
+          icon: Icon(Icons.refresh, color: AppTheme.textMutedFor(context)),
         ),
       ],
     );
@@ -354,20 +355,20 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
   void _handleSave() async {
     // التحقق من صلاحية الإضافة
     if (!PermissionsService().canAddCodingItem) {
-      _showSnackBar("ليس لديك صلاحية للحفظ", Colors.orange);
+      _showSnackBar("ليس لديك صلاحية للحفظ", AppTheme.warningOrangeFor(context));
       return;
     }
 
     if (_nameController.text.isEmpty) {
-      _showSnackBar("الاسم مطلوب", Colors.orange);
+      _showSnackBar("الاسم مطلوب", AppTheme.warningOrangeFor(context));
       return;
     }
     if (_codeController.text.isEmpty) {
-      _showSnackBar("الكود مطلوب", Colors.orange);
+      _showSnackBar("الكود مطلوب", AppTheme.warningOrangeFor(context));
       return;
     }
     if (_selectedCategory == "types" && _selectedType == null) {
-      _showSnackBar("يرجى اختيار نوع التصنيف (وارد/صادر)", Colors.orange);
+      _showSnackBar("يرجى اختيار نوع التصنيف (وارد/صادر)", AppTheme.warningOrangeFor(context));
       return;
     }
 
@@ -393,14 +394,14 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
       );
 
       if (result['success'] == true) {
-        _showSnackBar(_isEditMode ? "تم التحديث بنجاح" : "تم الحفظ بنجاح", Colors.green);
+        _showSnackBar(_isEditMode ? "تم التحديث بنجاح" : "تم الحفظ بنجاح", AppTheme.successStrongFor(context));
         _clearControllers();
         _loadNextCode();
       } else {
-        _showSnackBar("فشل عملية الحفظ: ${result['error']}", Colors.red);
+        _showSnackBar("فشل عملية الحفظ: ${result['error']}", AppTheme.dangerStrongFor(context));
       }
     } catch (e) {
-      _showSnackBar("خطأ: $e", Colors.red);
+      _showSnackBar("خطأ: $e", AppTheme.dangerStrongFor(context));
     } finally {
       setState(() => _isLoading = false);
     }
@@ -409,7 +410,7 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
   void _showItemsModal() async {
     // التحقق من صلاحية المعاينة
     if (!PermissionsService().canViewCoding) {
-      _showSnackBar("ليس لديك صلاحية للمعاينة", Colors.orange);
+      _showSnackBar("ليس لديك صلاحية للمعاينة", AppTheme.warningOrangeFor(context));
       return;
     }
 
@@ -424,12 +425,12 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
       showModalBottomSheet(
         context: context,
         isScrollControlled: true,
-        backgroundColor: Colors.transparent,
+        backgroundColor: AppTheme.sheetBgTransparent,
         builder: (ctx) => _buildModal(items),
       );
     } catch (e) {
       setState(() => _isLoading = false);
-      _showSnackBar("حدث خطأ أثناء المعاينة", Colors.red);
+      _showSnackBar("حدث خطأ أثناء المعاينة", AppTheme.dangerStrongFor(context));
     }
   }
 
@@ -441,27 +442,27 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
         return Container(
           height: MediaQuery.of(context).size.height * 0.7,
           decoration: BoxDecoration(
-            color: Colors.indigo.shade900,
+            color: AppTheme.modalPanelFor(context),
             borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
           ),
           child: initialItems.isEmpty
-              ? const Center(child: Text("القسم فارغ حالياً", style: TextStyle(color: Colors.white70, fontFamily: 'Cairo')))
+              ? Center(child: Text("القسم فارغ حالياً", style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo')))
               : ListView.builder(
                   itemCount: initialItems.length,
                   itemBuilder: (c, i) => ListTile(
                     title: Text(
                       initialItems[i].name,
-                      style: const TextStyle(color: Colors.white, fontFamily: 'Cairo', fontSize: 14),
+                      style: TextStyle(color: AppTheme.textMainFor(context), fontFamily: 'Cairo', fontSize: 14),
                     ),
                     subtitle: Row(
                       children: [
-                        Text("كود: ${initialItems[i].code}", style: const TextStyle(color: Colors.white60, fontFamily: 'Cairo', fontSize: 12)),
+                        Text("كود: ${initialItems[i].code}", style: TextStyle(color: AppTheme.textMutedFor(context), fontFamily: 'Cairo', fontSize: 12)),
                         if (_selectedCategory == "types") ...[
                           const SizedBox(width: 15),
                           Text(
                             "النوع: ${initialItems[i].type}",
                             style: TextStyle(
-                              color: initialItems[i].type == "وارد" ? Colors.greenAccent : Colors.redAccent,
+                              color: initialItems[i].type == "وارد" ? AppTheme.successFor(context) : AppTheme.dangerFor(context),
                               fontFamily: 'Cairo',
                               fontSize: 12,
                               fontWeight: FontWeight.bold,
@@ -473,7 +474,7 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
                     // زر الحذف يظهر فقط إذا كانت صلاحية الإضافة موجودة
                     trailing: canAdd
                         ? IconButton(
-                            icon: const Icon(Icons.delete, color: Colors.red),
+                            icon: Icon(Icons.delete, color: AppTheme.dangerStrongFor(context)),
                             onPressed: () async {
                               setState(() => _isLoading = true);
                               bool isDeleted = await _codingService.deleteCode(
@@ -483,13 +484,13 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
                               );
                               setState(() => _isLoading = false);
                               if (isDeleted) {
-                                _showSnackBar("تم الحذف بنجاح", Colors.green);
+                                _showSnackBar("تم الحذف بنجاح", AppTheme.successStrongFor(context));
                                 setModalState(() {
                                   initialItems.removeAt(i);
                                 });
                                 _loadNextCode();
                               } else {
-                                _showSnackBar("فشل الحذف، تحقق من الاتصال", Colors.red);
+                                _showSnackBar("فشل الحذف، تحقق من الاتصال", AppTheme.dangerStrongFor(context));
                               }
                             },
                           )

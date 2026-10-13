@@ -1,6 +1,7 @@
 // lib/views/dashboard/supplier_page.dart
 
 import 'package:flutter/material.dart';
+import '../../core/theme.dart';
 import 'package:intl/intl.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
@@ -64,6 +65,7 @@ class _SupplierPageState extends State<SupplierPage> {
 
   List<Map<String, String>> _stores = [];
   List<Map<String, String>> _suppliers = [];
+  List<Map<String, String>> _itemsLookup = []; // ✅ قائمة الأصناف المقترحة
 
   // ===================== الأصناف =====================
 
@@ -71,6 +73,7 @@ class _SupplierPageState extends State<SupplierPage> {
 
   List<List<TextEditingController>> _controllers = [];
   List<List<FocusNode>> _focusNodes = [];
+  List<LayerLink> _nameFieldLinks = []; // ✅ روابط عرض قائمة الاقتراحات
 
   final ScrollController _scrollController =
       ScrollController();
@@ -138,6 +141,7 @@ class _SupplierPageState extends State<SupplierPage> {
 
     _controllers.clear();
     _focusNodes.clear();
+    _nameFieldLinks.clear(); // ✅
 
     for (final item in _items) {
       final List<TextEditingController> rowControllers = [];
@@ -177,6 +181,7 @@ class _SupplierPageState extends State<SupplierPage> {
 
       _controllers.add(rowControllers);
       _focusNodes.add(rowFocusNodes);
+      _nameFieldLinks.add(LayerLink()); // ✅ رابط لكل صف
     }
   }
 
@@ -334,7 +339,7 @@ void _applyDiscount() {
         _selectedStoreCode =
             _stores.first['code'];
       }
-
+      await _loadItemsLookup();
       await _loadLastSerial();
 
       if (widget.editItem != null) {
@@ -353,6 +358,44 @@ void _applyDiscount() {
     }
   }
 
+  // ============================================================
+  // تحميل قائمة الأصناف للاقتراحات (من التكويد)
+  // ============================================================
+  Future<void> _loadItemsLookup() async {
+    try {
+      final box = Hive.box('coding_box');
+      final raw = box.get(
+        '${widget.companyCode}_items',
+        defaultValue: [],
+      );
+
+      final List<Map<String, String>> list = [];
+
+      if (raw is List) {
+        for (final e in raw) {
+          if (e is! Map) continue;
+          final code = e['code']?.toString() ?? '';
+          final name = e['name']?.toString() ?? '';
+          if (code.isEmpty || name.isEmpty) continue;
+
+          list.add({
+            'code': code,
+            'name': name,
+            'wholesale_price':
+                (e['wholesale_price'] ?? e['wholesalePrice'] ?? '0').toString(),
+          });
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _itemsLookup = list;
+        });
+      }
+    } catch (e) {
+      print('❌ خطأ في تحميل الأصناف للاقتراحات: $e');
+    }
+  }
   // ============================================================
 // تحميل التعديل
 // ============================================================
@@ -568,6 +611,7 @@ void _loadEditData() {
         FocusNode(),
         FocusNode(),
       ]);
+      _nameFieldLinks.add(LayerLink()); 
     });
   }
 
@@ -589,6 +633,7 @@ void _loadEditData() {
 
       _controllers.removeAt(index);
       _focusNodes.removeAt(index);
+      _nameFieldLinks.removeAt(index);
     });
 
     _recalcTotals();
@@ -793,6 +838,34 @@ void _loadEditData() {
   }
 
   // ============================================================
+  // تعبئة الصف عند اختيار صنف من قائمة الاقتراحات
+  // ============================================================
+  void _fillRowFromSelectedItem(
+    int rowIndex,
+    Map<String, String> item,
+  ) {
+    if (rowIndex >= _items.length) return;
+
+    final code = item['code'] ?? '';
+    final name = item['name'] ?? '';
+    final price =
+        double.tryParse(item['wholesale_price'] ?? '0') ?? 0.0;
+
+    setState(() {
+      _items[rowIndex].code = code;
+      _items[rowIndex].name = name;
+      _items[rowIndex].price = price;
+
+      _controllers[rowIndex][0].text = code;
+      _controllers[rowIndex][1].text = name;
+      _controllers[rowIndex][3].text = price.toString();
+
+      _recalcItem(rowIndex);
+      _recalcTotals();
+    });
+  }
+
+  // ============================================================
   // Enter
   // ============================================================
 
@@ -906,7 +979,7 @@ void _loadEditData() {
         .canAddSupplierTransaction) {
       _showSnackBar(
         'ليس لديك صلاحية للحفظ',
-        Colors.orange,
+        AppTheme.warningOrangeFor(context),
       );
       return;
     }
@@ -916,7 +989,7 @@ void _loadEditData() {
         _selectedSupplier!.isEmpty) {
       _showSnackBar(
         'اختر مورداً',
-        Colors.orange,
+        AppTheme.warningOrangeFor(context),
       );
       return;
     }
@@ -926,7 +999,7 @@ void _loadEditData() {
         _selectedStoreCode!.isEmpty) {
       _showSnackBar(
         'اختر مخزناً',
-        Colors.orange,
+        AppTheme.warningOrangeFor(context),
       );
       return;
     }
@@ -941,7 +1014,7 @@ void _loadEditData() {
     if (validItems.isEmpty) {
       _showSnackBar(
         'أضف صنفاً واحداً على الأقل',
-        Colors.orange,
+        AppTheme.warningOrangeFor(context),
       );
       return;
     }
@@ -953,7 +1026,7 @@ void _loadEditData() {
     if (normalNetTotal < 0) {
       _showSnackBar(
         'الخصم لا يمكن أن يكون أكبر من إجمالي الفاتورة',
-        Colors.orange,
+        AppTheme.warningOrangeFor(context),
       );
       return;
     }
@@ -1042,7 +1115,7 @@ void _loadEditData() {
       if (result['success'] != true) {
         _showSnackBar(
           'فشل الحفظ: ${result['error'] ?? 'خطأ غير معروف'}',
-          Colors.red,
+          AppTheme.dangerStrongFor(context),
         );
         return;
       }
@@ -1051,7 +1124,7 @@ void _loadEditData() {
         widget.editItem != null
             ? 'تم تعديل حركة المورد بنجاح'
             : 'تم حفظ فاتورة المشتريات بنجاح',
-        Colors.green,
+        AppTheme.successStrongFor(context),
       );
 
       // ========================================================
@@ -1104,7 +1177,7 @@ setState(() {
     } catch (e) {
       _showSnackBar(
         'خطأ: $e',
-        Colors.red,
+        AppTheme.dangerStrongFor(context),
       );
     } finally {
       if (mounted) {
@@ -1137,7 +1210,7 @@ setState(() {
             ),
             decoration:
                 BoxDecoration(
-              color: Colors.white10,
+              color: GlassStyle.fill10For(context),
               borderRadius:
                   BorderRadius.circular(10),
             ),
@@ -1176,10 +1249,7 @@ setState(() {
                       Border(
                     bottom:
                         BorderSide(
-                      color: Colors.white
-                          .withOpacity(
-                        0.05,
-                      ),
+                      color: GlassStyle.line05For(context),
                       width: 0.5,
                     ),
                   ),
@@ -1214,7 +1284,7 @@ setState(() {
                     BoxDecoration(
                   border:
                       Border.all(
-                    color: Colors.white24,
+                    color: GlassStyle.line24For(context),
                   ),
                   borderRadius:
                       BorderRadius
@@ -1223,13 +1293,12 @@ setState(() {
                   ),
                 ),
                 child:
-                    const Center(
+                    Center(
                   child: Text(
                     '+ إضافة صنف جديد',
                     style:
                         TextStyle(
-                      color: Colors
-                          .cyanAccent,
+                      color: AppTheme.accentFor(context),
                       fontFamily:
                           'Cairo',
                       fontSize: 13,
@@ -1274,14 +1343,14 @@ setState(() {
 
     return Row(
       children: [
-        const SizedBox(
+        SizedBox(
           width: 28,
           child: Text(
             '#',
             textAlign:
                 TextAlign.center,
             style: TextStyle(
-              color: Colors.cyan,
+              color: AppTheme.accentAltFor(context),
               fontWeight:
                   FontWeight.bold,
               fontSize: 9,
@@ -1290,12 +1359,12 @@ setState(() {
         ),
         SizedBox(
           width: colWidth,
-          child: const Text(
+          child: Text(
             'الكود',
             textAlign:
                 TextAlign.center,
             style: TextStyle(
-              color: Colors.cyan,
+              color: AppTheme.accentAltFor(context),
               fontWeight:
                   FontWeight.bold,
               fontSize: 9,
@@ -1304,12 +1373,12 @@ setState(() {
         ),
         SizedBox(
           width: nameWidth,
-          child: const Text(
+          child: Text(
             'الصنف',
             textAlign:
                 TextAlign.center,
             style: TextStyle(
-              color: Colors.cyan,
+              color: AppTheme.accentAltFor(context),
               fontWeight:
                   FontWeight.bold,
               fontSize: 9,
@@ -1318,12 +1387,12 @@ setState(() {
         ),
         SizedBox(
           width: colWidth,
-          child: const Text(
+          child: Text(
             'الكمية',
             textAlign:
                 TextAlign.center,
             style: TextStyle(
-              color: Colors.cyan,
+              color: AppTheme.accentAltFor(context),
               fontWeight:
                   FontWeight.bold,
               fontSize: 9,
@@ -1332,13 +1401,13 @@ setState(() {
         ),
         SizedBox(
           width: colWidth,
-          child: const Text(
+          child: Text(
             'سعر الجملة',
             textAlign:
                 TextAlign.center,
             style: TextStyle(
               color:
-                  Colors.greenAccent,
+                  AppTheme.successFor(context),
               fontWeight:
                   FontWeight.bold,
               fontSize: 9,
@@ -1347,13 +1416,13 @@ setState(() {
         ),
         SizedBox(
           width: colWidth,
-          child: const Text(
+          child: Text(
             'الإجمالي',
             textAlign:
                 TextAlign.center,
             style: TextStyle(
               color:
-                  Colors.greenAccent,
+                  AppTheme.successFor(context),
               fontWeight:
                   FontWeight.bold,
               fontSize: 9,
@@ -1392,9 +1461,9 @@ setState(() {
             textAlign:
                 TextAlign.center,
             style:
-                const TextStyle(
+                TextStyle(
               color:
-                  Colors.white54,
+                  AppTheme.textHintFor(context),
               fontSize: 9,
             ),
           ),
@@ -1446,9 +1515,9 @@ setState(() {
             textAlign:
                 TextAlign.center,
             style:
-                const TextStyle(
+                TextStyle(
               color:
-                  Colors.greenAccent,
+                  AppTheme.successFor(context),
               fontSize: 10,
               fontWeight:
                   FontWeight.bold,
@@ -1458,10 +1527,10 @@ setState(() {
 
         IconButton(
           icon:
-              const Icon(
+              Icon(
             Icons.delete,
             color:
-                Colors.red,
+                AppTheme.dangerStrongFor(context),
             size: 18,
           ),
           onPressed:
@@ -1482,7 +1551,7 @@ setState(() {
   // ============================================================
 
   Widget _buildDesktopHeaders() {
-    return const Row(
+    return Row(
       children: [
         Expanded(
           flex: 0,
@@ -1494,7 +1563,7 @@ setState(() {
             style:
                 TextStyle(
               color:
-                  Colors.cyan,
+                  AppTheme.accentAltFor(context),
               fontWeight:
                   FontWeight.bold,
               fontSize: 10,
@@ -1511,7 +1580,7 @@ setState(() {
             style:
                 TextStyle(
               color:
-                  Colors.cyan,
+                  AppTheme.accentAltFor(context),
               fontWeight:
                   FontWeight.bold,
               fontSize: 10,
@@ -1528,7 +1597,7 @@ setState(() {
             style:
                 TextStyle(
               color:
-                  Colors.cyan,
+                  AppTheme.accentAltFor(context),
               fontWeight:
                   FontWeight.bold,
               fontSize: 10,
@@ -1545,7 +1614,7 @@ setState(() {
             style:
                 TextStyle(
               color:
-                  Colors.cyan,
+                  AppTheme.accentAltFor(context),
               fontWeight:
                   FontWeight.bold,
               fontSize: 10,
@@ -1562,7 +1631,7 @@ setState(() {
             style:
                 TextStyle(
               color:
-                  Colors.greenAccent,
+                  AppTheme.successFor(context),
               fontWeight:
                   FontWeight.bold,
               fontSize: 10,
@@ -1579,7 +1648,7 @@ setState(() {
             style:
                 TextStyle(
               color:
-                  Colors.greenAccent,
+                  AppTheme.successFor(context),
               fontWeight:
                   FontWeight.bold,
               fontSize: 10,
@@ -1613,9 +1682,9 @@ setState(() {
             textAlign:
                 TextAlign.center,
             style:
-                const TextStyle(
+                TextStyle(
               color:
-                  Colors.white54,
+                  AppTheme.textHintFor(context),
               fontSize: 10,
             ),
           ),
@@ -1668,9 +1737,9 @@ setState(() {
             textAlign:
                 TextAlign.center,
             style:
-                const TextStyle(
+                TextStyle(
               color:
-                  Colors.greenAccent,
+                  AppTheme.successFor(context),
               fontSize: 11,
               fontWeight:
                   FontWeight.bold,
@@ -1680,10 +1749,10 @@ setState(() {
 
         IconButton(
           icon:
-              const Icon(
+              Icon(
             Icons.delete,
             color:
-                Colors.red,
+                AppTheme.dangerStrongFor(context),
             size: 20,
           ),
           onPressed:
@@ -1703,99 +1772,195 @@ setState(() {
   // حقل الصنف
   // ============================================================
 
-  Widget _buildItemField(
+    Widget _buildItemField(
     int rowIndex,
     int fieldIndex,
   ) {
-    final field =
-        _fieldOrder[
-            fieldIndex];
+    final field = _fieldOrder[fieldIndex];
 
-    final keyboard =
-        (field ==
-                    'quantity' ||
-                field == 'price')
-            ? const TextInputType
-                .numberWithOptions(
-                decimal: true,
-              )
-            : TextInputType.text;
+    // ✅ حقل "الصنف" فقط: نستخدم RawAutocomplete
+    if (field == 'name') {
+      return _buildNameFieldWithSuggestions(rowIndex, fieldIndex);
+    }
+
+    final keyboard = (field == 'quantity' || field == 'price')
+        ? const TextInputType.numberWithOptions(decimal: true)
+        : TextInputType.text;
 
     return Padding(
-      padding:
-          const EdgeInsets
-              .symmetric(
-        horizontal: 2,
-      ),
-      child:
-          TextFormField(
-        controller:
-            _controllers[rowIndex]
-                [fieldIndex],
-        focusNode:
-            _focusNodes[rowIndex]
-                [fieldIndex],
-        style:
-            TextStyle(
-          color:
-              field == 'total'
-                  ? Colors.white70
-                  : Colors.white,
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: TextFormField(
+        controller: _controllers[rowIndex][fieldIndex],
+        focusNode: _focusNodes[rowIndex][fieldIndex],
+        style: TextStyle(
+          color: field == 'total'
+              ? AppTheme.textSoftFor(context)
+              : AppTheme.textMainFor(context),
           fontSize: 12,
         ),
-        textAlign:
-            TextAlign.center,
-        keyboardType:
-            keyboard,
-        readOnly:
-            field == 'total',
-        textInputAction:
-            TextInputAction.next,
-        onChanged:
-            field == 'total'
-                ? null
-                : (value) =>
-                    _updateItem(rowIndex,fieldIndex,value,),
-        onFieldSubmitted:
-            (_) =>
-                _onFieldSubmitted(
-          rowIndex,
-          fieldIndex,
-        ),
-        decoration:
-            InputDecoration(
-          border:
-              OutlineInputBorder(
-            borderRadius:
-                BorderRadius.circular(
-              8,
-            ),
+        textAlign: TextAlign.center,
+        keyboardType: keyboard,
+        readOnly: field == 'total',
+        textInputAction: TextInputAction.next,
+        onChanged: field == 'total'
+            ? null
+            : (value) => _updateItem(rowIndex, fieldIndex, value),
+        onFieldSubmitted: (_) => _onFieldSubmitted(rowIndex, fieldIndex),
+        decoration: InputDecoration(
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
           ),
-          enabledBorder:
-              const OutlineInputBorder(
-            borderSide:
-                BorderSide(
-              color:
-                  Colors.white24,
-            ),
+          enabledBorder: OutlineInputBorder(
+            borderSide: BorderSide(color: GlassStyle.line24For(context)),
           ),
-          focusedBorder:
-              const OutlineInputBorder(
-            borderSide:
-                BorderSide(
-              color:
-                  Colors.cyanAccent,
-            ),
+          focusedBorder: OutlineInputBorder(
+            borderSide: BorderSide(color: AppTheme.accentFor(context)),
           ),
-          contentPadding:
-              const EdgeInsets
-                  .symmetric(
+          contentPadding: const EdgeInsets.symmetric(
             horizontal: 4,
             vertical: 6,
           ),
-          isDense:
-              true,
+          isDense: true,
         ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // حقل الصنف مع اقتراحات تلقائية
+  // ============================================================
+  Widget _buildNameFieldWithSuggestions(
+    int rowIndex,
+    int fieldIndex,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: RawAutocomplete<Map<String, String>>(
+        textEditingController: _controllers[rowIndex][fieldIndex],
+        focusNode: _focusNodes[rowIndex][fieldIndex],
+        displayStringForOption: (option) => option['name'] ?? '',
+        optionsBuilder: (TextEditingValue textValue) {
+          final query = textValue.text.trim();
+          if (query.isEmpty) {
+            return const Iterable<Map<String, String>>.empty();
+          }
+          return _itemsLookup.where(
+            (item) => (item['name'] ?? '').contains(query),
+          );
+        },
+        onSelected: (option) {
+          _fillRowFromSelectedItem(rowIndex, option);
+        },
+        fieldViewBuilder:
+            (context, controller, focusNode, onFieldSubmitted) {
+          return CompositedTransformTarget(
+            link: _nameFieldLinks[rowIndex],
+            child: TextFormField(
+              controller: controller,
+              focusNode: focusNode,
+              style: TextStyle(
+                color: AppTheme.textMainFor(context),
+                fontSize: 12,
+              ),
+              textAlign: TextAlign.center,
+              keyboardType: TextInputType.text,
+              textInputAction: TextInputAction.next,
+              onChanged: (value) =>
+                  _updateItem(rowIndex, fieldIndex, value),
+              onFieldSubmitted: (_) =>
+                  _onFieldSubmitted(rowIndex, fieldIndex),
+              decoration: InputDecoration(
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderSide:
+                      BorderSide(color: GlassStyle.line24For(context)),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderSide:
+                      BorderSide(color: AppTheme.accentFor(context)),
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 4,
+                  vertical: 6,
+                ),
+                isDense: true,
+              ),
+            ),
+          );
+        },
+        optionsViewBuilder: (context, onSelected, options) {
+          // ✅ عرض ثابت صريح — تحكم به من رقم واحد
+          const double boxWidth = 150.0;
+
+          return CompositedTransformFollower(
+            link: _nameFieldLinks[rowIndex],
+            showWhenUnlinked: false,
+            // ✅ في RTL: نربط بالحافة اليمنى للحقل
+            targetAnchor: Alignment.bottomRight,
+            followerAnchor: Alignment.topRight,
+            offset: const Offset(0, 6),
+            child: Align(
+              alignment: Alignment.topRight,
+              widthFactor: 1.0,
+              heightFactor: 1.0,
+              child: Material(
+                elevation: 8,
+                color: AppTheme.dropdownBackground(context),
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  width: boxWidth,
+                  constraints: const BoxConstraints(maxHeight: 200),
+                  child: ListView.builder(
+                    padding: EdgeInsets.zero,
+                    shrinkWrap: true,
+                    itemCount: options.length,
+                    itemBuilder: (context, index) {
+                      final option = options.elementAt(index);
+                      return InkWell(
+                        onTap: () => onSelected(option),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            vertical: 4,
+                            horizontal: 8,
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                option['name'] ?? '',
+                                style: TextStyle(
+                                  color: AppTheme.textMainFor(context),
+                                  fontSize: 12,
+                                  fontFamily: 'Cairo',
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 1),
+                              Text(
+                                'كود: ${option['code']}',
+                                style: TextStyle(
+                                  color: AppTheme.textMutedFor(context),
+                                  fontSize: 9,
+                                  fontFamily: 'Cairo',
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -1825,14 +1990,8 @@ setState(() {
           gradient:
               LinearGradient(
             colors: [
-              Colors.greenAccent
-                  .withOpacity(
-                0.15,
-              ),
-              Colors.greenAccent
-                  .withOpacity(
-                0.05,
-              ),
+              GlassStyle.successFill15For(context),
+              GlassStyle.successFill05For(context),
             ],
           ),
           borderRadius:
@@ -1841,10 +2000,7 @@ setState(() {
           ),
           border:
               Border.all(
-            color: Colors.greenAccent
-                .withOpacity(
-              0.3,
-            ),
+            color: GlassStyle.successBorder30For(context),
           ),
         ),
         child: Row(
@@ -1852,12 +2008,12 @@ setState(() {
               MainAxisAlignment
                   .spaceBetween,
           children: [
-            const Text(
+            Text(
               'الرصيد',
               style:
                   TextStyle(
                 color:
-                    Colors.white70,
+                    AppTheme.textSoftFor(context),
                 fontSize: 14,
                 fontFamily:
                     'Cairo',
@@ -1865,10 +2021,10 @@ setState(() {
             ),
             Row(
               children: [
-                const Icon(
+                Icon(
                   Icons.trending_up,
                   color:
-                      Colors.greenAccent,
+                      AppTheme.successFor(context),
                   size: 22,
                 ),
                 const SizedBox(
@@ -1880,9 +2036,9 @@ setState(() {
                     2,
                   ),
                   style:
-                      const TextStyle(
+                      TextStyle(
                     color:
-                        Colors.greenAccent,
+                        AppTheme.successFor(context),
                     fontSize: 20,
                     fontWeight:
                         FontWeight.bold,
@@ -1904,11 +2060,10 @@ setState(() {
     return DropdownButtonFormField<String?>(
       value:
           _selectedStoreCode,
-      dropdownColor:
-          Colors.indigo.shade900,
+      dropdownColor: AppTheme.dropdownBackground(context),
       style:
-          const TextStyle(
-        color: Colors.white,
+          TextStyle(
+        color: AppTheme.textMainFor(context),
         fontSize: 13,
       ),
       decoration:
@@ -1916,9 +2071,9 @@ setState(() {
         labelText:
             'المخزن',
         labelStyle:
-            const TextStyle(
+            TextStyle(
           color:
-              Colors.white70,
+              AppTheme.textSoftFor(context),
           fontSize: 11,
         ),
         border:
@@ -1929,11 +2084,11 @@ setState(() {
           ),
         ),
         enabledBorder:
-            const OutlineInputBorder(
+            OutlineInputBorder(
           borderSide:
               BorderSide(
             color:
-                Colors.white24,
+                GlassStyle.line24For(context),
           ),
         ),
         isDense:
@@ -1956,7 +2111,7 @@ setState(() {
               store['name'] ??
                   '',
               style:
-                  const TextStyle(
+                  TextStyle(
                 fontSize:
                     12,
               ),
@@ -1982,7 +2137,7 @@ setState(() {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text('مرتجع', style: TextStyle(color: _isReturn ? Colors.redAccent : Colors.white54, fontSize: 10, fontFamily: 'Cairo')),
+        Text('مرتجع', style: TextStyle(color: _isReturn ? AppTheme.dangerFor(context) : AppTheme.textHintFor(context), fontSize: 10, fontFamily: 'Cairo')),
         Switch(
           value: _isReturn,
           onChanged: (value) {
@@ -1995,8 +2150,8 @@ setState(() {
               _updateExpectedBalance();
             });
           },
-          activeColor: Colors.redAccent,
-          inactiveThumbColor: Colors.grey,
+          activeColor: AppTheme.dangerFor(context),
+          inactiveThumbColor: AppTheme.neutralFor(context),
           materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
         ),
       ],
@@ -2014,8 +2169,8 @@ setState(() {
               TextStyle(
             color:
                 _isAddToStore
-                    ? Colors.greenAccent
-                    : Colors.white54,
+                    ? AppTheme.successFor(context)
+                    : AppTheme.textHintFor(context),
             fontSize: 10,
             fontFamily:
                 'Cairo',
@@ -2032,9 +2187,9 @@ setState(() {
             });
           },
           activeColor:
-              Colors.greenAccent,
+              AppTheme.successFor(context),
           inactiveThumbColor:
-              Colors.grey,
+              AppTheme.neutralFor(context),
           materialTapTargetSize:
               MaterialTapTargetSize
                   .shrinkWrap,
@@ -2058,8 +2213,8 @@ setState(() {
               TextStyle(
             color:
                 _isAddToCoding
-                    ? Colors.cyanAccent
-                    : Colors.white54,
+                    ? AppTheme.accentFor(context)
+                    : AppTheme.textHintFor(context),
             fontSize: 10,
             fontFamily:
                 'Cairo',
@@ -2076,9 +2231,9 @@ setState(() {
             });
           },
           activeColor:
-              Colors.cyanAccent,
+              AppTheme.accentFor(context),
           inactiveThumbColor:
-              Colors.grey,
+              AppTheme.neutralFor(context),
           materialTapTargetSize:
               MaterialTapTargetSize
                   .shrinkWrap,
@@ -2095,11 +2250,10 @@ setState(() {
     return DropdownButtonFormField<String?>(
       value:
           _selectedSupplier,
-      dropdownColor:
-          Colors.indigo.shade900,
+      dropdownColor: AppTheme.dropdownBackground(context),
       style:
-          const TextStyle(
-        color: Colors.white,
+          TextStyle(
+        color: AppTheme.textMainFor(context),
         fontSize: 13,
       ),
       isExpanded:
@@ -2109,9 +2263,9 @@ setState(() {
         labelText:
             'المورد',
         labelStyle:
-            const TextStyle(
+            TextStyle(
           color:
-              Colors.white70,
+              AppTheme.textSoftFor(context),
           fontSize: 11,
         ),
         border:
@@ -2122,11 +2276,11 @@ setState(() {
           ),
         ),
         enabledBorder:
-            const OutlineInputBorder(
+            OutlineInputBorder(
           borderSide:
               BorderSide(
             color:
-                Colors.white24,
+                GlassStyle.line24For(context),
           ),
         ),
         isDense:
@@ -2149,7 +2303,7 @@ setState(() {
               supplier['name'] ??
                   '',
               style:
-                  const TextStyle(
+                  TextStyle(
                 fontSize:
                     12,
               ),
@@ -2192,7 +2346,7 @@ setState(() {
           textAlign:
               TextAlign.center,
           style:
-              const TextStyle(
+              TextStyle(
             fontFamily:
                 'Cairo',
           ),
@@ -2221,41 +2375,30 @@ setState(() {
         appBar:
             AppBar(
           title:
-              const Text(
+              Text(
             'المشتريات',
             style:
                 TextStyle(
               color:
-                  Colors.white,
+                  AppTheme.textMainFor(context),
             ),
           ),
           backgroundColor:
-              Colors.transparent,
+              AppTheme.appBarBg,
         ),
         body:
             Container(
           decoration:
-              const BoxDecoration(
-            gradient:
-                LinearGradient(
-              colors: [
-                Colors.black,
-                Color(
-                  0xFF1A237E,
-                ),
-                Colors.black,
-              ],
-            ),
-          ),
+              BoxDecoration(gradient: LinearGradient(colors: AppTheme.pageGradient(context))),
           child:
-              const Center(
+              Center(
             child:
                 Text(
               'ليس لديك صلاحية لعرض المشتريات',
               style:
                   TextStyle(
                 color:
-                    Colors.white70,
+                    AppTheme.textSoftFor(context),
                 fontFamily:
                     'Cairo',
                 fontSize:
@@ -2305,14 +2448,14 @@ setState(() {
                 mainAxisSize:
                     MainAxisSize.min,
                 children: [
-                  const Text(
+                  Text(
                     'المشتريات',
                     style:
                         TextStyle(
                       fontFamily:
                           'Cairo',
                       color:
-                          Colors.white,
+                          AppTheme.textMainFor(context),
                       fontSize:
                           15,
                     ),
@@ -2322,13 +2465,13 @@ setState(() {
                     Text(
                       'إذن رقم: $_currentSerial',
                       style:
-                          const TextStyle(
+                          TextStyle(
                         fontFamily:
                             'Cairo',
                         fontSize:
                             13,
                         color:
-                            Colors.cyanAccent,
+                            AppTheme.accentFor(context),
                         fontWeight:
                             FontWeight.bold,
                       ),
@@ -2338,13 +2481,13 @@ setState(() {
                       _selectedBranchCode,
                     ),
                     style:
-                        const TextStyle(
+                        TextStyle(
                       fontFamily:
                           'Cairo',
                       fontSize:
                           10,
                       color:
-                          Colors.white60,
+                          AppTheme.textMutedFor(context),
                     ),
                   ),
                 ],
@@ -2365,11 +2508,7 @@ setState(() {
                   ),
                   decoration:
                       BoxDecoration(
-                    color: Colors
-                        .white
-                        .withOpacity(
-                      0.08,
-                    ),
+                    color: GlassStyle.fill08For(context),
                     borderRadius:
                         BorderRadius
                             .circular(
@@ -2378,17 +2517,17 @@ setState(() {
                     border:
                         Border.all(
                       color:
-                          Colors.white24,
+                          GlassStyle.line24For(context),
                     ),
                   ),
                   child:
                       Row(
                     children: [
-                      const Icon(
+                      Icon(
                         Icons
                             .calendar_today,
                         color:
-                            Colors.amber,
+                            AppTheme.warningFor(context),
                         size:
                             16,
                       ),
@@ -2399,9 +2538,9 @@ setState(() {
                       Text(
                         _selectedDate,
                         style:
-                            const TextStyle(
+                            TextStyle(
                           color:
-                              Colors.white,
+                              AppTheme.textMainFor(context),
                           fontSize:
                               13,
                           fontFamily:
@@ -2417,7 +2556,7 @@ setState(() {
             ],
           ),
           backgroundColor:
-              Colors.transparent,
+              AppTheme.appBarBg,
           elevation:
               0,
           centerTitle:
@@ -2429,28 +2568,17 @@ setState(() {
         body:
             Container(
           decoration:
-              const BoxDecoration(
-            gradient:
-                LinearGradient(
-              colors: [
-                Colors.black,
-                Color(
-                  0xFF1A237E,
-                ),
-                Colors.black,
-              ],
-            ),
-          ),
+              BoxDecoration(gradient: LinearGradient(colors: AppTheme.pageGradient(context))),
           child:
               SafeArea(
             child:
                 (_isLoading ||
                         _isSaving)
-                    ? const Center(
+                    ? Center(
                         child:
                             CircularProgressIndicator(
                           color:
-                              Colors.white,
+                              AppTheme.textMainFor(context),
                         ),
                       )
                     : SingleChildScrollView(
@@ -2507,11 +2635,11 @@ setState(() {
                                                   ),
                                                   IconButton(
                                                     icon:
-                                                        const Icon(
+                                                        Icon(
                                                       Icons
                                                           .add_circle,
                                                       color:
-                                                          Colors.amber,
+                                                          AppTheme.warningFor(context),
                                                       size:
                                                           20,
                                                     ),
@@ -2600,11 +2728,11 @@ setState(() {
                                               ),
                                               IconButton(
                                                 icon:
-                                                    const Icon(
+                                                    Icon(
                                                   Icons
                                                       .add_circle,
                                                   color:
-                                                      Colors.amber,
+                                                      AppTheme.warningFor(context),
                                                   size:
                                                       20,
                                                 ),
@@ -2726,9 +2854,9 @@ setState(() {
                                             controller: _discountPercentController,
   onChanged: (_) => _onDiscountPercentChanged(),
                                             style:
-                                                const TextStyle(
+                                                TextStyle(
                                               color:
-                                                  Colors.white,
+                                                  AppTheme.textMainFor(context),
                                               fontSize:
                                                   13,
                                             ),
@@ -2741,9 +2869,9 @@ setState(() {
                                               labelText:
                                                   'نسبة الخصم %',
                                               labelStyle:
-                                                  const TextStyle(
+                                                  TextStyle(
                                                 color:
-                                                    Colors.white70,
+                                                    AppTheme.textSoftFor(context),
                                                 fontSize:
                                                     11,
                                               ),
@@ -2775,9 +2903,9 @@ setState(() {
                                             controller: _discountAmountController,
   onChanged: (_) => _onDiscountAmountChanged(),
                                             style:
-                                                const TextStyle(
+                                                TextStyle(
                                               color:
-                                                  Colors.white,
+                                                  AppTheme.textMainFor(context),
                                               fontSize:
                                                   13,
                                             ),
@@ -2790,9 +2918,9 @@ setState(() {
                                               labelText:
                                                   'مبلغ الخصم',
                                               labelStyle:
-                                                  const TextStyle(
+                                                  TextStyle(
                                                 color:
-                                                    Colors.white70,
+                                                    AppTheme.textSoftFor(context),
                                                 fontSize:
                                                     11,
                                               ),
@@ -2837,22 +2965,14 @@ setState(() {
                                         ),
                                         decoration:
                                             BoxDecoration(
-                                          color: Colors
-                                              .greenAccent
-                                              .withOpacity(
-                                            0.1,
-                                          ),
+                                          color: GlassStyle.successFill10For(context),
                                           borderRadius:
                                               BorderRadius.circular(
                                             8,
                                           ),
                                           border:
                                               Border.all(
-                                            color: Colors
-                                                .greenAccent
-                                                .withOpacity(
-                                              0.3,
-                                            ),
+                                            color: GlassStyle.successBorder30For(context),
                                           ),
                                         ),
                                         child:
@@ -2862,12 +2982,12 @@ setState(() {
                                             mainAxisAlignment:
                                                 MainAxisAlignment.center,
                                             children: [
-                                              const Text(
+                                              Text(
                                                 'الإجمالي بعد الخصم',
                                                 style:
                                                     TextStyle(
                                                   color:
-                                                      Colors.white70,
+                                                      AppTheme.textSoftFor(context),
                                                   fontSize:
                                                       13,
                                                   fontFamily:
@@ -2881,9 +3001,9 @@ setState(() {
                                               Text(
                                                 netTotalText(),
                                                 style:
-                                                    const TextStyle(
+                                                    TextStyle(
                                                   color:
-                                                      Colors.greenAccent,
+                                                      AppTheme.successFor(context),
                                                   fontSize:
                                                       16,
                                                   fontWeight:
@@ -2919,9 +3039,9 @@ setState(() {
                                     style:
                                         ElevatedButton.styleFrom(
                                       backgroundColor:
-                                          Colors.greenAccent,
+                                          AppTheme.successFor(context),
                                       foregroundColor:
-                                          Colors.black,
+                                          AppTheme.onAccentFor(context),
                                       padding:
                                           const EdgeInsets.symmetric(
                                         vertical:
@@ -2941,7 +3061,7 @@ setState(() {
                                           ? 'جاري الحفظ...'
                                           : 'حفظ',
                                       style:
-                                          const TextStyle(
+                                          TextStyle(
                                         fontSize:
                                             14,
                                         fontWeight:
@@ -2978,9 +3098,9 @@ setState(() {
                                     style:
                                         ElevatedButton.styleFrom(
                                       backgroundColor:
-                                          Colors.white10,
+                                          GlassStyle.fill10For(context),
                                       foregroundColor:
-                                          Colors.white,
+                                          Theme.of(context).colorScheme.onPrimary,
                                       padding:
                                           const EdgeInsets.symmetric(
                                         vertical:

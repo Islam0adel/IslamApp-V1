@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../core/theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../main.dart'; 
@@ -85,12 +86,12 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
       child: Scaffold(
         extendBodyBehindAppBar: true,
         appBar: AppBar(
-          title: const Text('الإعدادات', 
-            style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold, color: Colors.white)),
+          title: Text('الإعدادات', 
+            style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold, color: AppTheme.textMainFor(context))),
           centerTitle: true,
-          backgroundColor: const Color.fromARGB(24, 75, 42, 194),
+          backgroundColor: AppTheme.appBarBgGlass,
           elevation: 0,
-          iconTheme: const IconThemeData(color: Colors.white),
+          iconTheme: IconThemeData(color: AppTheme.textMainFor(context)),
         ),
         body: Stack(
           children: [
@@ -100,9 +101,7 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
                   gradient: LinearGradient(
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
-                    colors: _isDark 
-                      ? [const Color.fromARGB(255, 33, 31, 147), const Color(0xFF161B22)]
-                      : [const Color.fromARGB(255, 33, 44, 159), const Color(0xFF3949AB)],
+                    colors: AppTheme.settingsGradient(context),
                   ),
                 ),
               ),
@@ -116,7 +115,7 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
                 height: 300,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: Colors.white.withOpacity(0.04),
+                  color: GlassStyle.fill04For(context),
                 ),
               ),
             ),
@@ -134,20 +133,20 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
                             Container(
                               padding: const EdgeInsets.all(12),
                               decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.1),
+                                color: GlassStyle.fill10For(context),
                                 shape: BoxShape.circle,
                               ),
-                              child: const Icon(Icons.person_rounded, color: Colors.cyanAccent, size: 40),
+                              child: Icon(Icons.person_rounded, color: AppTheme.accentFor(context), size: 40),
                             ),
                             const SizedBox(width: 15),
                             Expanded(
                               child: _isLoadingData 
-                                  ? const Align(
+                                  ? Align(
                                       alignment: Alignment.centerRight,
                                       child: SizedBox(
                                         width: 20,
                                         height: 20,
-                                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.cyanAccent),
+                                        child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.accentFor(context)),
                                       ),
                                     )
                                   : Column(
@@ -155,8 +154,8 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
                                       children: [
                                         Text(
                                           _userName,
-                                          style: const TextStyle(
-                                            color: Colors.white,
+                                          style: TextStyle(
+                                            color: AppTheme.textMainFor(context),
                                             fontSize: 18,
                                             fontWeight: FontWeight.bold,
                                             fontFamily: 'Cairo',
@@ -165,7 +164,7 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
                                         Text(
                                           _companyName,
                                           style: TextStyle(
-                                            color: Colors.white.withOpacity(0.6),
+                                            color: AppTheme.textMutedFor(context),
                                             fontSize: 13,
                                             fontFamily: 'Cairo',
                                           ),
@@ -188,7 +187,7 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
                               title: 'الوضع الليلي (Dark Mode)',
                               trailing: Switch(
                                 value: _isDark,
-                                activeColor: Colors.cyanAccent,
+                                activeColor: AppTheme.accentFor(context),
                                 onChanged: (val) {
                                   try {
                                     IslamApp.of(context).changeTheme(
@@ -200,8 +199,8 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
                                 },
                               ),
                             ),
-                            const Divider(
-  color: Colors.white10,
+                            Divider(
+  color: GlassStyle.line10For(context),
   height: 20,
 ),
 
@@ -210,7 +209,7 @@ _buildSettingRow(
   title: 'إظهار رسالة اختيار الفرع',
   trailing: Switch(
     value: _showBranchDialog,
-    activeColor: Colors.cyanAccent,
+    activeColor: AppTheme.accentFor(context),
     onChanged: (value) async {
       final prefs = await SharedPreferences.getInstance();
 
@@ -230,12 +229,12 @@ _buildSettingRow(
     },
   ),
 ),
-                            const Divider(color: Colors.white10, height: 20),
+                            Divider(color: GlassStyle.line10For(context), height: 20),
                             _buildSettingRow(
                               icon: Icons.translate_rounded,
                               title: 'لغة التطبيق',
-                              trailing: const Text('العربية', 
-                                style: TextStyle(color: Colors.cyanAccent, fontFamily: 'Cairo')),
+                              trailing: Text('العربية', 
+                                style: TextStyle(color: AppTheme.accentFor(context), fontFamily: 'Cairo')),
                             ),
                           ],
                         ),
@@ -263,7 +262,7 @@ _buildSettingRow(
       setState(() {}); // تحديث الواجهة إن لزم
     },
   ),
-  const Divider(color: Colors.white10, height: 20),
+  Divider(color: GlassStyle.line10For(context), height: 20),
 ],
                             
                             _buildSettingRow(
@@ -276,14 +275,14 @@ _buildSettingRow(
                                   );
                                 },
                             ),
-                            const Divider(color: Colors.white10, height: 20),
+                            Divider(color: GlassStyle.line10For(context), height: 20),
                             _buildSettingRow(
                               icon: Icons.contact_support_rounded,
                               title: 'تواصل مع الدعم الفني',
                               onTap: () {},
                             ),
 
-                            const Divider(color: Colors.white10, height: 20),
+                            Divider(color: GlassStyle.line10For(context), height: 20),
                             _buildSettingRow(
                               icon: Icons.restore_rounded,
                               title: 'إعادة تعيين البيانات',
@@ -294,11 +293,11 @@ _buildSettingRow(
                                 );
                               },
                             ),
-                            const Divider(color: Colors.white10, height: 20),
+                            Divider(color: GlassStyle.line10For(context), height: 20),
                             
                             // زر إدارة الشركات محمي أيضاً لصاحب البرنامج (99)
                             if (_jobCode == '99') ...[
-                              const Divider(color: Colors.white10, height: 20),
+                              Divider(color: GlassStyle.line10For(context), height: 20),
                               _buildSettingRow(
                                 icon: Icons.business_center,
                                 title: 'إدارة الشركات',
@@ -311,7 +310,7 @@ _buildSettingRow(
                               ),
                             ],
                             
-                            const Divider(color: Colors.white10, height: 20),
+                            Divider(color: GlassStyle.line10For(context), height: 20),
                             _buildSettingRow(
                               icon: Icons.info_outline_rounded,
                               title: 'حول الإصدار V1.0',
@@ -322,11 +321,11 @@ _buildSettingRow(
                       ),
                       
                       const SizedBox(height: 40),
-                      const Opacity(
+                      Opacity(
                         opacity: 0.3,
                         child: Text(
                           "Designed & Developed by Islam",
-                          style: TextStyle(color: Colors.white, fontSize: 10, letterSpacing: 1.1),
+                          style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 10, letterSpacing: 1.1),
                         ),
                       ),
                     ],
@@ -348,7 +347,7 @@ _buildSettingRow(
         child: Text(
           title,
           style: TextStyle(
-            color: Colors.white.withOpacity(0.8),
+            color: AppTheme.textStrongFor(context),
             fontSize: 14,
             fontWeight: FontWeight.bold,
             fontFamily: 'Cairo',
@@ -374,20 +373,20 @@ _buildSettingRow(
             Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.05),
+                color: GlassStyle.fill05For(context),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: Icon(icon, color: Colors.white, size: 20),
+              child: Icon(icon, color: AppTheme.textMainFor(context), size: 20),
             ),
             const SizedBox(width: 15),
             Text(
               title,
-              style: const TextStyle(color: Colors.white, fontSize: 15, fontFamily: 'Cairo'),
+              style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 15, fontFamily: 'Cairo'),
             ),
             const Spacer(),
             if (trailing != null) trailing,
             if (onTap != null && trailing == null)
-              const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white30, size: 14),
+              const Icon(Icons.arrow_forward_ios_rounded, color: AppTheme.iconFaint, size: 14),
           ],
         ),
       ),

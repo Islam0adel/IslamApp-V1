@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../core/theme.dart';
 import '../../services/permissions_service.dart';
 import '../../views/widgets/glass_card.dart';
 import 'reports_page.dart';
@@ -82,10 +83,10 @@ class ReportsDashboardPage extends StatelessWidget {
                 Expanded(
                   child: Text(
                     title,
-                    style: const TextStyle(color: Colors.white, fontFamily: 'Cairo', fontWeight: FontWeight.bold),
+                    style: TextStyle(color: AppTheme.textMainFor(context), fontFamily: 'Cairo', fontWeight: FontWeight.bold),
                   ),
                 ),
-                const Icon(Icons.arrow_back_ios_new, color: Colors.white38, size: 16),
+                Icon(Icons.arrow_back_ios_new, color: AppTheme.textFaintFor(context), size: 16),
               ],
             ),
           ),
@@ -103,17 +104,17 @@ class ReportsDashboardPage extends StatelessWidget {
     final List<Widget> cards = [];
 
     if (canSales) {
-      cards.add(_card(context, 'تقرير المبيعات', Icons.point_of_sale, Colors.greenAccent, () => _open(context, 1)));
+      cards.add(_card(context, 'تقرير المبيعات', Icons.point_of_sale, AppTheme.successFor(context), () => _open(context, 1)));
     }
     if (canPeriod) {
-      cards.add(_card(context, 'تقرير الفترة', Icons.analytics, Colors.cyanAccent, () => _open(context, 2)));
+      cards.add(_card(context, 'تقرير الفترة', Icons.analytics, AppTheme.accentFor(context), () => _open(context, 2)));
     }
     if (canPeriod && canExtended) {
       cards.add(_card(
         context,
         'التقرير المالي الموسع / صافي الجرد الحالي',
         Icons.account_balance_wallet,
-        Colors.amber,
+        AppTheme.warningFor(context),
         () => _open(context, 3),
       ));
     }
@@ -126,7 +127,7 @@ class ReportsDashboardPage extends StatelessWidget {
           context,
           report['name'],
           Icons.insights,
-          Colors.blueAccent,
+          AppTheme.infoFor(context),
           () => _open(context, report['id'] + 3),
         ));
       }
@@ -135,14 +136,14 @@ class ReportsDashboardPage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('لوحة التقارير', style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
-        backgroundColor: Colors.transparent,
+        backgroundColor: AppTheme.appBarBg,
         elevation: 0,
       ),
       extendBodyBehindAppBar: true,
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [Colors.black, Color(0xFF1A237E), Colors.black],
+            colors: AppTheme.dashGradientMain(context),
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
@@ -154,7 +155,7 @@ class ReportsDashboardPage extends StatelessWidget {
               children: [
                 Text(
                   'التقارير والتحليلات',
-                  style: TextStyle(color: Colors.cyanAccent, fontFamily: 'Cairo', fontSize: 18, fontWeight: FontWeight.bold),
+                  style: TextStyle(color: AppTheme.accentFor(context), fontFamily: 'Cairo', fontSize: 18, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 10),
                 Expanded(

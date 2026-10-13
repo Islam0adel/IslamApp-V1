@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../core/theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/api_service.dart';
 import '../../views/widgets/glass_card.dart';
@@ -54,7 +55,7 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
       });
     } catch (e) {
       setState(() => _isLoading = false);
-      _showSnackBar(e.toString(), Colors.red);
+      _showSnackBar(e.toString(), AppTheme.dangerStrongFor(context));
     }
   }
 
@@ -69,10 +70,10 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
         _codeController.clear();
         _nameController.clear();
         await _fetchCompanies();
-        _showSnackBar('✅ تم إضافة الشركة بنجاح', Colors.green);
+        _showSnackBar('✅ تم إضافة الشركة بنجاح', AppTheme.successStrongFor(context));
         Navigator.pop(context);
       } catch (e) {
-        _showSnackBar(e.toString(), Colors.red);
+        _showSnackBar(e.toString(), AppTheme.dangerStrongFor(context));
       }
     }
   }
@@ -87,10 +88,10 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
           adminJobCode: '99',
         );
         await _fetchCompanies();
-        _showSnackBar('✅ تم تعديل الشركة بنجاح', Colors.green);
+        _showSnackBar('✅ تم تعديل الشركة بنجاح', AppTheme.successStrongFor(context));
         Navigator.pop(context);
       } catch (e) {
-        _showSnackBar(e.toString(), Colors.red);
+        _showSnackBar(e.toString(), AppTheme.dangerStrongFor(context));
       }
     }
   }
@@ -105,8 +106,8 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('حذف', style: TextStyle(color: Colors.white)),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.dangerStrongFor(context)),
+            child: Text('حذف', style: TextStyle(color: Theme.of(context).colorScheme.onPrimary)),
           ),
         ],
       ),
@@ -116,9 +117,9 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
     try {
       await _api.deleteCompany(code, '99');
       await _fetchCompanies();
-      _showSnackBar('🗑️ تم حذف الشركة بنجاح', Colors.orange);
+      _showSnackBar('🗑️ تم حذف الشركة بنجاح', AppTheme.warningOrangeFor(context));
     } catch (e) {
-      _showSnackBar(e.toString(), Colors.red);
+      _showSnackBar(e.toString(), AppTheme.dangerStrongFor(context));
     }
   }
 
@@ -128,10 +129,10 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
       await _fetchCompanies();
       _showSnackBar(
         !currentStatus ? '✅ تم تفعيل الشركة' : '⛔ تم إيقاف الشركة',
-        Colors.orange,
+        AppTheme.warningOrangeFor(context),
       );
     } catch (e) {
-      _showSnackBar(e.toString(), Colors.red);
+      _showSnackBar(e.toString(), AppTheme.dangerStrongFor(context));
     }
   }
 
@@ -206,8 +207,8 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
               Navigator.pop(ctx);
               _deleteCompany(code);
             },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('حذف', style: TextStyle(color: Colors.white)),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.dangerStrongFor(context)),
+            child: Text('حذف', style: TextStyle(color: Theme.of(context).colorScheme.onPrimary)),
           ),
         ],
       ),
@@ -236,7 +237,7 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
           Container(
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                colors: [Colors.indigo.shade900, Colors.black],
+                colors: AppTheme.dashGradientIndigo(context),
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
@@ -253,7 +254,7 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
                         label: const Text('إضافة شركة جديدة'),
                         onPressed: _showAddCompanyDialog,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.cyan.shade700,
+                          backgroundColor: AppTheme.accentDeep,
                           padding: const EdgeInsets.symmetric(vertical: 14),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
@@ -276,23 +277,23 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
                               margin: const EdgeInsets.only(bottom: 12),
                               child: ListTile(
                                 leading: CircleAvatar(
-                                  backgroundColor: isActive ? Colors.green : Colors.red,
+                                  backgroundColor: isActive ? AppTheme.successStrongFor(context) : AppTheme.dangerStrongFor(context),
                                   child: Text(code ?? '??'),
                                 ),
                                 title: Text(
                                   name ?? 'بدون اسم',
-                                  style: const TextStyle(color: Colors.white),
+                                  style: TextStyle(color: AppTheme.textMainFor(context)),
                                 ),
                                 subtitle: Text(
                                   isActive ? '🟢 نشطة' : '🔴 موقوفة',
                                   style: TextStyle(
-                                    color: isActive ? Colors.greenAccent : Colors.redAccent,
+                                    color: isActive ? AppTheme.successFor(context) : AppTheme.dangerFor(context),
                                   ),
                                 ),
                                 trailing: Switch(
                                   value: isActive,
                                   onChanged: (_) => _toggleCompany(code, isActive),
-                                  activeColor: Colors.green,
+                                  activeColor: AppTheme.successStrongFor(context),
                                 ),
                               ),
                             ),

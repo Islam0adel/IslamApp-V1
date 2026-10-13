@@ -1,6 +1,7 @@
 // lib/views/dashboard/supplier_settlement_history_page.dart
 
 import 'package:flutter/material.dart';
+import '../../core/theme.dart';
 import 'package:intl/intl.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -392,7 +393,7 @@ double _totalSupplierBalance = 0.0;
     if (docId == null || docId.isEmpty) {
       _showSnackBar(
         'رقم الحركة غير موجود',
-        Colors.red,
+        AppTheme.dangerStrongFor(context),
       );
       return;
     }
@@ -400,34 +401,34 @@ double _totalSupplierBalance = 0.0;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF0F172A),
-        title: const Text(
+        backgroundColor: AppTheme.dialogBackground(context),
+        title: Text(
           'تأكيد الحذف',
           style: TextStyle(
-            color: Colors.white,
+            color: AppTheme.textMainFor(context),
             fontFamily: 'Cairo',
           ),
         ),
         content: Text(
           'هل تريد حذف الدفعة رقم ${item['serial'] ?? ''}؟',
-          style: const TextStyle(
-            color: Colors.white70,
+          style: TextStyle(
+            color: AppTheme.textSoftFor(context),
             fontFamily: 'Cairo',
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text(
+            child: Text(
               'إلغاء',
-              style: TextStyle(color: Colors.white70),
+              style: TextStyle(color: AppTheme.textSoftFor(context)),
             ),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text(
+            child: Text(
               'حذف',
-              style: TextStyle(color: Colors.redAccent),
+              style: TextStyle(color: AppTheme.dangerFor(context)),
             ),
           ),
         ],
@@ -444,13 +445,13 @@ double _totalSupplierBalance = 0.0;
     if (success) {
       _showSnackBar(
         'تم حذف الدفعة بنجاح',
-        Colors.green,
+        AppTheme.successStrongFor(context),
       );
       await _loadData();
     } else {
       _showSnackBar(
         'فشل حذف الدفعة',
-        Colors.red,
+        AppTheme.dangerStrongFor(context),
       );
     }
   }
@@ -461,7 +462,7 @@ double _totalSupplierBalance = 0.0;
 
   Future<void> _exportExcel() async {
     if (_filteredSettlements.isEmpty) {
-      _showSnackBar('لا توجد بيانات للتصدير', Colors.orange);
+      _showSnackBar('لا توجد بيانات للتصدير', AppTheme.warningOrangeFor(context));
       return;
     }
 
@@ -521,12 +522,12 @@ double _totalSupplierBalance = 0.0;
 
       _showSnackBar(
         'تم تصدير Excel بنجاح',
-        Colors.green,
+        AppTheme.successStrongFor(context),
       );
     } catch (e) {
       _showSnackBar(
         'فشل تصدير Excel: $e',
-        Colors.red,
+        AppTheme.dangerStrongFor(context),
       );
     }
   }
@@ -537,7 +538,7 @@ double _totalSupplierBalance = 0.0;
 
   Future<void> _exportPDF() async {
     if (_filteredSettlements.isEmpty) {
-      _showSnackBar('لا توجد بيانات للتصدير', Colors.orange);
+      _showSnackBar('لا توجد بيانات للتصدير', AppTheme.warningOrangeFor(context));
       return;
     }
 
@@ -598,12 +599,12 @@ double _totalSupplierBalance = 0.0;
 
       _showSnackBar(
         'تم تصدير PDF بنجاح',
-        Colors.green,
+        AppTheme.successStrongFor(context),
       );
     } catch (e) {
       _showSnackBar(
         'فشل تصدير PDF: $e',
-        Colors.red,
+        AppTheme.dangerStrongFor(context),
       );
     }
   }
@@ -637,11 +638,11 @@ double _totalSupplierBalance = 0.0;
   Widget _buildTotalsCard() {
   // قائمة العناصر الخمسة
   final items = [
-    _buildTotalItem('الرصيد السابق', _previousBalance, Colors.blueAccent),
-    _buildTotalItem('مشتريات الفترة', _totalPurchases, Colors.cyanAccent),
-    _buildTotalItem('دفعات الفترة', _totalSettlements, Colors.redAccent),
-    _buildTotalItem('المتبقي', _remainingBalance, Colors.greenAccent),
-    _buildTotalItem('إجمالي رصيد المورد', _totalSupplierBalance, Colors.purpleAccent),
+    _buildTotalItem('الرصيد السابق', _previousBalance, AppTheme.infoFor(context)),
+    _buildTotalItem('مشتريات الفترة', _totalPurchases, AppTheme.accentFor(context)),
+    _buildTotalItem('دفعات الفترة', _totalSettlements, AppTheme.dangerFor(context)),
+    _buildTotalItem('المتبقي', _remainingBalance, AppTheme.successFor(context)),
+    _buildTotalItem('إجمالي رصيد المورد', _totalSupplierBalance, AppTheme.extraPurpleFor(context)),
   ];
 
   // على الشاشات الصغيرة: 3 في السطر الأول و 2 في الثاني
@@ -676,8 +677,8 @@ double _totalSupplierBalance = 0.0;
     children: [
       Text(
         title,
-        style: const TextStyle(
-          color: Colors.white60,
+        style: TextStyle(
+          color: AppTheme.textMutedFor(context),
           fontFamily: 'Cairo',
           fontSize: 10,
         ),
@@ -703,7 +704,7 @@ double _totalSupplierBalance = 0.0;
     Map<String, dynamic> item,
   ) {
     return Card(
-      color: Colors.white.withOpacity(0.05),
+      color: GlassStyle.fill05For(context),
       margin: const EdgeInsets.symmetric(
         horizontal: 6,
         vertical: 4,
@@ -723,11 +724,11 @@ double _totalSupplierBalance = 0.0;
                   CircleAvatar(
                     radius: 17,
                     backgroundColor:
-                        Colors.amber.withOpacity(0.15),
+                        GlassStyle.warningFill15For(context),
                     child: Text(
                       '${item['serial'] ?? ''}',
-                      style: const TextStyle(
-                        color: Colors.amber,
+                      style: TextStyle(
+                        color: AppTheme.warningFor(context),
                         fontSize: 10,
                         fontWeight: FontWeight.bold,
                       ),
@@ -741,39 +742,39 @@ double _totalSupplierBalance = 0.0;
                       children: [
                         Text(
                           item['supplier_name']?.toString() ?? '',
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: AppTheme.textMainFor(context),
                             fontSize: 14,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
                         Text(
                           'إذن رقم: ${item['serial'] ?? ''}',
-                          style: const TextStyle(
-                            color: Colors.cyanAccent,
+                          style: TextStyle(
+                            color: AppTheme.accentFor(context),
                             fontSize: 10,
                             fontFamily: 'Cairo',
                           ),
                         ),
                         Text(
                           'التاريخ: ${item['date'] ?? ''}',
-                          style: const TextStyle(
-                            color: Colors.white60,
+                          style: TextStyle(
+                            color: AppTheme.textMutedFor(context),
                             fontSize: 10,
                           ),
                         ),
                         Text(
                           'الفرع: ${_getBranchName(item['branch_code']?.toString())}',
-                          style: const TextStyle(
-                            color: Colors.greenAccent,
+                          style: TextStyle(
+                            color: AppTheme.successFor(context),
                             fontSize: 10,
                             fontFamily: 'Cairo',
                           ),
                         ),
                         Text(
                           'الموظف: ${item['employee']?.toString() ?? 'غير محدد'}',
-                          style: const TextStyle(
-                            color: Colors.white54,
+                          style: TextStyle(
+                            color: AppTheme.textHintFor(context),
                             fontSize: 10,
                             fontFamily: 'Cairo',
                           ),
@@ -783,8 +784,8 @@ double _totalSupplierBalance = 0.0;
                   ),
                   Text(
                     _formatCurrency(item['amount']),
-                    style: const TextStyle(
-                      color: Colors.redAccent,
+                    style: TextStyle(
+                      color: AppTheme.dangerFor(context),
                       fontSize: 15,
                       fontWeight: FontWeight.bold,
                     ),
@@ -801,12 +802,12 @@ double _totalSupplierBalance = 0.0;
                     _getTreasuryName(
                       item['treasury']?.toString(),
                     ),
-                    Colors.blueAccent,
+                    AppTheme.infoFor(context),
                   ),
                   _infoChip(
                     'طريقة الدفع',
                     item['payment_method']?.toString() ?? '',
-                    Colors.cyanAccent,
+                    AppTheme.accentFor(context),
                   ),
                 ],
               ),
@@ -820,15 +821,15 @@ double _totalSupplierBalance = 0.0;
                       .canEditSupplierSettlement)
                     TextButton.icon(
                       onPressed: () => _editSettlement(item),
-                      icon: const Icon(
+                      icon: Icon(
                         Icons.edit,
-                        color: Colors.amber,
+                        color: AppTheme.warningFor(context),
                         size: 18,
                       ),
-                      label: const Text(
+                      label: Text(
                         'تعديل',
                         style: TextStyle(
-                          color: Colors.amber,
+                          color: AppTheme.warningFor(context),
                           fontFamily: 'Cairo',
                           fontSize: 11,
                         ),
@@ -838,15 +839,15 @@ double _totalSupplierBalance = 0.0;
                       .canDeleteSupplierSettlement)
                     TextButton.icon(
                       onPressed: () => _deleteSettlement(item),
-                      icon: const Icon(
+                      icon: Icon(
                         Icons.delete,
-                        color: Colors.redAccent,
+                        color: AppTheme.dangerFor(context),
                         size: 18,
                       ),
-                      label: const Text(
+                      label: Text(
                         'حذف',
                         style: TextStyle(
-                          color: Colors.redAccent,
+                          color: AppTheme.dangerFor(context),
                           fontFamily: 'Cairo',
                           fontSize: 11,
                         ),
@@ -898,11 +899,11 @@ double _totalSupplierBalance = 0.0;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF0F172A),
-        title: const Text(
+        backgroundColor: AppTheme.dialogBackground(context),
+        title: Text(
           'تفاصيل الدفعة',
           style: TextStyle(
-            color: Colors.white,
+            color: AppTheme.textMainFor(context),
             fontFamily: 'Cairo',
           ),
         ),
@@ -947,10 +948,10 @@ double _totalSupplierBalance = 0.0;
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text(
+            child: Text(
               'إغلاق',
               style: TextStyle(
-                color: Colors.cyanAccent,
+                color: AppTheme.accentFor(context),
               ),
             ),
           ),
@@ -970,15 +971,15 @@ double _totalSupplierBalance = 0.0;
           children: [
             TextSpan(
               text: '$label: ',
-              style: const TextStyle(
-                color: Colors.white54,
+              style: TextStyle(
+                color: AppTheme.textHintFor(context),
                 fontFamily: 'Cairo',
               ),
             ),
             TextSpan(
               text: value,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: AppTheme.textMainFor(context),
                 fontFamily: 'Cairo',
               ),
             ),
@@ -997,22 +998,22 @@ Widget build(BuildContext context) {
   if (!PermissionsService().canShowSupplierSettlements) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
+        title: Text(
           'معاينة التسويات',
-          style: TextStyle(color: Colors.white, fontFamily: 'Cairo'),
+          style: TextStyle(color: AppTheme.textMainFor(context), fontFamily: 'Cairo'),
         ),
-        backgroundColor: Colors.transparent,
+        backgroundColor: AppTheme.appBarBg,
       ),
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [Colors.black, Color(0xFF1A237E), Colors.black],
+            colors: AppTheme.dashGradientMain(context),
           ),
         ),
-        child: const Center(
+        child: Center(
           child: Text(
             'ليس لديك صلاحية لعرض التسويات',
-            style: TextStyle(color: Colors.white70, fontFamily: 'Cairo'),
+            style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo'),
           ),
         ),
       ),
@@ -1021,46 +1022,46 @@ Widget build(BuildContext context) {
 
   return Scaffold(
     appBar: AppBar(
-      title: const Text(
+      title: Text(
         'معاينة تسويات الموردين',
         style: TextStyle(
-          color: Colors.white,
+          color: AppTheme.textMainFor(context),
           fontFamily: 'Cairo',
           fontSize: 16,
           fontWeight: FontWeight.bold,
         ),
       ),
-      backgroundColor: Colors.transparent,
+      backgroundColor: AppTheme.appBarBg,
       elevation: 0,
       centerTitle: true,
       actions: [
         if (PermissionsService().canExportSupplierSettlement)
           IconButton(
-            icon: const Icon(Icons.download, color: Colors.blueAccent),
+            icon: Icon(Icons.download, color: AppTheme.infoFor(context)),
             onPressed: _exportExcel,
           ),
         if (PermissionsService().canExportSupplierSettlement)
           IconButton(
-            icon: const Icon(Icons.picture_as_pdf, color: Colors.redAccent),
+            icon: Icon(Icons.picture_as_pdf, color: AppTheme.dangerFor(context)),
             onPressed: _exportPDF,
           ),
         IconButton(
-          icon: const Icon(Icons.refresh, color: Colors.white),
+          icon: Icon(Icons.refresh, color: AppTheme.textMainFor(context)),
           onPressed: _loadData,
         ),
       ],
     ),
     body: Container(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [Colors.black, Color(0xFF1A237E), Colors.black],
+          colors: AppTheme.dashGradientMain(context),
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
       ),
       child: SafeArea(
         child: _isLoading
-            ? const Center(child: CircularProgressIndicator(color: Colors.white))
+            ? Center(child: CircularProgressIndicator(color: AppTheme.textMainFor(context)))
             : CustomScrollView(
                 slivers: [
                   // الفلاتر
@@ -1077,11 +1078,11 @@ Widget build(BuildContext context) {
                                   Expanded(
                                     child: DropdownButtonFormField<String?>(
                                       value: _selectedSupplier,
-                                      dropdownColor: Colors.indigo.shade900,
-                                      style: const TextStyle(color: Colors.white, fontSize: 12),
-                                      decoration: const InputDecoration(
+                                      dropdownColor: AppTheme.dropdownBackground(context),
+                                      style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 12),
+                                      decoration: InputDecoration(
                                         labelText: 'المورد',
-                                        labelStyle: TextStyle(color: Colors.white70, fontSize: 10),
+                                        labelStyle: TextStyle(color: AppTheme.textSoftFor(context), fontSize: 10),
                                         isDense: true,
                                       ),
                                       items: [
@@ -1103,7 +1104,7 @@ Widget build(BuildContext context) {
                                     ),
                                   ),
                                   IconButton(
-                                    icon: const Icon(Icons.clear, color: Colors.white70),
+                                    icon: Icon(Icons.clear, color: AppTheme.textSoftFor(context)),
                                     onPressed: _clearFilters,
                                   ),
                                 ],
@@ -1138,12 +1139,12 @@ Widget build(BuildContext context) {
                     delegate: SliverChildBuilderDelegate(
                       (context, index) {
                         if (_filteredSettlements.isEmpty) {
-                          return const Center(
+                          return Center(
                             child: Padding(
                               padding: EdgeInsets.all(20),
                               child: Text(
                                 'لا توجد دفعات',
-                                style: TextStyle(color: Colors.white60, fontFamily: 'Cairo'),
+                                style: TextStyle(color: AppTheme.textMutedFor(context), fontFamily: 'Cairo'),
                               ),
                             ),
                           );
@@ -1158,23 +1159,23 @@ Widget build(BuildContext context) {
                     child: Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.05),
-                        border: const Border(top: BorderSide(color: Colors.white24)),
+                        color: GlassStyle.fill05For(context),
+                        border: Border(top: BorderSide(color: GlassStyle.line24For(context))),
                       ),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceAround,
                         children: [
-                          const Text(
+                          Text(
                             'إجمالي الدفعات',
                             style: TextStyle(
-                              color: Colors.white60,
+                              color: AppTheme.textMutedFor(context),
                               fontFamily: 'Cairo',
                             ),
                           ),
                           Text(
                             _formatCurrency(_totalAmount),
-                            style: const TextStyle(
-                              color: Colors.redAccent,
+                            style: TextStyle(
+                              color: AppTheme.dangerFor(context),
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
                             ),
@@ -1207,10 +1208,10 @@ Widget build(BuildContext context) {
           vertical: 7,
         ),
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.05),
+          color: GlassStyle.fill05For(context),
           borderRadius: BorderRadius.circular(7),
           border: Border.all(
-            color: Colors.white24,
+            color: GlassStyle.line24For(context),
           ),
         ),
         child: Row(
@@ -1218,22 +1219,22 @@ Widget build(BuildContext context) {
           children: [
             Text(
               '$label: ',
-              style: const TextStyle(
-                color: Colors.white60,
+              style: TextStyle(
+                color: AppTheme.textMutedFor(context),
                 fontSize: 10,
               ),
             ),
             Text(
               DateFormat('yyyy-MM-dd').format(date),
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: AppTheme.textMainFor(context),
                 fontSize: 10,
               ),
             ),
             const SizedBox(width: 4),
-            const Icon(
+            Icon(
               Icons.calendar_today,
-              color: Colors.amber,
+              color: AppTheme.warningFor(context),
               size: 12,
             ),
           ],

@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import '../../core/theme.dart';
 import 'package:intl/intl.dart';
 import 'package:excel/excel.dart' as excel_lib;
 import 'package:file_picker/file_picker.dart';
@@ -266,21 +267,21 @@ void _onAmountChanged() {
       return Scaffold(
         extendBodyBehindAppBar: true,
         appBar: AppBar(
-          title: const Text("حركة الخزينة", style: TextStyle(fontFamily: 'Cairo', color: Colors.white)),
-          backgroundColor: Colors.transparent,
+          title: Text("حركة الخزينة", style: TextStyle(fontFamily: 'Cairo', color: AppTheme.textMainFor(context))),
+          backgroundColor: AppTheme.appBarBg,
           elevation: 0,
         ),
         body: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: [Colors.black, Colors.indigo.shade900, Colors.black],
+              colors: AppTheme.dashGradientMain(context),
               begin: Alignment.topLeft, end: Alignment.bottomRight,
             ),
           ),
-          child: const Center(
+          child: Center(
             child: Text(
               "ليس لديك صلاحية للوصول إلى حركة الخزينة",
-              style: TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 16),
+              style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo', fontSize: 16),
             ),
           ),
         ),
@@ -305,24 +306,24 @@ void _onAmountChanged() {
               ),
               Text(
                 "إذن رقم: $_currentSerial",
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: 'Cairo',
                   fontSize: 13,
-                  color: Colors.cyanAccent,
+                  color: AppTheme.accentFor(context),
                   fontWeight: FontWeight.bold,
                 ),
               ),
               Text(
                 "${widget.branchName ?? _getBranchName(widget.selectedBranchCode)}",
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: 'Cairo',
                   fontSize: 11,
-                  color: Colors.white70,
+                  color: AppTheme.textSoftFor(context),
                 ),
               ),
             ],
           ),
-          backgroundColor: Colors.transparent,
+          backgroundColor: AppTheme.appBarBg,
           elevation: 0,
           centerTitle: true,
           toolbarHeight: 70,
@@ -335,12 +336,12 @@ void _onAmountChanged() {
                   message: "استيراد من إكسيل",
                   child: Container(
                     decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.15),
+                      color: GlassStyle.fill15For(context),
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.greenAccent.withOpacity(0.4)),
+                      border: Border.all(color: GlassStyle.successBorder40For(context)),
                     ),
                     child: IconButton(
-                      icon: const Icon(Icons.upload_file, color: Colors.greenAccent, size: 22),
+                      icon: Icon(Icons.upload_file, color: AppTheme.successFor(context), size: 22),
                       onPressed: canImport ? _importFromExcel : null,
                     ),
                   ),
@@ -353,13 +354,13 @@ void _onAmountChanged() {
           width: double.infinity,
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: [Colors.black, Colors.indigo.shade900, Colors.black],
+              colors: AppTheme.dashGradientMain(context),
               begin: Alignment.topLeft, end: Alignment.bottomRight,
             ),
           ),
           child: SafeArea(
             child: _isLoading
-                ? const Center(child: CircularProgressIndicator(color: Colors.white))
+                ? Center(child: CircularProgressIndicator(color: AppTheme.textMainFor(context)))
                 : Center(
                     child: Container(
                       constraints: BoxConstraints(
@@ -467,8 +468,8 @@ _buildSecondaryActions(),
                           child: Center(
                             child: Text(
                               treasuryName,
-                              style: const TextStyle(
-                                color: Colors.white,
+                              style: TextStyle(
+                                color: AppTheme.textMainFor(context),
                                 fontSize: 14,
                                 fontFamily: 'Cairo',
                                 fontWeight: FontWeight.bold,
@@ -486,8 +487,8 @@ _buildSecondaryActions(),
                               fit: BoxFit.scaleDown,
                               child: Text(
                                 liveBalance.toStringAsFixed(2),
-                                style: const TextStyle(
-                                  color: Colors.greenAccent,
+                                style: TextStyle(
+                                  color: AppTheme.successFor(context),
                                   fontSize: 16,
                                   fontWeight: FontWeight.bold,
                                   fontFamily: 'Cairo',
@@ -572,14 +573,14 @@ _buildSecondaryActions(),
       height: 55,
       child: ElevatedButton(
         style: ElevatedButton.styleFrom(
-          backgroundColor: isEdit ? Colors.orange.withOpacity(0.3) : Colors.white.withOpacity(0.2),
+          backgroundColor: isEdit ? GlassStyle.warningOrangeFill30For(context) : GlassStyle.fill20For(context),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-          side: BorderSide(color: isEdit ? Colors.orangeAccent : Colors.white24),
+          side: BorderSide(color: isEdit ? AppTheme.warningOrangeSoftFor(context) : GlassStyle.line24For(context)),
         ),
         onPressed: isEnabled ? _handleSave : null,
         child: Text(
           isEdit ? "تعديل الإذن" : "حفظ",
-          style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, fontFamily: 'Cairo'),
+          style: TextStyle(color: Theme.of(context).colorScheme.onPrimary, fontSize: 18, fontWeight: FontWeight.bold, fontFamily: 'Cairo'),
         ),
       ),
     );
@@ -589,21 +590,21 @@ _buildSecondaryActions(),
     // التحقق من الصلاحية مرة أخرى
     bool isEdit = widget.editItem != null;
     if (isEdit && !PermissionsService().canEditTransaction) {
-      _showSnackBar("ليس لديك صلاحية للتعديل", Colors.orange);
+      _showSnackBar("ليس لديك صلاحية للتعديل", AppTheme.warningOrangeFor(context));
       return;
     }
     if (!isEdit && !PermissionsService().canAddTransaction) {
-      _showSnackBar("ليس لديك صلاحية للإضافة", Colors.orange);
+      _showSnackBar("ليس لديك صلاحية للإضافة", AppTheme.warningOrangeFor(context));
       return;
     }
 
     if (_amountController.text.isEmpty || _selectedTreasury == null || _selectedCategory == null) {
-      _showSnackBar("برجاء إكمال البيانات", Colors.orange);
+      _showSnackBar("برجاء إكمال البيانات", AppTheme.warningOrangeFor(context));
       return;
     }
     final double? parsedAmount = double.tryParse(_amountController.text.trim());
     if (parsedAmount == null || parsedAmount <= 0) {
-      _showSnackBar("برجاء إدخال مبلغ صحيح أكبر من الصفر", Colors.orange);
+      _showSnackBar("برجاء إدخال مبلغ صحيح أكبر من الصفر", AppTheme.warningOrangeFor(context));
       return;
     }
 
@@ -630,7 +631,7 @@ _buildSecondaryActions(),
         if (widget.editItem != null) {
           Navigator.pop(context, true);
         } else {
-          _showSnackBar("تم الحفظ بنجاح وتحديث الذاكرة المحلية والشبكية التراكمية", Colors.green);
+          _showSnackBar("تم الحفظ بنجاح وتحديث الذاكرة المحلية والشبكية التراكمية", AppTheme.successStrongFor(context));
           _amountController.clear();
 _statementController.clear();
 
@@ -639,7 +640,7 @@ await _refreshBalancesOnly();
         }
       }
     } catch (e) {
-      if (mounted) _showSnackBar("خطأ: $e", Colors.red);
+      if (mounted) _showSnackBar("خطأ: $e", AppTheme.dangerStrongFor(context));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -648,12 +649,12 @@ await _refreshBalancesOnly();
   Widget _buildDropdown(String label, String? value, List<Map<String, dynamic>> items, Function(String?) onChanged, {bool enabled = true}) {
     return DropdownButtonFormField<String>(
       value: value,
-      dropdownColor: Colors.indigo.shade900,
-      style: const TextStyle(color: Colors.white, fontSize: 13),
+      dropdownColor: AppTheme.dropdownBackground(context),
+      style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 13),
       decoration: InputDecoration(
         labelText: label,
-        labelStyle: const TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 12),
-        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.white10)),
+        labelStyle: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo', fontSize: 12),
+        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: GlassStyle.line10For(context))),
         contentPadding: const EdgeInsets.symmetric(vertical: 15, horizontal: 10),
       ),
       items: items.map((item) {
@@ -671,13 +672,13 @@ await _refreshBalancesOnly();
       controller: ctrl,
       enabled: enabled,
       keyboardType: isNumber ? TextInputType.number : TextInputType.text,
-      style: const TextStyle(color: Colors.white),
+      style: TextStyle(color: AppTheme.textMainFor(context)),
       decoration: InputDecoration(
-        prefixIcon: Icon(icon, color: enabled ? Colors.white70 : Colors.white38),
+        prefixIcon: Icon(icon, color: enabled ? AppTheme.textSoftFor(context) : AppTheme.textFaintFor(context)),
         labelText: label,
-        labelStyle: TextStyle(color: enabled ? Colors.white70 : Colors.white38, fontFamily: 'Cairo'),
-        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.white10)),
-        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.cyanAccent)),
+        labelStyle: TextStyle(color: enabled ? AppTheme.textSoftFor(context) : AppTheme.textFaintFor(context), fontFamily: 'Cairo'),
+        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: GlassStyle.line10For(context))),
+        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: AppTheme.accentFor(context))),
         contentPadding: const EdgeInsets.symmetric(vertical: 18, horizontal: 15),
       ),
     );
@@ -688,12 +689,12 @@ await _refreshBalancesOnly();
       controller: _dateController,
       readOnly: true,
       enabled: enabled,
-      style: const TextStyle(color: Colors.white),
+      style: TextStyle(color: AppTheme.textMainFor(context)),
       decoration: InputDecoration(
-        prefixIcon: Icon(Icons.calendar_today, color: enabled ? Colors.white70 : Colors.white38),
+        prefixIcon: Icon(Icons.calendar_today, color: enabled ? AppTheme.textSoftFor(context) : AppTheme.textFaintFor(context)),
         labelText: "التاريخ",
-        labelStyle: TextStyle(color: enabled ? Colors.white70 : Colors.white38, fontFamily: 'Cairo'),
-        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.white10)),
+        labelStyle: TextStyle(color: enabled ? AppTheme.textSoftFor(context) : AppTheme.textFaintFor(context), fontFamily: 'Cairo'),
+        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: GlassStyle.line10For(context))),
       ),
       onTap: enabled ? _pickDate : null,
     );
@@ -725,8 +726,8 @@ await _refreshBalancesOnly();
                 _loadInitialData();
               });
             },
-            icon: const Icon(Icons.history, color: Colors.cyanAccent),
-            label: const Text("المعاينة", style: TextStyle(color: Colors.cyanAccent, fontFamily: 'Cairo')),
+            icon: Icon(Icons.history, color: AppTheme.accentFor(context)),
+            label: Text("المعاينة", style: TextStyle(color: AppTheme.accentFor(context), fontFamily: 'Cairo')),
           ),
         
         const SizedBox(height: 10),
@@ -736,14 +737,14 @@ await _refreshBalancesOnly();
           OutlinedButton.icon(
             style: OutlinedButton.styleFrom(
               padding: const EdgeInsets.symmetric(vertical: 12),
-              side: const BorderSide(color: Colors.cyanAccent, width: 1.0),
+              side: BorderSide(color: AppTheme.accentFor(context), width: 1.0),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              backgroundColor: Colors.white.withOpacity(0.05),
+              backgroundColor: GlassStyle.fill05For(context),
             ),
-            icon: const Icon(Icons.sync_alt, color: Colors.cyanAccent, size: 20),
-            label: const Text(
+            icon: Icon(Icons.sync_alt, color: AppTheme.accentFor(context), size: 20),
+            label: Text(
               "تحويل بين الخزائن",
-              style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold, fontFamily: 'Cairo'),
+              style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 13, fontWeight: FontWeight.bold, fontFamily: 'Cairo'),
             ),
             onPressed: () {
               Navigator.push(
@@ -773,7 +774,7 @@ await _refreshBalancesOnly();
   void _importFromExcel() async {
     // التحقق من صلاحية الاستيراد
     if (!PermissionsService().canImportExcel) {
-      _showSnackBar("ليس لديك صلاحية للاستيراد", Colors.orange);
+      _showSnackBar("ليس لديك صلاحية للاستيراد", AppTheme.warningOrangeFor(context));
       return;
     }
 
@@ -790,11 +791,11 @@ await _refreshBalancesOnly();
           textAlign: TextAlign.right,
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("إلغاء", style: TextStyle(fontFamily: 'Cairo', color: Colors.red))),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text("إلغاء", style: TextStyle(fontFamily: 'Cairo', color: AppTheme.dangerStrongFor(context)))),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo.shade900),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.buttonPrimaryBg),
             onPressed: () => Navigator.pop(context, true),
-            child: const Text("موافق واختيار الملف", style: TextStyle(fontFamily: 'Cairo', color: Colors.white)),
+            child: Text("موافق واختيار الملف", style: TextStyle(fontFamily: 'Cairo', color: Theme.of(context).colorScheme.onPrimary)),
           ),
         ],
       ),
@@ -899,11 +900,11 @@ await _refreshBalancesOnly();
             );
           }
         }
-        _showSnackBar("تم الاستيراد المباشر والمزامنة بنجاح محلياً وسحابياً", Colors.green);
+        _showSnackBar("تم الاستيراد المباشر والمزامنة بنجاح محلياً وسحابياً", AppTheme.successStrongFor(context));
         // ✅ إعادة تحميل البيانات والأرصدة بعد الاستيراد
         _loadInitialData();
       } catch (e) {
-        _showSnackBar("خطأ في الاستيراد: $e", Colors.red);
+        _showSnackBar("خطأ في الاستيراد: $e", AppTheme.dangerStrongFor(context));
       } finally {
         setState(() => _isLoading = false);
       }

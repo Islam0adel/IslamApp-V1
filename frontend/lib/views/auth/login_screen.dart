@@ -1,3 +1,4 @@
+import '../../core/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../views/widgets/glass_card.dart';
@@ -54,7 +55,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
 
   void _handleLogin() async {
     if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
-      _showSnackBar('برجاء ملء البيانات', Colors.orange);
+      _showSnackBar('برجاء ملء البيانات', AppTheme.warningOrangeFor(context));
       return;
     }
 
@@ -104,7 +105,7 @@ initializeGlobalListener(
         );
       }
     } catch (e) {
-      _showSnackBar(e.toString(), Colors.redAccent);
+      _showSnackBar(e.toString(), AppTheme.dangerFor(context));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -124,7 +125,7 @@ initializeGlobalListener(
         width: double.infinity,
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [Colors.black, Colors.indigo.shade900, Colors.black],
+            colors: AppTheme.authGradient(context),
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
@@ -138,14 +139,14 @@ initializeGlobalListener(
                 // أنميشن الشعار
                 FadeTransition(
                   opacity: _animController,
-                  child: const Column(
+                  child: Column(
                     children: [
-                      Icon(Icons.lock_person_rounded, size: 90, color: Colors.white),
+                      Icon(Icons.lock_person_rounded, size: 90, color: AppTheme.textMainFor(context)),
                       SizedBox(height: 15),
                       Text(
                         'تسجيل الدخول',
                         style: TextStyle(
-                          color: Colors.white,
+                          color: AppTheme.textMainFor(context),
                           fontSize: 32,
                           fontWeight: FontWeight.bold,
                           letterSpacing: 1.2,
@@ -189,18 +190,18 @@ initializeGlobalListener(
                             children: [
                               Checkbox(
                                 value: _rememberMe,
-                                checkColor: Colors.black,
-                                activeColor: Colors.white,
+                                checkColor: AppTheme.checkboxCheck(context),
+                                activeColor: AppTheme.checkboxActive(context),
                                 onChanged: (val) => setState(() => _rememberMe = val!),
                               ),
-                              const Text('تذكرني', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                              Text('تذكرني', style: TextStyle(color: AppTheme.textSoftFor(context), fontSize: 13)),
                             ],
                           ),
                           TextButton(
                               onPressed: () {
                                 Navigator.pushNamed(context, '/forgot-password'); // الانتقال لصفحة الاستعادة
                               },
-                              child: const Text('نسيت كلمة السر؟', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                              child: Text('نسيت كلمة السر؟', style: TextStyle(color: AppTheme.textSoftFor(context), fontSize: 13)),
                             ),
                         ],
                       ),
@@ -211,18 +212,18 @@ initializeGlobalListener(
                       SizedBox(
                         width: double.infinity,
                         child: _isLoading
-                            ? const Center(child: CircularProgressIndicator(color: Colors.white))
+                            ? Center(child: CircularProgressIndicator(color: Theme.of(context).colorScheme.onPrimary))
                             : ElevatedButton(
                                 style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.white.withOpacity(0.2),
+                                  backgroundColor: AppTheme.authActionBackground(context),
                                   padding: const EdgeInsets.symmetric(vertical: 15),
                                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                                  side: BorderSide(color: Colors.white.withOpacity(0.1)),
+                                  side: BorderSide(color: AppTheme.inputBorder(context)),
                                 ),
                                 onPressed: _handleLogin,
-                                child: const Text(
+                                child: Text(
                                   'دخول',
-                                  style: TextStyle(fontSize: 20, color: Colors.white, fontWeight: FontWeight.bold),
+                                  style: TextStyle(fontSize: 20, color: Theme.of(context).colorScheme.onPrimary, fontWeight: FontWeight.bold),
                                 ),
                               ),
                       ),
@@ -238,12 +239,12 @@ initializeGlobalListener(
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Text('ليس لديك حساب؟', style: TextStyle(color: Colors.white70)),
+                      Text('ليس لديك حساب؟', style: TextStyle(color: AppTheme.textSoftFor(context))),
                       TextButton(
                         onPressed: () => Navigator.pushNamed(context, '/register'),
-                        child: const Text(
+                        child: Text(
                           'إنشاء حساب جديد',
-                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                          style: TextStyle(color: Theme.of(context).colorScheme.onPrimary, fontWeight: FontWeight.bold),
                         ),
                       ),
                     ],
@@ -251,9 +252,9 @@ initializeGlobalListener(
                 ),
                 
                 const SizedBox(height: 40),
-                const Text(
+                Text(
                   'executed by Islam Adel',
-                  style: TextStyle(color: Colors.white38, fontSize: 12, fontStyle: FontStyle.italic),
+                  style: TextStyle(color: AppTheme.textMutedFor(context), fontSize: 12, fontStyle: FontStyle.italic),
                 ),
               ],
             ),
@@ -289,7 +290,7 @@ initializeGlobalListener(
             controller: controller,
             focusNode: node,
             obscureText: isPass,
-            style: const TextStyle(color: Colors.white),
+            style: TextStyle(color: AppTheme.textMainFor(context)),
             textInputAction: isLast ? TextInputAction.done : TextInputAction.next,
             onSubmitted: (_) {
               if (isLast) {
@@ -299,18 +300,18 @@ initializeGlobalListener(
               }
             },
             decoration: InputDecoration(
-              prefixIcon: Icon(icon, color: Colors.white70),
+              prefixIcon: Icon(icon, color: AppTheme.textSoftFor(context)),
               labelText: label,
-              labelStyle: const TextStyle(color: Colors.white70),
+              labelStyle: TextStyle(color: AppTheme.textSoftFor(context)),
               filled: true,
-              fillColor: Colors.white.withOpacity(0.05),
+              fillColor: AppTheme.inputFill(context),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(15),
-                borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
+                borderSide: BorderSide(color: AppTheme.inputBorder(context)),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(15),
-                borderSide: const BorderSide(color: Colors.white),
+                borderSide: BorderSide(color: AppTheme.inputFocus(context)),
               ),
             ),
           ),

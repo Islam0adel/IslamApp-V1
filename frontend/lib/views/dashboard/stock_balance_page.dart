@@ -1,6 +1,7 @@
 // lib/views/dashboard/stock_balance_page.dart
 
 import 'package:flutter/material.dart';
+import '../../core/theme.dart';
 import 'package:intl/intl.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
@@ -263,11 +264,11 @@ class _StockBalancePageState extends State<StockBalancePage> {
     if (_itemsData.isEmpty) {
       ScaffoldMessenger.of(context)
           .showSnackBar(
-        const SnackBar(
+        SnackBar(
           content:
               Text('لا توجد بيانات للتصدير'),
           backgroundColor:
-              Colors.orange,
+              AppTheme.warningOrangeFor(context),
         ),
       );
 
@@ -350,11 +351,11 @@ class _StockBalancePageState extends State<StockBalancePage> {
 
       ScaffoldMessenger.of(context)
           .showSnackBar(
-        const SnackBar(
+        SnackBar(
           content:
               Text('تم تصدير البيانات بنجاح'),
           backgroundColor:
-              Colors.green,
+              AppTheme.successStrongFor(context),
         ),
       );
     } catch (e) {
@@ -364,7 +365,7 @@ class _StockBalancePageState extends State<StockBalancePage> {
           content:
               Text('فشل التصدير: $e'),
           backgroundColor:
-              Colors.red,
+              AppTheme.dangerStrongFor(context),
         ),
       );
     }
@@ -378,11 +379,11 @@ class _StockBalancePageState extends State<StockBalancePage> {
     if (_itemsData.isEmpty) {
       ScaffoldMessenger.of(context)
           .showSnackBar(
-        const SnackBar(
+        SnackBar(
           content:
               Text('لا توجد بيانات للتصدير'),
           backgroundColor:
-              Colors.orange,
+              AppTheme.warningOrangeFor(context),
         ),
       );
 
@@ -488,11 +489,11 @@ class _StockBalancePageState extends State<StockBalancePage> {
 
       ScaffoldMessenger.of(context)
           .showSnackBar(
-        const SnackBar(
+        SnackBar(
           content:
               Text('تم تصدير البيانات بنجاح'),
           backgroundColor:
-              Colors.green,
+              AppTheme.successStrongFor(context),
         ),
       );
     } catch (e) {
@@ -502,7 +503,7 @@ class _StockBalancePageState extends State<StockBalancePage> {
           content:
               Text('فشل تصدير PDF: $e'),
           backgroundColor:
-              Colors.red,
+              AppTheme.dangerStrongFor(context),
         ),
       );
     }
@@ -683,9 +684,9 @@ class _StockBalancePageState extends State<StockBalancePage> {
             textAlign:
                 TextAlign.center,
             style:
-                const TextStyle(
+                TextStyle(
               color:
-                  Colors.cyan,
+                  AppTheme.accentAltFor(context),
               fontWeight:
                   FontWeight.bold,
               fontSize: 11,
@@ -724,9 +725,9 @@ class _StockBalancePageState extends State<StockBalancePage> {
             textAlign:
                 TextAlign.center,
             style:
-                const TextStyle(
+                TextStyle(
               color:
-                  Colors.white54,
+                  AppTheme.textHintFor(context),
               fontSize: 11,
             ),
           ),
@@ -745,9 +746,9 @@ class _StockBalancePageState extends State<StockBalancePage> {
             textAlign:
                 TextAlign.center,
             style:
-                const TextStyle(
+                TextStyle(
               color:
-                  Colors.white70,
+                  AppTheme.textSoftFor(context),
               fontSize: 11,
             ),
           ),
@@ -769,9 +770,9 @@ class _StockBalancePageState extends State<StockBalancePage> {
                 TextOverflow
                     .ellipsis,
             style:
-                const TextStyle(
+                TextStyle(
               color:
-                  Colors.white,
+                  AppTheme.textMainFor(context),
               fontSize: 12,
             ),
           ),
@@ -789,9 +790,9 @@ class _StockBalancePageState extends State<StockBalancePage> {
             textAlign:
                 TextAlign.center,
             style:
-                const TextStyle(
+                TextStyle(
               color:
-                  Colors.cyanAccent,
+                  AppTheme.accentFor(context),
               fontSize: 12,
               fontWeight:
                   FontWeight.bold,
@@ -817,9 +818,9 @@ class _StockBalancePageState extends State<StockBalancePage> {
               textAlign:
                   TextAlign.center,
               style:
-                  const TextStyle(
+                  TextStyle(
                 color:
-                    Colors.greenAccent,
+                    AppTheme.successFor(context),
                 fontSize: 11,
               ),
             ),
@@ -839,9 +840,9 @@ class _StockBalancePageState extends State<StockBalancePage> {
               textAlign:
                   TextAlign.center,
               style:
-                  const TextStyle(
+                  TextStyle(
                 color:
-                    Colors.greenAccent,
+                    AppTheme.successFor(context),
                 fontSize: 12,
                 fontWeight:
                     FontWeight.bold,
@@ -865,9 +866,9 @@ class _StockBalancePageState extends State<StockBalancePage> {
             textAlign:
                 TextAlign.center,
             style:
-                const TextStyle(
+                TextStyle(
               color:
-                  Colors.amber,
+                  AppTheme.warningFor(context),
               fontSize: 11,
             ),
           ),
@@ -886,9 +887,9 @@ class _StockBalancePageState extends State<StockBalancePage> {
             textAlign:
                 TextAlign.center,
             style:
-                const TextStyle(
+                TextStyle(
               color:
-                  Colors.amber,
+                  AppTheme.warningFor(context),
               fontSize: 12,
               fontWeight:
                   FontWeight.bold,
@@ -911,10 +912,7 @@ class _StockBalancePageState extends State<StockBalancePage> {
                 Border(
               bottom:
                   BorderSide(
-                color: Colors.white
-                    .withOpacity(
-                  0.05,
-                ),
+                color: GlassStyle.line05For(context),
                 width: 0.5,
               ),
             ),
@@ -949,7 +947,7 @@ class _StockBalancePageState extends State<StockBalancePage> {
               decoration:
                   BoxDecoration(
                 color:
-                    Colors.white10,
+                    GlassStyle.fill10For(context),
                 borderRadius:
                     BorderRadius.circular(
                   8,
@@ -987,31 +985,22 @@ class _StockBalancePageState extends State<StockBalancePage> {
         appBar:
             AppBar(
           title:
-              const Text(
+              Text(
             'رصيد المخزون',
             style:
                 TextStyle(
               color:
-                  Colors.white,
+                  AppTheme.textMainFor(context),
             ),
           ),
           backgroundColor:
-              Colors.transparent,
+              AppTheme.appBarBg,
           elevation: 0,
         ),
         body:
             Container(
           decoration:
-              const BoxDecoration(
-            gradient:
-                LinearGradient(
-              colors: [
-                Colors.black,
-                Color(
-                  0xFF1A237E,
-                ),
-                Colors.black,
-              ],
+              BoxDecoration(gradient: LinearGradient(colors: AppTheme.pageGradient(context),
               begin:
                   Alignment.topLeft,
               end:
@@ -1019,14 +1008,14 @@ class _StockBalancePageState extends State<StockBalancePage> {
             ),
           ),
           child:
-              const Center(
+              Center(
             child:
                 Text(
               'ليس لديك صلاحية لعرض رصيد المخزون',
               style:
                   TextStyle(
                 color:
-                    Colors.white70,
+                    AppTheme.textSoftFor(context),
                 fontFamily:
                     'Cairo',
                 fontSize:
@@ -1046,12 +1035,12 @@ class _StockBalancePageState extends State<StockBalancePage> {
           mainAxisSize:
               MainAxisSize.min,
           children: [
-            const Text(
+            Text(
               'رصيد المخزون',
               style:
                   TextStyle(
                 color:
-                    Colors.white,
+                    AppTheme.textMainFor(context),
                 fontFamily:
                     'Cairo',
                 fontSize:
@@ -1061,29 +1050,29 @@ class _StockBalancePageState extends State<StockBalancePage> {
             Text(
               'الفرع: ${_getBranchName()}',
               style:
-                  const TextStyle(
+                  TextStyle(
                 fontFamily:
                     'Cairo',
                 fontSize:
                     11,
                 color:
-                    Colors.white70,
+                    AppTheme.textSoftFor(context),
               ),
             ),
           ],
         ),
         backgroundColor:
-            Colors.transparent,
+            AppTheme.appBarBg,
         elevation: 0,
         centerTitle: true,
         toolbarHeight: 75,
         leading:
             IconButton(
           icon:
-              const Icon(
+              Icon(
             Icons.arrow_back,
             color:
-                Colors.white,
+                AppTheme.textMainFor(context),
           ),
           onPressed:
               () => Navigator.pop(
@@ -1095,10 +1084,10 @@ class _StockBalancePageState extends State<StockBalancePage> {
               .canExportStock)
             IconButton(
               icon:
-                  const Icon(
+                  Icon(
                 Icons.download,
                 color:
-                    Colors.blueAccent,
+                    AppTheme.infoFor(context),
               ),
               onPressed:
                   _exportExcel,
@@ -1109,10 +1098,10 @@ class _StockBalancePageState extends State<StockBalancePage> {
               .canExportStock)
             IconButton(
               icon:
-                  const Icon(
+                  Icon(
                 Icons.picture_as_pdf,
                 color:
-                    Colors.redAccent,
+                    AppTheme.dangerFor(context),
               ),
               onPressed:
                   _exportPDF,
@@ -1121,10 +1110,10 @@ class _StockBalancePageState extends State<StockBalancePage> {
             ),
           IconButton(
             icon:
-                const Icon(
+                Icon(
               Icons.refresh,
               color:
-                  Colors.white,
+                  AppTheme.textMainFor(context),
             ),
             onPressed:
                 _calculateBalances,
@@ -1136,16 +1125,7 @@ class _StockBalancePageState extends State<StockBalancePage> {
       body:
           Container(
         decoration:
-            const BoxDecoration(
-          gradient:
-              LinearGradient(
-            colors: [
-              Colors.black,
-              Color(
-                0xFF1A237E,
-              ),
-              Colors.black,
-            ],
+            BoxDecoration(gradient: LinearGradient(colors: AppTheme.pageGradient(context),
             begin:
                 Alignment.topLeft,
             end:
@@ -1179,20 +1159,20 @@ class _StockBalancePageState extends State<StockBalancePage> {
                               value:
                                   _selectedStoreCode,
                               dropdownColor:
-                                  Colors.indigo.shade900,
+                                  AppTheme.dropdownBackground(context),
                               style:
-                                  const TextStyle(
+                                  TextStyle(
                                 color:
-                                    Colors.white,
+                                    AppTheme.textMainFor(context),
                               ),
                               decoration:
-                                  const InputDecoration(
+                                  InputDecoration(
                                 labelText:
                                     'المخزن',
                                 labelStyle:
                                     TextStyle(
                                   color:
-                                      Colors.white70,
+                                      AppTheme.textSoftFor(context),
                                 ),
                                 isDense:
                                     true,
@@ -1269,9 +1249,7 @@ class _StockBalancePageState extends State<StockBalancePage> {
                                 decoration:
                                     BoxDecoration(
                                   color:
-                                      Colors.white.withOpacity(
-                                    0.05,
-                                  ),
+                                      GlassStyle.fill05For(context),
                                   borderRadius:
                                       BorderRadius.circular(
                                     8,
@@ -1279,16 +1257,16 @@ class _StockBalancePageState extends State<StockBalancePage> {
                                   border:
                                       Border.all(
                                     color:
-                                        Colors.white24,
+                                        GlassStyle.line24For(context),
                                   ),
                                 ),
                                 child:
                                     Row(
                                   children: [
-                                    const Icon(
+                                    Icon(
                                       Icons.calendar_today,
                                       color:
-                                          Colors.amber,
+                                          AppTheme.warningFor(context),
                                       size:
                                           18,
                                     ),
@@ -1299,9 +1277,9 @@ class _StockBalancePageState extends State<StockBalancePage> {
                                     Text(
                                       'التاريخ: ${DateFormat('yyyy-MM-dd', 'en_US').format(_selectedDate)}',
                                       style:
-                                          const TextStyle(
+                                          TextStyle(
                                         color:
-                                            Colors.white,
+                                            AppTheme.textMainFor(context),
                                         fontSize:
                                             13,
                                       ),
@@ -1331,9 +1309,7 @@ class _StockBalancePageState extends State<StockBalancePage> {
                               decoration:
                                   BoxDecoration(
                                 color:
-                                    Colors.cyanAccent.withOpacity(
-                                  0.1,
-                                ),
+                                    GlassStyle.accentFill10For(context),
                                 borderRadius:
                                     BorderRadius.circular(
                                   8,
@@ -1341,18 +1317,16 @@ class _StockBalancePageState extends State<StockBalancePage> {
                                 border:
                                     Border.all(
                                   color:
-                                      Colors.cyanAccent.withOpacity(
-                                    0.3,
-                                  ),
+                                      GlassStyle.accentBorder30For(context),
                                 ),
                               ),
                               child:
                                   Row(
                                 children: [
-                                  const Icon(
+                                  Icon(
                                     Icons.info_outline,
                                     color:
-                                        Colors.cyanAccent,
+                                        AppTheme.accentFor(context),
                                     size:
                                         18,
                                   ),
@@ -1363,9 +1337,9 @@ class _StockBalancePageState extends State<StockBalancePage> {
                                   Text(
                                     'آخر جرد: ${_getLastInventoryDate()}',
                                     style:
-                                        const TextStyle(
+                                        TextStyle(
                                       color:
-                                          Colors.cyanAccent,
+                                          AppTheme.accentFor(context),
                                       fontSize:
                                           12,
                                       fontFamily:
@@ -1394,34 +1368,34 @@ class _StockBalancePageState extends State<StockBalancePage> {
               Expanded(
                 child:
                     _isLoading
-                        ? const Center(
+                        ? Center(
                             child:
                                 CircularProgressIndicator(
                               color:
-                                  Colors.white,
+                                  AppTheme.textMainFor(context),
                             ),
                           )
                         : !_hasData
-                            ? const Center(
+                            ? Center(
                                 child:
                                     Text(
                                   'اختر المخزن لعرض الرصيد',
                                   style:
                                       TextStyle(
                                     color:
-                                        Colors.white60,
+                                        AppTheme.textMutedFor(context),
                                   ),
                                 ),
                               )
                             : _itemsData.isEmpty
-                                ? const Center(
+                                ? Center(
                                     child:
                                         Text(
                                       'لا توجد أصناف برصيد أكبر من صفر',
                                       style:
                                           TextStyle(
                                         color:
-                                            Colors.white60,
+                                            AppTheme.textMutedFor(context),
                                       ),
                                     ),
                                   )
@@ -1442,17 +1416,13 @@ class _StockBalancePageState extends State<StockBalancePage> {
                   decoration:
                       BoxDecoration(
                     color:
-                        Colors.white.withOpacity(
-                      0.05,
-                    ),
+                        GlassStyle.fill05For(context),
                     border:
                         Border(
                       top:
                           BorderSide(
                         color:
-                            Colors.white.withOpacity(
-                          0.1,
-                        ),
+                            GlassStyle.line10For(context),
                         width:
                             1,
                       ),
@@ -1466,12 +1436,12 @@ class _StockBalancePageState extends State<StockBalancePage> {
                     children: [
                       Column(
                         children: [
-                          const Text(
+                          Text(
                             'إجمالي الكميات',
                             style:
                                 TextStyle(
                               color:
-                                  Colors.white60,
+                                  AppTheme.textMutedFor(context),
                               fontSize:
                                   12,
                               fontFamily:
@@ -1481,9 +1451,9 @@ class _StockBalancePageState extends State<StockBalancePage> {
                           Text(
                             _formatQuantity(totalQuantity),
                             style:
-                                const TextStyle(
+                                TextStyle(
                               color:
-                                  Colors.cyanAccent,
+                                  AppTheme.accentFor(context),
                               fontSize:
                                   16,
                               fontWeight:
@@ -1498,18 +1468,18 @@ class _StockBalancePageState extends State<StockBalancePage> {
                         height:
                             30,
                         color:
-                            Colors.white24,
+                            GlassStyle.line24For(context),
                       ),
                       if (PermissionsService()
                           .canViewStockWholesalePrice)
                         Column(
                           children: [
-                            const Text(
+                            Text(
                               'قيمة الجملة',
                               style:
                                   TextStyle(
                                 color:
-                                    Colors.white60,
+                                    AppTheme.textMutedFor(context),
                                 fontSize:
                                     12,
                                 fontFamily:
@@ -1521,9 +1491,9 @@ class _StockBalancePageState extends State<StockBalancePage> {
                                 totalWholesaleValue,
                               ),
                               style:
-                                  const TextStyle(
+                                  TextStyle(
                                 color:
-                                    Colors.greenAccent,
+                                    AppTheme.successFor(context),
                                 fontSize:
                                     16,
                                 fontWeight:
@@ -1540,16 +1510,16 @@ class _StockBalancePageState extends State<StockBalancePage> {
                           height:
                               30,
                           color:
-                              Colors.white24,
+                              GlassStyle.line24For(context),
                         ),
                       Column(
                         children: [
-                          const Text(
+                          Text(
                             'قيمة البيع',
                             style:
                                 TextStyle(
                               color:
-                                  Colors.white60,
+                                  AppTheme.textMutedFor(context),
                               fontSize:
                                   12,
                               fontFamily:
@@ -1561,9 +1531,9 @@ class _StockBalancePageState extends State<StockBalancePage> {
                               totalRetailValue,
                             ),
                             style:
-                                const TextStyle(
+                                TextStyle(
                               color:
-                                  Colors.amber,
+                                  AppTheme.warningFor(context),
                               fontSize:
                                   16,
                               fontWeight:

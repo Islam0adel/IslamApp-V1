@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../core/theme.dart';
 import 'package:intl/intl.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -731,10 +732,10 @@ Future<double> _supplierBalanceAt(DateTime date) async {
       builder: (context, child) => Theme(
         data: Theme.of(context).copyWith(
           colorScheme: const ColorScheme.dark(
-            primary: Colors.blueAccent,
-            onPrimary: Colors.white,
-            surface: Color.fromARGB(255, 30, 30, 30),
-            onSurface: Colors.white,
+            primary: AppTheme.datePickerPrimary,
+            onPrimary: AppTheme.datePickerOnPrimary,
+            surface: AppTheme.datePickerSurface,
+            onSurface: AppTheme.datePickerOnSurface,
           ),
         ),
         child: child!,
@@ -763,15 +764,15 @@ if (mounted) setState(() {});
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.05),
+          color: GlassStyle.fill05For(context),
           borderRadius: BorderRadius.circular(15),
-          border: Border.all(color: Colors.white.withOpacity(0.2)),
+          border: Border.all(color: GlassStyle.line20For(context)),
         ),
         child: Column(
           children: [
-            Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12, fontFamily: 'Cairo')),
+            Text(label, style: TextStyle(color: AppTheme.textSoftFor(context), fontSize: 12, fontFamily: 'Cairo')),
             const SizedBox(height: 4),
-            Text(DateFormat('yyyy-MM-dd').format(date), style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+            Text(DateFormat('yyyy-MM-dd').format(date), style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 14, fontWeight: FontWeight.bold)),
           ],
         ),
       ),
@@ -893,32 +894,32 @@ if (mounted) setState(() {});
     return Scaffold(
       appBar: AppBar(
         title: Text(_title, style: const TextStyle(fontFamily: 'Cairo')),
-        backgroundColor: Colors.transparent,
+        backgroundColor: AppTheme.appBarBg,
         elevation: 0,
         actions: [
           if (PermissionsService().canShareReports)
             PopupMenuButton<String>(
-              icon: const Icon(Icons.share, color: Colors.cyanAccent),
+              icon: Icon(Icons.share, color: AppTheme.accentFor(context)),
               onSelected: (value) {
                 if (value == 'excel') _exportExcel();
                 if (value == 'pdf') _exportPdf();
               },
               itemBuilder: (context) => [
-                const PopupMenuItem(
+                PopupMenuItem(
                   value: 'excel',
                   child: Row(
                     children: [
-                      Icon(Icons.table_chart, color: Colors.greenAccent),
+                      Icon(Icons.table_chart, color: AppTheme.successFor(context)),
                       SizedBox(width: 8),
                       Text('Excel'),
                     ],
                   ),
                 ),
-                const PopupMenuItem(
+                PopupMenuItem(
                   value: 'pdf',
                   child: Row(
                     children: [
-                      Icon(Icons.picture_as_pdf, color: Colors.redAccent),
+                      Icon(Icons.picture_as_pdf, color: AppTheme.dangerFor(context)),
                       SizedBox(width: 8),
                       Text('PDF'),
                     ],
@@ -929,9 +930,9 @@ if (mounted) setState(() {});
         ],
       ),
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [Colors.black, Color(0xFF1A237E), Colors.black],
+            colors: AppTheme.dashGradientMain(context),
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
@@ -968,20 +969,20 @@ if (mounted) setState(() {});
                                         final name = snapshot.data ?? widget.companyCode;
                                         return Text(
                                           name,
-                                          style: const TextStyle(color: Colors.white, fontFamily: 'Cairo', fontSize: 14, fontWeight: FontWeight.bold),
+                                          style: TextStyle(color: AppTheme.textMainFor(context), fontFamily: 'Cairo', fontSize: 14, fontWeight: FontWeight.bold),
                                         );
                                       },
                                     ),
                                     Text(
                                       'من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}',
-                                      style: const TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 12),
+                                      style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo', fontSize: 12),
                                     ),
                                   ],
                                 ),
                               ),
                               Text(
                                 'الفرع: ${_getBranchName(widget.selectedBranchCode)}',
-                                style: const TextStyle(color: Colors.cyanAccent, fontFamily: 'Cairo'),
+                                style: TextStyle(color: AppTheme.accentFor(context), fontFamily: 'Cairo'),
                               ),
                             ],
                           ),
@@ -992,22 +993,22 @@ if (mounted) setState(() {});
                       Expanded(
                         child: GlassCard(
                           child: _rows.isEmpty
-                              ? const Center(
+                              ? Center(
                                   child: Text(
                                     'لا توجد بيانات كافية للفترة المحددة',
-                                    style: TextStyle(color: Colors.white70, fontFamily: 'Cairo'),
+                                    style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo'),
                                   ),
                                 )
                               : SingleChildScrollView(
                                   scrollDirection: Axis.horizontal,
                                   child: SingleChildScrollView(
                                     child: DataTable(
-                                      headingRowColor: MaterialStateProperty.all(Colors.white10),
+                                      headingRowColor: MaterialStateProperty.all(GlassStyle.fill10For(context)),
                                       columns: _rows.first.keys
                                           .map((k) => DataColumn(
                                                 label: Text(
                                                   k,
-                                                  style: const TextStyle(color: Colors.cyanAccent, fontFamily: 'Cairo'),
+                                                  style: TextStyle(color: AppTheme.accentFor(context), fontFamily: 'Cairo'),
                                                 ),
                                               ))
                                           .toList(),
@@ -1033,7 +1034,7 @@ if (mounted) setState(() {});
                                                       return DataCell(
                                                         Text(
                                                           displayText,
-                                                          style: const TextStyle(color: Colors.white70, fontFamily: 'Cairo'),
+                                                          style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo'),
                                                         ),
                                                       );
                                                     },
@@ -1072,12 +1073,12 @@ if (mounted) setState(() {});
                                     return Container(
                                       padding: const EdgeInsets.all(8),
                                       decoration: BoxDecoration(
-                                        color: Colors.white.withOpacity(.06),
+                                        color: GlassStyle.fill06For(context),
                                         borderRadius: BorderRadius.circular(8),
                                       ),
                                       child: Text(
                                         '$key: $displayText',
-                                        style: const TextStyle(color: Colors.amber, fontFamily: 'Cairo'),
+                                        style: TextStyle(color: AppTheme.warningFor(context), fontFamily: 'Cairo'),
                                       ),
                                     );
                                   },

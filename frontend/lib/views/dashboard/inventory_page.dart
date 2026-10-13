@@ -2,6 +2,7 @@
 
 import 'dart:io';
 import 'package:flutter/material.dart';
+import '../../core/theme.dart';
 import 'package:intl/intl.dart';
 import 'package:excel/excel.dart' as excel_lib;
 import 'package:file_picker/file_picker.dart';
@@ -48,8 +49,10 @@ class _InventoryPageState extends State<InventoryPage> {
   int? _currentSerial;
 
   List<Map<String, String>> _stores = [];
+  List<Map<String, String>> _itemsLookup = []; // ✅ قائمة الأصناف المقترحة
   List<List<TextEditingController>> _controllers = [];
   List<List<FocusNode>> _focusNodes = [];
+  List<LayerLink> _nameFieldLinks = []; // ✅ روابط الحقول لعرض القائمة أسفلها
   final ScrollController _scrollController = ScrollController();
 
   static const List<String> _fieldOrder = [
@@ -154,7 +157,8 @@ class _InventoryPageState extends State<InventoryPage> {
                 e['name']!.isNotEmpty,
           )
           .toList();
-
+      // ✅ تحميل الأصناف للاقتراحات
+      await _loadItemsLookup();
       if (widget.editItem != null) {
         _loadEditData();
       } else {
@@ -174,6 +178,47 @@ class _InventoryPageState extends State<InventoryPage> {
       }
     }
   }
+
+  // ============================================================
+// تحميل قائمة الأصناف للاقتراحات (من التكويد)
+// ============================================================
+Future<void> _loadItemsLookup() async {
+  try {
+    final box = Hive.box('coding_box');
+    final raw = box.get(
+      '${widget.companyCode}_items',
+      defaultValue: [],
+    );
+
+    final List<Map<String, String>> list = [];
+
+    if (raw is List) {
+      for (final e in raw) {
+        if (e is! Map) continue;
+        final code = e['code']?.toString() ?? '';
+        final name = e['name']?.toString() ?? '';
+        if (code.isEmpty || name.isEmpty) continue;
+
+        list.add({
+          'code': code,
+          'name': name,
+          'wholesale_price':
+              (e['wholesale_price'] ?? e['wholesalePrice'] ?? '0').toString(),
+          'selling_price':
+              (e['selling_price'] ?? e['sellingPrice'] ?? '0').toString(),
+        });
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _itemsLookup = list;
+      });
+    }
+  } catch (e) {
+    debugPrint('❌ خطأ في تحميل الأصناف للاقتراحات: $e');
+  }
+}
 
   // ============================================================
   // تحميل التعديل
@@ -234,7 +279,7 @@ class _InventoryPageState extends State<InventoryPage> {
 
     _controllers.clear();
     _focusNodes.clear();
-
+    _nameFieldLinks.clear(); // ✅ نظّف الروابط
     for (final item in _items) {
       final controllers = <TextEditingController>[];
       final focusNodes = <FocusNode>[];
@@ -269,6 +314,7 @@ class _InventoryPageState extends State<InventoryPage> {
 
       _controllers.add(controllers);
       _focusNodes.add(focusNodes);
+      _nameFieldLinks.add(LayerLink()); // ✅ أضف رابطاً لكل صف
     }
   }
 
@@ -370,6 +416,7 @@ class _InventoryPageState extends State<InventoryPage> {
           (_) => FocusNode(),
         ),
       );
+      _nameFieldLinks.add(LayerLink()); // ✅ رابط للصف الجديد
     });
   }
 
@@ -393,6 +440,7 @@ class _InventoryPageState extends State<InventoryPage> {
 
       _controllers.removeAt(index);
       _focusNodes.removeAt(index);
+      _nameFieldLinks.removeAt(index); // ✅ احذف الرابط
     });
   }
 
@@ -594,6 +642,37 @@ class _InventoryPageState extends State<InventoryPage> {
     }
   }
 
+// ============================================================
+// تعبئة الصف عند اختيار صنف من القائمة المنسدلة
+// ============================================================
+void _fillRowFromSelectedItem(
+  int rowIndex,
+  Map<String, String> item,
+) {
+  if (rowIndex >= _items.length) return;
+
+  final code = item['code'] ?? '';
+  final name = item['name'] ?? '';
+  final wholesale =
+      double.tryParse(item['wholesale_price'] ?? '0') ?? 0.0;
+  final retail =
+      double.tryParse(item['selling_price'] ?? '0') ?? 0.0;
+
+  setState(() {
+    _items[rowIndex].code = code;
+    _items[rowIndex].name = name;
+    _items[rowIndex].wholesalePrice = wholesale;
+    _items[rowIndex].retailPrice = retail;
+
+    _controllers[rowIndex][0].text = code;
+    _controllers[rowIndex][1].text = name;
+    _controllers[rowIndex][3].text = wholesale.toString();
+    _controllers[rowIndex][4].text = retail.toString();
+
+    _recalcItem(rowIndex);
+  });
+}
+
   // ============================================================
   // Enter
   // ============================================================
@@ -690,7 +769,7 @@ class _InventoryPageState extends State<InventoryPage> {
         isEdit
             ? 'ليس لديك صلاحية تعديل الجرد'
             : 'ليس لديك صلاحية إضافة الجرد',
-        Colors.orange,
+        AppTheme.warningOrangeFor(context),
       );
       return;
     }
@@ -718,7 +797,7 @@ class _InventoryPageState extends State<InventoryPage> {
     if (validItems.isEmpty) {
       _showSnackBar(
         'أضف صنفاً واحداً على الأقل',
-        Colors.orange,
+        AppTheme.warningOrangeFor(context),
       );
       return;
     }
@@ -728,7 +807,7 @@ class _InventoryPageState extends State<InventoryPage> {
         _selectedBranchCode == 'all') {
       _showSnackBar(
         'يجب تحديد الفرع',
-        Colors.orange,
+        AppTheme.warningOrangeFor(context),
       );
       return;
     }
@@ -737,7 +816,7 @@ class _InventoryPageState extends State<InventoryPage> {
         _selectedStoreCode!.isEmpty) {
       _showSnackBar(
         'اختر المخزن',
-        Colors.orange,
+        AppTheme.warningOrangeFor(context),
       );
       return;
     }
@@ -793,7 +872,7 @@ class _InventoryPageState extends State<InventoryPage> {
           isEdit
               ? 'تم تحديث الجرد بنجاح'
               : 'تم حفظ الجرد بنجاح',
-          Colors.green,
+          AppTheme.successStrongFor(context),
         );
 
         if (isEdit) {
@@ -829,13 +908,13 @@ class _InventoryPageState extends State<InventoryPage> {
         _showSnackBar(
           'فشل الحفظ: '
           '${result['error'] ?? 'خطأ غير معروف'}',
-          Colors.red,
+          AppTheme.dangerStrongFor(context),
         );
       }
     } catch (e) {
       _showSnackBar(
         'خطأ: $e',
-        Colors.red,
+        AppTheme.dangerStrongFor(context),
       );
     } finally {
       if (mounted) {
@@ -1072,7 +1151,7 @@ class _InventoryPageState extends State<InventoryPage> {
         .canImportInventory) {
       _showSnackBar(
         'ليس لديك صلاحية للاستيراد',
-        Colors.orange,
+        AppTheme.warningOrangeFor(context),
       );
       return;
     }
@@ -1085,20 +1164,20 @@ class _InventoryPageState extends State<InventoryPage> {
           (ctx) =>
               AlertDialog(
         backgroundColor:
-            Colors.indigo.shade900,
+            AppTheme.dialogBackground(context),
         title:
-            const Text(
+            Text(
           'تأكيد الاستيراد',
           style:
               TextStyle(
             color:
-                Colors.white,
+                AppTheme.textMainFor(context),
             fontFamily:
                 'Cairo',
           ),
         ),
         content:
-            const Text(
+            Text(
           'تأكد من احتواء ملف Excel على الأعمدة التالية بأي ترتيب:\n\n'
           '• الكود\n'
           '• الصنف\n'
@@ -1109,7 +1188,7 @@ class _InventoryPageState extends State<InventoryPage> {
           style:
               TextStyle(
             color:
-                Colors.white70,
+                AppTheme.textSoftFor(context),
             fontFamily:
                 'Cairo',
           ),
@@ -1125,12 +1204,12 @@ class _InventoryPageState extends State<InventoryPage> {
               false,
             ),
             child:
-                const Text(
+                Text(
               'إلغاء',
               style:
                   TextStyle(
                 color:
-                    Colors.redAccent,
+                    AppTheme.dangerFor(context),
               ),
             ),
           ),
@@ -1144,9 +1223,9 @@ class _InventoryPageState extends State<InventoryPage> {
             style:
                 ElevatedButton.styleFrom(
               backgroundColor:
-                  Colors.greenAccent,
+                  AppTheme.successFor(context),
               foregroundColor:
-                  Colors.black,
+                  AppTheme.onAccentFor(context),
             ),
             child:
                 const Text(
@@ -1355,12 +1434,12 @@ class _InventoryPageState extends State<InventoryPage> {
 
           _showSnackBar(
             'تم استيراد ${newItems.length} صنفاً',
-            Colors.green,
+            AppTheme.successStrongFor(context),
           );
         } else {
           _showSnackBar(
             'لم يتم استيراد أي بيانات صالحة',
-            Colors.orange,
+            AppTheme.warningOrangeFor(context),
           );
         }
 
@@ -1369,7 +1448,7 @@ class _InventoryPageState extends State<InventoryPage> {
     } catch (e) {
       _showSnackBar(
         'فشل الاستيراد: $e',
-        Colors.red,
+        AppTheme.dangerStrongFor(context),
       );
     } finally {
       if (mounted) {
@@ -1394,43 +1473,32 @@ class _InventoryPageState extends State<InventoryPage> {
         appBar:
             AppBar(
           title:
-              const Text(
+              Text(
             'الجرد',
             style:
                 TextStyle(
               color:
-                  Colors.white,
+                  AppTheme.textMainFor(context),
               fontFamily:
                   'Cairo',
             ),
           ),
           backgroundColor:
-              Colors.transparent,
+              AppTheme.appBarBg,
         ),
         body:
             Container(
           decoration:
-              const BoxDecoration(
-            gradient:
-                LinearGradient(
-              colors: [
-                Colors.black,
-                Color(
-                  0xFF1A237E,
-                ),
-                Colors.black,
-              ],
-            ),
-          ),
+              BoxDecoration(gradient: LinearGradient(colors: AppTheme.pageGradient(context))),
           child:
-              const Center(
+              Center(
             child:
                 Text(
               'ليس لديك صلاحية لعرض الجرد',
               style:
                   TextStyle(
                 color:
-                    Colors.white70,
+                    AppTheme.textSoftFor(context),
                 fontFamily:
                     'Cairo',
               ),
@@ -1468,11 +1536,11 @@ class _InventoryPageState extends State<InventoryPage> {
                     ? 'تعديل جرد'
                     : 'جرد المخزون',
                 style:
-                    const TextStyle(
+                    TextStyle(
                   fontFamily:
                       'Cairo',
                   color:
-                      Colors.white,
+                      AppTheme.textMainFor(context),
                   fontSize:
                       16,
                 ),
@@ -1482,13 +1550,13 @@ class _InventoryPageState extends State<InventoryPage> {
                 Text(
                   'إذن رقم: $_currentSerial',
                   style:
-                      const TextStyle(
+                      TextStyle(
                     fontFamily:
                         'Cairo',
                     fontSize:
                         14,
                     color:
-                        Colors.cyanAccent,
+                        AppTheme.accentFor(context),
                     fontWeight:
                         FontWeight.bold,
                   ),
@@ -1496,19 +1564,19 @@ class _InventoryPageState extends State<InventoryPage> {
               Text(
                 'الفرع: ${widget.branchName ?? _getBranchName(_selectedBranchCode)}',
                 style:
-                    const TextStyle(
+                    TextStyle(
                   fontFamily:
                       'Cairo',
                   fontSize:
                       11,
                   color:
-                      Colors.white70,
+                      AppTheme.textSoftFor(context),
                 ),
               ),
             ],
           ),
           backgroundColor:
-              Colors.transparent,
+              AppTheme.appBarBg,
           elevation:
               0,
           centerTitle:
@@ -1520,10 +1588,10 @@ class _InventoryPageState extends State<InventoryPage> {
                 .canViewInventory)
               IconButton(
                 icon:
-                    const Icon(
+                    Icon(
                   Icons.history,
                   color:
-                      Colors.cyanAccent,
+                      AppTheme.accentFor(context),
                 ),
                 onPressed:
                     () =>
@@ -1550,10 +1618,10 @@ class _InventoryPageState extends State<InventoryPage> {
                 .canImportInventory)
               IconButton(
                 icon:
-                    const Icon(
+                    Icon(
                   Icons.upload_file,
                   color:
-                      Colors.greenAccent,
+                      AppTheme.successFor(context),
                 ),
                 onPressed:
                     _importFromExcel,
@@ -1567,28 +1635,17 @@ class _InventoryPageState extends State<InventoryPage> {
           height:
               double.infinity,
           decoration:
-              const BoxDecoration(
-            gradient:
-                LinearGradient(
-              colors: [
-                Colors.black,
-                Color(
-                  0xFF1A237E,
-                ),
-                Colors.black,
-              ],
-            ),
-          ),
+              BoxDecoration(gradient: LinearGradient(colors: AppTheme.pageGradient(context))),
           child:
               SafeArea(
             child:
                 (_isLoading ||
                         _isSaving)
-                    ? const Center(
+                    ? Center(
                         child:
                             CircularProgressIndicator(
                           color:
-                              Colors.white,
+                              AppTheme.textMainFor(context),
                         ),
                       )
                     : Center(
@@ -1761,9 +1818,7 @@ class _InventoryPageState extends State<InventoryPage> {
           decoration:
               BoxDecoration(
             color:
-                Colors.white.withOpacity(
-              0.05,
-            ),
+                GlassStyle.fill05For(context),
             borderRadius:
                 BorderRadius.circular(
               6,
@@ -1771,7 +1826,7 @@ class _InventoryPageState extends State<InventoryPage> {
             border:
                 Border.all(
               color:
-                  Colors.white24,
+                  GlassStyle.line24For(context),
             ),
           ),
           child:
@@ -1779,10 +1834,10 @@ class _InventoryPageState extends State<InventoryPage> {
             mainAxisSize:
                 MainAxisSize.min,
             children: [
-              const Icon(
+              Icon(
                 Icons.calendar_today,
                 color:
-                    Colors.amber,
+                    AppTheme.warningFor(context),
                 size:
                     14,
               ),
@@ -1793,9 +1848,9 @@ class _InventoryPageState extends State<InventoryPage> {
               Text(
                 _selectedDate,
                 style:
-                    const TextStyle(
+                    TextStyle(
                   color:
-                      Colors.white,
+                      AppTheme.textMainFor(context),
                   fontSize:
                       12,
                 ),
@@ -1819,11 +1874,11 @@ class _InventoryPageState extends State<InventoryPage> {
         value:
             value,
         dropdownColor:
-            Colors.indigo.shade900,
+            AppTheme.dropdownBackground(context),
         style:
-            const TextStyle(
+            TextStyle(
           color:
-              Colors.white,
+              AppTheme.textMainFor(context),
           fontSize:
               12,
         ),
@@ -1834,9 +1889,9 @@ class _InventoryPageState extends State<InventoryPage> {
           labelText:
               label,
           labelStyle:
-              const TextStyle(
+              TextStyle(
             color:
-                Colors.white70,
+                AppTheme.textSoftFor(context),
             fontSize:
                 10,
           ),
@@ -1854,9 +1909,9 @@ class _InventoryPageState extends State<InventoryPage> {
               6,
             ),
             borderSide:
-                const BorderSide(
+                BorderSide(
               color:
-                  Colors.white24,
+                  GlassStyle.line24For(context),
             ),
           ),
           enabledBorder:
@@ -1866,9 +1921,9 @@ class _InventoryPageState extends State<InventoryPage> {
               6,
             ),
             borderSide:
-                const BorderSide(
+                BorderSide(
               color:
-                  Colors.white24,
+                  GlassStyle.line24For(context),
             ),
           ),
           isDense:
@@ -1884,7 +1939,7 @@ class _InventoryPageState extends State<InventoryPage> {
                 Text(
               item['name'] ?? '',
               style:
-                  const TextStyle(
+                  TextStyle(
                 fontSize:
                     12,
               ),
@@ -1904,11 +1959,11 @@ class _InventoryPageState extends State<InventoryPage> {
         value:
             _inventoryType,
         dropdownColor:
-            Colors.indigo.shade900,
+            AppTheme.dropdownBackground(context),
         style:
-            const TextStyle(
+            TextStyle(
           color:
-              Colors.white,
+              AppTheme.textMainFor(context),
           fontSize:
               12,
         ),
@@ -1919,9 +1974,9 @@ class _InventoryPageState extends State<InventoryPage> {
           labelText:
               'النوع',
           labelStyle:
-              const TextStyle(
+              TextStyle(
             color:
-                Colors.white70,
+                AppTheme.textSoftFor(context),
             fontSize:
                 10,
           ),
@@ -1939,9 +1994,9 @@ class _InventoryPageState extends State<InventoryPage> {
               6,
             ),
             borderSide:
-                const BorderSide(
+                BorderSide(
               color:
-                  Colors.white24,
+                  GlassStyle.line24For(context),
             ),
           ),
           enabledBorder:
@@ -1951,9 +2006,9 @@ class _InventoryPageState extends State<InventoryPage> {
               6,
             ),
             borderSide:
-                const BorderSide(
+                BorderSide(
               color:
-                  Colors.white24,
+                  GlassStyle.line24For(context),
             ),
           ),
           isDense:
@@ -2025,9 +2080,7 @@ class _InventoryPageState extends State<InventoryPage> {
       decoration:
           BoxDecoration(
         color:
-            Colors.white.withOpacity(
-          0.05,
-        ),
+            GlassStyle.fill05For(context),
         borderRadius:
             BorderRadius.circular(
           6,
@@ -2035,7 +2088,7 @@ class _InventoryPageState extends State<InventoryPage> {
         border:
             Border.all(
           color:
-              Colors.white24,
+              GlassStyle.line24For(context),
         ),
       ),
       child:
@@ -2046,12 +2099,12 @@ class _InventoryPageState extends State<InventoryPage> {
         children: [
           Row(
             children: [
-              const Text(
+              Text(
                 'الكمية:',
                 style:
                     TextStyle(
                   color:
-                      Colors.white70,
+                      AppTheme.textSoftFor(context),
                   fontSize:
                       12,
                 ),
@@ -2065,9 +2118,9 @@ class _InventoryPageState extends State<InventoryPage> {
                   totalQuantity,
                 ),
                 style:
-                    const TextStyle(
+                    TextStyle(
                   color:
-                      Colors.cyanAccent,
+                      AppTheme.accentFor(context),
                   fontSize:
                       13,
                   fontWeight:
@@ -2078,12 +2131,12 @@ class _InventoryPageState extends State<InventoryPage> {
           ),
           Row(
             children: [
-              const Text(
+              Text(
                 'الجملة:',
                 style:
                     TextStyle(
                   color:
-                      Colors.white70,
+                      AppTheme.textSoftFor(context),
                   fontSize:
                       12,
                 ),
@@ -2097,9 +2150,9 @@ class _InventoryPageState extends State<InventoryPage> {
                   totalWholesale,
                 ),
                 style:
-                    const TextStyle(
+                    TextStyle(
                   color:
-                      Colors.greenAccent,
+                      AppTheme.successFor(context),
                   fontSize:
                       13,
                   fontWeight:
@@ -2110,12 +2163,12 @@ class _InventoryPageState extends State<InventoryPage> {
           ),
           Row(
             children: [
-              const Text(
+              Text(
                 'البيع:',
                 style:
                     TextStyle(
                   color:
-                      Colors.white70,
+                      AppTheme.textSoftFor(context),
                   fontSize:
                       12,
                 ),
@@ -2129,9 +2182,9 @@ class _InventoryPageState extends State<InventoryPage> {
                   totalRetail,
                 ),
                 style:
-                    const TextStyle(
+                    TextStyle(
                   color:
-                      Colors.amber,
+                      AppTheme.warningFor(context),
                   fontSize:
                       13,
                   fontWeight:
@@ -2175,10 +2228,10 @@ class _InventoryPageState extends State<InventoryPage> {
           ElevatedButton.styleFrom(
         backgroundColor:
             canSave && valid
-                ? Colors.greenAccent
-                : Colors.grey,
+                ? AppTheme.successFor(context)
+                : AppTheme.neutralFor(context),
         foregroundColor:
-            Colors.black,
+            AppTheme.onAccentFor(context),
         padding:
             const EdgeInsets.symmetric(
           horizontal:
@@ -2202,7 +2255,7 @@ class _InventoryPageState extends State<InventoryPage> {
                 ? 'تحديث'
                 : 'حفظ',
         style:
-            const TextStyle(
+            TextStyle(
           fontSize:
               14,
           fontWeight:
@@ -2231,7 +2284,7 @@ class _InventoryPageState extends State<InventoryPage> {
               Container(
                 padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
                 decoration: BoxDecoration(
-                  color: Colors.white10,
+                  color: GlassStyle.fill10For(context),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: _buildDesktopHeaders(),
@@ -2248,14 +2301,14 @@ class _InventoryPageState extends State<InventoryPage> {
                     child: Container(
                       padding: const EdgeInsets.symmetric(vertical: 4),
                       decoration: BoxDecoration(
-                        border: Border.all(color: Colors.white24),
+                        border: Border.all(color: GlassStyle.line24For(context)),
                         borderRadius: BorderRadius.circular(6),
                       ),
-                      child: const Center(
+                      child: Center(
                         child: Text(
                           '+ إضافة صنف جديد',
                           style: TextStyle(
-                            color: Colors.cyanAccent,
+                            color: AppTheme.accentFor(context),
                             fontFamily: 'Cairo',
                             fontSize: 13,
                           ),
@@ -2296,7 +2349,7 @@ class _InventoryPageState extends State<InventoryPage> {
         Container(
           padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
           decoration: BoxDecoration(
-            color: Colors.white10,
+            color: GlassStyle.fill10For(context),
             borderRadius: BorderRadius.circular(6),
           ),
           child: _buildMobileHeaders(),
@@ -2316,7 +2369,7 @@ class _InventoryPageState extends State<InventoryPage> {
               decoration: BoxDecoration(
                 border: Border(
                   bottom: BorderSide(
-                    color: Colors.white.withOpacity(0.05),
+                    color: GlassStyle.line05For(context),
                     width: 0.5,
                   ),
                 ),
@@ -2334,14 +2387,14 @@ class _InventoryPageState extends State<InventoryPage> {
               child: Container(
                 padding: const EdgeInsets.symmetric(vertical: 4),
                 decoration: BoxDecoration(
-                  border: Border.all(color: Colors.white24),
+                  border: Border.all(color: GlassStyle.line24For(context)),
                   borderRadius: BorderRadius.circular(6),
                 ),
-                child: const Center(
+                child: Center(
                   child: Text(
                     '+ إضافة صنف جديد',
                     style: TextStyle(
-                      color: Colors.cyanAccent,
+                      color: AppTheme.accentFor(context),
                       fontFamily: 'Cairo',
                       fontSize: 13,
                     ),
@@ -2376,19 +2429,19 @@ class _InventoryPageState extends State<InventoryPage> {
   return Row(
     mainAxisSize: MainAxisSize.max,
     children: [
-      _headerCell('الكود', colWidth, Colors.cyan),
+      _headerCell('الكود', colWidth, AppTheme.accentAltFor(context)),
       const SizedBox(width: 4),
-      _headerCell('الصنف', nameColWidth, Colors.cyan),
+      _headerCell('الصنف', nameColWidth, AppTheme.accentAltFor(context)),
       const SizedBox(width: 4),
-      _headerCell('الكمية', colWidth, Colors.cyan),
+      _headerCell('الكمية', colWidth, AppTheme.accentAltFor(context)),
       const SizedBox(width: 4),
-      _headerCell('سعر الجملة', colWidth, Colors.cyan),
+      _headerCell('سعر الجملة', colWidth, AppTheme.accentAltFor(context)),
       const SizedBox(width: 4),
-      _headerCell('قيمة الجملة', colWidth, Colors.greenAccent),
+      _headerCell('قيمة الجملة', colWidth, AppTheme.successFor(context)),
       const SizedBox(width: 4),
-      _headerCell('سعر البيع', colWidth, Colors.cyan),
+      _headerCell('سعر البيع', colWidth, AppTheme.accentAltFor(context)),
       const SizedBox(width: 4),
-      _headerCell('قيمة البيع', colWidth, Colors.amber),
+      _headerCell('قيمة البيع', colWidth, AppTheme.warningFor(context)),
       const SizedBox(width: 4),
       const SizedBox(width: 40), // مساحة زر الحذف
     ],
@@ -2443,19 +2496,19 @@ class _InventoryPageState extends State<InventoryPage> {
         child: _buildItemField(rowIndex, 3),
       ),
       const SizedBox(width: 4),
-      _valueCell(item.wholesaleValue, colWidth, Colors.greenAccent),
+      _valueCell(item.wholesaleValue, colWidth, AppTheme.successFor(context)),
       const SizedBox(width: 4),
       SizedBox(
         width: colWidth,
         child: _buildItemField(rowIndex, 4),
       ),
       const SizedBox(width: 4),
-      _valueCell(item.retailValue, colWidth, Colors.amber),
+      _valueCell(item.retailValue, colWidth, AppTheme.warningFor(context)),
       const SizedBox(width: 4),
       SizedBox(
         width: 40,
         child: IconButton(
-          icon: const Icon(Icons.delete, color: Colors.red, size: 20),
+          icon: Icon(Icons.delete, color: AppTheme.dangerStrongFor(context), size: 20),
           onPressed: () => _removeRow(rowIndex),
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints(),
@@ -2497,7 +2550,7 @@ class _InventoryPageState extends State<InventoryPage> {
   // ============================================================
 
   Widget _buildDesktopHeaders() =>
-      const Row(
+      Row(
         children: [
           Expanded(
             flex:
@@ -2510,7 +2563,7 @@ class _InventoryPageState extends State<InventoryPage> {
               style:
                   TextStyle(
                 color:
-                    Colors.cyan,
+                    AppTheme.accentAltFor(context),
                 fontWeight:
                     FontWeight.bold,
                 fontSize:
@@ -2531,7 +2584,7 @@ class _InventoryPageState extends State<InventoryPage> {
               style:
                   TextStyle(
                 color:
-                    Colors.cyan,
+                    AppTheme.accentAltFor(context),
                 fontWeight:
                     FontWeight.bold,
                 fontSize:
@@ -2552,7 +2605,7 @@ class _InventoryPageState extends State<InventoryPage> {
               style:
                   TextStyle(
                 color:
-                    Colors.cyan,
+                    AppTheme.accentAltFor(context),
                 fontWeight:
                     FontWeight.bold,
                 fontSize:
@@ -2573,7 +2626,7 @@ class _InventoryPageState extends State<InventoryPage> {
               style:
                   TextStyle(
                 color:
-                    Colors.cyan,
+                    AppTheme.accentAltFor(context),
                 fontWeight:
                     FontWeight.bold,
                 fontSize:
@@ -2594,7 +2647,7 @@ class _InventoryPageState extends State<InventoryPage> {
               style:
                   TextStyle(
                 color:
-                    Colors.greenAccent,
+                    AppTheme.successFor(context),
                 fontWeight:
                     FontWeight.bold,
                 fontSize:
@@ -2615,7 +2668,7 @@ class _InventoryPageState extends State<InventoryPage> {
               style:
                   TextStyle(
                 color:
-                    Colors.cyan,
+                    AppTheme.accentAltFor(context),
                 fontWeight:
                     FontWeight.bold,
                 fontSize:
@@ -2636,7 +2689,7 @@ class _InventoryPageState extends State<InventoryPage> {
               style:
                   TextStyle(
                 color:
-                    Colors.amber,
+                    AppTheme.warningFor(context),
                 fontWeight:
                     FontWeight.bold,
                 fontSize:
@@ -2693,9 +2746,7 @@ class _InventoryPageState extends State<InventoryPage> {
                 bottom:
                     BorderSide(
                   color:
-                      Colors.white.withOpacity(
-                    0.05,
-                  ),
+                      GlassStyle.line05For(context),
                   width:
                       0.5,
                 ),
@@ -2747,7 +2798,7 @@ class _InventoryPageState extends State<InventoryPage> {
                       _valueCell(
                     item.wholesaleValue,
                     double.infinity,
-                    Colors.greenAccent,
+                    AppTheme.successFor(context),
                   ),
                 ),
                 Expanded(
@@ -2766,7 +2817,7 @@ class _InventoryPageState extends State<InventoryPage> {
                       _valueCell(
                     item.retailValue,
                     double.infinity,
-                    Colors.amber,
+                    AppTheme.warningFor(context),
                   ),
                 ),
                 SizedBox(
@@ -2775,10 +2826,10 @@ class _InventoryPageState extends State<InventoryPage> {
                   child:
                       IconButton(
                     icon:
-                        const Icon(
+                        Icon(
                       Icons.delete,
                       color:
-                          Colors.red,
+                          AppTheme.dangerStrongFor(context),
                       size:
                           18,
                     ),
@@ -2804,107 +2855,195 @@ class _InventoryPageState extends State<InventoryPage> {
   // ============================================================
 
   Widget _buildItemField(
-    int rowIndex,
-    int fieldIndex,
-  ) {
-    final field =
-        _fieldOrder[fieldIndex];
+  int rowIndex,
+  int fieldIndex,
+) {
+  final field = _fieldOrder[fieldIndex];
 
-    final isNumber =
-        field == 'quantity' ||
-        field == 'wholesalePrice' ||
-        field == 'retailPrice';
-
-    return Padding(
-      padding:
-          const EdgeInsets.symmetric(
-        horizontal:
-            2,
-      ),
-      child:
-          TextFormField(
-        controller:
-            _controllers[rowIndex]
-                [fieldIndex],
-        focusNode:
-            _focusNodes[rowIndex]
-                [fieldIndex],
-        style:
-            const TextStyle(
-          color:
-              Colors.white,
-          fontSize:
-              13,
-          fontFamily:
-              'Cairo',
-        ),
-        textAlign:
-            TextAlign.center,
-        keyboardType:
-            isNumber
-                ? const TextInputType.numberWithOptions(
-                    decimal:
-                        true,
-                  )
-                : TextInputType.text,
-        textInputAction:
-            fieldIndex ==
-                    _fieldOrder.length -
-                        1
-                ? TextInputAction.done
-                : TextInputAction.next,
-        onChanged:
-            (_) =>
-                _onFieldChanged(
-          rowIndex,
-          fieldIndex,
-        ),
-        onFieldSubmitted:
-            (_) =>
-                _onFieldSubmitted(
-          rowIndex,
-          fieldIndex,
-        ),
-        decoration:
-            InputDecoration(
-          border:
-              const OutlineInputBorder(),
-          enabledBorder:
-              const OutlineInputBorder(
-            borderSide:
-                BorderSide(
-              color:
-                  Colors.white24,
-            ),
-          ),
-          focusedBorder:
-              const OutlineInputBorder(
-            borderSide:
-                BorderSide(
-              color:
-                  Colors.cyanAccent,
-            ),
-          ),
-          contentPadding:
-              const EdgeInsets.symmetric(
-            horizontal:
-                4,
-            vertical:
-                6,
-          ),
-          isDense:
-              true,
-          fillColor:
-              Colors.white
-                  .withOpacity(
-            0.03,
-          ),
-          filled:
-              true,
-        ),
-      ),
-    );
+  // ✅ حقل "الصنف" فقط: نستخدم RawAutocomplete
+  if (field == 'name') {
+    return _buildNameFieldWithSuggestions(rowIndex, fieldIndex);
   }
+
+  final isNumber =
+      field == 'quantity' ||
+      field == 'wholesalePrice' ||
+      field == 'retailPrice';
+
+  return Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 2),
+    child: TextFormField(
+      controller: _controllers[rowIndex][fieldIndex],
+      focusNode: _focusNodes[rowIndex][fieldIndex],
+      style: TextStyle(
+        color: AppTheme.textMainFor(context),
+        fontSize: 13,
+        fontFamily: 'Cairo',
+      ),
+      textAlign: TextAlign.center,
+      keyboardType: isNumber
+          ? const TextInputType.numberWithOptions(decimal: true)
+          : TextInputType.text,
+      textInputAction: fieldIndex == _fieldOrder.length - 1
+          ? TextInputAction.done
+          : TextInputAction.next,
+      onChanged: (_) => _onFieldChanged(rowIndex, fieldIndex),
+      onFieldSubmitted: (_) => _onFieldSubmitted(rowIndex, fieldIndex),
+      decoration: InputDecoration(
+        border: const OutlineInputBorder(),
+        enabledBorder: OutlineInputBorder(
+          borderSide: BorderSide(color: GlassStyle.line24For(context)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderSide: BorderSide(color: AppTheme.accentFor(context)),
+        ),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+        isDense: true,
+        fillColor: GlassStyle.fill03For(context),
+        filled: true,
+      ),
+    ),
+  );
+}
+
+// ============================================================
+// حقل الصنف مع اقتراحات تلقائية
+// ============================================================
+Widget _buildNameFieldWithSuggestions(
+  int rowIndex,
+  int fieldIndex,
+) {
+  return Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 2),
+    child: RawAutocomplete<Map<String, String>>(
+      textEditingController: _controllers[rowIndex][fieldIndex],
+      focusNode: _focusNodes[rowIndex][fieldIndex],
+      displayStringForOption: (option) => option['name'] ?? '',
+      optionsBuilder: (TextEditingValue textValue) {
+        final query = textValue.text.trim();
+        if (query.isEmpty) {
+          return const Iterable<Map<String, String>>.empty();
+        }
+        // ✅ بحث لا يعتمد على حالة الأحرف، ويعرض كل الأصناف المطابقة
+        return _itemsLookup.where(
+          (item) => (item['name'] ?? '').contains(query),
+        );
+      },
+      onSelected: (option) {
+        _fillRowFromSelectedItem(rowIndex, option);
+      },
+      fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+  return CompositedTransformTarget( // ✅ اربط الحقل بالرابط
+    link: _nameFieldLinks[rowIndex],
+    child: TextFormField(
+      controller: controller,
+      focusNode: focusNode,
+      style: TextStyle(
+        color: AppTheme.textMainFor(context),
+        fontSize: 13,
+        fontFamily: 'Cairo',
+      ),
+      textAlign: TextAlign.center,
+      keyboardType: TextInputType.text,
+      textInputAction: TextInputAction.next,
+      onChanged: (_) => _onFieldChanged(rowIndex, fieldIndex),
+      onFieldSubmitted: (_) {
+        _onFieldSubmitted(rowIndex, fieldIndex);
+      },
+      decoration: InputDecoration(
+        border: const OutlineInputBorder(),
+        enabledBorder: OutlineInputBorder(
+          borderSide: BorderSide(color: GlassStyle.line24For(context)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderSide: BorderSide(color: AppTheme.accentFor(context)),
+        ),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+        isDense: true,
+        fillColor: GlassStyle.fill03For(context),
+        filled: true,
+      ),
+    ),
+  );
+},
+    optionsViewBuilder: (context, onSelected, options) {
+  // ✅ رقم واحد فقط تتحكم به في العرض
+  const double boxWidth = 150.0;
+
+  return CompositedTransformFollower(
+    link: _nameFieldLinks[rowIndex],
+    showWhenUnlinked: false,
+    // ✅ في RTL نربط بالحافة اليمنى للحقل
+    targetAnchor: Alignment.bottomRight,
+    followerAnchor: Alignment.topRight,
+    offset: const Offset(0, 6),
+    child: Align(
+      alignment: Alignment.topRight,
+      // ✅ widthFactor: 1.0 يمنع Align من تمديد الأبناء
+      widthFactor: 1.0,
+      heightFactor: 1.0,
+      child: Material(
+        elevation: 8,
+        color: AppTheme.dropdownBackground(context),
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          // ✅ عرض ثابت صريح
+          width: boxWidth,
+          constraints: const BoxConstraints(maxHeight: 200),
+          child: ListView.builder(
+            padding: EdgeInsets.zero,
+            shrinkWrap: true,
+            itemCount: options.length,
+            itemBuilder: (context, index) {
+              final option = options.elementAt(index);
+              return InkWell(
+                onTap: () => onSelected(option),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 4,
+                    horizontal: 8,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        option['name'] ?? '',
+                        style: TextStyle(
+                          color: AppTheme.textMainFor(context),
+                          fontSize: 12,
+                          fontFamily: 'Cairo',
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 1),
+                      Text(
+                        'كود: ${option['code']}',
+                        style: TextStyle(
+                          color: AppTheme.textMutedFor(context),
+                          fontSize: 9,
+                          fontFamily: 'Cairo',
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    ),
+  );
+},
+    ),
+  );
+}
 
   // ============================================================
   // SnackBar
@@ -2926,7 +3065,7 @@ class _InventoryPageState extends State<InventoryPage> {
           textAlign:
               TextAlign.center,
           style:
-              const TextStyle(
+              TextStyle(
             fontFamily:
                 'Cairo',
             fontSize:

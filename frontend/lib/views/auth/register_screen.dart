@@ -1,3 +1,4 @@
+import '../../core/theme.dart';
 import 'package:flutter/material.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../services/api_service.dart';
@@ -51,7 +52,7 @@ class _RegisterScreenState extends State<RegisterScreen> with TickerProviderStat
     if (_nameController.text.isEmpty || _emailController.text.isEmpty || 
         _passwordController.text.isEmpty || _compCodeController.text.isEmpty ||
         _jobCodeController.text.isEmpty) {
-      _showSnackBar('برجاء ملء جميع الحقول بما فيها أكواد التفعيل', Colors.orange);
+      _showSnackBar('برجاء ملء جميع الحقول بما فيها أكواد التفعيل', AppTheme.warningOrangeFor(context));
       return;
     }
 
@@ -67,11 +68,11 @@ class _RegisterScreenState extends State<RegisterScreen> with TickerProviderStat
       );
 
       if (mounted) {
-        _showSnackBar('تم إنشاء الحساب بنجاح كـ ${_jobCodeController.text}', Colors.green);
+        _showSnackBar('تم إنشاء الحساب بنجاح كـ ${_jobCodeController.text}', AppTheme.successStrongFor(context));
         Navigator.pop(context);
       }
     } catch (e) {
-      _showSnackBar(e.toString(), Colors.redAccent);
+      _showSnackBar(e.toString(), AppTheme.dangerFor(context));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -91,7 +92,7 @@ class _RegisterScreenState extends State<RegisterScreen> with TickerProviderStat
         width: double.infinity,
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [Colors.indigo.shade900, Colors.black],
+            colors: AppTheme.registerGradient(context),
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
@@ -103,13 +104,13 @@ class _RegisterScreenState extends State<RegisterScreen> with TickerProviderStat
               // أنميشن الشعار أو العنوان
               FadeTransition(
                 opacity: _animController,
-                child: const Column(
+                child: Column(
                   children: [
-                    Icon(Icons.person_add_outlined, size: 80, color: Colors.white),
+                    Icon(Icons.person_add_outlined, size: 80, color: AppTheme.textMainFor(context)),
                     SizedBox(height: 10),
                     Text(
                       'إنشاء حساب',
-                      style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold),
+                      style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 28, fontWeight: FontWeight.bold),
                     ),
                   ],
                 ),
@@ -168,15 +169,15 @@ class _RegisterScreenState extends State<RegisterScreen> with TickerProviderStat
                     SizedBox(
                       width: double.infinity,
                       child: _isLoading
-                          ? const Center(child: CircularProgressIndicator(color: Colors.white))
+                          ? Center(child: CircularProgressIndicator(color: Theme.of(context).colorScheme.onPrimary))
                           : ElevatedButton(
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.white.withOpacity(0.2),
+                                backgroundColor: AppTheme.authActionBackground(context),
                                 padding: const EdgeInsets.symmetric(vertical: 15),
                                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                               ),
                               onPressed: _handleRegister,
-                              child: const Text('إتمام التسجيل', style: TextStyle(fontSize: 18, color: Colors.white)),
+                              child: Text('إتمام التسجيل', style: TextStyle(fontSize: 18, color: Theme.of(context).colorScheme.onPrimary)),
                             ),
                     ),
                   ],
@@ -186,7 +187,7 @@ class _RegisterScreenState extends State<RegisterScreen> with TickerProviderStat
               const SizedBox(height: 20),
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('لديك حساب بالفعل؟ سجل دخولك', style: TextStyle(color: Colors.white70)),
+                child: Text('لديك حساب بالفعل؟ سجل دخولك', style: TextStyle(color: AppTheme.textSoftFor(context))),
               ),
             ],
           ),
@@ -226,7 +227,7 @@ class _RegisterScreenState extends State<RegisterScreen> with TickerProviderStat
                 controller: controller,
                 focusNode: node,
                 obscureText: isPass,
-                style: const TextStyle(color: Colors.white),
+                style: TextStyle(color: AppTheme.textMainFor(context)),
                 textInputAction: isLast ? TextInputAction.done : TextInputAction.next,
                 // الانتقال للخانات التالية عند ضغط Enter
                 onSubmitted: (_) {
@@ -237,18 +238,18 @@ class _RegisterScreenState extends State<RegisterScreen> with TickerProviderStat
                   }
                 },
                 decoration: InputDecoration(
-                  prefixIcon: Icon(icon, color: Colors.white70),
+                  prefixIcon: Icon(icon, color: AppTheme.textSoftFor(context)),
                   labelText: label,
-                  labelStyle: const TextStyle(color: Colors.white70),
+                  labelStyle: TextStyle(color: AppTheme.textSoftFor(context)),
                   filled: true,
-                  fillColor: Colors.white.withOpacity(0.05),
+                  fillColor: AppTheme.inputFill(context),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(15),
-                    borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
+                    borderSide: BorderSide(color: AppTheme.inputBorder(context)),
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(15),
-                    borderSide: const BorderSide(color: Colors.white),
+                    borderSide: BorderSide(color: AppTheme.inputFocus(context)),
                   ),
                 ),
               ),
