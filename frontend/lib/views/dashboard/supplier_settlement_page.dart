@@ -662,7 +662,7 @@ class _SupplierSettlementPageState
           children: [
             // المورد
             DropdownButtonFormField<String>(
-              value: _selectedSupplier,
+              initialValue: _selectedSupplier,
               dropdownColor: AppTheme.dropdownBackground(context),
               style: TextStyle(color: AppTheme.textMainFor(context)),
               decoration: InputDecoration(
@@ -705,7 +705,7 @@ class _SupplierSettlementPageState
               children: [
                 Expanded(
                   child: DropdownButtonFormField<String>(
-                    value: _selectedPaymentMethod,
+                    initialValue: _selectedPaymentMethod,
                     dropdownColor: AppTheme.dropdownBackground(context),
                     style: TextStyle(color: AppTheme.textMainFor(context)),
                     decoration: const InputDecoration(
@@ -731,7 +731,7 @@ class _SupplierSettlementPageState
                 const SizedBox(width: 8),
                 Expanded(
                   child: DropdownButtonFormField<String>(
-                    value: _selectedTreasury,
+                    initialValue: _selectedTreasury,
                     dropdownColor: AppTheme.dropdownBackground(context),
                     style: TextStyle(color: AppTheme.textMainFor(context)),
                     decoration:

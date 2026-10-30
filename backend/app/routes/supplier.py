@@ -1,10 +1,11 @@
 # backend/app/routes/supplier.py
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 
 from app.core.database import get_db
+from app.core.auth_middleware import allowed_branches_for_profile
 from app.core.models import SupplierRecord
 from app.core.schemas import SupplierTransactionModel
 from app.core.sync import manager
@@ -288,6 +289,7 @@ async def save_supplier_transaction(
 @router.get("/list/{company_code}")
 async def list_supplier_transactions(
     company_code: str,
+    request: Request,
     branch_code: Optional[str] = Query(None),
     supplier_name: Optional[str] = Query(None),
     start_date: Optional[str] = Query(None),
@@ -305,7 +307,7 @@ async def list_supplier_transactions(
             )
         )
 
-        if branch_code:
+        if branch_code and branch_code.lower() not in {"all", "الكل", "كل الفروع"}:
             stmt = stmt.where(
                 SupplierRecord.branch_code
                 == branch_code
@@ -333,6 +335,10 @@ async def list_supplier_transactions(
             desc(SupplierRecord.date),
             desc(SupplierRecord.serial),
         )
+
+        allowed_branches = allowed_branches_for_profile(request.state.auth_user)
+        if allowed_branches:
+            stmt = stmt.where(SupplierRecord.branch_code.in_(allowed_branches))
 
         result = await db.execute(stmt)
 
@@ -367,6 +373,7 @@ async def list_supplier_transactions(
 @router.get("/changes/{company_code}")
 async def get_supplier_changes(
     company_code: str,
+    request: Request,
     since: str = Query(
         ...,
         description=(
@@ -424,6 +431,10 @@ async def get_supplier_changes(
             )
         )
 
+        allowed_branches = allowed_branches_for_profile(request.state.auth_user)
+        if allowed_branches:
+            stmt = stmt.where(SupplierRecord.branch_code.in_(allowed_branches))
+
         result = await db.execute(stmt)
 
         docs = result.scalars().all()
@@ -473,6 +484,7 @@ async def get_supplier_changes(
 )
 async def delete_supplier_transaction(
     company_code: str,
+    request: Request,
     doc_id: str,
     db: AsyncSession = Depends(get_db),
 ):
@@ -516,6 +528,9 @@ async def delete_supplier_transaction(
                 status_code=404,
                 detail="Supplier record not found",
             )
+        allowed_branches = allowed_branches_for_profile(request.state.auth_user)
+        if allowed_branches and existing.branch_code not in allowed_branches:
+            raise HTTPException(status_code=403, detail="غير مسموح بالوصول إلى هذا الفرع")
 
         # ------------------------------------------------------
         # لو محذوف بالفعل

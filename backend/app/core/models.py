@@ -9,6 +9,7 @@ from sqlalchemy import (
     Text,
     Index,
     text,
+    UniqueConstraint,
 )
 from sqlalchemy.sql import func
 
@@ -719,3 +720,95 @@ class SupplierSettlementRecord(Base):
         'is_deleted',
     ),
 )
+
+# ==========================================
+# 8. إشعارات المستخدمين وسجل التدقيق
+# ==========================================
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True, autoincrement=True, index=True)
+    event_id = Column(String(36), nullable=False, index=True)
+    recipient_uid = Column(String(128), nullable=False, index=True)
+    recipient_email = Column(String(255), nullable=False, index=True)
+    company_code = Column(String(50), nullable=False, index=True)
+    branch_code = Column(String(50), nullable=False, default="")
+    section = Column(String(50), nullable=False, index=True)
+    action = Column(String(20), nullable=False)
+    actor_uid = Column(String(128), nullable=False, default="")
+    actor_name = Column(String(255), nullable=False, default="")
+    title = Column(String(255), nullable=False)
+    body = Column(Text, nullable=False, default="")
+    entity_id = Column(String(255), nullable=False, default="")
+    created_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
+    is_read = Column(Boolean, nullable=False, default=False, server_default="false")
+    read_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("event_id", "recipient_uid", name="uq_notifications_event_recipient"),
+        Index("idx_notifications_recipient_company_created", "recipient_uid", "company_code", "created_at"),
+    )
+
+
+class NotificationPreference(Base):
+    __tablename__ = "notification_preferences"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_uid = Column(String(128), nullable=False, index=True)
+    user_email = Column(String(255), nullable=False, index=True)
+    company_code = Column(String(50), nullable=False, index=True)
+    sections = Column(JSON, nullable=False, default=dict)
+    actions = Column(JSON, nullable=False, default=dict)
+    retention_days = Column(Integer, nullable=False, default=90)
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("user_uid", "company_code", name="uq_notification_preferences_user_company"),
+    )
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_id = Column(String(36), nullable=False, index=True)
+    company_code = Column(String(50), nullable=False, index=True)
+    branch_code = Column(String(50), nullable=False, default="")
+    actor_uid = Column(String(128), nullable=False, default="")
+    actor_email = Column(String(255), nullable=False, default="")
+    actor_name = Column(String(255), nullable=False, default="")
+    section = Column(String(50), nullable=False, index=True)
+    action = Column(String(20), nullable=False)
+    entity_id = Column(String(255), nullable=False, default="")
+    details = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
+
+# ==========================================
+# 9. كتالوج المنتجات والبحث بالباركود
+# ==========================================
+class ProductCatalog(Base):
+    __tablename__ = "product_catalog"
+
+    barcode = Column(String(14), primary_key=True, nullable=False)
+    product_name = Column(String(500), nullable=False, default="")
+    brand = Column(String(500), nullable=False, default="")
+    quantity = Column(String(120), nullable=False, default="")
+    category = Column(String(500), nullable=False, default="")
+    manufacturer = Column(String(500), nullable=False, default="")
+    origin_country = Column(String(200), nullable=False, default="")
+    verification_status = Column(String(30), nullable=False, default="partial")
+    product_source = Column(String(100), nullable=False, default="")
+    product_source_url = Column(Text, nullable=False, default="")
+    product_updated_at = Column(DateTime, nullable=True)
+    price_amount = Column(Float, nullable=True)
+    price_min = Column(Float, nullable=True)
+    price_max = Column(Float, nullable=True)
+    price_type = Column(String(30), nullable=False, default="unavailable")
+    price_unit = Column(String(50), nullable=False, default="unit")
+    price_source = Column(String(200), nullable=False, default="")
+    price_source_url = Column(Text, nullable=False, default="")
+    price_observed_at = Column(DateTime, nullable=True)
+    price_updated_at = Column(DateTime, nullable=True)
+    price_checked_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())

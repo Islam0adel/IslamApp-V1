@@ -2058,7 +2058,7 @@ setState(() {
 
   Widget _buildStoreDropdown() {
     return DropdownButtonFormField<String?>(
-      value:
+      initialValue:
           _selectedStoreCode,
       dropdownColor: AppTheme.dropdownBackground(context),
       style:
@@ -2150,7 +2150,7 @@ setState(() {
               _updateExpectedBalance();
             });
           },
-          activeColor: AppTheme.dangerFor(context),
+          activeThumbColor: AppTheme.dangerFor(context),
           inactiveThumbColor: AppTheme.neutralFor(context),
           materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
         ),
@@ -2186,7 +2186,7 @@ setState(() {
                   value;
             });
           },
-          activeColor:
+          activeThumbColor:
               AppTheme.successFor(context),
           inactiveThumbColor:
               AppTheme.neutralFor(context),
@@ -2230,7 +2230,7 @@ setState(() {
                   value;
             });
           },
-          activeColor:
+          activeThumbColor:
               AppTheme.accentFor(context),
           inactiveThumbColor:
               AppTheme.neutralFor(context),
@@ -2248,7 +2248,7 @@ setState(() {
 
   Widget _buildSupplierDropdown() {
     return DropdownButtonFormField<String?>(
-      value:
+      initialValue:
           _selectedSupplier,
       dropdownColor: AppTheme.dropdownBackground(context),
       style:

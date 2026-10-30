@@ -1,10 +1,10 @@
 import 'dart:convert';
 
-import 'package:http/http.dart' as http;
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/constants.dart';
+import 'auth_http.dart';
 
 
 class DailyService {
@@ -243,7 +243,7 @@ await _transactionBox.put(
     String companyCode,
   ) async {
     try {
-      final response = await http.get(
+      final response = await AuthHttp.get(
         Uri.parse(
           '$baseUrl/transactions/list/$companyCode'
           '?start_date=2020-01-01'
@@ -438,7 +438,7 @@ final String effectiveSince =
       // Request
       // --------------------------------------------------------
 
-      final response = await http.get(
+      final response = await AuthHttp.get(
         Uri.parse(
           '$baseUrl/transactions/changes/'
           '$companyCode?since=$effectiveSince',
@@ -604,7 +604,7 @@ final String effectiveSince =
     required String branchCode,
   }) async {
     try {
-      final response = await http.post(
+      final response = await AuthHttp.post(
         Uri.parse(
           '$baseUrl/transactions/save',
         ),
@@ -760,7 +760,7 @@ final String effectiveSince =
     int fromSerial,
   ) async {
     try {
-      final response = await http.get(
+      final response = await AuthHttp.get(
         Uri.parse(
           '$baseUrl/transactions/updates/'
           '$companyCode/$fromSerial',
@@ -917,7 +917,7 @@ final String effectiveSince =
 
       if (resultData.isEmpty) {
         final response =
-            await http.get(
+            await AuthHttp.get(
           Uri.parse(
             '$baseUrl/transactions/list/'
             '$companyCode'
@@ -1101,7 +1101,7 @@ final String effectiveSince =
   ) async {
     try {
       final response =
-          await http.delete(
+          await AuthHttp.delete(
         Uri.parse(
           '$baseUrl/transactions/delete/'
           '$companyCode/'
@@ -1224,7 +1224,7 @@ final String effectiveSince =
 
 
       final response =
-          await http.get(
+          await AuthHttp.get(
         Uri.parse(
           '$baseUrl/transactions/list/'
           '$companyCode'

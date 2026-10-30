@@ -2,7 +2,6 @@
 
 import 'dart:convert';
 
-import 'package:http/http.dart' as http;
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -10,6 +9,7 @@ import '../models/inventory_model.dart';
 import '../core/constants.dart';
 import '../services/coding_service.dart';
 import '../models/coding_model.dart';
+import 'auth_http.dart';
 
 
 class InventoryService {
@@ -90,7 +90,7 @@ class InventoryService {
     // ----------------------------------------------------------
 
     try {
-      final response = await http.get(
+      final response = await AuthHttp.get(
         Uri.parse(
           '$baseUrl/inventory/list/'
           '$companyCode'
@@ -262,7 +262,7 @@ class InventoryService {
       // إرسال للسيرفر
       // --------------------------------------------------------
 
-      final response = await http.post(
+      final response = await AuthHttp.post(
         Uri.parse(
           '$baseUrl/inventory/save',
         ),
@@ -492,7 +492,7 @@ class InventoryService {
     String docId,
   ) async {
     try {
-      final response = await http.delete(
+      final response = await AuthHttp.delete(
         Uri.parse(
           '$baseUrl/inventory/delete/'
           '$companyCode/$docId',
@@ -613,7 +613,7 @@ class InventoryService {
 
 
     try {
-      final response = await http.get(
+      final response = await AuthHttp.get(
         Uri.parse(
           '$baseUrl/inventory/list/'
           '$companyCode',
@@ -808,7 +808,7 @@ class InventoryService {
           sinceDt.toIso8601String();
 
 
-      final response = await http.get(
+      final response = await AuthHttp.get(
         Uri.parse(
           '$baseUrl/inventory/changes/'
           '$companyCode'

@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 
 from app.core.database import get_db
+from app.core.auth_middleware import allowed_branches_for_profile
 from app.core.models import SupplierSettlementRecord
 from app.core.schemas import SupplierSettlementModel
 from app.core.sync import manager
@@ -240,6 +241,7 @@ async def save_settlement(
 @router.get("/list/{company_code}")
 async def list_settlements(
     company_code: str,
+    request: Request,
     branch_code: Optional[str] = Query(None),
     supplier_name: Optional[str] = Query(None),
     start_date: Optional[str] = Query(None),
@@ -256,7 +258,7 @@ async def list_settlements(
             )
         )
 
-        if branch_code:
+        if branch_code and branch_code.lower() not in {"all", "الكل", "كل الفروع"}:
             stmt = stmt.where(
                 SupplierSettlementRecord.branch_code
                 == branch_code
@@ -284,6 +286,10 @@ async def list_settlements(
             desc(SupplierSettlementRecord.date),
             desc(SupplierSettlementRecord.serial),
         )
+
+        allowed_branches = allowed_branches_for_profile(request.state.auth_user)
+        if allowed_branches:
+            stmt = stmt.where(SupplierSettlementRecord.branch_code.in_(allowed_branches))
 
         result = await db.execute(stmt)
 
@@ -313,6 +319,7 @@ async def list_settlements(
 @router.get("/changes/{company_code}")
 async def get_settlement_changes(
     company_code: str,
+    request: Request,
     since: str = Query(...),
     db: AsyncSession = Depends(get_db),
 ):
@@ -342,6 +349,10 @@ async def get_settlement_changes(
                 SupplierSettlementRecord.updated_at
             )
         )
+
+        allowed_branches = allowed_branches_for_profile(request.state.auth_user)
+        if allowed_branches:
+            stmt = stmt.where(SupplierSettlementRecord.branch_code.in_(allowed_branches))
 
         result = await db.execute(stmt)
 
@@ -390,6 +401,7 @@ async def get_settlement_changes(
 @router.delete("/delete/{company_code}/{doc_id}")
 async def delete_settlement(
     company_code: str,
+    request: Request,
     doc_id: str,
     db: AsyncSession = Depends(get_db),
 ):
@@ -420,6 +432,9 @@ async def delete_settlement(
                 status_code=404,
                 detail="التسوية غير موجودة",
             )
+        allowed_branches = allowed_branches_for_profile(request.state.auth_user)
+        if allowed_branches and existing.branch_code not in allowed_branches:
+            raise HTTPException(status_code=403, detail="غير مسموح بالوصول إلى هذا الفرع")
 
         if existing.is_deleted:
             return {

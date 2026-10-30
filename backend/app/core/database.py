@@ -6,7 +6,7 @@ from sqlalchemy.orm import declarative_base
 from sqlalchemy.pool import NullPool
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-ENV_PATH = BASE_DIR /"D:\IslamApp-V1\.env"
+ENV_PATH = Path(r"D:\IslamApp-V1\.env")
 load_dotenv(dotenv_path=ENV_PATH)
 
 DATABASE_URL = os.getenv("DATABASE_URL")

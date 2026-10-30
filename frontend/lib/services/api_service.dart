@@ -1,8 +1,8 @@
 import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'package:firebase_auth/firebase_auth.dart';
 import '../core/constants.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'auth_http.dart';
 
 class ApiService {
   final String baseUrl = ApiConstants.baseUrl;
@@ -16,10 +16,10 @@ class ApiService {
         email: email.trim().toLowerCase(),
         password: password,
       );
-      // إضافة (true) تجبر Firebase على جلب توكن جديد وتحديث التوكن الحالي
-      String? token = await userCredential.user?.getIdToken(true);
+      // استخدام التوكن الحالي الصالح؛ Firebase يجدده عند الحاجة لتجنب refresh إجباري عند كل تسجيل دخول
+      String? token = await userCredential.user?.getIdToken();
       // print("🔑 التوكن الذي يتم إرساله: $token");
-      final response = await http.post(
+      final response = await AuthHttp.post(
         Uri.parse('$baseUrl/auth/verify-user'),
         headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $token'},
       );
@@ -40,7 +40,7 @@ class ApiService {
       UserCredential userCredential = await _auth.createUserWithEmailAndPassword(
         email: email.trim().toLowerCase(), password: password,
       );
-      final response = await http.post(
+      final response = await AuthHttp.post(
         Uri.parse('$baseUrl/auth/register'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
@@ -64,7 +64,7 @@ class ApiService {
     required String companyCode, 
     required String jobCode
   }) async {
-    final response = await http.post(
+    final response = await AuthHttp.post(
       Uri.parse('$baseUrl/auth/verify-reset'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
@@ -99,7 +99,7 @@ class ApiService {
       }
 
       // لو الـ Hive فاضي (أول تشغيل مثلاً)، يجيب من السيرفر
-      final response = await http.get(
+      final response = await AuthHttp.get(
         Uri.parse('$baseUrl/coding/list/$companyCode/branches'),
         headers: {'Content-Type': 'application/json'},
       ).timeout(const Duration(seconds: 3));
@@ -135,7 +135,7 @@ Future<void> updatePermissions(
     if (allowedBranches != null) {
       body['allowed_branches'] = allowedBranches;
     }
-    final response = await http.post(
+    final response = await AuthHttp.post(
       Uri.parse('$baseUrl/auth/update-permissions'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode(body),
@@ -151,7 +151,7 @@ Future<void> updatePermissions(
   // ================= 3. إدارة الشركات (لصاحب البرنامج فقط) =================
 
 Future<List<dynamic>> getAllCompanies(String adminJobCode) async {
-  final response = await http.get(
+  final response = await AuthHttp.get(
     Uri.parse('$baseUrl/auth/companies/all?admin_job_code=$adminJobCode'),
   );
   if (response.statusCode == 200) {
@@ -161,7 +161,7 @@ Future<List<dynamic>> getAllCompanies(String adminJobCode) async {
 }
 
 Future<void> addCompany(String code, String name, String adminJobCode) async {
-  final response = await http.post(
+  final response = await AuthHttp.post(
     Uri.parse('$baseUrl/auth/companies/add?admin_job_code=$adminJobCode'),
     headers: {'Content-Type': 'application/json'},
     body: jsonEncode({'code': code, 'name': name}),
@@ -172,7 +172,7 @@ Future<void> addCompany(String code, String name, String adminJobCode) async {
 }
 
 Future<void> toggleCompanyStatus(String code, bool isActive, String adminJobCode) async {
-  final response = await http.post(
+  final response = await AuthHttp.post(
     Uri.parse('$baseUrl/auth/companies/toggle'),
     headers: {'Content-Type': 'application/json'},
     body: jsonEncode({
@@ -195,7 +195,7 @@ Future<void> updateCompany({
   required String adminJobCode,
 }) async {
   try {
-    final response = await http.put(
+    final response = await AuthHttp.put(
       Uri.parse('$baseUrl/auth/companies/update'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
@@ -217,7 +217,7 @@ Future<void> updateCompany({
 }
 
 Future<void> deleteCompany(String code, String adminJobCode) async {
-  final response = await http.delete(
+  final response = await AuthHttp.delete(
     Uri.parse('$baseUrl/auth/companies/delete/$code?admin_job_code=$adminJobCode'),
   );
   if (response.statusCode != 200) {

@@ -1,10 +1,11 @@
 # backend/app/routes/transactions.py
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 
 from app.core.database import get_db
+from app.core.auth_middleware import allowed_branches_for_profile
 from app.core.models import Transaction
 from app.core.schemas import TransactionModel
 from app.core.sync import manager
@@ -225,6 +226,7 @@ async def save_transaction(
 @router.get("/list/{company_code}")
 async def get_transactions(
     company_code: str,
+    request: Request,
     start_date: str = Query(...),
     end_date: str = Query(...),
     branch_code: str = Query(None),
@@ -266,6 +268,10 @@ async def get_transactions(
             desc(Transaction.serial),
         )
 
+        allowed_branches = allowed_branches_for_profile(request.state.auth_user)
+        if allowed_branches:
+            stmt = stmt.where(Transaction.branch_code.in_(allowed_branches))
+
         result = await db.execute(stmt)
 
         docs = result.scalars().all()
@@ -303,6 +309,7 @@ async def get_transactions(
 @router.get("/changes/{company_code}")
 async def get_transactions_changes(
     company_code: str,
+    request: Request,
     since: str = Query(
         ...,
         description=(
@@ -359,6 +366,10 @@ async def get_transactions_changes(
                 Transaction.updated_at
             )
         )
+
+        allowed_branches = allowed_branches_for_profile(request.state.auth_user)
+        if allowed_branches:
+            stmt = stmt.where(Transaction.branch_code.in_(allowed_branches))
 
         result = await db.execute(stmt)
 
@@ -417,6 +428,7 @@ async def get_transactions_changes(
 @router.get("/updates/{company_code}/{from_serial}")
 async def get_transactions_from_serial(
     company_code: str,
+    request: Request,
     from_serial: int,
     db: AsyncSession = Depends(get_db),
 ):
@@ -435,6 +447,10 @@ async def get_transactions_from_serial(
                 Transaction.serial
             )
         )
+
+        allowed_branches = allowed_branches_for_profile(request.state.auth_user)
+        if allowed_branches:
+            stmt = stmt.where(Transaction.branch_code.in_(allowed_branches))
 
         result = await db.execute(stmt)
 
@@ -590,6 +606,7 @@ async def delete_transaction(
 @router.get("/last_serial/{company_code}")
 async def get_last_serial(
     company_code: str,
+    request: Request,
     branch_code: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
@@ -624,6 +641,10 @@ async def get_last_serial(
             )
             .limit(1)
         )
+
+        allowed_branches = allowed_branches_for_profile(request.state.auth_user)
+        if allowed_branches:
+            stmt = stmt.where(Transaction.branch_code.in_(allowed_branches))
 
         result = await db.execute(stmt)
 

@@ -2,12 +2,12 @@
 
 import 'dart:convert';
 
-import 'package:http/http.dart' as http;
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/coding_model.dart';
 import '../core/constants.dart';
+import 'auth_http.dart';
 
 
 class CodingService {
@@ -122,7 +122,7 @@ class CodingService {
     );
 
     try {
-      final response = await http.get(
+      final response = await AuthHttp.get(
         Uri.parse(
           "$baseUrl/coding/list/"
           "$companyCode/$category",
@@ -237,7 +237,7 @@ class CodingService {
 
     try {
       for (final category in categories) {
-        final response = await http.get(
+        final response = await AuthHttp.get(
           Uri.parse(
             '$baseUrl/coding/list/'
             '$companyCode/$category',
@@ -436,7 +436,7 @@ class CodingService {
       // --------------------------------------------------------
 
       for (final category in categories) {
-        final response = await http.get(
+        final response = await AuthHttp.get(
           Uri.parse(
             '$baseUrl/coding/changes/'
             '$companyCode'
@@ -737,7 +737,7 @@ class CodingService {
           category;
 
 
-      final response = await http.post(
+      final response = await AuthHttp.post(
         Uri.parse(
           "$baseUrl/coding/save",
         ),
@@ -957,7 +957,7 @@ class CodingService {
     required String code,
   }) async {
     try {
-      final response = await http.delete(
+      final response = await AuthHttp.delete(
         Uri.parse(
           "$baseUrl/coding/delete/"
           "$companyCode/"

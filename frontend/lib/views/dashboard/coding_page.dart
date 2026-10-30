@@ -205,7 +205,7 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
                                 if (_selectedCategory == "types") ...[
                                   const SizedBox(height: 10),
                                   DropdownButtonFormField<String>(
-                                    value: _selectedType,
+                                    initialValue: _selectedType,
                                     dropdownColor: AppTheme.dropdownBackground(context),
                                     style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 14, fontFamily: 'Cairo'),
                                     decoration: InputDecoration(
@@ -434,35 +434,59 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
     }
   }
 
-  Widget _buildModal(List<CodingModel> initialItems) {
-    return StatefulBuilder(
-      builder: (BuildContext context, StateSetter setModalState) {
-        bool canAdd = PermissionsService().canAddCodingItem;
+  
+Widget _buildModal(List<CodingModel> initialItems) {
+  return StatefulBuilder(
+    builder: (BuildContext context, StateSetter setModalState) {
+      bool canAdd = PermissionsService().canAddCodingItem;
 
-        return Container(
-          height: MediaQuery.of(context).size.height * 0.7,
-          decoration: BoxDecoration(
-            color: AppTheme.modalPanelFor(context),
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-          ),
-          child: initialItems.isEmpty
-              ? Center(child: Text("القسم فارغ حالياً", style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo')))
-              : ListView.builder(
-                  itemCount: initialItems.length,
-                  itemBuilder: (c, i) => ListTile(
+      return Container(
+        height: MediaQuery.of(context).size.height * 0.7,
+        decoration: BoxDecoration(
+          color: AppTheme.modalPanelFor(context),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: initialItems.isEmpty
+            ? Center(
+                child: Text(
+                  "القسم فارغ حالياً",
+                  style: TextStyle(
+                    color: AppTheme.textSoftFor(context),
+                    fontFamily: 'Cairo',
+                  ),
+                ),
+              )
+            : ListView.builder(
+                itemCount: initialItems.length,
+                itemBuilder: (c, i) => Material(
+                  color: Colors.transparent,
+                  child: ListTile(
                     title: Text(
                       initialItems[i].name,
-                      style: TextStyle(color: AppTheme.textMainFor(context), fontFamily: 'Cairo', fontSize: 14),
+                      style: TextStyle(
+                        color: AppTheme.textMainFor(context),
+                        fontFamily: 'Cairo',
+                        fontSize: 14,
+                      ),
                     ),
                     subtitle: Row(
                       children: [
-                        Text("كود: ${initialItems[i].code}", style: TextStyle(color: AppTheme.textMutedFor(context), fontFamily: 'Cairo', fontSize: 12)),
+                        Text(
+                          "كود: ${initialItems[i].code}",
+                          style: TextStyle(
+                            color: AppTheme.textMutedFor(context),
+                            fontFamily: 'Cairo',
+                            fontSize: 12,
+                          ),
+                        ),
                         if (_selectedCategory == "types") ...[
                           const SizedBox(width: 15),
                           Text(
                             "النوع: ${initialItems[i].type}",
                             style: TextStyle(
-                              color: initialItems[i].type == "وارد" ? AppTheme.successFor(context) : AppTheme.dangerFor(context),
+                              color: initialItems[i].type == "وارد"
+                                  ? AppTheme.successFor(context)
+                                  : AppTheme.dangerFor(context),
                               fontFamily: 'Cairo',
                               fontSize: 12,
                               fontWeight: FontWeight.bold,
@@ -474,23 +498,33 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
                     // زر الحذف يظهر فقط إذا كانت صلاحية الإضافة موجودة
                     trailing: canAdd
                         ? IconButton(
-                            icon: Icon(Icons.delete, color: AppTheme.dangerStrongFor(context)),
+                            icon: Icon(
+                              Icons.delete,
+                              color: AppTheme.dangerStrongFor(context),
+                            ),
                             onPressed: () async {
                               setState(() => _isLoading = true);
-                              bool isDeleted = await _codingService.deleteCode(
+                              bool isDeleted =
+                                  await _codingService.deleteCode(
                                 companyCode: widget.companyCode,
                                 category: _selectedCategory,
                                 code: initialItems[i].code,
                               );
                               setState(() => _isLoading = false);
                               if (isDeleted) {
-                                _showSnackBar("تم الحذف بنجاح", AppTheme.successStrongFor(context));
+                                _showSnackBar(
+                                  "تم الحذف بنجاح",
+                                  AppTheme.successStrongFor(context),
+                                );
                                 setModalState(() {
                                   initialItems.removeAt(i);
                                 });
                                 _loadNextCode();
                               } else {
-                                _showSnackBar("فشل الحذف، تحقق من الاتصال", AppTheme.dangerStrongFor(context));
+                                _showSnackBar(
+                                  "فشل الحذف، تحقق من الاتصال",
+                                  AppTheme.dangerStrongFor(context),
+                                );
                               }
                             },
                           )
@@ -508,19 +542,25 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
                         }
                         if (_selectedCategory == "items") {
                           _barcodeController.text = initialItems[i].barcode;
-                          _wholesalePriceController.text = initialItems[i].wholesalePrice.toString();
-                          _sellingPriceController.text = initialItems[i].sellingPrice.toString();
-                          _profitMarginController.text = initialItems[i].profitMargin.toString();
-                          _profitPercentController.text = "${initialItems[i].profitPercent} %";
+                          _wholesalePriceController.text =
+                              initialItems[i].wholesalePrice.toString();
+                          _sellingPriceController.text =
+                              initialItems[i].sellingPrice.toString();
+                          _profitMarginController.text =
+                              initialItems[i].profitMargin.toString();
+                          _profitPercentController.text =
+                              "${initialItems[i].profitPercent} %";
                         }
                       });
                     },
                   ),
                 ),
-        );
-      },
-    );
-  }
+              ),
+      );
+    },
+  );
+}
+
 
   void _clearControllers() {
     _nameController.clear();

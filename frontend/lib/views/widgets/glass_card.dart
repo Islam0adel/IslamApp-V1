@@ -49,12 +49,12 @@ class GlassStyle {
   /// لون خلفية الكارت حسب الوضع (فاتح / داكن).
   static Color cardFill(BuildContext context) => AppTheme.isDark(context)
       ? cardFillDark
-      : AppTheme.surface(context).withOpacity(cardFillLightOpacity);
+      : AppTheme.surface(context).withValues(alpha: cardFillLightOpacity);
 
   /// لون حد الكارت حسب الوضع (فاتح / داكن).
   static Color cardBorder(BuildContext context) => AppTheme.isDark(context)
       ? cardBorderDark
-      : AppTheme.border(context).withOpacity(cardBorderLightOpacity);
+      : AppTheme.border(context).withValues(alpha: cardBorderLightOpacity);
 
   // ==========================================================================
   // 2) خلفيات الصناديق الداخلية (تتكيف تلقائيًا مع الوضع)
@@ -62,19 +62,19 @@ class GlassStyle {
 
   // الدوال التالية هي البديل المستخدم في الصفحات: في الوضع الداكن تحتفظ
   // بنفس الشفافيات الأصلية، وفي الوضع الفاتح تستخدم درجات سطح وحدود من theme.dart.
-  static Color fill03For(BuildContext context) => AppTheme.isDark(context) ? fill03 : AppTheme.surfaceAlt(context).withOpacity(0.28);
-  static Color fill04For(BuildContext context) => AppTheme.isDark(context) ? fill04 : AppTheme.surfaceAlt(context).withOpacity(0.34);
-  static Color fill05For(BuildContext context) => AppTheme.isDark(context) ? fill05 : AppTheme.surface(context).withOpacity(0.76);
-  static Color fill06For(BuildContext context) => AppTheme.isDark(context) ? fill06 : AppTheme.surface(context).withOpacity(0.80);
-  static Color fill08For(BuildContext context) => AppTheme.isDark(context) ? fill08 : AppTheme.surface(context).withOpacity(0.86);
-  static Color fill10For(BuildContext context) => AppTheme.isDark(context) ? fill10 : AppTheme.surfaceAlt(context).withOpacity(0.78);
-  static Color fill12For(BuildContext context) => AppTheme.isDark(context) ? fill12 : AppTheme.surfaceAlt(context).withOpacity(0.86);
-  static Color fill15For(BuildContext context) => AppTheme.isDark(context) ? fill15 : AppTheme.surfaceAlt(context).withOpacity(0.92);
+  static Color fill03For(BuildContext context) => AppTheme.isDark(context) ? fill03 : AppTheme.surfaceAlt(context).withValues(alpha: 0.28);
+  static Color fill04For(BuildContext context) => AppTheme.isDark(context) ? fill04 : AppTheme.surfaceAlt(context).withValues(alpha: 0.34);
+  static Color fill05For(BuildContext context) => AppTheme.isDark(context) ? fill05 : AppTheme.surface(context).withValues(alpha: 0.76);
+  static Color fill06For(BuildContext context) => AppTheme.isDark(context) ? fill06 : AppTheme.surface(context).withValues(alpha: 0.80);
+  static Color fill08For(BuildContext context) => AppTheme.isDark(context) ? fill08 : AppTheme.surface(context).withValues(alpha: 0.86);
+  static Color fill10For(BuildContext context) => AppTheme.isDark(context) ? fill10 : AppTheme.surfaceAlt(context).withValues(alpha: 0.78);
+  static Color fill12For(BuildContext context) => AppTheme.isDark(context) ? fill12 : AppTheme.surfaceAlt(context).withValues(alpha: 0.86);
+  static Color fill15For(BuildContext context) => AppTheme.isDark(context) ? fill15 : AppTheme.surfaceAlt(context).withValues(alpha: 0.92);
   static Color fill20For(BuildContext context) => AppTheme.isDark(context) ? fill20 : AppTheme.surfaceAlt(context);
-  static Color line05For(BuildContext context) => AppTheme.isDark(context) ? line05 : AppTheme.border(context).withOpacity(0.30);
-  static Color line10For(BuildContext context) => AppTheme.isDark(context) ? line10 : AppTheme.border(context).withOpacity(0.48);
-  static Color line20For(BuildContext context) => AppTheme.isDark(context) ? line20 : AppTheme.border(context).withOpacity(0.72);
-  static Color line24For(BuildContext context) => AppTheme.isDark(context) ? line24 : AppTheme.border(context).withOpacity(0.88);
+  static Color line05For(BuildContext context) => AppTheme.isDark(context) ? line05 : AppTheme.border(context).withValues(alpha: 0.30);
+  static Color line10For(BuildContext context) => AppTheme.isDark(context) ? line10 : AppTheme.border(context).withValues(alpha: 0.48);
+  static Color line20For(BuildContext context) => AppTheme.isDark(context) ? line20 : AppTheme.border(context).withValues(alpha: 0.72);
+  static Color line24For(BuildContext context) => AppTheme.isDark(context) ? line24 : AppTheme.border(context).withValues(alpha: 0.88);
   static Color switchTrackOffFor(BuildContext context) => AppTheme.isDark(context) ? switchTrackOff : AppTheme.border(context);
 
   // ==========================================================================
@@ -134,85 +134,85 @@ class GlassStyle {
 
   // ---- المميز (accent) ----
   // في Light Mode نستخدم أزرق هادئ بدل السماوي الفاقع، وفي Dark Mode نحتفظ بالأصل.
-  static Color accentFill10For(BuildContext context) => (AppTheme.isDark(context) ? AppTheme.accent : AppTheme.accentFor(context)).withOpacity(0.1);
-  static Color accentFill15For(BuildContext context) => (AppTheme.isDark(context) ? AppTheme.accent : AppTheme.accentFor(context)).withOpacity(0.15);
-  static Color accentFill20For(BuildContext context) => (AppTheme.isDark(context) ? AppTheme.accent : AppTheme.accentFor(context)).withOpacity(0.2);
-  static Color accentBorder30For(BuildContext context) => (AppTheme.isDark(context) ? AppTheme.accent : AppTheme.accentFor(context)).withOpacity(0.3);
-  static Color accentBorder40For(BuildContext context) => (AppTheme.isDark(context) ? AppTheme.accent : AppTheme.accentFor(context)).withOpacity(0.4);
+  static Color accentFill10For(BuildContext context) => (AppTheme.isDark(context) ? AppTheme.accent : AppTheme.accentFor(context)).withValues(alpha: 0.1);
+  static Color accentFill15For(BuildContext context) => (AppTheme.isDark(context) ? AppTheme.accent : AppTheme.accentFor(context)).withValues(alpha: 0.15);
+  static Color accentFill20For(BuildContext context) => (AppTheme.isDark(context) ? AppTheme.accent : AppTheme.accentFor(context)).withValues(alpha: 0.2);
+  static Color accentBorder30For(BuildContext context) => (AppTheme.isDark(context) ? AppTheme.accent : AppTheme.accentFor(context)).withValues(alpha: 0.3);
+  static Color accentBorder40For(BuildContext context) => (AppTheme.isDark(context) ? AppTheme.accent : AppTheme.accentFor(context)).withValues(alpha: 0.4);
   /// خلفية مميزة خفيفة 10%.
-  static Color get accentFill10 => AppTheme.accent.withOpacity(0.1);
+  static Color get accentFill10 => AppTheme.accent.withValues(alpha: 0.1);
   /// خلفية مميزة 15% (دائرة أيقونة).
-  static Color get accentFill15 => AppTheme.accent.withOpacity(0.15);
+  static Color get accentFill15 => AppTheme.accent.withValues(alpha: 0.15);
   /// خلفية مميزة 20% (دائرة أيقونة).
-  static Color get accentFill20 => AppTheme.accent.withOpacity(0.2);
+  static Color get accentFill20 => AppTheme.accent.withValues(alpha: 0.2);
   /// حد مميز 30%.
-  static Color get accentBorder30 => AppTheme.accent.withOpacity(0.3);
+  static Color get accentBorder30 => AppTheme.accent.withValues(alpha: 0.3);
   /// حد مميز 40%.
-  static Color get accentBorder40 => AppTheme.accent.withOpacity(0.4);
+  static Color get accentBorder40 => AppTheme.accent.withValues(alpha: 0.4);
 
   // ألوان الحالات التكيفية: ألوان أهدأ في الوضع الفاتح مع الاحتفاظ بالأصل في الداكن.
-  static Color successFill05For(BuildContext context) => AppTheme.successFor(context).withOpacity(0.05);
-  static Color successFill10For(BuildContext context) => AppTheme.successFor(context).withOpacity(0.1);
-  static Color successFill15For(BuildContext context) => AppTheme.successFor(context).withOpacity(0.15);
-  static Color successBorder30For(BuildContext context) => AppTheme.successFor(context).withOpacity(0.3);
-  static Color successBorder40For(BuildContext context) => AppTheme.successFor(context).withOpacity(0.4);
-  static Color dangerBorder40For(BuildContext context) => AppTheme.dangerFor(context).withOpacity(0.4);
-  static Color warningFill15For(BuildContext context) => AppTheme.warningFor(context).withOpacity(0.15);
-  static Color warningFill20For(BuildContext context) => AppTheme.warningFor(context).withOpacity(0.2);
-  static Color warningBorder50For(BuildContext context) => AppTheme.warningFor(context).withOpacity(0.5);
-  static Color warningOrangeFill20For(BuildContext context) => AppTheme.warningOrangeFor(context).withOpacity(0.2);
-  static Color warningOrangeFill30For(BuildContext context) => AppTheme.warningOrangeFor(context).withOpacity(0.3);
-  static Color warningOrangeSoftFill15For(BuildContext context) => AppTheme.warningOrangeSoftFor(context).withOpacity(0.15);
-  static Color warningOrangeSoftBorder60For(BuildContext context) => AppTheme.warningOrangeSoftFor(context).withOpacity(0.6);
-  static Color extraPurpleBorder30For(BuildContext context) => AppTheme.extraPurpleFor(context).withOpacity(0.3);
-  static Color neutralFill15For(BuildContext context) => AppTheme.neutralFor(context).withOpacity(0.15);
-  static Color neutralBorder30For(BuildContext context) => AppTheme.neutralFor(context).withOpacity(0.3);
+  static Color successFill05For(BuildContext context) => AppTheme.successFor(context).withValues(alpha: 0.05);
+  static Color successFill10For(BuildContext context) => AppTheme.successFor(context).withValues(alpha: 0.1);
+  static Color successFill15For(BuildContext context) => AppTheme.successFor(context).withValues(alpha: 0.15);
+  static Color successBorder30For(BuildContext context) => AppTheme.successFor(context).withValues(alpha: 0.3);
+  static Color successBorder40For(BuildContext context) => AppTheme.successFor(context).withValues(alpha: 0.4);
+  static Color dangerBorder40For(BuildContext context) => AppTheme.dangerFor(context).withValues(alpha: 0.4);
+  static Color warningFill15For(BuildContext context) => AppTheme.warningFor(context).withValues(alpha: 0.15);
+  static Color warningFill20For(BuildContext context) => AppTheme.warningFor(context).withValues(alpha: 0.2);
+  static Color warningBorder50For(BuildContext context) => AppTheme.warningFor(context).withValues(alpha: 0.5);
+  static Color warningOrangeFill20For(BuildContext context) => AppTheme.warningOrangeFor(context).withValues(alpha: 0.2);
+  static Color warningOrangeFill30For(BuildContext context) => AppTheme.warningOrangeFor(context).withValues(alpha: 0.3);
+  static Color warningOrangeSoftFill15For(BuildContext context) => AppTheme.warningOrangeSoftFor(context).withValues(alpha: 0.15);
+  static Color warningOrangeSoftBorder60For(BuildContext context) => AppTheme.warningOrangeSoftFor(context).withValues(alpha: 0.6);
+  static Color extraPurpleBorder30For(BuildContext context) => AppTheme.extraPurpleFor(context).withValues(alpha: 0.3);
+  static Color neutralFill15For(BuildContext context) => AppTheme.neutralFor(context).withValues(alpha: 0.15);
+  static Color neutralBorder30For(BuildContext context) => AppTheme.neutralFor(context).withValues(alpha: 0.3);
 
   // ---- النجاح (success) ----
   /// خلفية نجاح 5% (تدرج خفيف).
-  static Color get successFill05 => AppTheme.success.withOpacity(0.05);
+  static Color get successFill05 => AppTheme.success.withValues(alpha: 0.05);
   /// خلفية نجاح 10%.
-  static Color get successFill10 => AppTheme.success.withOpacity(0.1);
+  static Color get successFill10 => AppTheme.success.withValues(alpha: 0.1);
   /// خلفية نجاح 15% (شارات - صناديق الإيراد).
-  static Color get successFill15 => AppTheme.success.withOpacity(0.15);
+  static Color get successFill15 => AppTheme.success.withValues(alpha: 0.15);
   /// حد نجاح 30%.
-  static Color get successBorder30 => AppTheme.success.withOpacity(0.3);
+  static Color get successBorder30 => AppTheme.success.withValues(alpha: 0.3);
   /// حد نجاح 40%.
-  static Color get successBorder40 => AppTheme.success.withOpacity(0.4);
+  static Color get successBorder40 => AppTheme.success.withValues(alpha: 0.4);
 
   // ---- الخطر (danger) ----
   /// حد خطر 40%.
-  static Color get dangerBorder40 => AppTheme.danger.withOpacity(0.4);
+  static Color get dangerBorder40 => AppTheme.danger.withValues(alpha: 0.4);
 
   // ---- التحذير (warning) ----
   /// خلفية تحذير 15%.
-  static Color get warningFill15 => AppTheme.warning.withOpacity(0.15);
+  static Color get warningFill15 => AppTheme.warning.withValues(alpha: 0.15);
   /// خلفية تحذير 20% (الكارت الحالي في القائمة).
-  static Color get warningFill20 => AppTheme.warning.withOpacity(0.2);
+  static Color get warningFill20 => AppTheme.warning.withValues(alpha: 0.2);
   /// حد تحذير 50%.
-  static Color get warningBorder50 => AppTheme.warning.withOpacity(0.5);
+  static Color get warningBorder50 => AppTheme.warning.withValues(alpha: 0.5);
 
   // ---- التحذير البرتقالي ----
   /// خلفية برتقالية 20%.
-  static Color get warningOrangeFill20 => AppTheme.warningOrange.withOpacity(0.2);
+  static Color get warningOrangeFill20 => AppTheme.warningOrange.withValues(alpha: 0.2);
   /// خلفية برتقالية 30% (زر وضع التعديل).
-  static Color get warningOrangeFill30 => AppTheme.warningOrange.withOpacity(0.3);
+  static Color get warningOrangeFill30 => AppTheme.warningOrange.withValues(alpha: 0.3);
 
   // ---- البرتقالي الفاتح ----
   /// خلفية برتقالية فاتحة 15%.
-  static Color get warningOrangeSoftFill15 => AppTheme.warningOrangeSoft.withOpacity(0.15);
+  static Color get warningOrangeSoftFill15 => AppTheme.warningOrangeSoft.withValues(alpha: 0.15);
   /// حد برتقالي فاتح 60%.
-  static Color get warningOrangeSoftBorder60 => AppTheme.warningOrangeSoft.withOpacity(0.6);
+  static Color get warningOrangeSoftBorder60 => AppTheme.warningOrangeSoft.withValues(alpha: 0.6);
 
   // ---- بنفسجي ----
   /// حد بنفسجي 30%.
-  static Color get extraPurpleBorder30 => AppTheme.extraPurple.withOpacity(0.3);
+  static Color get extraPurpleBorder30 => AppTheme.extraPurple.withValues(alpha: 0.3);
 
   // ---- محايد (رمادي) ----
   /// خلفية رمادية 15%.
-  static Color get neutralFill15 => AppTheme.neutral.withOpacity(0.15);
+  static Color get neutralFill15 => AppTheme.neutral.withValues(alpha: 0.15);
   /// حد رمادي 30%.
-  static Color get neutralBorder30 => AppTheme.neutral.withOpacity(0.3);
+  static Color get neutralBorder30 => AppTheme.neutral.withValues(alpha: 0.3);
 }
 
 /// الكارت الزجاجي المستخدم في كل التطبيق — كل ألوانه وتأثيراته من GlassStyle فوق.

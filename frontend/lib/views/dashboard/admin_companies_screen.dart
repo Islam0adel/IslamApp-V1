@@ -293,7 +293,7 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
                                 trailing: Switch(
                                   value: isActive,
                                   onChanged: (_) => _toggleCompany(code, isActive),
-                                  activeColor: AppTheme.successStrongFor(context),
+                                  activeThumbColor: AppTheme.successStrongFor(context),
                                 ),
                               ),
                             ),

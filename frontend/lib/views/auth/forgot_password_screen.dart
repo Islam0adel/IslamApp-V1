@@ -142,7 +142,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                         ),
                         const SizedBox(height: 15),
                         ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.successStrongFor(context).withOpacity(0.85)),
+                          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.successStrongFor(context).withValues(alpha: 0.85)),
                           onPressed: () async {
                               final Uri url = Uri.parse(_resetLink!); // تحويل النص لـ Uri
                               if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {

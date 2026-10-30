@@ -1003,7 +1003,7 @@ if (mounted) setState(() {});
                                   scrollDirection: Axis.horizontal,
                                   child: SingleChildScrollView(
                                     child: DataTable(
-                                      headingRowColor: MaterialStateProperty.all(GlassStyle.fill10For(context)),
+                                      headingRowColor: WidgetStateProperty.all(GlassStyle.fill10For(context)),
                                       columns: _rows.first.keys
                                           .map((k) => DataColumn(
                                                 label: Text(

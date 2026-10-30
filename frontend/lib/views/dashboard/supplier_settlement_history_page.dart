@@ -873,10 +873,10 @@ double _totalSupplierBalance = 0.0;
         vertical: 4,
       ),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.08),
+        color: color.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(7),
         border: Border.all(
-          color: color.withOpacity(0.2),
+          color: color.withValues(alpha: 0.2),
         ),
       ),
       child: Text(
@@ -1077,7 +1077,7 @@ Widget build(BuildContext context) {
                                 children: [
                                   Expanded(
                                     child: DropdownButtonFormField<String?>(
-                                      value: _selectedSupplier,
+                                      initialValue: _selectedSupplier,
                                       dropdownColor: AppTheme.dropdownBackground(context),
                                       style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 12),
                                       decoration: InputDecoration(

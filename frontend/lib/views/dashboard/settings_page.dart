@@ -9,6 +9,7 @@ import '../../views/dashboard/permissions_page.dart';
 import '../../services/permissions_service.dart';
 import '../../views/dashboard/reset_page.dart';
 import '../../views/auth/forgot_password_screen.dart';
+import 'notification_settings_page.dart';
 
 
 class SettingsPage extends StatefulWidget {
@@ -24,6 +25,7 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
   String _userName = "جاري التحميل...";
   String _companyName = "شركتي";
   String _jobCode = ""; // 2. متغير جديد لحفظ كود الوظيفة
+  String _companyCode = "01";
   bool _isLoadingData = true;
   bool _showBranchDialog = true;
 
@@ -56,6 +58,8 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
 
       _jobCode =
           prefs.getString('job_code') ?? "";
+
+      _companyCode = prefs.getString('company_code') ?? "01";
 
       _showBranchDialog = showDialog;
 
@@ -187,7 +191,7 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
                               title: 'الوضع الليلي (Dark Mode)',
                               trailing: Switch(
                                 value: _isDark,
-                                activeColor: AppTheme.accentFor(context),
+                                activeThumbColor: AppTheme.accentFor(context),
                                 onChanged: (val) {
                                   try {
                                     IslamApp.of(context).changeTheme(
@@ -209,7 +213,7 @@ _buildSettingRow(
   title: 'إظهار رسالة اختيار الفرع',
   trailing: Switch(
     value: _showBranchDialog,
-    activeColor: AppTheme.accentFor(context),
+    activeThumbColor: AppTheme.accentFor(context),
     onChanged: (value) async {
       final prefs = await SharedPreferences.getInstance();
 
@@ -230,6 +234,14 @@ _buildSettingRow(
   ),
 ),
                             Divider(color: GlassStyle.line10For(context), height: 20),
+if (PermissionsService().canShowNotifications) ...[
+  _buildSettingRow(
+    icon: Icons.notifications_active_rounded,
+    title: 'إعدادات الإشعارات',
+    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (c) => NotificationSettingsPage(companyCode: _companyCode))),
+  ),
+  Divider(color: GlassStyle.line10For(context), height: 20),
+],
                             _buildSettingRow(
                               icon: Icons.translate_rounded,
                               title: 'لغة التطبيق',

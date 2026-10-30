@@ -1,12 +1,12 @@
 // lib/services/supplier_settlement_service.dart
 
 import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/constants.dart';
 import '../models/supplier_settlement_model.dart';
+import 'auth_http.dart';
 
 class SupplierSettlementService {
   final String baseUrl = ApiConstants.baseUrl;
@@ -123,7 +123,7 @@ int _getNextSerial(String companyCode, String branchCode) {
       // إرسال للسيرفر
       // --------------------------------------------------------
 
-      final response = await http.post(
+      final response = await AuthHttp.post(
         Uri.parse('$baseUrl/supplier-settlement/save'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(model.toMap()),
@@ -301,7 +301,7 @@ int _getNextSerial(String companyCode, String branchCode) {
   String docId,
 ) async {
   try {
-    final response = await http.delete(
+    final response = await AuthHttp.delete(
       Uri.parse(
         '$baseUrl/supplier-settlement/delete/'
         '$companyCode/$docId',
@@ -379,7 +379,7 @@ int _getNextSerial(String companyCode, String branchCode) {
     String companyCode,
   ) async {
     try {
-      final response = await http.get(
+      final response = await AuthHttp.get(
         Uri.parse(
           '$baseUrl/supplier-settlement/list/$companyCode',
         ),
@@ -461,7 +461,7 @@ Future<void> syncChangesFromServer(
     DateTime since = DateTime.parse(savedLastSync).toUtc();
     since = since.subtract(const Duration(minutes: 1));
 
-    final response = await http.get(
+    final response = await AuthHttp.get(
       Uri.parse(
         '$baseUrl/supplier-settlement/changes/$companyCode'
         '?since=${since.toIso8601String()}',

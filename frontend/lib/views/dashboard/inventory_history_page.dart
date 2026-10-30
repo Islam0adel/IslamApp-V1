@@ -813,7 +813,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
               children: [
                 Expanded(
                   child: DropdownButtonFormField<String?>(
-                    value: _filterStoreCode,
+                    initialValue: _filterStoreCode,
                     dropdownColor: AppTheme.dropdownBackground(context),
                     style: TextStyle(color: AppTheme.textMainFor(context)),
                     decoration: const InputDecoration(
@@ -1104,10 +1104,10 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
         vertical: isMobile ? 2 : 4,
       ),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(6),
         border: Border.all(
-          color: color.withOpacity(0.2),
+          color: color.withValues(alpha: 0.2),
         ),
       ),
       child: Row(

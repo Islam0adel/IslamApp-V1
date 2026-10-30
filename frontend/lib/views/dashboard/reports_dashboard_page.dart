@@ -73,9 +73,9 @@ class ReportsDashboardPage extends StatelessWidget {
                   width: 48,
                   height: 48,
                   decoration: BoxDecoration(
-                    color: color.withOpacity(.12),
+                    color: color.withValues(alpha: .12),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: color.withOpacity(.3)),
+                    border: Border.all(color: color.withValues(alpha: .3)),
                   ),
                   child: Icon(icon, color: color),
                 ),

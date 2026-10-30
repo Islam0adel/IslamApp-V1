@@ -648,7 +648,7 @@ await _refreshBalancesOnly();
 
   Widget _buildDropdown(String label, String? value, List<Map<String, dynamic>> items, Function(String?) onChanged, {bool enabled = true}) {
     return DropdownButtonFormField<String>(
-      value: value,
+      initialValue: value,
       dropdownColor: AppTheme.dropdownBackground(context),
       style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 13),
       decoration: InputDecoration(

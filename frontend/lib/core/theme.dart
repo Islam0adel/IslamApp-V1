@@ -92,7 +92,7 @@ class AppTheme {
 
   // ألوان الواجهة التكيفية: استخدمها داخل الصفحات بدل الألوان الثابتة.
   // في Light Mode النصوص كحلي/رمادي غامق، وفي Dark Mode تحتفظ بدرجاتها الفاتحة.
-  static Color textMainFor(BuildContext context) => isDark(context) ? Colors.white : lightText;
+  static Color textMainFor(BuildContext context) => isDark(context) ? const Color.fromARGB(245, 252, 247, 247) : lightText;
   static Color textStrongFor(BuildContext context) => isDark(context) ? const Color(0xCCFFFFFF) : const Color(0xFF243B5A);
   static Color textSoftFor(BuildContext context) => isDark(context) ? Colors.white70 : lightTextSecondary;
   static Color textMutedFor(BuildContext context) => isDark(context) ? Colors.white60 : const Color(0xFF65758B);
@@ -102,12 +102,12 @@ class AppTheme {
   static Color accentAltFor(BuildContext context) => isDark(context) ? Colors.cyan : const Color(0xFF3569A8);
   static Color onAccentFor(BuildContext context) => isDark(context) ? Colors.black : Colors.white;
   // ألوان حقول الدخول: نص غامق على سطح فاتح، ونص فاتح على سطح داكن.
-  static Color inputFill(BuildContext context) => isDark(context) ? Colors.white.withOpacity(0.05) : lightSurface;
-  static Color inputBorder(BuildContext context) => isDark(context) ? Colors.white.withOpacity(0.10) : lightBorder;
+  static Color inputFill(BuildContext context) => isDark(context) ? Colors.white.withValues(alpha: 0.05) : lightSurface;
+  static Color inputBorder(BuildContext context) => isDark(context) ? Colors.white.withValues(alpha: 0.10) : lightBorder;
   static Color inputFocus(BuildContext context) => isDark(context) ? Colors.white : primaryLight;
-  static Color buttonOverlay(BuildContext context) => isDark(context) ? Colors.white.withOpacity(0.20) : primaryLight.withOpacity(0.08);
+  static Color buttonOverlay(BuildContext context) => isDark(context) ? Colors.white.withValues(alpha: 0.20) : primaryLight.withValues(alpha: 0.08);
   // خلفية أزرار شاشات الدخول: نحافظ على الشفافية الداكنة، ونستخدم كحلي واضح في الوضع الفاتح.
-  static Color authActionBackground(BuildContext context) => isDark(context) ? Colors.white.withOpacity(0.20) : primaryLight;
+  static Color authActionBackground(BuildContext context) => isDark(context) ? Colors.white.withValues(alpha: 0.20) : primaryLight;
   static Color checkboxActive(BuildContext context) => isDark(context) ? Colors.white : primaryLight;
   static Color checkboxCheck(BuildContext context) => isDark(context) ? Colors.black : Colors.white;
 
@@ -412,7 +412,7 @@ class AppTheme {
   ),
   scaffoldBackgroundColor: darkBackground,
   fontFamily: 'Cairo',
-  inputDecorationTheme: _inputTheme(Colors.white, Colors.white.withOpacity(0.05), Colors.transparent),
+  inputDecorationTheme: _inputTheme(Colors.white, Colors.white.withValues(alpha: 0.05), Colors.transparent),
   elevatedButtonTheme: _buttonTheme(primaryDark, Colors.white, elevation: 10),
 );
 
@@ -426,13 +426,13 @@ class AppTheme {
     // حد الحقل عند التركيز عليه
     focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide(color: textColor, width: 1.4)),
     // لون عنوان الحقل (Label)
-    labelStyle: TextStyle(color: textColor.withOpacity(0.8)),
+    labelStyle: TextStyle(color: textColor.withValues(alpha: 0.8)),
     // لون النص التوضيحي (Hint)
-    hintStyle: TextStyle(color: textColor.withOpacity(0.65)),
+    hintStyle: TextStyle(color: textColor.withValues(alpha: 0.65)),
   );
 
   /// ثيم الأزرار المرتفعة: color خلفية الزر، foreground لون النص، والزر المعطّل بشفافية.
   static ElevatedButtonThemeData _buttonTheme(Color color, Color foreground, {double elevation = 3}) => ElevatedButtonThemeData(
-    style: ElevatedButton.styleFrom(backgroundColor: color, foregroundColor: foreground, disabledBackgroundColor: color.withOpacity(0.35), disabledForegroundColor: foreground.withOpacity(0.7), padding: const EdgeInsets.symmetric(vertical: 15), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)), elevation: elevation, shadowColor: color.withOpacity(elevation == 10 ? 0.4 : 0.2)),
+    style: ElevatedButton.styleFrom(backgroundColor: color, foregroundColor: foreground, disabledBackgroundColor: color.withValues(alpha: 0.35), disabledForegroundColor: foreground.withValues(alpha: 0.7), padding: const EdgeInsets.symmetric(vertical: 15), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)), elevation: elevation, shadowColor: color.withValues(alpha: elevation == 10 ? 0.4 : 0.2)),
   );
 }

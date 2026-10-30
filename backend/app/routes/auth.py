@@ -1,5 +1,5 @@
 # backend/app/routes/auth.py
-from fastapi import APIRouter, HTTPException, Header, Body, Query, Depends
+from fastapi import APIRouter, HTTPException, Header, Body, Query, Depends, Request
 from pydantic import BaseModel, EmailStr
 from app.core.firebase_setup import db  # ✅ كائن Firestore (للمستخدمين والصلاحيات)
 from google.cloud import firestore
@@ -12,6 +12,11 @@ from app.core.models import Company
 from app.core.schemas import CompanyModel
 
 router = APIRouter()
+
+
+def _require_program_admin(request: Request):
+    if str(getattr(request.state, "auth_user", {}).get("job_code", "1")) != "99":
+        raise HTTPException(status_code=403, detail="هذه الصلاحية خاصة بصاحب البرنامج فقط")
 
 USER_ROLES = {
     "1": "موظف",
@@ -175,9 +180,11 @@ async def verify_reset(
 @router.post("/companies/add")
 async def add_new_company(
     company: CompanyModel,
+    request: Request,
     admin_job_code: str = Query(...),
     session: AsyncSession = Depends(get_db)
 ):
+    _require_program_admin(request)
     if admin_job_code != "99":
         raise HTTPException(status_code=403, detail="عذراً، هذه الصلاحية خاصة بصاحب البرنامج فقط!")
 
@@ -203,9 +210,11 @@ async def add_new_company(
 
 @router.get("/companies/all")
 async def get_all_companies(
+    request: Request,
     admin_job_code: str = Query(...),
     session: AsyncSession = Depends(get_db)
 ):
+    _require_program_admin(request)
     if admin_job_code != "99":
         raise HTTPException(status_code=403, detail="غير مصرح لك بالوصول")
 
@@ -227,11 +236,13 @@ async def get_all_companies(
 
 @router.post("/companies/toggle")
 async def toggle_company_status(
+    request: Request,
     code: str = Body(..., embed=True),
     is_active: bool = Body(..., embed=True),
     admin_job_code: str = Body(..., embed=True),
     session: AsyncSession = Depends(get_db)
 ):
+    _require_program_admin(request)
     if admin_job_code != "99":
         raise HTTPException(status_code=403, detail="غير مصرح لك بالوصول")
 
@@ -250,6 +261,7 @@ async def toggle_company_status(
 
 @router.put("/companies/update")
 async def update_company(
+    request: Request,
     old_code: str = Body(...),
     new_code: str = Body(...),
     new_name: str = Body(...),
@@ -257,6 +269,7 @@ async def update_company(
     session: AsyncSession = Depends(get_db)
 ):
     try:
+        _require_program_admin(request)
         if admin_job_code != "99":
             raise HTTPException(status_code=403, detail="غير مصرح لك بالوصول")
 
@@ -316,10 +329,12 @@ async def update_company(
 @router.delete("/companies/delete/{code}")
 async def delete_company(
     code: str,
+    request: Request,
     admin_job_code: str = Query(...),
     session: AsyncSession = Depends(get_db)
 ):
     try:
+        _require_program_admin(request)
         if admin_job_code != "99":
             raise HTTPException(status_code=403, detail="غير مصرح لك بالوصول")
 
@@ -354,12 +369,23 @@ async def delete_company(
 # 5. تحديث الصلاحيات (يبقى في Firestore)
 # ==========================================
 @router.post("/update-permissions")
-async def update_user_permissions(data: PermissionsUpdateModel):
+async def update_user_permissions(data: PermissionsUpdateModel, request: Request):
     try:
+        actor = getattr(request.state, "auth_user", {})
+        actor_job_code = str(actor.get("job_code", "1"))
+        actor_permissions = actor.get("permissions", {})
+        general_permissions = actor_permissions.get("صلاحيات عامة", {}) if isinstance(actor_permissions, dict) else {}
+        can_manage_permissions = isinstance(general_permissions, dict) and general_permissions.get("صفحة الصلاحيات(الاعدادات)") is True
+        if actor_job_code != "99" and actor_job_code != "201" and not can_manage_permissions:
+            raise HTTPException(status_code=403, detail="غير مصرح لك بتعديل الصلاحيات")
         email = data.email.strip().lower()
         user_ref = db.collection("users").document(email)
-        if not user_ref.get().exists:
+        user_doc = user_ref.get()
+        if not user_doc.exists:
             raise HTTPException(status_code=404, detail="المستخدم غير موجود")
+        target_data = user_doc.to_dict() or {}
+        if actor_job_code != "99" and str(target_data.get("company_code", "")) != str(actor.get("company_code", "")):
+            raise HTTPException(status_code=403, detail="غير مسموح بتعديل صلاحيات مستخدم من شركة أخرى")
         update_data = {
             "permissions": data.permissions,
             "updated_at": firestore.SERVER_TIMESTAMP
@@ -368,5 +394,7 @@ async def update_user_permissions(data: PermissionsUpdateModel):
             update_data["allowed_branches"] = data.allowed_branches
         user_ref.update(update_data)
         return {"status": "success", "message": "تم تحديث الصلاحيات بنجاح"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

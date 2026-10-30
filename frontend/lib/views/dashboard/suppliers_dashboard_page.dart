@@ -163,7 +163,7 @@ _buildDashboardCard(
             children: [
               Container(
                 padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(color: color.withOpacity(0.15),borderRadius: BorderRadius.circular(12),),
+                decoration: BoxDecoration(color: color.withValues(alpha: 0.15),borderRadius: BorderRadius.circular(12),),
                 child: Icon(
                   icon,
                   color: color,
@@ -207,17 +207,17 @@ _buildDashboardCard(
     );
   }
 
-  void _showUnderDevelopment(BuildContext context, String feature) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          '⏳ صفحة "$feature" قيد التطوير وسيتم إضافتها قريباً',
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontFamily: 'Cairo'),
-        ),
-        backgroundColor: AppTheme.warningOrangeFor(context),
-        duration: const Duration(seconds: 3),
-      ),
-    );
-  }
+  // void _showUnderDevelopment(BuildContext context, String feature) {
+  //   ScaffoldMessenger.of(context).showSnackBar(
+  //     SnackBar(
+  //       content: Text(
+  //         '⏳ صفحة "$feature" قيد التطوير وسيتم إضافتها قريباً',
+  //         textAlign: TextAlign.center,
+  //         style: const TextStyle(fontFamily: 'Cairo'),
+  //       ),
+  //       backgroundColor: AppTheme.warningOrangeFor(context),
+  //       duration: const Duration(seconds: 3),
+  //     ),
+  //   );
+  // }
 }

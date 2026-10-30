@@ -4,6 +4,9 @@ analyzer:
     # تجاهل الخطأ ده لو المكتبة مش موجودة
     uri_does_not_exist: ignore
     unused_import: warning
+  exclude:
+    - build/**
+    - web/**
 
 linter:
   rules:

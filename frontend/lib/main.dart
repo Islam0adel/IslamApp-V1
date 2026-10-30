@@ -27,7 +27,6 @@ import 'services/supplier_settlement_service.dart';
 
 final GlobalSyncService _syncService = GlobalSyncService();
 
-
 // ============================================================
 // متغيرات قديمة للحفاظ على التوافق
 // ============================================================
@@ -37,13 +36,11 @@ StreamSubscription? codingSyncSubscription;
 StreamSubscription? inventorySyncSubscription;
 StreamSubscription? supplierSyncSubscription;
 
-
 // ============================================================
 // منع تشغيل أكثر من مزامنة في نفس الوقت
 // ============================================================
 
 bool _isSyncing = false;
-
 
 // ============================================================
 // Sync Manager
@@ -57,16 +54,13 @@ bool _isSyncing = false;
 // Full Sync مرة واحدة فقط
 // ============================================================
 
-Future<void> syncAllDataIfNeeded(
-  String companyCode,
-) async {
+Future<void> syncAllDataIfNeeded(String companyCode) async {
   if (_isSyncing) {
     print("⚠️ مزامنة قيد التنفيذ، تم تجاهل الطلب الجديد");
     return;
   }
 
   _isSyncing = true;
-
   print("🔄 بدء المزامنة للشركة: $companyCode");
 
   try {
@@ -75,41 +69,30 @@ Future<void> syncAllDataIfNeeded(
     // ========================================================
     // وقت بداية عملية المزامنة
     // ========================================================
-    final syncStartedAt =
-        DateTime.now().toUtc().toIso8601String();
+    final syncStartedAt = DateTime.now().toUtc().toIso8601String();
 
     // ========================================================
     // 1) اليوميات
     // ========================================================
 
-    final String dailyKey =
-        'last_sync_daily_$companyCode';
-
-    final String? dailyLastSync =
-        prefs.getString(dailyKey);
+    final String dailyKey = 'last_sync_daily_$companyCode';
+    final String? dailyLastSync = prefs.getString(dailyKey);
 
     if (dailyLastSync == null) {
       print("📥 اليوميات: تحميل كامل");
 
-      await DailyService()
-          .syncAllTransactions(companyCode);
+      await DailyService().syncAllTransactions(companyCode);
 
       // مهم جداً:
       // تسجيل وقت بداية الـ Full Sync
-      await prefs.setString(
-        dailyKey,
-        syncStartedAt,
-      );
+      await prefs.setString(dailyKey, syncStartedAt);
 
       print("✅ اليوميات: اكتمل التحميل الكامل");
       print("💾 تم حفظ lastSync لليوميات: $syncStartedAt");
     } else {
-      print(
-        "📡 اليوميات: مزامنة تزايدية منذ $dailyLastSync",
-      );
+      print("📡 اليوميات: مزامنة تزايدية منذ $dailyLastSync");
 
-      await DailyService()
-          .syncChangesFromServer(
+      await DailyService().syncChangesFromServer(
         companyCode,
         dailyLastSync,
       );
@@ -117,64 +100,48 @@ Future<void> syncAllDataIfNeeded(
       print("✅ اليوميات: اكتملت المزامنة التزايدية");
     }
 
+    // ========================================================
+    // التسويات
+    // ========================================================
 
-  final String settlementKey =
-    'last_sync_settlement_$companyCode';
+    final String settlementKey = 'last_sync_settlement_$companyCode';
+    final String? settlementLastSync = prefs.getString(settlementKey);
 
-final String? settlementLastSync =
-    prefs.getString(settlementKey);
+    if (settlementLastSync == null) {
+      print("📥 التسويات: تحميل كامل");
 
-if (settlementLastSync == null) {
-  print("📥 التسويات: تحميل كامل");
+      await SupplierSettlementService().fetchAllSettlements(companyCode);
 
-  await SupplierSettlementService()
-      .fetchAllSettlements(companyCode);
+      await prefs.setString(settlementKey, syncStartedAt);
+    } else {
+      print("📡 التسويات: مزامنة تزايدية منذ $settlementLastSync");
 
-  await prefs.setString(
-    settlementKey,
-    syncStartedAt,
-  );
-} else {
-  print(
-    "📡 التسويات: مزامنة تزايدية منذ $settlementLastSync",
-  );
+      await SupplierSettlementService().syncChangesFromServer(
+        companyCode,
+        settlementLastSync,
+      );
+    }
 
-  await SupplierSettlementService()
-      .syncChangesFromServer(
-    companyCode,
-    settlementLastSync,
-  );
-}
     // ========================================================
     // 2) التكويد
     // ========================================================
 
-    final String codingKey =
-        'last_sync_coding_$companyCode';
-
-    final String? codingLastSync =
-        prefs.getString(codingKey);
+    final String codingKey = 'last_sync_coding_$companyCode';
+    final String? codingLastSync = prefs.getString(codingKey);
 
     if (codingLastSync == null) {
       print("📥 التكويد: تحميل كامل");
 
-      await CodingService()
-          .fetchAllCoding(companyCode);
+      await CodingService().fetchAllCoding(companyCode);
 
-      await prefs.setString(
-        codingKey,
-        syncStartedAt,
-      );
+      await prefs.setString(codingKey, syncStartedAt);
 
       print("✅ التكويد: اكتمل التحميل الكامل");
       print("💾 تم حفظ lastSync للتكويد: $syncStartedAt");
     } else {
-      print(
-        "📡 التكويد: مزامنة تزايدية منذ $codingLastSync",
-      );
+      print("📡 التكويد: مزامنة تزايدية منذ $codingLastSync");
 
-      await CodingService()
-          .syncChangesFromServer(
+      await CodingService().syncChangesFromServer(
         companyCode,
         codingLastSync,
       );
@@ -186,32 +153,22 @@ if (settlementLastSync == null) {
     // 3) الموردين
     // ========================================================
 
-    final String supplierKey =
-        'last_sync_supplier_$companyCode';
-
-    final String? supplierLastSync =
-        prefs.getString(supplierKey);
+    final String supplierKey = 'last_sync_supplier_$companyCode';
+    final String? supplierLastSync = prefs.getString(supplierKey);
 
     if (supplierLastSync == null) {
       print("📥 الموردين: تحميل كامل");
 
-      await SupplierService()
-          .fetchAllSupplier(companyCode);
+      await SupplierService().fetchAllSupplier(companyCode);
 
-      await prefs.setString(
-        supplierKey,
-        syncStartedAt,
-      );
+      await prefs.setString(supplierKey, syncStartedAt);
 
       print("✅ الموردين: اكتمل التحميل الكامل");
       print("💾 تم حفظ lastSync للموردين: $syncStartedAt");
     } else {
-      print(
-        "📡 الموردين: مزامنة تزايدية منذ $supplierLastSync",
-      );
+      print("📡 الموردين: مزامنة تزايدية منذ $supplierLastSync");
 
-      await SupplierService()
-          .syncChangesFromServer(
+      await SupplierService().syncChangesFromServer(
         companyCode,
         supplierLastSync,
       );
@@ -223,32 +180,22 @@ if (settlementLastSync == null) {
     // 4) الجرد
     // ========================================================
 
-    final String inventoryKey =
-        'last_sync_inventory_$companyCode';
-
-    final String? inventoryLastSync =
-        prefs.getString(inventoryKey);
+    final String inventoryKey = 'last_sync_inventory_$companyCode';
+    final String? inventoryLastSync = prefs.getString(inventoryKey);
 
     if (inventoryLastSync == null) {
       print("📥 الجرد: تحميل كامل");
 
-      await InventoryService()
-          .fetchAllInventory(companyCode);
+      await InventoryService().fetchAllInventory(companyCode);
 
-      await prefs.setString(
-        inventoryKey,
-        syncStartedAt,
-      );
+      await prefs.setString(inventoryKey, syncStartedAt);
 
       print("✅ الجرد: اكتمل التحميل الكامل");
       print("💾 تم حفظ lastSync للجرد: $syncStartedAt");
     } else {
-      print(
-        "📡 الجرد: مزامنة تزايدية منذ $inventoryLastSync",
-      );
+      print("📡 الجرد: مزامنة تزايدية منذ $inventoryLastSync");
 
-      await InventoryService()
-          .syncChangesFromServer(
+      await InventoryService().syncChangesFromServer(
         companyCode,
         inventoryLastSync,
       );
@@ -260,11 +207,9 @@ if (settlementLastSync == null) {
     // تحديث الأرصدة المحلية فقط
     // ========================================================
 
-    await DailyService()
-        .getDailySummaryLocal(companyCode);
+    await DailyService().getDailySummaryLocal(companyCode);
 
     print("✅ تم تحديث الأرصدة المحلية");
-
     print("✅ اكتملت المزامنة المركزية بنجاح");
   } catch (e) {
     print("❌ فشلت المزامنة المركزية: $e");
@@ -272,7 +217,6 @@ if (settlementLastSync == null) {
     _isSyncing = false;
   }
 }
-
 
 // ============================================================
 // تشغيل Global Sync
@@ -282,15 +226,11 @@ if (settlementLastSync == null) {
 // ============================================================
 
 void initializeGlobalListener(String companyCode) {
-  print(
-    "🌐 طلب تشغيل المزامنة للشركة: $companyCode",
-  );
+  print("🌐 طلب تشغيل المزامنة للشركة: $companyCode");
 
   // ربط الـ callback مرة واحدة فقط
   _syncService.onWebSocketConnected ??= () {
-    print(
-      "🔄 WebSocket اتصل/عاد الاتصال",
-    );
+    print("🔄 WebSocket اتصل/عاد الاتصال");
 
     syncAllDataIfNeeded(
       _syncService.currentCompanyCode ?? companyCode,
@@ -300,19 +240,14 @@ void initializeGlobalListener(String companyCode) {
   // لو WebSocket شغال بالفعل لنفس الشركة
   if (_syncService.isConnected &&
       _syncService.currentCompanyCode == companyCode) {
-    print(
-      "✅ WebSocket شغال بالفعل للشركة: $companyCode",
-    );
+    print("✅ WebSocket شغال بالفعل للشركة: $companyCode");
     return;
   }
 
-  print(
-    "🌐 بدء WebSocket للشركة: $companyCode",
-  );
+  print("🌐 بدء WebSocket للشركة: $companyCode");
 
   _syncService.startSync(companyCode);
 }
-
 
 // ============================================================
 // إيقاف Global Sync
@@ -326,11 +261,8 @@ void disposeGlobalListener() {
 
   _syncService.stopSync();
 
-  print(
-    "🔌 تم إيقاف المزامنة",
-  );
+  print("🔌 تم إيقاف المزامنة");
 }
-
 
 // ============================================================
 // Main
@@ -339,16 +271,13 @@ void disposeGlobalListener() {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-
   // ==========================================================
   // Firebase
   // ==========================================================
 
   await Firebase.initializeApp(
-    options:
-        DefaultFirebaseOptions.currentPlatform,
+    options: DefaultFirebaseOptions.currentPlatform,
   );
-
 
   // ==========================================================
   // Hive
@@ -356,49 +285,27 @@ Future<void> main() async {
 
   await Hive.initFlutter();
 
-  await Hive.openBox(
-    'daily_transactions_box',
-  );
+  await Hive.openBox('daily_transactions_box');
+  await Hive.openBox('coding_box');
+  await Hive.openBox('inventory_box');
+  await Hive.openBox('supplier_box');
+  await Hive.openBox('supplier_settlement_box');
 
-  await Hive.openBox(
-    'coding_box',
-  );
-
-  await Hive.openBox(
-    'inventory_box',
-  );
-
-  await Hive.openBox(
-    'supplier_box',
-  );
-
-  await Hive.openBox(
-    'supplier_settlement_box',
-  );
-
+  await Hive.openBox('notifications_box');
+  await Hive.openBox('notification_settings_box');
+  await Hive.openBox('product_lookup_box');
 
   // ==========================================================
   // SharedPreferences
   // ==========================================================
 
-  final prefs =
-      await SharedPreferences.getInstance();
+  final prefs = await SharedPreferences.getInstance();
 
-  final bool rememberMe =
-      prefs.getBool('remember_me') ??
-          false;
-
-  final String? userName =
-      prefs.getString('user_name');
-
-  final String? companyName =
-      prefs.getString('company_name');
-
-  final String? companyCode =
-      prefs.getString('company_code');
-  
+  final bool rememberMe = prefs.getBool('remember_me') ?? false;
+  final String? userName = prefs.getString('user_name');
+  final String? companyName = prefs.getString('company_name');
+  final String? companyCode = prefs.getString('company_code');
   final String savedTheme = prefs.getString('theme_mode') ?? 'dark';
-
 
   // ==========================================================
   // الشاشة الأولى
@@ -406,10 +313,7 @@ Future<void> main() async {
 
   Widget initialScreen;
 
-  if (rememberMe &&
-      userName != null &&
-      companyCode != null) {
-
+  if (rememberMe && userName != null && companyCode != null) {
     // --------------------------------------------------------
     // تشغيل WebSocket
     //
@@ -419,10 +323,7 @@ Future<void> main() async {
     // syncAllDataIfNeeded
     // --------------------------------------------------------
 
-    initializeGlobalListener(
-      companyCode,
-    );
-
+    initializeGlobalListener(companyCode);
 
     // --------------------------------------------------------
     // لا يوجد Sync إضافي هنا
@@ -432,32 +333,25 @@ Future<void> main() async {
 
     initialScreen = HomePage(
       userName: userName,
-      companyName:
-          companyName ?? 'شركتي',
+      companyName: companyName ?? 'شركتي',
       companyCode: companyCode,
     );
   } else {
-
-    initialScreen =
-        const LoginScreen();
+    initialScreen = const LoginScreen();
   }
-
 
   // ==========================================================
   // تشغيل التطبيق
   // ==========================================================
 
-    runApp(
+  runApp(
     IslamApp(
-      initialScreen:
-          initialScreen,
-      initialThemeMode: savedTheme == 'light'
-          ? ThemeMode.light
-          : ThemeMode.dark,
+      initialScreen: initialScreen,
+      initialThemeMode:
+          savedTheme == 'light' ? ThemeMode.light : ThemeMode.dark,
     ),
   );
 }
-
 
 // ============================================================
 // IslamApp
@@ -466,36 +360,33 @@ Future<void> main() async {
 class IslamApp extends StatefulWidget {
   final Widget initialScreen;
   final ThemeMode initialThemeMode;
+
   const IslamApp({
     super.key,
     required this.initialScreen,
     this.initialThemeMode = ThemeMode.dark,
   });
 
-  static _IslamAppState of(
-    BuildContext context,
-  ) {
-    return context
-        .findAncestorStateOfType<
-            _IslamAppState>()!;
+  static _IslamAppState of(BuildContext context) {
+    return context.findAncestorStateOfType<_IslamAppState>()!;
   }
 
   @override
-  State<IslamApp> createState() =>
-      _IslamAppState();
+  State<IslamApp> createState() => _IslamAppState();
 }
-
 
 // ============================================================
 // App State
 // ============================================================
 
-class _IslamAppState
-    extends State<IslamApp>
-    with WidgetsBindingObserver {
-
+class _IslamAppState extends State<IslamApp> with WidgetsBindingObserver {
   late ThemeMode _themeMode; // ✅ بدون قيمة ابتدائية
 
+  // منع تكرار فحص الاستئناف إذا كان فحص سابق لا يزال يعمل.
+  bool _resumeSyncInProgress = false;
+
+  // // منع أحداث الاستئناف المتكررة خلال فترة قصيرة.
+  // DateTime? _lastResumeSyncAt;
 
   // ==========================================================
   // Init
@@ -508,118 +399,82 @@ class _IslamAppState
     // ✅ استخدام الثيم المحفوظ من SharedPreferences
     _themeMode = widget.initialThemeMode;
 
-    WidgetsBinding.instance
-        .addObserver(this);
+    WidgetsBinding.instance.addObserver(this);
   }
-
 
   // ==========================================================
   // App Lifecycle
   // ==========================================================
 
   @override
-  void didChangeAppLifecycleState(
-    AppLifecycleState state,
-  ) {
-    if (state ==
-        AppLifecycleState.resumed) {
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
       _syncWhenAppResumes();
     }
   }
-
 
   // ==========================================================
   // Sync عند رجوع التطبيق
   // ==========================================================
 
-  Future<void>
-      _syncWhenAppResumes() async {
+  
+Future<void> _syncWhenAppResumes() async {
+  // لو فيه مزامنة أو فحص سابق شغال، لا تبدأ طلبًا جديدًا.
+  if (_resumeSyncInProgress || _isSyncing) return;
 
-    final prefs =
-        await SharedPreferences
-            .getInstance();
+  _resumeSyncInProgress = true;
 
-    final bool rememberMe =
-        prefs.getBool(
-      'remember_me',
-    ) ??
-            false;
+  try {
+    final prefs = await SharedPreferences.getInstance();
 
-    final String? companyCode =
-        prefs.getString(
-      'company_code',
-    );
-    
+    final bool rememberMe = prefs.getBool('remember_me') ?? false;
+    final String? companyCode = prefs.getString('company_code');
 
-
-    if (!rememberMe ||
-        companyCode == null ||
-        companyCode.isEmpty) {
+    if (!rememberMe || companyCode == null || companyCode.isEmpty) {
       return;
     }
 
-
-    print(
-      "🔙 التطبيق عاد للعمل، جاري التحقق من التحديثات...",
-    );
-
-
-    // --------------------------------------------------------
-    // لو WebSocket غير متصل:
-    // نعيد تشغيله فقط.
-    //
-    // عند نجاح الاتصال callback
-    // سيشغل المزامنة.
-    // --------------------------------------------------------
-
-    if (!_syncService.isConnected) {
-      initializeGlobalListener(
-        companyCode,
-      );
-
+    // لو WebSocket متصل بالفعل، لا تشغّل مزامنة إضافية
+    // لمجرد الرجوع للمتصفح؛ المزامنة اللحظية مستمرة.
+    if (_syncService.isConnected &&
+        _syncService.currentCompanyCode == companyCode) {
+      print("✅ WebSocket متصل؛ لا حاجة لمزامنة عند الرجوع للمتصفح");
       return;
     }
 
-
-    // --------------------------------------------------------
-    // WebSocket متصل بالفعل:
-    // مزامنة واحدة فقط.
-    // --------------------------------------------------------
-
-    await syncAllDataIfNeeded(
-      companyCode,
-    );
+    // لو الاتصال غير متاح، أعد تشغيله فقط.
+    // المزامنة ستبدأ من callback عند نجاح الاتصال.
+    print("🔌 WebSocket غير متصل؛ جاري إعادة الاتصال");
+    initializeGlobalListener(companyCode);
+  } catch (e) {
+    print("❌ تعذر التحقق من اتصال المزامنة بعد العودة: $e");
+  } finally {
+    _resumeSyncInProgress = false;
   }
+}
 
 
   // ==========================================================
   // Theme
   // ==========================================================
 
-    void changeTheme(
-    ThemeMode themeMode,
-  ) async {
+  void changeTheme(ThemeMode themeMode) async {
     setState(() {
-      _themeMode =
-          themeMode;
+      _themeMode = themeMode;
     });
 
     // ✅ حفظ الاختيار على الجهاز
     try {
-      final prefs =
-          await SharedPreferences.getInstance();
+      final prefs = await SharedPreferences.getInstance();
 
       await prefs.setString(
         'theme_mode',
-        themeMode == ThemeMode.light
-            ? 'light'
-            : 'dark',
+        themeMode == ThemeMode.light ? 'light' : 'dark',
       );
     } catch (e) {
       print("⚠️ فشل حفظ الثيم: $e");
     }
   }
-
 
   // ==========================================================
   // Dispose
@@ -627,64 +482,35 @@ class _IslamAppState
 
   @override
   void dispose() {
-    WidgetsBinding.instance
-        .removeObserver(this);
+    WidgetsBinding.instance.removeObserver(this);
 
     disposeGlobalListener();
 
     super.dispose();
   }
 
-
   // ==========================================================
   // Build
   // ==========================================================
 
   @override
-  Widget build(
-    BuildContext context,
-  ) {
+  Widget build(BuildContext context) {
     return MaterialApp(
-      title:
-          'IslamApp V1.0',
-
-      debugShowCheckedModeBanner:
-          false,
-
-      theme:
-          AppTheme.lightTheme,
-
-      darkTheme:
-          AppTheme.darkTheme,
-
-      themeMode:
-          _themeMode,
-
-      home:
-          widget.initialScreen,
-
+      title: 'IslamApp V1.0',
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.lightTheme,
+      darkTheme: AppTheme.darkTheme,
+      themeMode: _themeMode,
+      home: widget.initialScreen,
       routes: {
-        '/login':
-            (context) =>
-                const LoginScreen(),
-
-        '/register':
-            (context) =>
-                const RegisterScreen(),
-
-        '/forgot-password':
-            (context) =>
-                const ForgotPasswordScreen(),
+        '/login': (context) => const LoginScreen(),
+        '/register': (context) => const RegisterScreen(),
+        '/forgot-password': (context) => const ForgotPasswordScreen(),
       },
-
-      builder:
-          (context, child) {
+      builder: (context, child) {
         return Directionality(
-          textDirection:
-              TextDirection.rtl,
-
-          child:
-              child!,
+          textDirection: TextDirection.rtl,
+          child: child!,
         );
       },
     );

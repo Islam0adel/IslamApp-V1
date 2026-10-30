@@ -3,6 +3,7 @@
 from typing import Dict, Set
 
 from fastapi import WebSocket
+from app.core.notification_events import prepare_and_persist_event, _branch_allowed, _can_view_section, _SECTION_MAP
 
 
 class ConnectionManager:
@@ -28,6 +29,7 @@ class ConnectionManager:
             str,
             Set[WebSocket]
         ] = {}
+        self.connection_profiles: Dict[WebSocket, dict] = {}
 
     # ============================================================
     # اتصال جهاز
@@ -37,13 +39,17 @@ class ConnectionManager:
         self,
         company_code: str,
         websocket: WebSocket,
+        accept_connection: bool = True,
+        profile: dict | None = None,
     ):
-        await websocket.accept()
+        if accept_connection:
+            await websocket.accept()
 
         if company_code not in self.active_connections:
             self.active_connections[company_code] = set()
 
         self.active_connections[company_code].add(websocket)
+        self.connection_profiles[websocket] = profile or {"company_code": company_code}
 
         print(
             f"🔌 WebSocket connected | "
@@ -68,6 +74,7 @@ class ConnectionManager:
             return
 
         connections.discard(websocket)
+        self.connection_profiles.pop(websocket, None)
 
         # لو مفيش أجهزة متصلة للشركة
         # نحذف مجموعة الشركة لتقليل استخدام الذاكرة.
@@ -91,6 +98,8 @@ class ConnectionManager:
         company_code: str,
         message: dict,
     ):
+        # حفظ سجل التدقيق والإشعارات في Neon قبل بث الحدث للأجهزة المتصلة.
+        message = await prepare_and_persist_event(company_code, message)
         connections = self.active_connections.get(
             company_code
         )
@@ -111,6 +120,13 @@ class ConnectionManager:
 
         for connection in connections_copy:
             try:
+                profile = self.connection_profiles.get(connection, {})
+                event_type = str(message.get("type", ""))
+                section = _SECTION_MAP.get(event_type, (None, None))[0]
+                payload = message.get("data") if isinstance(message.get("data"), dict) else {}
+                branch_code = str(payload.get("branch_code", "") or "")
+                if section and (not _branch_allowed(profile, branch_code) or not _can_view_section(profile, section)):
+                    continue
                 await connection.send_json(message)
 
             except Exception as e:

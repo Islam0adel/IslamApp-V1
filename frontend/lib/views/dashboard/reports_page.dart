@@ -718,7 +718,7 @@ class _ReportsPageState extends State<ReportsPage> {
         decoration: BoxDecoration(
           color: GlassStyle.fill05For(context),
           borderRadius: BorderRadius.circular(15),
-          border: Border.all(color: color.withOpacity(0.3)),
+          border: Border.all(color: color.withValues(alpha: 0.3)),
         ),
         child: Column(
           children: [
@@ -1393,7 +1393,7 @@ class _ReportsPageState extends State<ReportsPage> {
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: DataTable(
-                headingRowColor: MaterialStateProperty.all(GlassStyle.fill10For(context)),
+                headingRowColor: WidgetStateProperty.all(GlassStyle.fill10For(context)),
                 columns: [
                   DataColumn(label: Text('التاريخ', style: TextStyle(color: AppTheme.textMainFor(context), fontFamily: 'Cairo'))),
                   ...columns.map((c) => DataColumn(label: Text(c, style: TextStyle(color: AppTheme.textMainFor(context), fontFamily: 'Cairo')))),
@@ -1468,7 +1468,7 @@ class _ReportsPageState extends State<ReportsPage> {
           Container(
             padding: const EdgeInsets.all(15),
             decoration: BoxDecoration(
-              color: Theme.of(context).primaryColor.withOpacity(0.3),
+              color: Theme.of(context).primaryColor.withValues(alpha: 0.3),
               borderRadius: BorderRadius.circular(15),
               border: Border.all(color: Theme.of(context).primaryColor),
             ),

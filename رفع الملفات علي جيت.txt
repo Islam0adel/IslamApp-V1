@@ -75,3 +75,8 @@ rmdir /s /q "%userprofile%\.edge_web_profile"
 ـــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــ
 تشغيل بالذاكرة من فلاتر
 flutter run -d edge --web-browser-flag "--user-data-dir=./edge_profile"
+ـــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــ
+تنظيف تطبيق فلاتر وحذف ملف بيلد واعادة البناء
+flutter clean
+ثم
+flutter pub get

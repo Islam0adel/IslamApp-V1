@@ -1156,7 +1156,7 @@ class _StockBalancePageState extends State<StockBalancePage> {
                           Expanded(
                             child:
                                 DropdownButtonFormField<String?>(
-                              value:
+                              initialValue:
                                   _selectedStoreCode,
                               dropdownColor:
                                   AppTheme.dropdownBackground(context),

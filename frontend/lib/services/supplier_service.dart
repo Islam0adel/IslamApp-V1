@@ -2,12 +2,12 @@
 
 import 'dart:convert';
 
-import 'package:http/http.dart' as http;
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/supplier_transaction_model.dart';
 import '../core/constants.dart';
+import 'auth_http.dart';
 
 class SupplierService {
   final String baseUrl = ApiConstants.baseUrl;
@@ -190,7 +190,7 @@ class SupplierService {
       // الحفظ في السيرفر
       // --------------------------------------------------------
 
-      final response = await http.post(
+      final response = await AuthHttp.post(
         Uri.parse(
           '$baseUrl/supplier/save',
         ),
@@ -593,7 +593,7 @@ int _getNextSerial(String companyCode, String branchCode) {
     // ----------------------------------------------------------
 
     final response =
-        await http.post(
+        await AuthHttp.post(
       Uri.parse(
         '$baseUrl/coding/save',
       ),
@@ -877,7 +877,7 @@ int _getNextSerial(String companyCode, String branchCode) {
   String docId,
 ) async {
   try {
-    final response = await http.delete(
+    final response = await AuthHttp.delete(
       Uri.parse(
         '$baseUrl/supplier/delete/'
         '$companyCode/$docId',
@@ -975,7 +975,7 @@ int _getNextSerial(String companyCode, String branchCode) {
 
     try {
       final response =
-          await http.get(
+          await AuthHttp.get(
         Uri.parse(
           '$baseUrl/supplier/list/'
           '$companyCode',
@@ -1095,7 +1095,7 @@ Future<void> syncChangesFromServer(
     DateTime since = DateTime.parse(lastSyncValue).toUtc();
     since = since.subtract(const Duration(minutes: 1));
 
-    final response = await http.get(
+    final response = await AuthHttp.get(
       Uri.parse(
         '$baseUrl/supplier/changes/$companyCode'
         '?since=${since.toIso8601String()}',

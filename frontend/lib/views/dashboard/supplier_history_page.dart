@@ -782,7 +782,7 @@ double _totalSupplierBalance = 0.0;
                   scrollDirection: Axis.horizontal,
                   child: SingleChildScrollView(
                     child: DataTable(
-                      headingRowColor: MaterialStateProperty.all(GlassStyle.fill10For(context)),
+                      headingRowColor: WidgetStateProperty.all(GlassStyle.fill10For(context)),
                       columns: [
                         DataColumn(label: Text('التاريخ', style: TextStyle(color: AppTheme.accentFor(context)))),
                         DataColumn(label: Text('الإذن', style: TextStyle(color: AppTheme.accentFor(context)))),
@@ -1150,9 +1150,9 @@ double _totalSupplierBalance = 0.0;
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.08),
+        color: color.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withOpacity(0.2)),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
       ),
       child: Column(
         children: [
@@ -1328,9 +1328,9 @@ double _totalSupplierBalance = 0.0;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.08),
+        color: color.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: color.withOpacity(0.15), width: 0.5),
+        border: Border.all(color: color.withValues(alpha: 0.15), width: 0.5),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -1349,7 +1349,7 @@ double _totalSupplierBalance = 0.0;
 
   Widget _buildSupplierFilter() {
     return DropdownButtonFormField<String?>(
-      value: _selectedSupplierCode,
+      initialValue: _selectedSupplierCode,
       dropdownColor: AppTheme.dropdownBackground(context),
       style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 12),
       decoration: InputDecoration(
@@ -1380,7 +1380,7 @@ double _totalSupplierBalance = 0.0;
 
   Widget _buildStoreFilter() {
     return DropdownButtonFormField<String?>(
-      value: _filterStore,
+      initialValue: _filterStore,
       dropdownColor: AppTheme.dropdownBackground(context),
       style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 12),
       decoration: InputDecoration(
