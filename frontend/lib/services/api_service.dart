@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:cloud_firestore/cloud_firestore.dart';   // ← NEW
 import 'package:firebase_auth/firebase_auth.dart';
 import '../core/constants.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -16,6 +17,38 @@ class ApiService {
         email: email.trim().toLowerCase(),
         password: password,
       );
+
+      // ============================================================
+      // ✅ NEW: فحص is_active قبل ما نكمل تسجيل الدخول
+      //
+      // - لو is_active = false → نرفض الدخول + signOut
+      // - لو Firestore offline → نكمل عادي (Firebase Auth كافي)
+      // - لو المستند مش موجود → نعتبره active (احتياطي)
+      // ============================================================
+      try {
+        final userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(email.trim().toLowerCase())
+            .get()
+            .timeout(const Duration(seconds: 5));
+
+        if (userDoc.exists) {
+          final isActive = userDoc.data()?['is_active'] ?? true;
+          if (isActive == false) {
+            await _auth.signOut();
+            throw 'تم إيقاف حسابك. يرجى التواصل مع الإدارة.';
+          }
+        }
+      } catch (e) {
+        // لو الرفض بسبب is_active → ارمي الخطأ
+        if (e.toString().contains('تم إيقاف حسابك')) {
+          rethrow;
+        }
+        // غير كده → Firestore offline أو مشكلة شبكة، نكمل
+        print('⚠️ Firestore offline - skipping is_active check: $e');
+      }
+      // ============================================================
+
       // استخدام التوكن الحالي الصالح؛ Firebase يجدده عند الحاجة لتجنب refresh إجباري عند كل تسجيل دخول
       String? token = await userCredential.user?.getIdToken();
       // print("🔑 التوكن الذي يتم إرساله: $token");

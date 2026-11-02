@@ -270,8 +270,8 @@ if (PermissionsService().canShowNotifications) ...[
         MaterialPageRoute(builder: (_) => const PermissionsPage()),
       );
       // 🔥 إعادة تحميل الصلاحيات للمستخدم الحالي بعد العودة
-      await PermissionsService().loadPermissions();
-      setState(() {}); // تحديث الواجهة إن لزم
+      // await PermissionsService().loadPermissions();
+      // setState(() {}); // تحديث الواجهة إن لزم
     },
   ),
   Divider(color: GlassStyle.line10For(context), height: 20),

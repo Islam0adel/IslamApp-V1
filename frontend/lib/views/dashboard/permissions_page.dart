@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../../services/permissions_service.dart';
+import '../../services/presence_service.dart';   // ← NEW
 
 class PermissionsPage extends StatefulWidget {
   const PermissionsPage({super.key});
@@ -19,12 +20,21 @@ class _PermissionsPageState extends State<PermissionsPage> {
   String currentCompanyCode = '';
   bool _isLoading = true;
 
+  // ✅ NEW: حالة is_active للمستخدم المختار (افتراضي = نشط)
+  bool _selectedUserIsActive = true;
+
   Map<String, Map<String, bool>> userPermissions = {};
 
   List<QueryDocumentSnapshot> usersList = [];
   List<Map<String, String>> _allBranches = [];
   bool _allowAllBranches = true;
   List<String> _selectedBranchCodes = [];
+
+  // ✅ NEW: Stream محفوظ — عشان ما نعملش stream جديد كل rebuild
+  Stream<QuerySnapshot>? _usersStream;
+
+  // ✅ NEW: guard لمنع التنفيذ المتزامن لـ _loadUserPermissions
+  bool _isLoadingUserData = false;
 
   @override
   void initState() {
@@ -64,12 +74,20 @@ class _PermissionsPageState extends State<PermissionsPage> {
 
   Future<void> _loadCompanyCode() async {
     final prefs = await SharedPreferences.getInstance();
+    final code = prefs.getString('company_code') ?? '';
 
     if (mounted) {
       setState(() {
-        currentCompanyCode =
-            prefs.getString('company_code') ?? '';
+        currentCompanyCode = code;
         _isLoading = false;
+
+        // ✅ NEW: بناء الـ stream مرة واحدة فقط — جوه setState
+        if (code.isNotEmpty) {
+          _usersStream = FirebaseFirestore.instance
+              .collection('users')
+              .where('company_code', isEqualTo: code)
+              .snapshots();
+        }
       });
     }
 
@@ -100,39 +118,9 @@ class _PermissionsPageState extends State<PermissionsPage> {
     }
   }
 
-  Stream<QuerySnapshot> getCompanyUsers() {
-    return FirebaseFirestore.instance
-        .collection('users')
-        .where(
-          'company_code',
-          isEqualTo: currentCompanyCode,
-        )
-        .snapshots();
-  }
+  
 
-  void _applyPermissionsData(dynamic data) {
-    if (data == null || data is! Map) return;
 
-    if (!mounted) return;
-
-    setState(() {
-      data.forEach((category, perms) {
-        if (perms is! Map) return;
-
-        if (!userPermissions.containsKey(category)) {
-          userPermissions[category] = {};
-        }
-
-        perms.forEach((key, value) {
-          userPermissions[category]![key.toString()] =
-              value is bool
-                  ? value
-                  : value.toString().toLowerCase() ==
-                      'true';
-        });
-      });
-    });
-  }
 
   Map<String, Map<String, bool>> _createDefaultPermissions(
     String jobCode,
@@ -218,6 +206,8 @@ class _PermissionsPageState extends State<PermissionsPage> {
         'إظهار حركة الجرد': false,
         'إظهار الإشعارات': true, 
         'إظهار البحث عن المنتجات': false,
+        'إظهار المستخدمين المتصلين': false,
+        
       },
     };
 
@@ -232,123 +222,146 @@ class _PermissionsPageState extends State<PermissionsPage> {
     return allPermissions;
   }
 
-  Future<void> _loadUserPermissions(
-  String userId,
-  String jobCode,
-) async {
-  final defaultPerms = _createDefaultPermissions(jobCode);
+    Future<void> _loadUserPermissions(
+    String userId,
+    String jobCode,
+  ) async {
+    // ✅ guard: منع التنفيذ المتزامن
+    if (_isLoadingUserData) return;
+    _isLoadingUserData = true;
 
-  if (mounted) {
-    setState(() {
-      userPermissions = defaultPerms;
-    });
-  }
+    try {
+      // ============================================================
+      // متغيرات محلية — بدون setState
+      // ============================================================
+      final defaultPerms = _createDefaultPermissions(jobCode);
+      final Map<String, Map<String, bool>> newPermissions =
+          Map<String, Map<String, bool>>.from(
+        defaultPerms.map(
+          (k, v) => MapEntry(k, Map<String, bool>.from(v)),
+        ),
+      );
 
-  final localKey = 'permissions_$userId';
-  final branchesKey = 'allowed_branches_$userId';
+      bool allowAll = true;
+      List<String> selectedBranches = [];
+      bool isActive = true;
 
-  final box = Hive.box('coding_box');
+      final localKey = 'permissions_$userId';
+      final branchesKey = 'allowed_branches_$userId';
+      final box = Hive.box('coding_box');
 
-  // ============================================================
-  // 1) قراءة الفروع من Hive (لو موجودة)
-  // ============================================================
-  final savedBranches = box.get(branchesKey);
-
-  if (savedBranches is List) {
-    final list = savedBranches.map((e) => e.toString()).toList();
-
-    if (mounted) {
-      setState(() {
+      // ============================================================
+      // 1) قراءة الفروع من Hive (بدون setState)
+      // ============================================================
+      final savedBranches = box.get(branchesKey);
+      if (savedBranches is List) {
+        final list = savedBranches.map((e) => e.toString()).toList();
         if (list.contains('all')) {
-          _allowAllBranches = true;
-          _selectedBranchCodes = [];
+          allowAll = true;
+          selectedBranches = [];
         } else {
-          _allowAllBranches = false;
-          _selectedBranchCodes = list;
-        }
-      });
-    }
-  } else {
-    if (mounted) {
-      setState(() {
-        _allowAllBranches = true;
-        _selectedBranchCodes = [];
-      });
-    }
-  }
-
-  // ============================================================
-  // 2) قراءة الصلاحيات من Hive (لو موجودة)
-  // ============================================================
-  if (box.containsKey(localKey)) {
-    final data = box.get(localKey);
-
-    if (data != null) {
-      _applyPermissionsData(data);
-    }
-  }
-
-  // ============================================================
-  // 3) مزامنة من Firestore
-  //    - الصلاحيات
-  //    - ✅ الفروع (الإضافة الجديدة)
-  // ============================================================
-  try {
-    final doc = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(userId)
-        .get();
-
-    if (doc.exists) {
-      final data = doc.data();
-
-      if (data != null) {
-
-        // ─────────── الصلاحيات ───────────
-        if (data.containsKey('permissions')) {
-          final firestorePerms = data['permissions'];
-
-          await box.put(localKey, firestorePerms);
-
-          _applyPermissionsData(firestorePerms);
-        }
-
-        // ─────────── ✅ الفروع المسموح بها ───────────
-        List<String>? branches;
-        final rawBranches = data['allowed_branches'];
-
-        if (rawBranches is List) {
-          branches = rawBranches.map((e) => e.toString()).toList();
-        } else if (rawBranches is String &&
-            rawBranches.toLowerCase() == 'all') {
-          branches = ['all'];
-        }
-
-        if (branches != null && branches.isNotEmpty) {
-          // حدّث Hive عشان المرة الجاية القراءة تكون فورية
-          await box.put(branchesKey, branches);
-
-          // حدّث الواجهة (بشرط المستخدم لسه مختار)
-          if (mounted && selectedUserId == userId) {
-            setState(() {
-              if (branches!.contains('all')) {
-                _allowAllBranches = true;
-                _selectedBranchCodes = [];
-              } else {
-                _allowAllBranches = false;
-                _selectedBranchCodes = branches;
-              }
-            });
-          }
+          allowAll = false;
+          selectedBranches = list;
         }
       }
+
+      // ============================================================
+      // 2) قراءة الصلاحيات من Hive (بدون setState)
+      // ============================================================
+      if (box.containsKey(localKey)) {
+        final data = box.get(localKey);
+        if (data != null && data is Map) {
+          data.forEach((category, perms) {
+            if (perms is! Map) return;
+            if (!newPermissions.containsKey(category)) {
+              newPermissions[category] = {};
+            }
+            perms.forEach((key, value) {
+              newPermissions[category]![key.toString()] = value is bool
+                  ? value
+                  : value.toString().toLowerCase() == 'true';
+            });
+          });
+        }
+      }
+
+      // ============================================================
+      // 3) مزامنة من Firestore (بدون setState)
+      // ============================================================
+      try {
+        final doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(userId)
+            .get();
+
+        if (doc.exists) {
+          final data = doc.data();
+
+          if (data != null) {
+            // ─────────── is_active ───────────
+            isActive = data['is_active'] != false;
+
+            // ─────────── الصلاحيات ───────────
+            if (data.containsKey('permissions')) {
+              final firestorePerms = data['permissions'];
+              await box.put(localKey, firestorePerms);
+
+              if (firestorePerms is Map) {
+                firestorePerms.forEach((category, perms) {
+                  if (perms is! Map) return;
+                  if (!newPermissions.containsKey(category)) {
+                    newPermissions[category] = {};
+                  }
+                  perms.forEach((key, value) {
+                    newPermissions[category]![key.toString()] = value is bool
+                        ? value
+                        : value.toString().toLowerCase() == 'true';
+                  });
+                });
+              }
+            }
+
+            // ─────────── الفروع ───────────
+            List<String>? branches;
+            final rawBranches = data['allowed_branches'];
+
+            if (rawBranches is List) {
+              branches = rawBranches.map((e) => e.toString()).toList();
+            } else if (rawBranches is String &&
+                rawBranches.toLowerCase() == 'all') {
+              branches = ['all'];
+            }
+
+            if (branches != null && branches.isNotEmpty) {
+              await box.put(branchesKey, branches);
+              if (branches.contains('all')) {
+                allowAll = true;
+                selectedBranches = [];
+              } else {
+                allowAll = false;
+                selectedBranches = branches;
+              }
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('Offline mode: Using Hive permissions data.');
+      }
+
+      // ============================================================
+      // ✅ setState واحد في النهاية — بدل 6
+      // ============================================================
+      if (!mounted) return;
+      setState(() {
+        userPermissions = newPermissions;
+        _allowAllBranches = allowAll;
+        _selectedBranchCodes = selectedBranches;
+        _selectedUserIsActive = isActive;
+      });
+    } finally {
+      _isLoadingUserData = false;
     }
-  } catch (e) {
-    debugPrint(
-      'Offline mode: Using Hive permissions data.',
-    );
   }
-}
 
   Future<void> savePermissions() async {
     if (selectedUserId == null) {
@@ -414,7 +427,180 @@ class _PermissionsPageState extends State<PermissionsPage> {
     }
   }
 
-  @override
+  // ============================================================
+  // ✅ NEW: حذف المستخدم من RTDB (قائمة الحضور)
+  // ============================================================
+  Future<void> _handleRemoveFromPresence() async {
+    if (selectedUserId == null) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.dialogBackground(context),
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(15)),
+        title: Text(
+          '⚠️ حذف من قائمة الحضور',
+          style: TextStyle(
+            color: AppTheme.textMainFor(context),
+            fontFamily: 'Cairo',
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: Text(
+          'سيتم إخفاء "$selectedUserId" من قائمة المستخدمين المتصلين.\n\n'
+          'لن يتم حذف حسابه من النظام. لو سجل دخول تاني، هيرجع للقائمة.',
+          style: TextStyle(
+            color: AppTheme.textMutedFor(context),
+            fontFamily: 'Cairo',
+            height: 1.5,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('إلغاء',
+                style: TextStyle(
+                  color: AppTheme.textMutedFor(context),
+                  fontFamily: 'Cairo',
+                )),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('حذف',
+                style: TextStyle(
+                  color: AppTheme.dangerFor(context),
+                  fontFamily: 'Cairo',
+                  fontWeight: FontWeight.bold,
+                )),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    final ok = await PresenceService.instance
+        .removeUserByEmail(selectedUserId!);
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          ok
+              ? 'تم الحذف من قائمة الحضور'
+              : 'المستخدم مش موجود في القائمة',
+          style: const TextStyle(fontFamily: 'Cairo'),
+        ),
+        backgroundColor: ok
+            ? AppTheme.successStrongFor(context)
+            : AppTheme.warningOrangeFor(context),
+      ),
+    );
+  }
+
+  // ============================================================
+  // ✅ NEW: حظر / إلغاء حظر المستخدم (is_active في Firestore)
+  // ============================================================
+    Future<void> _handleToggleBlock(bool newValue) async {
+    if (selectedUserId == null) return;
+
+    // newValue = true  → عايز يخليه نشط (يلغي الحظر)
+    // newValue = false → عايز يحظره
+    final willBlock = !newValue;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.dialogBackground(context),
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(15)),
+        title: Text(
+          willBlock ? '🚫 حظر المستخدم' : '✅ إلغاء الحظر',
+          style: TextStyle(
+            color: AppTheme.textMainFor(context),
+            fontFamily: 'Cairo',
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: Text(
+          willBlock
+              ? 'سيتم منع "$selectedUserId" من تسجيل الدخول،\n'
+                'ولو كان داخل حاليًا، هيتم تسجيل خروجه تلقائيًا.'
+              : 'سيتم السماح لـ "$selectedUserId" بتسجيل الدخول مرة أخرى.',
+          style: TextStyle(
+            color: AppTheme.textMutedFor(context),
+            fontFamily: 'Cairo',
+            height: 1.5,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('إلغاء',
+                style: TextStyle(
+                  color: AppTheme.textMutedFor(context),
+                  fontFamily: 'Cairo',
+                )),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              willBlock ? 'حظر' : 'إلغاء الحظر',
+              style: TextStyle(
+                color: willBlock
+                    ? AppTheme.dangerFor(context)
+                    : Colors.green,
+                fontFamily: 'Cairo',
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    // لو المستخدم لغى → الـ switch بيرجع لحالته الأصلية تلقائيًا (مفيش setState)
+    if (confirmed != true) return;
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(selectedUserId!)
+          .update({'is_active': newValue});
+
+      if (!mounted) return;
+
+      setState(() {
+        _selectedUserIsActive = newValue;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            willBlock ? 'تم حظر المستخدم' : 'تم إلغاء الحظر',
+            style: const TextStyle(fontFamily: 'Cairo'),
+          ),
+          backgroundColor: willBlock
+              ? AppTheme.warningOrangeFor(context)
+              : AppTheme.successStrongFor(context),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('فشل: $e',
+              style: const TextStyle(fontFamily: 'Cairo')),
+          backgroundColor: AppTheme.dangerStrongFor(context),
+        ),
+      );
+      // ملاحظة: مش بنعمل setState → الـ switch هيرجع لحالته الأصلية تلقائيًا
+    }
+  }
+
+    @override
   Widget build(BuildContext context) {
     // final isDark =
     //     Theme.of(context).brightness ==
@@ -545,7 +731,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
                                   StreamBuilder<
                                       QuerySnapshot>(
                                 stream:
-                                    getCompanyUsers(),
+                                    _usersStream,
                                 builder:
                                     (
                                   context,
@@ -699,6 +885,9 @@ class _PermissionsPageState extends State<PermissionsPage> {
                                               value;
                                           selectedUserJobCode =
                                               jobCode;
+                                          // ✅ NEW: اقرأ is_active فورًا
+                                          _selectedUserIsActive =
+                                              data?['is_active'] != false;
                                         });
 
                                         _loadUserPermissions(
@@ -712,6 +901,12 @@ class _PermissionsPageState extends State<PermissionsPage> {
                               ),
                             ),
                           ),
+
+                          // ============================================================
+                          // ✅ Switch + زر الحذف اتنقلوا لتبويب "صلاحيات عامة"
+                          //    (جوه buildPermissionsTab)
+                          // ============================================================
+
                           TabBar(
                             isScrollable:
                                 true,
@@ -805,19 +1000,153 @@ class _PermissionsPageState extends State<PermissionsPage> {
   }
 
   
-Widget buildPermissionsTab(String tabName) {
-  var permissionsMap = userPermissions[tabName] ?? {};
+  Widget buildPermissionsTab(String tabName) {
+    var permissionsMap = userPermissions[tabName] ?? {};
 
-  if (tabName == 'رصيد المخزون') {
-    permissionsMap.remove('عرض قيمة الجملة');
-  }
+    if (tabName == 'رصيد المخزون') {
+      permissionsMap.remove('عرض قيمة الجملة');
+    }
 
-  if (tabName == 'صلاحيات عامة') {
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        ...permissionsMap.entries.map((entry) {
-          return Container(
+    if (tabName == 'صلاحيات عامة') {
+      return ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          ...permissionsMap.entries.map((entry) {
+            return Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              decoration: BoxDecoration(
+                color: GlassStyle.fill05For(context),
+                borderRadius: BorderRadius.circular(15),
+                border: Border.all(color: GlassStyle.line10For(context)),
+              ),
+              child: Material(
+                color: Colors.transparent,
+                borderRadius: BorderRadius.circular(15),
+                child: SwitchListTile(
+                  activeThumbColor: AppTheme.accentFor(context),
+                  inactiveTrackColor: GlassStyle.switchTrackOffFor(context),
+                  title: Text(
+                    entry.key,
+                    style: TextStyle(
+                      color: AppTheme.textMainFor(context),
+                      fontSize: 16,
+                      fontFamily: 'Cairo',
+                    ),
+                  ),
+                  value: entry.value,
+                  onChanged: selectedUserId == null
+                      ? null
+                      : (newValue) {
+                          setState(() {
+                            userPermissions[tabName]![entry.key] = newValue;
+                          });
+                        },
+                ),
+              ),
+            );
+          }).toList(),
+          Divider(color: GlassStyle.line24For(context)),
+
+          // ============================================================
+          // ✅ Switch: حالة الحساب (نشط / محظور)
+          // + زر: حذف من قائمة الحضور
+          // ============================================================
+          if (selectedUserId != null) ...[
+            // ✅ Switch: الحساب نشط / محظور
+            Material(
+              color: GlassStyle.fill05For(context),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(15),
+                side: BorderSide(
+                  color: _selectedUserIsActive
+                      ? Colors.green.withValues(alpha: 0.3)
+                      : AppTheme.dangerFor(context).withValues(alpha: 0.3),
+                ),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: SwitchListTile(
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                activeThumbColor: Colors.green,
+                inactiveThumbColor: AppTheme.dangerFor(context),
+                secondary: Icon(
+                  _selectedUserIsActive
+                      ? Icons.check_circle_rounded
+                      : Icons.block_rounded,
+                  color: _selectedUserIsActive
+                      ? Colors.green
+                      : AppTheme.dangerFor(context),
+                  size: 22,
+                ),
+                title: Text(
+                  _selectedUserIsActive ? 'الحساب نشط' : 'الحساب محظور',
+                  style: TextStyle(
+                    color: _selectedUserIsActive
+                        ? Colors.green
+                        : AppTheme.dangerFor(context),
+                    fontFamily: 'Cairo',
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                subtitle: Text(
+                  _selectedUserIsActive
+                      ? 'المستخدم يقدر يسجل دخول'
+                      : 'المستخدم ممنوع من الدخول',
+                  style: TextStyle(
+                    color: AppTheme.textMutedFor(context),
+                    fontFamily: 'Cairo',
+                    fontSize: 10,
+                  ),
+                ),
+                value: _selectedUserIsActive,
+                onChanged: _handleToggleBlock,
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            // ✅ زر: حذف من قائمة الحضور
+            OutlinedButton.icon(
+              onPressed: _handleRemoveFromPresence,
+              icon: Icon(
+                Icons.delete_sweep_rounded,
+                color: AppTheme.dangerFor(context),
+                size: 18,
+              ),
+              label: Text(
+                'حذف من قائمة الحضور',
+                style: TextStyle(
+                  color: AppTheme.dangerFor(context),
+                  fontFamily: 'Cairo',
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              style: OutlinedButton.styleFrom(
+                side: BorderSide(color: AppTheme.dangerFor(context)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                minimumSize: const Size(double.infinity, 0),
+              ),
+            ),
+          ],
+          // ============================================================
+
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Text(
+              'الفروع المسموح بها',
+              style: TextStyle(
+                color: AppTheme.textMainFor(context),
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                fontFamily: 'Cairo',
+              ),
+            ),
+          ),
+          Container(
             margin: const EdgeInsets.only(bottom: 12),
             decoration: BoxDecoration(
               color: GlassStyle.fill05For(context),
@@ -827,43 +1156,96 @@ Widget buildPermissionsTab(String tabName) {
             child: Material(
               color: Colors.transparent,
               borderRadius: BorderRadius.circular(15),
-              child: SwitchListTile(
-                activeThumbColor: AppTheme.accentFor(context),
-                inactiveTrackColor: GlassStyle.switchTrackOffFor(context),
+              child: CheckboxListTile(
+                activeColor: AppTheme.accentFor(context),
+                checkColor: AppTheme.onAccentFor(context),
                 title: Text(
-                  entry.key,
+                  'كل الفروع',
                   style: TextStyle(
                     color: AppTheme.textMainFor(context),
                     fontSize: 16,
                     fontFamily: 'Cairo',
                   ),
                 ),
-                value: entry.value,
+                value: _allowAllBranches,
                 onChanged: selectedUserId == null
                     ? null
-                    : (newValue) {
+                    : (val) {
                         setState(() {
-                          userPermissions[tabName]![entry.key] = newValue;
+                          _allowAllBranches = val ?? false;
+                          if (_allowAllBranches) {
+                            _selectedBranchCodes = [];
+                          }
                         });
                       },
               ),
             ),
-          );
-        }).toList(),
-        Divider(color: GlassStyle.line24For(context)),
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          child: Text(
-            'الفروع المسموح بها',
-            style: TextStyle(
-              color: AppTheme.textMainFor(context),
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              fontFamily: 'Cairo',
-            ),
           ),
-        ),
-        Container(
+          if (!_allowAllBranches)
+            ..._allBranches.map((branch) {
+              final isSelected =
+                  _selectedBranchCodes.contains(branch['code']);
+
+              return Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: GlassStyle.fill05For(context),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: GlassStyle.line10For(context)),
+                ),
+                child: Material(
+                  color: Colors.transparent,
+                  borderRadius: BorderRadius.circular(12),
+                  child: CheckboxListTile(
+                    activeColor: AppTheme.accentFor(context),
+                    checkColor: AppTheme.onAccentFor(context),
+                    title: Text(
+                      branch['name'] ?? '',
+                      style: TextStyle(
+                        color: AppTheme.textMainFor(context),
+                        fontSize: 14,
+                        fontFamily: 'Cairo',
+                      ),
+                    ),
+                    value: isSelected,
+                    onChanged: selectedUserId == null
+                        ? null
+                        : (val) {
+                            setState(() {
+                              if (val == true) {
+                                _selectedBranchCodes.add(branch['code']!);
+                              } else {
+                                _selectedBranchCodes.remove(branch['code']);
+                              }
+                            });
+                          },
+                  ),
+                ),
+              );
+            }).toList(),
+          if (!_allowAllBranches && _selectedBranchCodes.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                '⚠️ يجب اختيار فرع واحد على الأقل',
+                style: TextStyle(
+                  color: AppTheme.warningOrangeSoftFor(context),
+                  fontFamily: 'Cairo',
+                ),
+              ),
+            ),
+        ],
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(20),
+      itemCount: permissionsMap.length,
+      itemBuilder: (context, index) {
+        final key = permissionsMap.keys.elementAt(index);
+        final value = permissionsMap[key] ?? false;
+
+        return Container(
           margin: const EdgeInsets.only(bottom: 12),
           decoration: BoxDecoration(
             color: GlassStyle.fill05For(context),
@@ -873,129 +1255,30 @@ Widget buildPermissionsTab(String tabName) {
           child: Material(
             color: Colors.transparent,
             borderRadius: BorderRadius.circular(15),
-            child: CheckboxListTile(
-              activeColor: AppTheme.accentFor(context),
-              checkColor: AppTheme.onAccentFor(context),
+            child: SwitchListTile(
+              activeThumbColor: AppTheme.accentFor(context),
+              inactiveTrackColor: GlassStyle.switchTrackOffFor(context),
               title: Text(
-                'كل الفروع',
+                key,
                 style: TextStyle(
                   color: AppTheme.textMainFor(context),
                   fontSize: 16,
                   fontFamily: 'Cairo',
                 ),
               ),
-              value: _allowAllBranches,
+              value: value,
               onChanged: selectedUserId == null
                   ? null
-                  : (val) {
+                  : (newValue) {
                       setState(() {
-                        _allowAllBranches = val ?? false;
-                        if (_allowAllBranches) {
-                          _selectedBranchCodes = [];
-                        }
+                        userPermissions[tabName]![key] = newValue;
                       });
                     },
             ),
           ),
-        ),
-        if (!_allowAllBranches)
-          ..._allBranches.map((branch) {
-            final isSelected =
-                _selectedBranchCodes.contains(branch['code']);
-
-            return Container(
-              margin: const EdgeInsets.only(bottom: 8),
-              decoration: BoxDecoration(
-                color: GlassStyle.fill05For(context),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: GlassStyle.line10For(context)),
-              ),
-              child: Material(
-                color: Colors.transparent,
-                borderRadius: BorderRadius.circular(12),
-                child: CheckboxListTile(
-                  activeColor: AppTheme.accentFor(context),
-                  checkColor: AppTheme.onAccentFor(context),
-                  title: Text(
-                    branch['name'] ?? '',
-                    style: TextStyle(
-                      color: AppTheme.textMainFor(context),
-                      fontSize: 14,
-                      fontFamily: 'Cairo',
-                    ),
-                  ),
-                  value: isSelected,
-                  onChanged: selectedUserId == null
-                      ? null
-                      : (val) {
-                          setState(() {
-                            if (val == true) {
-                              _selectedBranchCodes.add(branch['code']!);
-                            } else {
-                              _selectedBranchCodes.remove(branch['code']);
-                            }
-                          });
-                        },
-                ),
-              ),
-            );
-          }).toList(),
-        if (!_allowAllBranches && _selectedBranchCodes.isEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Text(
-              '⚠️ يجب اختيار فرع واحد على الأقل',
-              style: TextStyle(
-                color: AppTheme.warningOrangeSoftFor(context),
-                fontFamily: 'Cairo',
-              ),
-            ),
-          ),
-      ],
+        );
+      },
     );
   }
-
-  return ListView.builder(
-    padding: const EdgeInsets.all(20),
-    itemCount: permissionsMap.length,
-    itemBuilder: (context, index) {
-      final key = permissionsMap.keys.elementAt(index);
-      final value = permissionsMap[key] ?? false;
-
-      return Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        decoration: BoxDecoration(
-          color: GlassStyle.fill05For(context),
-          borderRadius: BorderRadius.circular(15),
-          border: Border.all(color: GlassStyle.line10For(context)),
-        ),
-        child: Material(
-          color: Colors.transparent,
-          borderRadius: BorderRadius.circular(15),
-          child: SwitchListTile(
-            activeThumbColor: AppTheme.accentFor(context),
-            inactiveTrackColor: GlassStyle.switchTrackOffFor(context),
-            title: Text(
-              key,
-              style: TextStyle(
-                color: AppTheme.textMainFor(context),
-                fontSize: 16,
-                fontFamily: 'Cairo',
-              ),
-            ),
-            value: value,
-            onChanged: selectedUserId == null
-                ? null
-                : (newValue) {
-                    setState(() {
-                      userPermissions[tabName]![key] = newValue;
-                    });
-                  },
-          ),
-        ),
-      );
-    },
-  );
-}
 
 }

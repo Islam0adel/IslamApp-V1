@@ -97,6 +97,8 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
   //
   // بيتسجل مرة واحدة بعد تحميل الصلاحيات من Hive.
   // أي تغيير في users/{email} → تحديث _permissions + Hive + UI
+  //
+  // ✅ NEW: بيفحص is_active — لو المستخدم محظور، بيسجله خروج فورًا
   // ============================================================
 
   void _startFirestoreListener(String email) {
@@ -117,6 +119,23 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
         if (!snapshot.exists) return;
         final data = snapshot.data();
         if (data == null) return;
+
+        // ============================================================
+        // ✅ NEW: فحص is_active — لو محظور، نسجله خروج فورًا
+        //
+        // بيحصل لما:
+        // - الأدمن يحظر المستخدم وهو داخل
+        // - المستخدم يفتح التطبيق بعد ما اتحظر
+        //
+        // الحماية في login() بتمنع الدخول الجديد،
+        // ودي بتمنع الاستمرار لو محظور أثناء الاستخدام.
+        // ============================================================
+        if (data['is_active'] == false) {
+          print('🚫 تم إيقاف حساب $email من الإدارة — جاري تسجيل الخروج');
+          _stopFirestoreListener();
+          FirebaseAuth.instance.signOut();
+          return;
+        }
 
         bool changed = false;
 
@@ -712,13 +731,14 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
       'صلاحيات عامة': {
         'تغيير الفرع(صفحة الهوم)': false,
         'صفحة الصلاحيات(الاعدادات)': false,
-        'إظهار حركة الخزينة': true,
+        'إظهار حركة الخزينة': false,
         'إظهار التكويد': true,
-        'إظهار التقارير': true,
-        'إظهار حركة الموردين': true,
-        'إظهار حركة الجرد': true,
-        'إظهار الإشعارات': true,
+        'إظهار التقارير': false,
+        'إظهار حركة الموردين': false,
+        'إظهار حركة الجرد': false,
+        'إظهار الإشعارات': false,
         'إظهار البحث عن المنتجات': false,
+        'إظهار المستخدمين المتصلين': false,
       },
     };
 
@@ -1105,14 +1125,18 @@ bool get canViewExtendedReport => hasPermission('التقارير', 'التقر�
         'إظهار حركة الجرد',
       );
   bool get canShowNotifications {
-  // الافتراضي = true لو المفتاح غير موجود في بيانات المستخدم
-  // (يغطي المستخدمين القدامى اللي اتسجلوا قبل إضافة الصلاحية)
-  return _permissions?['صلاحيات عامة']?['إظهار الإشعارات'] ?? true;
-}
+    // الافتراضي = true لو المفتاح غير موجود في بيانات المستخدم
+    // (يغطي المستخدمين القدامى اللي اتسجلوا قبل إضافة الصلاحية)
+    return _permissions?['صلاحيات عامة']?['إظهار الإشعارات'] ?? true;
+  }
 
   bool get canShowProductLookup {
-  // الافتراضي = true لو المفتاح غير موجود في بيانات المستخدم
-  // (يغطي المستخدمين القدامى اللي اتسجلوا قبل إضافة الصلاحية)
-  return _permissions?['صلاحيات عامة']?['إظهار البحث عن المنتجات'] ?? true;
-}
+    // الافتراضي = true لو المفتاح غير موجود في بيانات المستخدم
+    // (يغطي المستخدمين القدامى اللي اتسجلوا قبل إضافة الصلاحية)
+    return _permissions?['صلاحيات عامة']?['إظهار البحث عن المنتجات'] ?? true;
+  }
+  bool get canShowOnlineUsers {
+    // الافتراضي = true لو المفتاح غير موجود (للمستخدمين القدامى)
+    return _permissions?['صلاحيات عامة']?['إظهار المستخدمين المتصلين'] ?? true;
+  }
 }
