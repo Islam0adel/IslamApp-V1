@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
-from sqlalchemy.pool import NullPool
+from sqlalchemy.pool import AsyncAdaptedQueuePool
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 ENV_PATH = Path(r"D:\IslamApp-V1\.env")
@@ -25,11 +25,13 @@ if clean_url.startswith("postgresql://"):
 
 engine = create_async_engine(
     clean_url,
-    echo=True,
+    echo=False,
     future=True,
     pool_pre_ping=True,
     pool_recycle=300,
-    poolclass=NullPool,
+    poolclass=AsyncAdaptedQueuePool,
+    pool_size=5,
+    max_overflow=10,
     connect_args={
         "ssl": True,
         "server_settings": {"application_name": "myapp"}

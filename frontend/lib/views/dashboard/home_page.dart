@@ -14,10 +14,9 @@ import 'package:hive_flutter/hive_flutter.dart';
 import '../../services/coding_service.dart';
 import '../../models/coding_model.dart';
 import '../../services/permissions_service.dart';
-import '../../views/dashboard/inventory_page.dart'; // تأكد من المسار الصحيح
-import 'stock_balance_page.dart'; // تأكد من المسار الصحيح
-// import '../../views/dashboard/supplier_page.dart';
-import 'suppliers_dashboard_page.dart'; // ✅ استيراد الصفحة الجديدة
+import '../../views/dashboard/inventory_page.dart';
+import 'stock_balance_page.dart';
+import 'suppliers_dashboard_page.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'notifications_page.dart';
 import 'product_lookup_page.dart';
@@ -53,10 +52,19 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   bool _isLoadingBranches = true;
   bool _permissionsLoaded = false;
 
+  // ✅ NEW: Debounce + Guards لمنع اللاج
+  Timer? _permissionsDebounce;
+  bool _branchCheckInProgress = false;
+  bool _branchDialogOpen = false;
+
   @override
   void initState() {
     super.initState();
     NotificationsService.instance.setCompany(widget.companyCode);
+
+    // ✅ استمع لتغييرات الصلاحيات لحظيًا
+    PermissionsService().addListener(_onPermissionsChanged);
+
     _mainController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 800),
@@ -77,9 +85,29 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     });
   }
 
+  // ✅ ردّ الفعل عند تغيير الصلاحيات (من Firestore listener)
+  // - Debounce 400ms: يجمع كل الإشعارات المتتالية في نداء واحد
+  // - showDialog: false: الديالوج يظهر بس في التحميل الأول
+  void _onPermissionsChanged() {
+    if (!mounted) return;
+
+    setState(() {
+      _permissionsLoaded = PermissionsService().isLoaded;
+    });
+
+    _permissionsDebounce?.cancel();
+    _permissionsDebounce = Timer(const Duration(milliseconds: 400), () {
+      if (!mounted) return;
+      _loadBranchesAndCheck(showDialog: false);
+    });
+  }
+
   Future<void> _loadAllData() async {
     try {
-      await PermissionsService().loadPermissions();
+      // ✅ idempotent: لو main.dart حمّلها، بترجع فورًا
+      if (!PermissionsService().isLoaded) {
+        await PermissionsService().loadPermissions();
+      }
 
       if (!mounted) return;
 
@@ -87,7 +115,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         _permissionsLoaded = true;
       });
 
-      await _loadBranchesAndCheck();
+      // ✅ التحميل الأول: showDialog = true (الديالوج يظهر)
+      await _loadBranchesAndCheck(showDialog: true);
     } catch (e) {
       print("خطأ في تحميل البيانات: $e");
 
@@ -99,7 +128,11 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     }
   }
 
-  Future<void> _loadBranchesAndCheck() async {
+  Future<void> _loadBranchesAndCheck({bool showDialog = true}) async {
+    // ✅ منع التنفيذ المتزامن
+    if (_branchCheckInProgress) return;
+    _branchCheckInProgress = true;
+
     try {
       final prefs = await SharedPreferences.getInstance();
       final Box codingBox = Hive.box('coding_box');
@@ -194,7 +227,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           savedBranchCode != 'none';
 
       if (savedBranchIsAllowed) {
-        // هنا savedBranchCode مضمون إنه غير null
         selectedCode = savedBranchCode;
         selectedName = savedBranchName ?? 'كل الفروع';
       } else {
@@ -262,18 +294,24 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
       // ==========================================================
       // 9) رسالة اختيار الفرع
+      // - بس لو showDialog = true (التحميل الأول)
+      // - وبس لو مفيش ديالوج مفتوح
       // ==========================================================
 
-      final List<Map<String, String>> realBranches = filteredBranches
-          .where((branch) => branch['code'] != 'all' && branch['code'] != 'none')
-          .toList();
+      if (showDialog) {
+        final List<Map<String, String>> realBranches = filteredBranches
+            .where((branch) => branch['code'] != 'all' && branch['code'] != 'none')
+            .toList();
 
-      if (realBranches.length > 1 && showBranchDialog && PermissionsService().canChangeBranch) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
-            _showBranchSelectionDialog();
-          }
-        });
+        if (realBranches.length > 1 &&
+            showBranchDialog &&
+            PermissionsService().canChangeBranch) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && !_branchDialogOpen) {
+              _showBranchSelectionDialog();
+            }
+          });
+        }
       }
     } catch (e) {
       print("❌ خطأ في جلب الفروع: $e");
@@ -283,10 +321,17 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           _isLoadingBranches = false;
         });
       }
+    } finally {
+      // ✅ دايمًا نحرر الـ guard
+      _branchCheckInProgress = false;
     }
   }
 
   void _showBranchSelectionDialog() {
+    // ✅ لو فيه ديالوج مفتوح، اخرج
+    if (_branchDialogOpen) return;
+    _branchDialogOpen = true;
+
     showDialog(
       context: context,
       barrierDismissible: _selectedBranchCode != "all",
@@ -334,7 +379,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           ),
         ),
       ),
-    );
+    ).then((_) {
+      // ✅ لما الديالوج يتقفل، حرر الـ flag
+      _branchDialogOpen = false;
+    });
   }
 
   String _formatDuration(int seconds) {
@@ -343,7 +391,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     return '${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
   }
 
-  
+
 
 
 Future<void> _showNotificationsPreview() async {
@@ -411,202 +459,223 @@ Future<void> _showNotificationsPreview() async {
     context: context,
     builder: (dialogContext) => StatefulBuilder(
       builder: (context, setDialogState) {
-        final latestItems = NotificationsService.instance
-            .getNotifications(companyCode: widget.companyCode)
-            .take(10)
-            .toList();
+        return ValueListenableBuilder<Box>(
+          valueListenable: Hive.box('notifications_box').listenable(),
+          builder: (context, box, _) {
+            final latestItems = NotificationsService.instance
+                .getNotifications(companyCode: widget.companyCode)
+                .take(10)
+                .toList();
 
-        return AlertDialog(
-          backgroundColor: AppTheme.dialogBackground(context),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(18),
-          ),
-          titlePadding: const EdgeInsets.fromLTRB(20, 18, 12, 8),
-          contentPadding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-          title: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  'آخر الإشعارات',
-                  style: TextStyle(
-                    color: AppTheme.textMainFor(context),
-                    fontFamily: 'Cairo',
-                    fontWeight: FontWeight.bold,
-                    fontSize: 17,
-                  ),
-                ),
+            return AlertDialog(
+              backgroundColor: AppTheme.dialogBackground(context),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
               ),
-              IconButton(
-                tooltip: 'تحديث',
-                onPressed: () async {
-                  await NotificationsService.instance.refreshUnreadFromServer(
-                    companyCode: widget.companyCode,
-                  );
-                  if (dialogContext.mounted) setDialogState(() {});
-                },
-                icon: Icon(
-                  Icons.refresh,
-                  color: AppTheme.textMainFor(context),
-                ),
-              ),
-              IconButton(
-                tooltip: 'إغلاق',
-                onPressed: () => Navigator.pop(dialogContext),
-                icon: Icon(
-                  Icons.close_rounded,
-                  color: AppTheme.dangerFor(context),
-                ),
-              ),
-            ],
-          ),
-          content: SizedBox(
-            width: 420,
-            child: latestItems.isEmpty
-                ? Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 28),
-                    child: Center(
-                      child: Text(
-                        'لا توجد إشعارات حتى الآن',
-                        style: TextStyle(
-                          color: AppTheme.textMutedFor(context),
-                          fontFamily: 'Cairo',
-                        ),
+              titlePadding: const EdgeInsets.fromLTRB(20, 18, 12, 8),
+              contentPadding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+              title: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'آخر الإشعارات',
+                      style: TextStyle(
+                        color: AppTheme.textMainFor(context),
+                        fontFamily: 'Cairo',
+                        fontWeight: FontWeight.bold,
+                        fontSize: 17,
                       ),
                     ),
-                  )
-                : ListView.separated(
-                    shrinkWrap: true,
-                    itemCount: latestItems.length,
-                    separatorBuilder: (_, __) => Divider(
-                      color: GlassStyle.line10For(context),
-                      height: 1,
-                    ),
-                    itemBuilder: (context, index) {
-                      final item = latestItems[index];
-                      final isRead = item['read'] == true;
-                      final branchCode =
-                          (item['branch_code'] ?? '').toString().trim();
-
-                      final branch = _branches
-                              .where(
-                                (b) =>
-                                    (b['code'] ?? '').toString() ==
-                                    branchCode,
-                              )
-                              .map((b) => (b['name'] ?? '').toString())
-                              .where((name) => name.isNotEmpty)
-                              .firstOrNull ??
-                          branchCode;
-
-                      final createdAt = formatNotificationDate(
-                        (item['created_at'] ?? '').toString(),
+                  ),
+                  IconButton(
+                    tooltip: 'تحديث',
+                    onPressed: () async {
+                      await NotificationsService.instance
+                          .refreshUnreadFromServer(
+                        companyCode: widget.companyCode,
                       );
-
-                      final actorName =
-                          (item['actor_name'] ?? '').toString().trim();
-                      final body = (item['body'] ?? '').toString().trim();
-
-                      return Material(
-                        color: Colors.transparent,
-                        child: ListTile(
-                          dense: true,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 3,
-                          ),
-                          leading: Icon(
-                            isRead
-                                ? Icons.notifications_none_rounded
-                                : Icons.notifications_active_rounded,
-                            color: isRead
-                                ? AppTheme.textMutedFor(context)
-                                : AppTheme.accentFor(context),
-                          ),
-                          title: Text(
-                            (item['title'] ?? 'تغيير').toString(),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: AppTheme.textMainFor(context),
-                              fontFamily: 'Cairo',
-                              fontSize: 13,
-                              fontWeight:
-                                  isRead ? FontWeight.normal : FontWeight.bold,
-                            ),
-                          ),
-                          subtitle: Text(
-                            [
-                              if (actorName.isNotEmpty)
-                                'بواسطة: $actorName',
-                              if (body.isNotEmpty) body,
-                              if (branch.isNotEmpty) 'الفرع: $branch',
-                              if (createdAt.isNotEmpty) createdAt,
-                            ].join('\n'),
-                            maxLines: 6,
-                            overflow: TextOverflow.ellipsis,
+                      if (dialogContext.mounted) setDialogState(() {});
+                    },
+                    icon: Icon(
+                      Icons.refresh,
+                      color: AppTheme.textMainFor(context),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'إغلاق',
+                    onPressed: () => Navigator.pop(dialogContext),
+                    icon: Icon(
+                      Icons.close_rounded,
+                      color: AppTheme.dangerFor(context),
+                    ),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 420,
+                child: latestItems.isEmpty
+                    ? Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 28),
+                        child: Center(
+                          child: Text(
+                            'لا توجد إشعارات حتى الآن',
                             style: TextStyle(
                               color: AppTheme.textMutedFor(context),
                               fontFamily: 'Cairo',
-                              fontSize: 11,
-                              height: 1.4,
                             ),
                           ),
-                          onTap: () async {
-                            if (item['read'] != true) {
-                              await NotificationsService.instance.markRead(
-                                item['id'].toString(),
-                              );
-                            }
-
-                            if (dialogContext.mounted) {
-                              setDialogState(() {});
-                            }
-                            if (mounted) setState(() {});
-                          },
                         ),
-                      );
-                    },
-                  ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () async {
-                await NotificationsService.instance.markAllRead(
-                  companyCode: widget.companyCode,
-                );
-                if (dialogContext.mounted) setDialogState(() {});
-                if (mounted) setState(() {});
-              },
-              child: Text(
-                'تحديد الكل كمقروء',
-                style: TextStyle(
-                  color: AppTheme.accentFor(context),
-                  fontFamily: 'Cairo',
-                ),
+                      )
+                    : ListView.separated(
+                        shrinkWrap: true,
+                        itemCount: latestItems.length,
+                        separatorBuilder: (_, __) => Divider(
+                          color: GlassStyle.line10For(context),
+                          height: 1,
+                        ),
+                        itemBuilder: (context, index) {
+                          final item = latestItems[index];
+                          final isRead = item['read'] == true;
+                          final branchCode =
+                              (item['branch_code'] ?? '')
+                                  .toString()
+                                  .trim();
+
+                          final branch = _branches
+                                  .where(
+                                    (b) =>
+                                        (b['code'] ?? '').toString() ==
+                                        branchCode,
+                                  )
+                                  .map((b) =>
+                                      (b['name'] ?? '').toString())
+                                  .where((name) => name.isNotEmpty)
+                                  .firstOrNull ??
+                              branchCode;
+
+                          final createdAt = formatNotificationDate(
+                            (item['created_at'] ?? '').toString(),
+                          );
+
+                          final actorName =
+                              (item['actor_name'] ?? '')
+                                  .toString()
+                                  .trim();
+                          final body =
+                              (item['body'] ?? '').toString().trim();
+
+                          return Material(
+                            color: Colors.transparent,
+                            child: ListTile(
+                              dense: true,
+                              contentPadding:
+                                  const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 3,
+                              ),
+                              leading: Icon(
+                                isRead
+                                    ? Icons.notifications_none_rounded
+                                    : Icons
+                                        .notifications_active_rounded,
+                                color: isRead
+                                    ? AppTheme.textMutedFor(context)
+                                    : AppTheme.accentFor(context),
+                              ),
+                              title: Text(
+                                (item['title'] ?? 'تغيير').toString(),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color:
+                                      AppTheme.textMainFor(context),
+                                  fontFamily: 'Cairo',
+                                  fontSize: 13,
+                                  fontWeight: isRead
+                                      ? FontWeight.normal
+                                      : FontWeight.bold,
+                                ),
+                              ),
+                              subtitle: Text(
+                                [
+                                  if (actorName.isNotEmpty)
+                                    'بواسطة: $actorName',
+                                  if (body.isNotEmpty) body,
+                                  if (branch.isNotEmpty)
+                                    'الفرع: $branch',
+                                  if (createdAt.isNotEmpty)
+                                    createdAt,
+                                ].join('\n'),
+                                maxLines: 6,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color:
+                                      AppTheme.textMutedFor(context),
+                                  fontFamily: 'Cairo',
+                                  fontSize: 11,
+                                  height: 1.4,
+                                ),
+                              ),
+                              onTap: () async {
+                                if (item['read'] != true) {
+                                  await NotificationsService.instance
+                                      .markRead(
+                                    item['id'].toString(),
+                                  );
+                                }
+
+                                if (dialogContext.mounted) {
+                                  setDialogState(() {});
+                                }
+                                if (mounted) setState(() {});
+                              },
+                            ),
+                          );
+                        },
+                      ),
               ),
-            ),
-            TextButton(
-              onPressed: () {
-                Navigator.pop(dialogContext);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => NotificationsPage(
+              actions: [
+                TextButton(
+                  onPressed: () async {
+                    await NotificationsService.instance
+                        .markAllRead(
                       companyCode: widget.companyCode,
+                    );
+                    if (dialogContext.mounted) setDialogState(() {});
+                    if (mounted) setState(() {});
+                  },
+                  child: Text(
+                    'تحديد الكل كمقروء',
+                    style: TextStyle(
+                      color: AppTheme.accentFor(context),
+                      fontFamily: 'Cairo',
                     ),
                   ),
-                );
-              },
-              child: Text(
-                'عرض كل الإشعارات',
-                style: TextStyle(
-                  color: AppTheme.accentFor(context),
-                  fontFamily: 'Cairo',
-                  fontWeight: FontWeight.bold,
                 ),
-              ),
-            ),
-          ],
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(dialogContext);
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => NotificationsPage(
+                          companyCode: widget.companyCode,
+                        ),
+                      ),
+                    );
+                  },
+                  child: Text(
+                    'عرض كل الإشعارات',
+                    style: TextStyle(
+                      color: AppTheme.accentFor(context),
+                      fontFamily: 'Cairo',
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
         );
       },
     ),
@@ -797,18 +866,18 @@ Future<void> _showNotificationsPreview() async {
             context,
             MaterialPageRoute(builder: (c) => CodingPage(companyCode: widget.companyCode)),
           ).then((_) {
-            _loadBranchesAndCheck();
+            _loadBranchesAndCheck(showDialog: false);
           });
         }),
       );
     }
 
-    // 3. 🔥 المشتريات والموردين (يؤدي إلى لوحة تحكم الموردين)
+    // 3. المشتريات والموردين
     if (_permissionsLoaded && PermissionsService().canShowSuppliers) {
       menuItems.add(
         _menuItem(
           "المشتريات والموردين",
-          Icons.shopping_cart_rounded, // تغيير الأيقونة لأيقونة مشتريات
+          Icons.shopping_cart_rounded,
           AppTheme.infoSoftFor(context),
           () {
             Navigator.push(
@@ -826,8 +895,7 @@ Future<void> _showNotificationsPreview() async {
       );
     }
 
-    // 4. 🔥 حركة الجرد (جديد)
-    // داخل HomePage - _buildMenuGrid()
+    // 4. حركة الجرد
     if (_permissionsLoaded && PermissionsService().canShowInventory) {
       menuItems.add(
         _menuItem("حركة الجرد", Icons.inventory_2_rounded, AppTheme.warningOrangeSoftFor(context), () {
@@ -836,7 +904,7 @@ Future<void> _showNotificationsPreview() async {
             MaterialPageRoute(
               builder: (c) => InventoryPage(
                 companyCode: widget.companyCode,
-                selectedBranchCode: _selectedBranchCode, // ✅ تمرير الفرع النشط
+                selectedBranchCode: _selectedBranchCode,
               ),
             ),
           );
@@ -844,8 +912,8 @@ Future<void> _showNotificationsPreview() async {
       );
     }
 
-    // 5. 🔥 رصيد المخزون
-    if (_permissionsLoaded && PermissionsService().canShowInventory) { // أو يمكنك إنشاء صلاحية جديدة canShowStock
+    // 5. رصيد المخزون
+    if (_permissionsLoaded && PermissionsService().canShowInventory) {
       menuItems.add(
         _menuItem("رصيد المخزون", Icons.storage_rounded, AppTheme.extraTealFor(context), () {
           Navigator.push(
@@ -861,7 +929,7 @@ Future<void> _showNotificationsPreview() async {
       );
     }
 
-    // 5. التقارير
+    // 6. التقارير
     if (_permissionsLoaded && PermissionsService().canShowReports) {
       menuItems.add(
         _menuItem("التقارير", Icons.analytics_rounded, AppTheme.extraPurpleFor(context), () {
@@ -878,36 +946,29 @@ Future<void> _showNotificationsPreview() async {
       );
     }
 
-    // البحث عن المنتجات بالباركود (ميزة مستقلة لا تغيّر بيانات المخزون الحالية)
-    // البحث عن المنتجات بالباركود (ميزة مستقلة لا تغيّر بيانات المخزون الحالية)
-if (_permissionsLoaded && PermissionsService().canShowProductLookup) {
-  menuItems.add(
-    _menuItem("البحث عن المنتجات", Icons.qr_code_scanner_rounded, AppTheme.extraTealFor(context), () {
-      Navigator.push(context, MaterialPageRoute(builder: (c) => const ProductLookupPage()));
-    }),
-  );
-}
+    // البحث عن المنتجات
+    if (_permissionsLoaded && PermissionsService().canShowProductLookup) {
+      menuItems.add(
+        _menuItem("البحث عن المنتجات", Icons.qr_code_scanner_rounded, AppTheme.extraTealFor(context), () {
+          Navigator.push(context, MaterialPageRoute(builder: (c) => const ProductLookupPage()));
+        }),
+      );
+    }
 
-    // الإشعارات (مرتبطة بأحداث المزامنة الحالية)
+    // الإشعارات
     if (_permissionsLoaded && PermissionsService().canShowNotifications) {
-  menuItems.add(
-    _menuItem("الإشعارات", Icons.notifications_active_rounded, AppTheme.infoSoftFor(context), () {
-      Navigator.push(context, MaterialPageRoute(builder: (c) => NotificationsPage(companyCode: widget.companyCode)));
-    }),
-  );
-}
+      menuItems.add(
+        _menuItem("الإشعارات", Icons.notifications_active_rounded, AppTheme.infoSoftFor(context), () {
+          Navigator.push(context, MaterialPageRoute(builder: (c) => NotificationsPage(companyCode: widget.companyCode)));
+        }),
+      );
+    }
 
-    // 6. الإعدادات (دائماً ظاهرة)
+    // 7. الإعدادات (دائماً ظاهرة)
     menuItems.add(
       _menuItem("الاعدادات", Icons.settings_rounded, AppTheme.extraBlueGreyFor(context), () async {
         await Navigator.push(context, MaterialPageRoute(builder: (c) => const SettingsPage()));
-        await PermissionsService().loadPermissions();
-
-        if (mounted) {
-          setState(() {
-            _permissionsLoaded = true;
-          });
-        }
+        // ✅ Firestore listener هيتولى تحديث الصلاحيات تلقائيًا
       }),
     );
 
@@ -920,7 +981,6 @@ if (_permissionsLoaded && PermissionsService().canShowProductLookup) {
       );
     }
 
-    // 🔥 تصميم متجاوب: تغيير عدد الأعمدة وحجم البطاقات حسب عرض الشاشة
     return LayoutBuilder(
       builder: (context, constraints) {
         double screenWidth = constraints.maxWidth;
@@ -928,15 +988,12 @@ if (_permissionsLoaded && PermissionsService().canShowProductLookup) {
         double childAspectRatio;
 
         if (screenWidth > 800) {
-          // شاشات كبيرة (لاب توب / ديسكتوب)
           crossAxisCount = 4;
           childAspectRatio = 1.3;
         } else if (screenWidth > 500) {
-          // شاشات متوسطة (تابلت)
           crossAxisCount = 3;
           childAspectRatio = 1.2;
         } else {
-          // شاشات صغيرة (موبايل)
           crossAxisCount = 2;
           childAspectRatio = 1.1;
         }
@@ -1039,18 +1096,14 @@ if (_permissionsLoaded && PermissionsService().canShowProductLookup) {
     );
   }
 
-  // void _showSnackBar(String message) {
-  //   ScaffoldMessenger.of(context).showSnackBar(
-  //     SnackBar(
-  //       content: Text(message, textAlign: TextAlign.center, style: const TextStyle(fontFamily: 'Cairo')),
-  //       backgroundColor: AppTheme.warningOrangeFor(context),
-  //       duration: const Duration(seconds: 2),
-  //     ),
-  //   );
-  // }
-
   @override
   void dispose() {
+    // ✅ إزالة listener الصلاحيات
+    PermissionsService().removeListener(_onPermissionsChanged);
+
+    // ✅ إلغاء الـ debounce timer
+    _permissionsDebounce?.cancel();
+
     _timer.cancel();
     _mainController.dispose();
     super.dispose();

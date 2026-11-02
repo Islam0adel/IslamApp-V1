@@ -236,13 +236,36 @@ class CodingService {
 
 
     try {
-      for (final category in categories) {
-        final response = await AuthHttp.get(
-          Uri.parse(
-            '$baseUrl/coding/list/'
-            '$companyCode/$category',
-          ),
-        );
+      // ✅ 1) جلب كل الأقسام بالتوازي
+      final responses = await Future.wait(
+        categories.map(
+          (category) async {
+            try {
+              return await AuthHttp.get(
+                Uri.parse(
+                  '$baseUrl/coding/list/'
+                  '$companyCode/$category',
+                ),
+              );
+            } catch (_) {
+              return null;
+            }
+          },
+        ),
+      );
+
+
+      // ✅ 2) معالجة النتائج بالترتيب (نفس الأصل)
+      for (int i = 0; i < categories.length; i++) {
+        final category = categories[i];
+        final response = responses[i];
+
+
+        if (response == null) {
+          throw Exception(
+            'فشل الاتصال بالسيرفر [$category]',
+          );
+        }
 
 
         if (response.statusCode != 200) {
@@ -432,18 +455,43 @@ class CodingService {
 
 
       // --------------------------------------------------------
-      // كل الأقسام
+      // ✅ 1) جلب كل التغييرات بالتوازي
       // --------------------------------------------------------
 
-      for (final category in categories) {
-        final response = await AuthHttp.get(
-          Uri.parse(
-            '$baseUrl/coding/changes/'
-            '$companyCode'
-            '?category=$category'
-            '&since=$effectiveSince',
-          ),
-        );
+      final responses = await Future.wait(
+        categories.map(
+          (category) async {
+            try {
+              return await AuthHttp.get(
+                Uri.parse(
+                  '$baseUrl/coding/changes/'
+                  '$companyCode'
+                  '?category=$category'
+                  '&since=$effectiveSince',
+                ),
+              );
+            } catch (_) {
+              return null;
+            }
+          },
+        ),
+      );
+
+
+      // --------------------------------------------------------
+      // ✅ 2) معالجة كل قسم بالترتيب (نفس الأصل)
+      // --------------------------------------------------------
+
+      for (int i = 0; i < categories.length; i++) {
+        final category = categories[i];
+        final response = responses[i];
+
+
+        if (response == null) {
+          throw Exception(
+            'فشل الاتصال بالسيرفر [$category]',
+          );
+        }
 
 
         if (response.statusCode != 200) {

@@ -1,3 +1,4 @@
+import time
 from datetime import datetime, timedelta
 from typing import Any, Dict
 
@@ -13,6 +14,25 @@ router = APIRouter()
 _SECTIONS = {"daily", "purchases", "settlements", "coding", "inventory"}
 _ACTIONS = {"add", "edit", "delete"}
 _RETENTION = {0, 30, 90, 365}
+
+# ✅ تنظيف الإشعارات القديمة مرة كل 24 ساعة لكل (uid, company_code)
+_CLEANUP_CACHE: Dict[tuple[str, str], float] = {}
+_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60  # 24 ساعة
+
+
+def _should_cleanup(uid: str, company_code: str) -> bool:
+    """
+    يحدد إذا كان لازم ينفذ DELETE للإشعارات القديمة.
+    مرة واحدة كل 24 ساعة لكل (uid, company_code).
+    في الذاكرة فقط — بيتصفّر عند إعادة تشغيل السيرفر (وده مقبول).
+    """
+    key = (uid, company_code)
+    now = time.time()
+    last = _CLEANUP_CACHE.get(key, 0.0)
+    if now - last >= _CLEANUP_INTERVAL_SECONDS:
+        _CLEANUP_CACHE[key] = now
+        return True
+    return False
 
 
 def _profile(request: Request) -> Dict[str, Any]:
@@ -45,7 +65,12 @@ async def list_notifications(
     ))
     pref = pref_result.scalar_one_or_none()
     retention_days = int(pref.retention_days) if pref else 90
-    if retention_days > 0:
+
+    # ✅ تنظيف كل 24 ساعة فقط (مش في كل طلب)
+    if retention_days > 0 and _should_cleanup(
+        str(profile["uid"]),
+        str(profile["company_code"]),
+    ):
         await db.execute(delete(Notification).where(
             Notification.recipient_uid == str(profile["uid"]),
             Notification.company_code == str(profile["company_code"]),
@@ -149,6 +174,12 @@ async def save_notification_settings(
             Notification.created_at < datetime.utcnow() - timedelta(days=retention_days),
         ))
         await db.commit()
+        # ✅ بعد تنظيف يدوي في الإعدادات، نصفّر الـ cache
+        # حتى لا يتنفذ DELETE تاني في أول طلب /notifications بعد كده
+        _CLEANUP_CACHE.pop(
+            (str(profile["uid"]), str(profile["company_code"])),
+            None,
+        )
     return {"status": "success", **_settings_json(pref)}
 
 

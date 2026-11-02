@@ -50,9 +50,22 @@ class NotificationsService {
       _settings.get('event_$action', defaultValue: true) == true;
 
   Future<void> handleSyncEvent(Map<String, dynamic> event) async {
-    try {
-      if (_settingsLoad != null) await _settingsLoad;
-      final type = (event['type'] ?? '').toString();
+  try {
+    if (_settingsLoad != null) {
+      await _settingsLoad!.timeout(
+        const Duration(milliseconds: 500),
+        onTimeout: () {},
+      );
+    }
+
+    // ✅ NEW: لا تحفظ حدث قبل تحميل الصلاحيات
+    // عشان نتجنب حفظ إشعارات بصلاحيات افتراضية غلط
+    if (!PermissionsService().isLoaded) {
+      print('⏳ الصلاحيات مش متحملة — تجاهل حدث ${event['type']}');
+      return;
+    }
+
+    final type = (event['type'] ?? '').toString();
       final section = _sections[type];
       if (section == null) return;
       final raw = event['data'];
@@ -136,12 +149,17 @@ class NotificationsService {
 
   // تحديث مخصص للإشعارات غير المقروءة فقط، دون تحريك مؤشر المزامنة التزايدية.
   Future<void> refreshUnreadFromServer({String? companyCode}) async {
-    final company = companyCode ?? _companyCode;
-    if (company == null || company.isEmpty) return;
+  final company = companyCode ?? _companyCode;
+  if (company == null || company.isEmpty) return;
 
-    try {
-      if (_settingsLoad != null) await _settingsLoad;
-      final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+  try {
+    if (_settingsLoad != null) {
+      await _settingsLoad!.timeout(
+        const Duration(milliseconds: 500),
+        onTimeout: () {},
+      );
+    }
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
       if (uid.isEmpty) return;
       final uri = Uri.parse('${ApiConstants.baseUrl}/notifications').replace(
         queryParameters: const {'limit': '100', 'unread_only': 'true'},
@@ -173,9 +191,14 @@ class NotificationsService {
   }
 
   Future<void> _refreshFromServer(String company) async {
-    try {
-      if (_settingsLoad != null) await _settingsLoad;
-      final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+  try {
+    if (_settingsLoad != null) {
+      await _settingsLoad!.timeout(
+        const Duration(milliseconds: 500),
+        onTimeout: () {},
+      );
+    }
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
       if (uid.isEmpty) return;
       final cursorKey = 'notification_cursor_${uid}_$company';
       final savedCursor = _settings.get(cursorKey);

@@ -83,7 +83,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
     }
   }
 
-  @override
+@override
 Widget build(BuildContext context) {
   // ============================================================
   // حماية بالصلاحية الجديدة
@@ -141,7 +141,6 @@ Widget build(BuildContext context) {
   // ============================================================
   // المحتوى الطبيعي
   // ============================================================
-  final items = _service.getNotifications(companyCode: widget.companyCode);
   final gradient = AppTheme.dashGradientDeep(context);
 
   return Scaffold(
@@ -191,104 +190,126 @@ Widget build(BuildContext context) {
         ),
       ),
       child: SafeArea(
-        child: RefreshIndicator(
-          onRefresh: _refresh,
-          child: items.isEmpty
-              ? ListView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  children: [
-                    SizedBox(
-                      height: MediaQuery.of(context).size.height * 0.55,
-                      child: Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.notifications_none_rounded,
-                              size: 54,
-                              color: AppTheme.textMutedFor(context),
-                            ),
-                            const SizedBox(height: 12),
-                            Text(
-                              'لا توجد إشعارات حتى الآن',
-                              style: TextStyle(
-                                color: AppTheme.textMutedFor(context),
-                                fontFamily: 'Cairo',
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                )
-              : ListView.separated(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-                  itemCount: items.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
-                  itemBuilder: (context, index) {
-                    final item = items[index];
-                    final read = item['read'] == true;
-                    final branch = _branchLabel(item);
-                    final createdAt = (item['created_at'] ?? '').toString();
+        // ✅ ValueListenableBuilder: يعيد البناء تلقائيًا عند أي تغيير
+        // في notifications_box (WebSocket event، refresh، markRead، ...)
+        child: ValueListenableBuilder(
+          valueListenable: Hive.box('notifications_box').listenable(),
+          builder: (context, box, _) {
+            final items = _service.getNotifications(
+              companyCode: widget.companyCode,
+            );
 
-                    return GlassCard(
-                      child: Material(
-                        color: Colors.transparent,
-                        borderRadius: BorderRadius.circular(16),
-                        clipBehavior: Clip.antiAlias,
-                        child: ListTile(
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 8,
-                          ),
-                          leading: Icon(
-                            read
-                                ? Icons.notifications_none_rounded
-                                : Icons.notifications_active_rounded,
-                            color: read
-                                ? AppTheme.textMutedFor(context)
-                                : AppTheme.accentFor(context),
-                            size: 28,
-                          ),
-                          title: Text(
-                            (item['title'] ?? 'تغيير').toString(),
-                            style: TextStyle(
-                              color: AppTheme.textMainFor(context),
-                              fontWeight: read ? FontWeight.normal : FontWeight.bold,
-                              fontFamily: 'Cairo',
+            return RefreshIndicator(
+              onRefresh: _refresh,
+              child: items.isEmpty
+                  ? ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: [
+                        SizedBox(
+                          height: MediaQuery.of(context).size.height * 0.55,
+                          child: Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.notifications_none_rounded,
+                                  size: 54,
+                                  color: AppTheme.textMutedFor(context),
+                                ),
+                                const SizedBox(height: 12),
+                                Text(
+                                  'لا توجد إشعارات حتى الآن',
+                                  style: TextStyle(
+                                    color: AppTheme.textMutedFor(context),
+                                    fontFamily: 'Cairo',
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                          subtitle: Padding(
-                            padding: const EdgeInsets.only(top: 6),
-                            child: Text(
-                              [
-                                if ((item['actor_name'] ?? '').toString().trim().isNotEmpty)
-                                  'بواسطة: ${item['actor_name']}',
-                                if ((item['body'] ?? '').toString().trim().isNotEmpty)
-                                  item['body'].toString(),
-                                if (branch.isNotEmpty) 'الفرع: $branch',
-                                if (createdAt.isNotEmpty) _formatDate(createdAt),
-                              ].join('\n'),
-                              style: TextStyle(
-                                color: AppTheme.textMutedFor(context),
-                                fontFamily: 'Cairo',
-                                height: 1.6,
-                              ),
-                            ),
-                          ),
-                          onTap: () async {
-                            if (!read) {
-                              await _service.markRead(item['id'].toString());
-                              if (mounted) setState(() {});
-                            }
-                          },
                         ),
-                      ),
-                    );
-                  },
-                ),
+                      ],
+                    )
+                  : ListView.separated(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                      itemCount: items.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 10),
+                      itemBuilder: (context, index) {
+                        final item = items[index];
+                        final read = item['read'] == true;
+                        final branch = _branchLabel(item);
+                        final createdAt = (item['created_at'] ?? '').toString();
+
+                        return GlassCard(
+                          child: Material(
+                            color: Colors.transparent,
+                            borderRadius: BorderRadius.circular(16),
+                            clipBehavior: Clip.antiAlias,
+                            child: ListTile(
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 8,
+                              ),
+                              leading: Icon(
+                                read
+                                    ? Icons.notifications_none_rounded
+                                    : Icons.notifications_active_rounded,
+                                color: read
+                                    ? AppTheme.textMutedFor(context)
+                                    : AppTheme.accentFor(context),
+                                size: 28,
+                              ),
+                              title: Text(
+                                (item['title'] ?? 'تغيير').toString(),
+                                style: TextStyle(
+                                  color: AppTheme.textMainFor(context),
+                                  fontWeight: read
+                                      ? FontWeight.normal
+                                      : FontWeight.bold,
+                                  fontFamily: 'Cairo',
+                                ),
+                              ),
+                              subtitle: Padding(
+                                padding: const EdgeInsets.only(top: 6),
+                                child: Text(
+                                  [
+                                    if ((item['actor_name'] ?? '')
+                                        .toString()
+                                        .trim()
+                                        .isNotEmpty)
+                                      'بواسطة: ${item['actor_name']}',
+                                    if ((item['body'] ?? '')
+                                        .toString()
+                                        .trim()
+                                        .isNotEmpty)
+                                      item['body'].toString(),
+                                    if (branch.isNotEmpty) 'الفرع: $branch',
+                                    if (createdAt.isNotEmpty)
+                                      _formatDate(createdAt),
+                                  ].join('\n'),
+                                  style: TextStyle(
+                                    color: AppTheme.textMutedFor(context),
+                                    fontFamily: 'Cairo',
+                                    height: 1.6,
+                                  ),
+                                ),
+                              ),
+                              onTap: () async {
+                                if (!read) {
+                                  await _service.markRead(
+                                    item['id'].toString(),
+                                  );
+                                  if (mounted) setState(() {});
+                                }
+                              },
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            );
+          },
         ),
       ),
     ),

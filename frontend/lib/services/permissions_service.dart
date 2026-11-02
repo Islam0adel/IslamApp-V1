@@ -1,17 +1,39 @@
 // lib/services/permissions_service.dart
 
+import 'dart:async';                                   // ← NEW
+import 'package:flutter/foundation.dart';              // ← NEW: ChangeNotifier
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../services/api_service.dart';
 
-class PermissionsService {
+class PermissionsService extends ChangeNotifier {      // ← extends ChangeNotifier
   static final PermissionsService _instance =
       PermissionsService._internal();
 
   factory PermissionsService() => _instance;
 
-  PermissionsService._internal();
+  // ============================================================
+  // ✅ Firebase Auth State Listener
+  //
+  // أول ما الـ singleton يتعمل، بنسمع لتغييرات حالة الـ Auth:
+  // - login (user موجود)
+  // - logout (user = null)
+  // - تغيير حساب (user جديد)
+  //
+  // أي تغيير → reset تلقائي للصلاحيات + إيقاف Firestore listener
+  // ============================================================
+
+  PermissionsService._internal() {
+    try {
+      FirebaseAuth.instance
+          .authStateChanges()
+          .listen(_onAuthStateChanged);
+    } catch (e) {
+      print('⚠️ فشل تسجيل auth listener: $e');
+    }
+  }
 
   // ============================================================
   // البيانات الحالية للصلاحيات
@@ -22,13 +44,160 @@ class PermissionsService {
   String? _defaultBranchCode;
 
   // ============================================================
-  // تحميل الصلاحيات
-  //
-  // 1) نقرأ من Hive فوراً
-  // 2) ثم نحدث من Firestore في الخلفية
+  // حماية من التحميل المتكرر + تتبع المستخدم
   // ============================================================
 
-  Future<void> loadPermissions() async {
+  Future<void>? _loadFuture;
+  bool _loaded = false;
+
+  /// آخر UID محفوظ — يستخدمه الـ listener لكشف تغيير المستخدم
+  String? _cachedUid;
+
+  // ✅ NEW: Firestore snapshot listener
+  StreamSubscription<DocumentSnapshot>? _firestoreSub;
+  String? _listenedEmail;
+
+  /// هل الصلاحيات محملة وجاهزة للاستخدام؟
+  bool get isLoaded => _loaded;
+
+  // ============================================================
+  // ✅ معالج تغيير حالة الـ Auth
+  //
+  // بيتنادى:
+  // 1. أول ما الـ listener يتسجل (بالقيمة الحالية)
+  // 2. كل مرة المستخدم يعمل login أو logout
+  //
+  // لو الـ UID اتغير → reset تلقائي + إيقاف Firestore listener
+  // ============================================================
+
+  void _onAuthStateChanged(User? user) {
+    final newUid = user?.uid ?? '';
+
+    // أول نداء — نحفظ الـ UID الحالي بس، من غير reset
+    if (_cachedUid == null) {
+      _cachedUid = newUid;
+      return;
+    }
+
+    // نفس المستخدم — مفيش تغيير
+    if (_cachedUid == newUid) {
+      return;
+    }
+
+    // المستخدم اتغير → reset
+    print('🔄 تغيير المستخدم: $_cachedUid → $newUid');
+    _cachedUid = newUid;
+    _resetState();
+    _stopFirestoreListener();                          // ← NEW
+    notifyListeners();                                 // ← NEW
+  }
+
+  // ============================================================
+  // ✅ Firestore snapshot listener — مزامنة لحظية للصلاحيات
+  //
+  // بيتسجل مرة واحدة بعد تحميل الصلاحيات من Hive.
+  // أي تغيير في users/{email} → تحديث _permissions + Hive + UI
+  // ============================================================
+
+  void _startFirestoreListener(String email) {
+    if (_listenedEmail == email && _firestoreSub != null) return;
+
+    _firestoreSub?.cancel();
+    _firestoreSub = null;
+    _listenedEmail = email;
+
+    print('🎧 بدء الاستماع لصلاحيات $email');
+
+    _firestoreSub = FirebaseFirestore.instance
+        .collection('users')
+        .doc(email)
+        .snapshots()
+        .listen(
+      (snapshot) {
+        if (!snapshot.exists) return;
+        final data = snapshot.data();
+        if (data == null) return;
+
+        bool changed = false;
+
+        final permissionsData = data['permissions'];
+        if (permissionsData is Map) {
+          final newPerms = _convertToPermissionsMap(permissionsData);
+          _permissions = newPerms;
+          Hive.box('coding_box').put('permissions_$email', newPerms);
+          changed = true;
+        }
+
+        final branchesData = data['allowed_branches'];
+        if (branchesData != null) {
+          final newBranches = _parseBranchList(branchesData) ?? ['all'];
+          _allowedBranchCodes = newBranches;
+          Hive.box('coding_box').put('allowed_branches_$email', newBranches);
+          changed = true;
+        }
+
+        if (changed) {
+          print('⚡ صلاحيات $email اتحدثت لحظيًا من Firestore');
+          notifyListeners();
+        }
+      },
+      onError: (e) => print('⚠️ خطأ في listener الصلاحيات: $e'),
+    );
+  }
+
+  void _stopFirestoreListener() {
+    _firestoreSub?.cancel();
+    _firestoreSub = null;
+    _listenedEmail = null;
+    print('🔌 إيقاف الاستماع للصلاحيات');
+  }
+
+  // ============================================================
+  // تصفير الحالة الداخلية (بدون لمس _cachedUid)
+  // ============================================================
+
+  void _resetState() {
+    _loadFuture = null;
+    _loaded = false;
+    _permissions = null;
+    _allowedBranchCodes = null;
+    _defaultBranchCode = null;
+  }
+
+  // ============================================================
+  // تحميل الصلاحيات (idempotent)
+  //
+  // ✅ لو اتنادت مرة، كل النداءات التالية بترجع نفس الـ Future
+  // ✅ لو عايز إعادة تحميل، استخدم refresh()
+  //
+  // 1) نقرأ من Hive فوراً
+  // 2) ثم نحدث من Firestore + نبدأ snapshot listener
+  // ============================================================
+
+  Future<void> loadPermissions() {
+    return _loadFuture ??= _doLoadPermissions();
+  }
+
+  /// إعادة تحميل الصلاحيات
+  Future<void> refresh() {
+    _loadFuture = null;
+    _loaded = false;
+    return loadPermissions();
+  }
+
+  /// إعادة تعيين الحالة يدويًا (اختياري — الـ listener بيعملها تلقائيًا)
+  void reset() {
+    _resetState();
+    _stopFirestoreListener();                          // ← NEW
+    _cachedUid = null;
+    notifyListeners();                                 // ← NEW
+  }
+
+  // ============================================================
+  // التنفيذ الفعلي للتحميل (private)
+  // ============================================================
+
+  Future<void> _doLoadPermissions() async {
     try {
       final prefs = await SharedPreferences.getInstance();
 
@@ -42,6 +211,8 @@ class PermissionsService {
         print(
           '⚠️ PermissionsService: user_email غير موجود',
         );
+        _loaded = true;
+        notifyListeners();                             // ← NEW
         return;
       }
 
@@ -93,15 +264,20 @@ class PermissionsService {
         '⚡ تم تحميل الصلاحيات والفروع من Hive',
       );
 
+      // ✅ الصلاحيات جاهزة من Hive
+      _loaded = true;
+      notifyListeners();                               // ← NEW
+
       // ----------------------------------------------------------
-      // تحديث Firestore في الخلفية
+      // تحديث Firestore في الخلفية + بدء snapshot listener
       // ----------------------------------------------------------
 
-      _refreshFromFirestore(
-        email,
-        permissionsKey,
-        branchesKey,
-      );
+      // _refreshFromFirestore(
+      //   email,
+      //   permissionsKey,
+      //   branchesKey,
+      // );
+      _startFirestoreListener(email);                  // ← NEW
     } catch (e) {
       print(
         '❌ خطأ في loadPermissions: $e',
@@ -122,89 +298,94 @@ class PermissionsService {
 
         _allowedBranchCodes = ['all'];
       }
+
+      // ✅ حتى في حالة الخطأ، نعتبرها محملة (بالـ defaults)
+      _loaded = true;
+      notifyListeners();                               // ← NEW
     }
   }
 
   // ============================================================
-  // تحديث الصلاحيات من Firestore
+  // تحديث أولي من Firestore (بيتنفذ مرة واحدة مع التحميل)
   // ============================================================
 
-  Future<void> _refreshFromFirestore(
-    String email,
-    String permissionsKey,
-    String branchesKey,
-  ) async {
-    try {
-      final box =
-          Hive.box('coding_box');
+  // Future<void> _refreshFromFirestore(
+  //   String email,
+  //   String permissionsKey,
+  //   String branchesKey,
+  // ) async {
+  //   try {
+  //     final box =
+  //         Hive.box('coding_box');
 
-      final doc =
-          await FirebaseFirestore.instance
-              .collection('users')
-              .doc(email)
-              .get();
+  //     final doc =
+  //         await FirebaseFirestore.instance
+  //             .collection('users')
+  //             .doc(email)
+  //             .get();
 
-      if (!doc.exists) {
-        return;
-      }
+  //     if (!doc.exists) {
+  //       return;
+  //     }
 
-      final data =
-          doc.data();
+  //     final data =
+  //         doc.data();
 
-      if (data == null) {
-        return;
-      }
+  //     if (data == null) {
+  //       return;
+  //     }
 
-      // ----------------------------------------------------------
-      // الصلاحيات
-      // ----------------------------------------------------------
+  //     // ----------------------------------------------------------
+  //     // الصلاحيات
+  //     // ----------------------------------------------------------
 
-      final permissionsData =
-          data['permissions'];
+  //     final permissionsData =
+  //         data['permissions'];
 
-      if (permissionsData is Map) {
-        final newPermissions =
-            _convertToPermissionsMap(
-          permissionsData,
-        );
+  //     if (permissionsData is Map) {
+  //       final newPermissions =
+  //           _convertToPermissionsMap(
+  //         permissionsData,
+  //       );
 
-        _permissions =
-            newPermissions;
+  //       _permissions =
+  //           newPermissions;
 
-        await box.put(
-          permissionsKey,
-          newPermissions,
-        );
-      }
+  //       await box.put(
+  //         permissionsKey,
+  //         newPermissions,
+  //       );
+  //     }
 
-      // ----------------------------------------------------------
-      // الفروع
-      // ----------------------------------------------------------
+  //     // ----------------------------------------------------------
+  //     // الفروع
+  //     // ----------------------------------------------------------
 
-      final branches =
-          _parseBranchList(
-        data['allowed_branches'],
-      );
+  //     final branches =
+  //         _parseBranchList(
+  //       data['allowed_branches'],
+  //     );
 
-      if (branches != null) {
-        _allowedBranchCodes =
-            branches;
+  //     if (branches != null) {
+  //       _allowedBranchCodes =
+  //           branches;
 
-        await box.put(
-          branchesKey,
-          branches,
-        );
-      }
+  //       await box.put(
+  //         branchesKey,
+  //         branches,
+  //       );
+  //     }
 
-      print(
-        '🔄 تم تحديث الصلاحيات والفروع من Firestore',
-      );
-    } catch (e) {
-      print(
-        '⚠️ فشل تحديث الصلاحيات من Firestore: $e',
-      );
-    }
-  }
+  //     print(
+  //       '🔄 تم تحديث الصلاحيات والفروع من Firestore',
+  //     );
+  //     notifyListeners();                               // ← NEW
+  //   } catch (e) {
+  //     print(
+  //       '⚠️ فشل تحديث الصلاحيات من Firestore: $e',
+  //     );
+  //   }
+  // }
 
   // ============================================================
   // تحليل قائمة الفروع
@@ -331,6 +512,7 @@ class PermissionsService {
           prefs.getString('user_email')) {
         _permissions =
             permissions;
+        notifyListeners();                             // ← NEW
       }
 
       // ----------------------------------------------------------

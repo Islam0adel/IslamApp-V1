@@ -1,5 +1,5 @@
 import 'dart:async';
-
+import 'services/permissions_service.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -313,7 +313,19 @@ Future<void> main() async {
 
   Widget initialScreen;
 
-  if (rememberMe && userName != null && companyCode != null) {
+if (rememberMe && userName != null && companyCode != null) {
+    // --------------------------------------------------------
+    // ✅ NEW: تحميل الصلاحيات أولاً (سريع — من Hive)
+    //
+    // لماذا؟
+    // - يضمن إن الصلاحيات جاهزة قبل ما WebSocket يستقبل أي event
+    // - يمنع إشعارات تظهر لمستخدمين مش مصرح لهم في أول ثانية
+    // - يمنع إشعارات مصرح لهم تضيع (لأن الصلاحيات = null)
+    //
+    // الأثر: يضيف ~50-70ms لزمن بدء التطبيق (مقبول جدًا)
+    // --------------------------------------------------------
+    await PermissionsService().loadPermissions();
+
     // --------------------------------------------------------
     // تشغيل WebSocket
     //
@@ -336,9 +348,9 @@ Future<void> main() async {
       companyName: companyName ?? 'شركتي',
       companyCode: companyCode,
     );
-  } else {
+} else {
     initialScreen = const LoginScreen();
-  }
+}
 
   // ==========================================================
   // تشغيل التطبيق

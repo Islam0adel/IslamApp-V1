@@ -317,36 +317,50 @@ async def list_codes(
 
             if category == "types":
 
+                # ✅ استعلام واحد لجلب كل السجلات الموجودة
+                # (بدل استعلام لكل عنصر)
+                all_codes = [
+                    str(i)
+                    for i in range(
+                        1, len(DEFAULT_TYPES) + 1
+                    )
+                ]
+
+                existing_stmt = (
+                    select(CodingRecord)
+                    .where(
+                        CodingRecord.company_code
+                        == company_code,
+
+                        CodingRecord.category
+                        == category,
+
+                        CodingRecord.code.in_(
+                            all_codes
+                        ),
+                    )
+                )
+
+                existing_result = (
+                    await db.execute(
+                        existing_stmt
+                    )
+                )
+
+                existing_map = {
+                    r.code: r
+                    for r in existing_result
+                    .scalars().all()
+                }
+
                 for index, item in enumerate(
                     DEFAULT_TYPES,
                     start=1,
                 ):
                     code = str(index)
 
-                    # نشوف إذا سجل Soft Deleted موجود
-                    existing_stmt = (
-                        select(CodingRecord)
-                        .where(
-                            CodingRecord.company_code
-                            == company_code,
-
-                            CodingRecord.category
-                            == category,
-
-                            CodingRecord.code
-                            == code,
-                        )
-                    )
-
-                    existing_result = (
-                        await db.execute(
-                            existing_stmt
-                        )
-                    )
-
-                    existing = (
-                        existing_result
-                        .scalar_one_or_none()
+                    existing = existing_map.get(
+                        code
                     )
 
                     if existing:
@@ -397,35 +411,55 @@ async def list_codes(
 
             elif category in DEFAULT_CATEGORIES_DATA:
 
+                # ✅ استعلام واحد لجلب كل السجلات الموجودة
+                # (بدل استعلام لكل عنصر)
+                all_codes = [
+                    str(i)
+                    for i in range(
+                        1,
+                        len(
+                            DEFAULT_CATEGORIES_DATA[
+                                category
+                            ]
+                        ) + 1,
+                    )
+                ]
+
+                existing_stmt = (
+                    select(CodingRecord)
+                    .where(
+                        CodingRecord.company_code
+                        == company_code,
+
+                        CodingRecord.category
+                        == category,
+
+                        CodingRecord.code.in_(
+                            all_codes
+                        ),
+                    )
+                )
+
+                existing_result = (
+                    await db.execute(
+                        existing_stmt
+                    )
+                )
+
+                existing_map = {
+                    r.code: r
+                    for r in existing_result
+                    .scalars().all()
+                }
+
                 for index, item in enumerate(
                     DEFAULT_CATEGORIES_DATA[category],
                     start=1,
                 ):
                     code = str(index)
 
-                    existing_stmt = (
-                        select(CodingRecord)
-                        .where(
-                            CodingRecord.company_code
-                            == company_code,
-
-                            CodingRecord.category
-                            == category,
-
-                            CodingRecord.code
-                            == code,
-                        )
-                    )
-
-                    existing_result = (
-                        await db.execute(
-                            existing_stmt
-                        )
-                    )
-
-                    existing = (
-                        existing_result
-                        .scalar_one_or_none()
+                    existing = existing_map.get(
+                        code
                     )
 
                     if existing:
