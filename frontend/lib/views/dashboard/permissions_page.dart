@@ -1,3 +1,4 @@
+import 'dart:async';                              // ← NEW: للـ StreamSubscription
 import 'package:flutter/material.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../core/theme.dart';
@@ -33,8 +34,11 @@ class _PermissionsPageState extends State<PermissionsPage> {
   // ✅ NEW: Stream محفوظ — عشان ما نعملش stream جديد كل rebuild
   Stream<QuerySnapshot>? _usersStream;
 
-  // ✅ NEW: guard لمنع التنفيذ المتزامن لـ _loadUserPermissions
-  bool _isLoadingUserData = false;
+  // ✅ NEW: request ID — الاستدعاء الأخير بس هو اللي بيفوز
+  int _loadUserRequestId = 0;
+
+  // ✅ NEW: اشتراك لحظي في مستند المستخدم المختار
+  StreamSubscription<DocumentSnapshot>? _selectedUserSub;
 
   @override
   void initState() {
@@ -118,9 +122,69 @@ class _PermissionsPageState extends State<PermissionsPage> {
     }
   }
 
-  
+  Future<void> savePermissions() async {
+    if (selectedUserId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content:
+              Text('برجاء اختيار الموظف أولاً'),
+          backgroundColor: AppTheme.warningOrangeFor(context),
+        ),
+      );
+      return;
+    }
 
+    List<String> allowedBranches;
 
+    if (_allowAllBranches) {
+      allowedBranches = ['all'];
+    } else {
+      allowedBranches =
+          List<String>.from(_selectedBranchCodes);
+
+      if (allowedBranches.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'يرجى اختيار فرع واحد على الأقل أو "كل الفروع"',
+            ),
+            backgroundColor: AppTheme.warningOrangeFor(context),
+          ),
+        );
+        return;
+      }
+    }
+
+    try {
+      await PermissionsService().savePermissions(
+        userPermissions,
+        targetEmail: selectedUserId,
+        allowedBranches: allowedBranches,
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content:
+                Text('تم حفظ الصلاحيات بنجاح!'),
+            backgroundColor: AppTheme.successStrongFor(context),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'تم الحفظ محلياً (وضع عدم الاتصال)',
+            ),
+            backgroundColor:
+                AppTheme.warningOrangeSoftFor(context),
+          ),
+        );
+      }
+    }
+  }
 
   Map<String, Map<String, bool>> _createDefaultPermissions(
     String jobCode,
@@ -222,19 +286,20 @@ class _PermissionsPageState extends State<PermissionsPage> {
     return allPermissions;
   }
 
-    Future<void> _loadUserPermissions(
+  Future<void> _loadUserPermissions(
     String userId,
     String jobCode,
   ) async {
-    // ✅ guard: منع التنفيذ المتزامن
-    if (_isLoadingUserData) return;
-    _isLoadingUserData = true;
+    // ✅ request ID: كل استدعاء بياخد رقم، والاستدعاء الأخير بس هو اللي بيفوز
+    final requestId = ++_loadUserRequestId;
 
     try {
       // ============================================================
-      // متغيرات محلية — بدون setState
+      // default: كل القيم false (مش يعتمد على jobCode)
+      // عشان نبدأ من حالة "نضيفة" والقيم الحقيقية تيجي من Hive/Firestore
       // ============================================================
-      final defaultPerms = _createDefaultPermissions(jobCode);
+      final defaultPerms = _createDefaultPermissions('1');
+
       final Map<String, Map<String, bool>> newPermissions =
           Map<String, Map<String, bool>>.from(
         defaultPerms.map(
@@ -251,22 +316,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
       final box = Hive.box('coding_box');
 
       // ============================================================
-      // 1) قراءة الفروع من Hive (بدون setState)
-      // ============================================================
-      final savedBranches = box.get(branchesKey);
-      if (savedBranches is List) {
-        final list = savedBranches.map((e) => e.toString()).toList();
-        if (list.contains('all')) {
-          allowAll = true;
-          selectedBranches = [];
-        } else {
-          allowAll = false;
-          selectedBranches = list;
-        }
-      }
-
-      // ============================================================
-      // 2) قراءة الصلاحيات من Hive (بدون setState)
+      // 1) Hive — الصلاحيات
       // ============================================================
       if (box.containsKey(localKey)) {
         final data = box.get(localKey);
@@ -286,7 +336,22 @@ class _PermissionsPageState extends State<PermissionsPage> {
       }
 
       // ============================================================
-      // 3) مزامنة من Firestore (بدون setState)
+      // 2) Hive — الفروع
+      // ============================================================
+      final savedBranches = box.get(branchesKey);
+      if (savedBranches is List) {
+        final list = savedBranches.map((e) => e.toString()).toList();
+        if (list.contains('all')) {
+          allowAll = true;
+          selectedBranches = [];
+        } else {
+          allowAll = false;
+          selectedBranches = list;
+        }
+      }
+
+      // ============================================================
+      // 3) Firestore — الصلاحيات + الفروع + is_active
       // ============================================================
       try {
         final doc = await FirebaseFirestore.instance
@@ -349,82 +414,107 @@ class _PermissionsPageState extends State<PermissionsPage> {
       }
 
       // ============================================================
-      // ✅ setState واحد في النهاية — بدل 6
+      // ✅ تحقق: هل ده لسه الاستدعاء الأخير؟
+      //    (المستخدم ممكن يكون اختار مستخدم تاني أثناء الـ await)
       // ============================================================
       if (!mounted) return;
+      if (requestId != _loadUserRequestId) return;  // ← استدعاء أحدث، تجاهل ده
+      if (selectedUserId != userId) return;          // ← المستخدم اتغير
+
+      // ============================================================
+      // ✅ setState واحد
+      // ============================================================
       setState(() {
         userPermissions = newPermissions;
         _allowAllBranches = allowAll;
         _selectedBranchCodes = selectedBranches;
         _selectedUserIsActive = isActive;
       });
-    } finally {
-      _isLoadingUserData = false;
+
+      // ✅ NEW: ابدأ الاستماع اللحظي للمستخدم المختار
+      _listenToUser(userId);
+    } catch (e) {
+      debugPrint('_loadUserPermissions error: $e');
     }
   }
 
-  Future<void> savePermissions() async {
-    if (selectedUserId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content:
-              Text('برجاء اختيار الموظف أولاً'),
-          backgroundColor: AppTheme.warningOrangeFor(context),
-        ),
-      );
-      return;
-    }
+  // ============================================================
+  // ✅ NEW: الاستماع اللحظي لمستند المستخدم المختار
+  //
+  // - كل تغيير في users/{userId} → snapshot
+  // - تحديث Hive + UI تلقائيًا
+  // ============================================================
+  void _listenToUser(String userId) {
+    _selectedUserSub?.cancel();
+    _selectedUserSub = FirebaseFirestore.instance
+        .collection('users')
+        .doc(userId)
+        .snapshots()
+        .listen(
+      (snap) async {
+        if (!snap.exists) return;
+        final data = snap.data();
+        if (data == null) return;
 
-    List<String> allowedBranches;
+        // تحقق: هل المستخدم لسه مختار؟
+        if (!mounted) return;
+        if (selectedUserId != userId) return;
 
-    if (_allowAllBranches) {
-      allowedBranches = ['all'];
-    } else {
-      allowedBranches =
-          List<String>.from(_selectedBranchCodes);
+        final box = Hive.box('coding_box');
+        final localKey = 'permissions_$userId';
+        final branchesKey = 'allowed_branches_$userId';
 
-      if (allowedBranches.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'يرجى اختيار فرع واحد على الأقل أو "كل الفروع"',
-            ),
-            backgroundColor: AppTheme.warningOrangeFor(context),
-          ),
-        );
-        return;
-      }
-    }
+        // ✅ تحديث Hive
+        if (data['permissions'] is Map) {
+          await box.put(localKey, data['permissions']);
+        }
+        if (data['allowed_branches'] != null) {
+          await box.put(branchesKey, data['allowed_branches']);
+        }
 
-    try {
-      await PermissionsService().savePermissions(
-        userPermissions,
-        targetEmail: selectedUserId,
-        allowedBranches: allowedBranches,
-      );
+        // ✅ تحديث UI
+        if (!mounted) return;
+        if (selectedUserId != userId) return;
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content:
-                Text('تم حفظ الصلاحيات بنجاح!'),
-            backgroundColor: AppTheme.successStrongFor(context),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'تم الحفظ محلياً (وضع عدم الاتصال)',
-            ),
-            backgroundColor:
-                AppTheme.warningOrangeSoftFor(context),
-          ),
-        );
-      }
-    }
+        setState(() {
+          // الصلاحيات
+          if (data['permissions'] is Map) {
+            final perms = data['permissions'] as Map;
+            perms.forEach((category, subPerms) {
+              if (subPerms is! Map) return;
+              if (!userPermissions.containsKey(category)) {
+                userPermissions[category] = {};
+              }
+              subPerms.forEach((key, value) {
+                userPermissions[category]![key.toString()] = value is bool
+                    ? value
+                    : value.toString().toLowerCase() == 'true';
+              });
+            });
+          }
+
+          // الفروع
+          final rawBranches = data['allowed_branches'];
+          if (rawBranches is List) {
+            final list = rawBranches.map((e) => e.toString()).toList();
+            if (list.contains('all')) {
+              _allowAllBranches = true;
+              _selectedBranchCodes = [];
+            } else {
+              _allowAllBranches = false;
+              _selectedBranchCodes = list;
+            }
+          } else if (rawBranches is String && rawBranches.toLowerCase() == 'all') {
+            _allowAllBranches = true;
+            _selectedBranchCodes = [];
+          }
+
+          // is_active
+          _selectedUserIsActive = data['is_active'] != false;
+        });
+      },
+      onError: (e) => debugPrint('⚠️ _listenToUser error: $e'),
+    );
   }
 
   // ============================================================
@@ -503,7 +593,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
   // ============================================================
   // ✅ NEW: حظر / إلغاء حظر المستخدم (is_active في Firestore)
   // ============================================================
-    Future<void> _handleToggleBlock(bool newValue) async {
+  Future<void> _handleToggleBlock(bool newValue) async {
     if (selectedUserId == null) return;
 
     // newValue = true  → عايز يخليه نشط (يلغي الحظر)
@@ -600,7 +690,13 @@ class _PermissionsPageState extends State<PermissionsPage> {
     }
   }
 
-    @override
+  @override
+  void dispose() {
+    _selectedUserSub?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     // final isDark =
     //     Theme.of(context).brightness ==
