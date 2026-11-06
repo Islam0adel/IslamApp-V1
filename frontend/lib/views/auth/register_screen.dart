@@ -15,14 +15,16 @@ class _RegisterScreenState extends State<RegisterScreen> with TickerProviderStat
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _compCodeController = TextEditingController();
-  final _jobCodeController = TextEditingController(); // كود الوظيفة
+  final _jobCodeController = TextEditingController();
+  final _employeeCodeController = TextEditingController();
 
-  //Nodes للانتقال بزر انتر
+  // Nodes للانتقال بزر انتر
   final FocusNode _nameNode = FocusNode();
   final FocusNode _emailNode = FocusNode();
   final FocusNode _passNode = FocusNode();
   final FocusNode _compNode = FocusNode();
   final FocusNode _jobNode = FocusNode();
+  final FocusNode _employeeNode = FocusNode();
 
   late AnimationController _animController;
   final _apiService = ApiService();
@@ -39,36 +41,51 @@ class _RegisterScreenState extends State<RegisterScreen> with TickerProviderStat
 
   @override
   void dispose() {
+    _nameController.dispose();
+    _emailController.dispose();
+    _passwordController.dispose();
+    _compCodeController.dispose();
+    _jobCodeController.dispose();
+    _employeeCodeController.dispose();
     _nameNode.dispose();
     _emailNode.dispose();
     _passNode.dispose();
     _compNode.dispose();
     _jobNode.dispose();
+    _employeeNode.dispose();
     _animController.dispose();
     super.dispose();
   }
 
   void _handleRegister() async {
-    if (_nameController.text.isEmpty || _emailController.text.isEmpty || 
-        _passwordController.text.isEmpty || _compCodeController.text.isEmpty ||
+    if (_nameController.text.isEmpty ||
+        _emailController.text.isEmpty ||
+        _passwordController.text.isEmpty ||
+        _compCodeController.text.isEmpty ||
         _jobCodeController.text.isEmpty) {
-      _showSnackBar('برجاء ملء جميع الحقول بما فيها أكواد التفعيل', AppTheme.warningOrangeFor(context));
+      _showSnackBar(
+        'برجاء ملء جميع الحقول بما فيها أكواد التفعيل',
+        AppTheme.warningOrangeFor(context),
+      );
       return;
     }
 
     setState(() => _isLoading = true);
     try {
-      // هنا هنعدل الـ ApiService لاحقاً ليدعم الـ jobCode
       await _apiService.register(
         name: _nameController.text.trim(),
         email: _emailController.text.trim(),
         password: _passwordController.text,
         companyCode: _compCodeController.text.trim(),
-        jobCode: _jobCodeController.text.trim(), // الحقل الجديد
+        jobCode: _jobCodeController.text.trim(),
+        employeeCode: _employeeCodeController.text.trim(),
       );
 
       if (mounted) {
-        _showSnackBar('تم إنشاء الحساب بنجاح كـ ${_jobCodeController.text}', AppTheme.successStrongFor(context));
+        _showSnackBar(
+          'تم إنشاء الحساب بنجاح كـ ${_jobCodeController.text}',
+          AppTheme.successStrongFor(context),
+        );
         Navigator.pop(context);
       }
     } catch (e) {
@@ -83,10 +100,10 @@ class _RegisterScreenState extends State<RegisterScreen> with TickerProviderStat
       SnackBar(content: Text(msg, textAlign: TextAlign.center), backgroundColor: color),
     );
   }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // خلفية متدرجة تليق بالتصميم الزجاجي
       body: Container(
         height: double.infinity,
         width: double.infinity,
@@ -101,13 +118,12 @@ class _RegisterScreenState extends State<RegisterScreen> with TickerProviderStat
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 60),
           child: Column(
             children: [
-              // أنميشن الشعار أو العنوان
               FadeTransition(
                 opacity: _animController,
                 child: Column(
                   children: [
                     Icon(Icons.person_add_outlined, size: 80, color: AppTheme.textMainFor(context)),
-                    SizedBox(height: 10),
+                    const SizedBox(height: 10),
                     Text(
                       'إنشاء حساب',
                       style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 28, fontWeight: FontWeight.bold),
@@ -117,7 +133,6 @@ class _RegisterScreenState extends State<RegisterScreen> with TickerProviderStat
               ),
               const SizedBox(height: 30),
 
-              // الكارت الزجاجي الذي يحتوي على الخانات
               GlassCard(
                 child: Column(
                   children: [
@@ -160,12 +175,30 @@ class _RegisterScreenState extends State<RegisterScreen> with TickerProviderStat
                       label: 'كود الوظيفة (الافتراضي 1)',
                       controller: _jobCodeController,
                       node: _jobNode,
-                      isLast: true, // هنا هيشغل الدالة علطول عند ضغط انتر
+                      nextNode: _employeeNode,
                     ),
-                    
+                    _buildAnimatedField(
+                      index: 6,
+                      icon: Icons.person_pin_rounded,
+                      label: 'كود الموظف (اختياري)',
+                      controller: _employeeCodeController,
+                      node: _employeeNode,
+                      isLast: true,
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10, right: 8),
+                      child: Text(
+                        '💡 لو موظف موجود، اكتب كوده لربط حسابك بملفك الوظيفي',
+                        style: TextStyle(
+                          color: AppTheme.textMutedFor(context),
+                          fontFamily: 'Cairo',
+                          fontSize: 10,
+                        ),
+                      ),
+                    ),
+
                     const SizedBox(height: 30),
 
-                    // زر التسجيل مع حالة التحميل
                     SizedBox(
                       width: double.infinity,
                       child: _isLoading
@@ -183,7 +216,7 @@ class _RegisterScreenState extends State<RegisterScreen> with TickerProviderStat
                   ],
                 ),
               ),
-              
+
               const SizedBox(height: 20),
               TextButton(
                 onPressed: () => Navigator.pop(context),
@@ -196,7 +229,6 @@ class _RegisterScreenState extends State<RegisterScreen> with TickerProviderStat
     );
   }
 
-  // دالة بناء الخانات مع الأنميشن وخاصية الانتقال (Enter)
   Widget _buildAnimatedField({
     required int index,
     required IconData icon,
@@ -210,7 +242,6 @@ class _RegisterScreenState extends State<RegisterScreen> with TickerProviderStat
     return AnimatedBuilder(
       animation: _animController,
       builder: (context, child) {
-        // تأثير انزلاق العناصر واحد تلو الآخر
         final slide = Tween<Offset>(begin: const Offset(0, 0.5), end: Offset.zero)
             .animate(CurvedAnimation(
               parent: _animController,
@@ -229,7 +260,6 @@ class _RegisterScreenState extends State<RegisterScreen> with TickerProviderStat
                 obscureText: isPass,
                 style: TextStyle(color: AppTheme.textMainFor(context)),
                 textInputAction: isLast ? TextInputAction.done : TextInputAction.next,
-                // الانتقال للخانات التالية عند ضغط Enter
                 onSubmitted: (_) {
                   if (isLast) {
                     _handleRegister();

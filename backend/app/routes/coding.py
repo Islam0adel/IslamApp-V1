@@ -110,6 +110,12 @@ async def save_code(
     db: AsyncSession = Depends(get_db),
 ):
     try:
+    # ✅ حماية: الموظفين انتقلوا لـ /employees
+        if data.category == "employees":
+            raise HTTPException(
+                status_code=400,
+                detail="الموظفين أصبحوا في /employees وليس /coding",
+            )
         company_code = data.company_code
         category = data.category
         code = data.code
@@ -281,6 +287,12 @@ async def list_codes(
     db: AsyncSession = Depends(get_db),
 ):
     try:
+                # ✅ حماية: الموظفين انتقلوا لـ /employees
+        if category == "employees":
+            raise HTTPException(
+                status_code=400,
+                detail="الموظفين أصبحوا في /employees وليس /coding",
+            )
         # ------------------------------------------------------
         # جلب البيانات غير المحذوفة فقط
         # ------------------------------------------------------
@@ -551,6 +563,12 @@ async def delete_code(
     db: AsyncSession = Depends(get_db),
 ):
     try:
+                # ✅ حماية: الموظفين انتقلوا لـ /employees
+        if category == "employees":
+            raise HTTPException(
+                status_code=400,
+                detail="الموظفين أصبحوا في /employees وليس /coding",
+            )
         # ------------------------------------------------------
         # البحث عن السجل
         # ------------------------------------------------------
@@ -676,6 +694,12 @@ async def get_coding_changes(
     db: AsyncSession = Depends(get_db),
 ):
     try:
+                # ✅ حماية: الموظفين انتقلوا لـ /employees
+        if category == "employees":
+            raise HTTPException(
+                status_code=400,
+                detail="الموظفين أصبحوا في /employees وليس /coding",
+            )
         # ------------------------------------------------------
         # تحويل since
         # ------------------------------------------------------

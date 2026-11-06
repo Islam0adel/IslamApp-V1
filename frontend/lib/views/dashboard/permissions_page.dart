@@ -21,8 +21,13 @@ class _PermissionsPageState extends State<PermissionsPage> {
   String currentCompanyCode = '';
   bool _isLoading = true;
 
-  // ✅ NEW: حالة is_active للمستخدم المختار (افتراضي = نشط)
+    // ✅ NEW: حالة is_active للمستخدم المختار (افتراضي = نشط)
   bool _selectedUserIsActive = true;
+
+  // ⭐ HR: فلترة الموظفين
+  List<String>? _hrViewableEmployees; // null/empty = كل الموظفين
+  bool _allowAllEmployees = true;
+  List<Map<String, String>> _allEmployees = [];
 
   Map<String, Map<String, bool>> userPermissions = {};
 
@@ -40,11 +45,12 @@ class _PermissionsPageState extends State<PermissionsPage> {
   // ✅ NEW: اشتراك لحظي في مستند المستخدم المختار
   StreamSubscription<DocumentSnapshot>? _selectedUserSub;
 
-  @override
+    @override
   void initState() {
     super.initState();
     _loadCompanyCode().then((_) {
       _loadBranches();
+      _loadEmployeesForFilter();  // ⭐ جديد
     });
   }
 
@@ -74,6 +80,43 @@ class _PermissionsPageState extends State<PermissionsPage> {
         ];
       }
     });
+  }
+
+    // ⭐ جديد: تحميل الموظفين من Hive (لفلترة HR)
+  Future<void> _loadEmployeesForFilter() async {
+    if (currentCompanyCode.isEmpty) return;
+
+    final box = Hive.box('coding_box');
+    final key = '${currentCompanyCode}_employees';
+    final raw = box.get(key);
+
+    if (raw is! List) {
+      if (mounted) setState(() => _allEmployees = []);
+      return;
+    }
+
+    final list = <Map<String, String>>[];
+    for (final item in raw) {
+      if (item is! Map) continue;
+      if (item['is_deleted'] == true) continue;
+
+      final code = item['code']?.toString() ?? '';
+      final name = item['name']?.toString() ?? '';
+      if (code.isEmpty) continue;
+
+      list.add({'code': code, 'name': name});
+    }
+
+    // ترتيب حسب الكود
+    list.sort((a, b) {
+      final aCode = int.tryParse(a['code'] ?? '0') ?? 0;
+      final bCode = int.tryParse(b['code'] ?? '0') ?? 0;
+      return aCode.compareTo(bCode);
+    });
+
+    if (mounted) {
+      setState(() => _allEmployees = list);
+    }
   }
 
   Future<void> _loadCompanyCode() async {
@@ -155,11 +198,38 @@ class _PermissionsPageState extends State<PermissionsPage> {
       }
     }
 
+        // ⭐ HR: تحضير قائمة الموظفين المرئيين
+    // ⚠️ نستخدم [] بدل null (Firestore بيتعامل مع null بشكل غير متوقع)
+    final List<String> viewableToSave;
+    final bool clearViewable;
+
+    if (_allowAllEmployees) {
+      viewableToSave = [];   // ⭐ [] = كل الموظفين
+      clearViewable = false; // ⭐ مش هنستخدم clear
+    } else {
+      final selected = _hrViewableEmployees ?? [];
+      if (selected.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'يرجى اختيار موظف واحد على الأقل أو "كل الموظفين"',
+            ),
+            backgroundColor: AppTheme.warningOrangeFor(context),
+          ),
+        );
+        return;
+      }
+      viewableToSave = selected;
+      clearViewable = false;
+    }
+
     try {
       await PermissionsService().savePermissions(
         userPermissions,
         targetEmail: selectedUserId,
         allowedBranches: allowedBranches,
+        hrViewableEmployees: viewableToSave,
+        clearHrViewableEmployees: clearViewable,
       );
 
       if (mounted) {
@@ -271,7 +341,41 @@ class _PermissionsPageState extends State<PermissionsPage> {
         'إظهار الإشعارات': true, 
         'إظهار البحث عن المنتجات': false,
         'إظهار المستخدمين المتصلين': false,
+        'إظهار الموارد البشرية': false, 
         
+      },
+              'الموارد البشرية': {
+        // ─── A. فتح الصفحات (3) ───
+        'canOpenAttendancePage': false,
+        'canOpenVacationsPage': false,
+        'canOpenReportPage': false,
+
+        // ─── B. عمليات الحضور (3) ───
+        'canAddAttendance': false,
+        'canEditAttendance': false,
+        'canDeleteAttendance': false,
+
+        // ─── C. عمليات الإجازات (3) ───
+        'canAddVacation': false,
+        'canEditVacation': false,
+        'canDeleteVacation': false,
+
+        // ─── D. التسويات (5) ───
+        'canViewAdjustments': false,
+        'canAddBonus': false,
+        'canAddLoan': false,
+        'canEditAdjustment': false,
+        'canDeleteAdjustment': false,
+
+        // ─── E. الإعدادات (3) ───
+        'canEditWeeklyDay': false,
+        'canEditWorkSchedule': false,
+        'canEditDelayRules': false,
+
+        // ─── F. الخصم والراتب (3) ───
+        'canAddDirectDiscount': false,
+        'canViewSalaryAmounts': false,
+        'canExportReport': false,
       },
     };
 
@@ -424,11 +528,24 @@ class _PermissionsPageState extends State<PermissionsPage> {
       // ============================================================
       // ✅ setState واحد
       // ============================================================
+            // ⭐ HR: تحميل الموظفين المرئيين
+      final hrViewableKey = 'hr_viewable_employees_$userId';
+      final savedViewable = box.get(hrViewableKey);
+      List<String>? loadedViewable;
+      if (savedViewable is List) {
+        loadedViewable = savedViewable.map((e) => e.toString()).toList();
+        if (loadedViewable.isEmpty) loadedViewable = null;
+      }
+
       setState(() {
         userPermissions = newPermissions;
         _allowAllBranches = allowAll;
         _selectedBranchCodes = selectedBranches;
         _selectedUserIsActive = isActive;
+
+        // ⭐ HR
+        _hrViewableEmployees = loadedViewable;
+        _allowAllEmployees = loadedViewable == null;
       });
 
       // ✅ NEW: ابدأ الاستماع اللحظي للمستخدم المختار
@@ -444,7 +561,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
   // - كل تغيير في users/{userId} → snapshot
   // - تحديث Hive + UI تلقائيًا
   // ============================================================
-  void _listenToUser(String userId) {
+    void _listenToUser(String userId) {
     _selectedUserSub?.cancel();
     _selectedUserSub = FirebaseFirestore.instance
         .collection('users')
@@ -472,12 +589,27 @@ class _PermissionsPageState extends State<PermissionsPage> {
           await box.put(branchesKey, data['allowed_branches']);
         }
 
+        // ⭐ HR: متابعة الموظفين المرئيين (Hive)
+        if (data.containsKey('hr_viewable_employees')) {
+          final rawViewable = data['hr_viewable_employees'];
+          if (rawViewable == null) {
+            await box.delete('hr_viewable_employees_$userId');
+          } else if (rawViewable is List) {
+            await box.put(
+              'hr_viewable_employees_$userId',
+              rawViewable.map((e) => e.toString()).toList(),
+            );
+          }
+        }
+
         // ✅ تحديث UI
         if (!mounted) return;
         if (selectedUserId != userId) return;
 
         setState(() {
-          // الصلاحيات
+          // ─────────────────────────────────────────
+          // 1) الصلاحيات
+          // ─────────────────────────────────────────
           if (data['permissions'] is Map) {
             final perms = data['permissions'] as Map;
             perms.forEach((category, subPerms) {
@@ -493,7 +625,9 @@ class _PermissionsPageState extends State<PermissionsPage> {
             });
           }
 
-          // الفروع
+          // ─────────────────────────────────────────
+          // 2) الفروع
+          // ─────────────────────────────────────────
           final rawBranches = data['allowed_branches'];
           if (rawBranches is List) {
             final list = rawBranches.map((e) => e.toString()).toList();
@@ -504,13 +638,31 @@ class _PermissionsPageState extends State<PermissionsPage> {
               _allowAllBranches = false;
               _selectedBranchCodes = list;
             }
-          } else if (rawBranches is String && rawBranches.toLowerCase() == 'all') {
+          } else if (rawBranches is String &&
+              rawBranches.toLowerCase() == 'all') {
             _allowAllBranches = true;
             _selectedBranchCodes = [];
           }
 
-          // is_active
+          // ─────────────────────────────────────────
+          // 3) is_active
+          // ─────────────────────────────────────────
           _selectedUserIsActive = data['is_active'] != false;
+
+          // ─────────────────────────────────────────
+          // 4) ⭐ HR: الموظفين المرئيين (UI)
+          // ─────────────────────────────────────────
+          if (data.containsKey('hr_viewable_employees')) {
+            final rawViewable = data['hr_viewable_employees'];
+            if (rawViewable == null) {
+              _hrViewableEmployees = null;
+              _allowAllEmployees = true;
+            } else if (rawViewable is List) {
+              final list = rawViewable.map((e) => e.toString()).toList();
+              _hrViewableEmployees = list.isEmpty ? null : list;
+              _allowAllEmployees = list.isEmpty;
+            }
+          }
         });
       },
       onError: (e) => debugPrint('⚠️ _listenToUser error: $e'),
@@ -705,8 +857,8 @@ class _PermissionsPageState extends State<PermissionsPage> {
     return Directionality(
       textDirection: TextDirection.rtl,
       child: DefaultTabController(
-        // ✅ عدد التبويبات الفعلي = 8
-        length: 8,
+        // ✅ عدد التبويبات الفعلي = 9
+        length: 9,
         child: Scaffold(
           extendBodyBehindAppBar: true,
           body: Stack(
@@ -1052,6 +1204,9 @@ class _PermissionsPageState extends State<PermissionsPage> {
                                 text:
                                     'صلاحيات عامة',
                               ),
+                                                            Tab(
+                                text: 'الموارد البشرية',
+                              ),
                             ],
                           ),
                           Expanded(
@@ -1081,6 +1236,9 @@ class _PermissionsPageState extends State<PermissionsPage> {
                                 ),
                                 buildPermissionsTab(
                                   'صلاحيات عامة',
+                                ),
+                                buildPermissionsTab(
+                                  'الموارد البشرية',
                                 ),
                               ],
                             ),
@@ -1333,6 +1491,9 @@ class _PermissionsPageState extends State<PermissionsPage> {
         ],
       );
     }
+            if (tabName == 'الموارد البشرية') {
+      return _buildHrPermissionsTab();
+    }
 
     return ListView.builder(
       padding: const EdgeInsets.all(20),
@@ -1374,6 +1535,416 @@ class _PermissionsPageState extends State<PermissionsPage> {
           ),
         );
       },
+    );
+  }
+
+
+  // ============================================================
+  // ⭐ HR: تبويب الموارد البشرية (6 مجموعات + فلترة)
+  // ============================================================
+
+  Widget _buildHrPermissionsTab() {
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        // ─── A. فتح الصفحات ───
+        _buildHrSection(
+          title: 'فتح الصفحات',
+          icon: Icons.lock_open_rounded,
+          color: AppTheme.infoFor(context),
+          keys: [
+            'canOpenAttendancePage',
+            'canOpenVacationsPage',
+            'canOpenReportPage',
+          ],
+        ),
+
+        // ─── B. عمليات الحضور ───
+        _buildHrSection(
+          title: 'عمليات الحضور',
+          icon: Icons.fingerprint_rounded,
+          color: AppTheme.successFor(context),
+          keys: [
+            'canAddAttendance',
+            'canEditAttendance',
+            'canDeleteAttendance',
+          ],
+        ),
+
+        // ─── C. عمليات الإجازات ───
+        _buildHrSection(
+          title: 'عمليات الإجازات',
+          icon: Icons.beach_access_rounded,
+          color: AppTheme.extraTealFor(context),
+          keys: [
+            'canAddVacation',
+            'canEditVacation',
+            'canDeleteVacation',
+          ],
+        ),
+
+        // ─── D. التسويات (مكافأة/سلفة) ───
+        _buildHrSection(
+          title: 'التسويات (مكافأة / سلفة)',
+          icon: Icons.attach_money_rounded,
+          color: AppTheme.warningFor(context),
+          keys: [
+            'canViewAdjustments',
+            'canAddBonus',
+            'canAddLoan',
+            'canEditAdjustment',
+            'canDeleteAdjustment',
+          ],
+        ),
+
+        // ─── E. الإعدادات ───
+        _buildHrSection(
+          title: 'الإعدادات',
+          icon: Icons.settings_rounded,
+          color: AppTheme.warningOrangeSoftFor(context),
+          keys: [
+            'canEditWeeklyDay',
+            'canEditWorkSchedule',
+            'canEditDelayRules',
+          ],
+        ),
+
+                // ─── F. الخصم المباشر والراتب ───
+        _buildHrSection(
+          title: 'الخصم المباشر والراتب',
+          icon: Icons.money_off_rounded,
+          color: AppTheme.dangerFor(context),
+          keys: [
+            'canAddDirectDiscount',
+            'canViewSalaryAmounts',
+            'canExportReport',
+          ],
+        ),
+
+                      // ─── G. إدارة الموظفين ───
+        _buildHrSection(
+          title: 'إدارة الموظفين',
+          icon: Icons.badge_rounded,
+          color: AppTheme.extraBlueGreyFor(context),
+          keys: [
+            'canViewEmployees',
+            'canManageEmployees',
+          ],
+        ),
+
+                // ─── H. الموظف يشوف بياناته ───
+        _buildHrSection(
+          title: 'بيانات الموظف الشخصية',
+          icon: Icons.person_pin_rounded,
+          color: AppTheme.infoFor(context),
+          keys: [
+            'canViewOwnHRData',
+          ],
+        ),
+
+        // ─── I. التقارير المجمعة ⭐ جديد ───
+        _buildHrSection(
+          title: 'التقارير المجمعة',
+          icon: Icons.summarize_rounded,
+          color: AppTheme.extraPurpleFor(context),
+          keys: [
+            'canViewBranchSalaryReport',
+          ],
+        ),
+
+        // ─── J. فلترة الموظفين ───
+        _buildHrEmployeesFilterSection(),
+      ],
+    );
+  }
+
+
+  // ──────────────────────────────────────────────────────────
+  // قسم HR واحد (Header + Switch لكل صلاحية)
+  // ──────────────────────────────────────────────────────────
+
+  Widget _buildHrSection({
+    required String title,
+    required IconData icon,
+    required Color color,
+    required List<String> keys,
+  }) {
+    final hrPerms = userPermissions['الموارد البشرية'] ?? {};
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Header
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(icon, color: color, size: 18),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                title,
+                style: TextStyle(
+                  color: AppTheme.textMainFor(context),
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                  fontFamily: 'Cairo',
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Switch لكل صلاحية
+        ...keys.map((key) {
+          final value = hrPerms[key] == true;
+          final label = _hrPermissionLabel(key);
+
+          return Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            decoration: BoxDecoration(
+              color: GlassStyle.fill05For(context),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: GlassStyle.line10For(context)),
+            ),
+            child: Material(
+              color: Colors.transparent,
+              borderRadius: BorderRadius.circular(12),
+              child: SwitchListTile(
+                activeThumbColor: color,
+                inactiveTrackColor: GlassStyle.switchTrackOffFor(context),
+                title: Text(
+                  label,
+                  style: TextStyle(
+                    color: AppTheme.textMainFor(context),
+                    fontSize: 14,
+                    fontFamily: 'Cairo',
+                  ),
+                ),
+                value: value,
+                onChanged: selectedUserId == null
+                    ? null
+                    : (newValue) {
+                        setState(() {
+                          userPermissions['الموارد البشرية'] ??= {};
+                          userPermissions['الموارد البشرية']![key] = newValue;
+                        });
+                      },
+              ),
+            ),
+          );
+        }),
+
+        const SizedBox(height: 15),
+      ],
+    );
+  }
+
+
+  // ──────────────────────────────────────────────────────────
+  // تسمية الصلاحية بالعربي
+  // ──────────────────────────────────────────────────────────
+
+  String _hrPermissionLabel(String key) {
+    const labels = {
+      // A
+      'canOpenAttendancePage': 'فتح صفحة الحضور',
+      'canOpenVacationsPage': 'فتح صفحة الإجازات',
+      'canOpenReportPage': 'فتح صفحة التقارير',
+      // B
+      'canAddAttendance': 'تسجيل حضور',
+      'canEditAttendance': 'تعديل حضور',
+      'canDeleteAttendance': 'حذف حضور',
+      // C
+      'canAddVacation': 'إضافة إجازة',
+      'canEditVacation': 'تعديل إجازة',
+      'canDeleteVacation': 'حذف إجازة',
+      // D
+      'canViewAdjustments': 'عرض التسويات',
+      'canAddBonus': 'إضافة مكافأة',
+      'canAddLoan': 'إضافة سلفة',
+      'canEditAdjustment': 'تعديل تسوية',
+      'canDeleteAdjustment': 'حذف تسوية',
+      // E
+      'canEditWeeklyDay': 'تعديل يوم الإجازة الأسبوعي',
+      'canEditWorkSchedule': 'تعديل مواعيد العمل',
+      'canEditDelayRules': 'تعديل إعدادات التأخير',
+      // F
+            'canAddDirectDiscount': 'إضافة خصم مباشر',
+      'canViewSalaryAmounts': 'إظهار المبالغ المالية',
+      'canExportReport': 'تصدير تقرير الراتب',
+                  // G
+      'canViewEmployees': 'عرض الموظفين',
+      'canManageEmployees': 'إدارة الموظفين (إضافة/تعديل/حذف)',
+            // H
+      'canViewOwnHRData': 'إظهار بيانات الموظف لنفسه (بروفايله + راتبه)',
+      // I
+      'canViewBranchSalaryReport': 'عرض تقرير إجمالي الرواتب لكل فرع',
+    };
+    return labels[key] ?? key;
+  }
+
+
+  // ──────────────────────────────────────────────────────────
+  // قسم فلترة الموظفين
+  // ──────────────────────────────────────────────────────────
+
+  Widget _buildHrEmployeesFilterSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: AppTheme.accentFor(context).withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(
+                  Icons.filter_alt_rounded,
+                  color: AppTheme.accentFor(context),
+                  size: 18,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'فلترة الموظفين المرئيين',
+                style: TextStyle(
+                  color: AppTheme.textMainFor(context),
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                  fontFamily: 'Cairo',
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Checkbox: كل الموظفين
+        Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          decoration: BoxDecoration(
+            color: GlassStyle.fill05For(context),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: GlassStyle.line10For(context)),
+          ),
+          child: Material(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+            child: CheckboxListTile(
+              activeColor: AppTheme.accentFor(context),
+              checkColor: AppTheme.onAccentFor(context),
+              title: Text(
+                'كل الموظفين (في الفروع المسموحة)',
+                style: TextStyle(
+                  color: AppTheme.textMainFor(context),
+                  fontSize: 14,
+                  fontFamily: 'Cairo',
+                ),
+              ),
+              value: _allowAllEmployees,
+              onChanged: selectedUserId == null
+                  ? null
+                  : (val) {
+                      setState(() {
+                        _allowAllEmployees = val ?? false;
+                        if (_allowAllEmployees) {
+                          _hrViewableEmployees = null;
+                        } else {
+                          _hrViewableEmployees ??= [];
+                        }
+                      });
+                    },
+            ),
+          ),
+        ),
+
+        // قائمة الموظفين (لو "كل الموظفين" = false)
+        if (!_allowAllEmployees) ...[
+          if (_allEmployees.isEmpty)
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                '⚠️ لا يوجد موظفون مسجلون في النظام',
+                style: TextStyle(
+                  color: AppTheme.warningOrangeSoftFor(context),
+                  fontFamily: 'Cairo',
+                  fontSize: 12,
+                ),
+              ),
+            )
+          else
+            ..._allEmployees.map((emp) {
+              final code = emp['code'] ?? '';
+              final name = emp['name'] ?? '';
+              final isSelected =
+                  _hrViewableEmployees?.contains(code) ?? false;
+
+              return Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: GlassStyle.fill05For(context),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: GlassStyle.line10For(context)),
+                ),
+                child: Material(
+                  color: Colors.transparent,
+                  borderRadius: BorderRadius.circular(10),
+                  child: CheckboxListTile(
+                    activeColor: AppTheme.accentFor(context),
+                    checkColor: AppTheme.onAccentFor(context),
+                    title: Text(
+                      '$name ($code)',
+                      style: TextStyle(
+                        color: AppTheme.textMainFor(context),
+                        fontSize: 13,
+                        fontFamily: 'Cairo',
+                      ),
+                    ),
+                    value: isSelected,
+                    onChanged: selectedUserId == null
+                        ? null
+                        : (val) {
+                            setState(() {
+                              _hrViewableEmployees ??= [];
+                              if (val == true) {
+                                if (!_hrViewableEmployees!.contains(code)) {
+                                  _hrViewableEmployees!.add(code);
+                                }
+                              } else {
+                                _hrViewableEmployees!.remove(code);
+                              }
+                            });
+                          },
+                  ),
+                ),
+              );
+            }),
+
+          // تحذير لو مفيش اختيار
+          if (_hrViewableEmployees?.isEmpty ?? true)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                '⚠️ يجب اختيار موظف واحد على الأقل',
+                style: TextStyle(
+                  color: AppTheme.warningOrangeSoftFor(context),
+                  fontFamily: 'Cairo',
+                  fontSize: 12,
+                ),
+              ),
+            ),
+        ],
+      ],
     );
   }
 

@@ -4,7 +4,7 @@ import '../../views/widgets/glass_card.dart';
 import '../../services/coding_service.dart';
 import '../../models/coding_model.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import '../../services/permissions_service.dart'; // ✅ استيراد خدمة الصلاحيات
+import '../../services/permissions_service.dart';
 
 class CodingPage extends StatefulWidget {
   final String companyCode;
@@ -16,6 +16,7 @@ class CodingPage extends StatefulWidget {
 
 class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
   final CodingService _codingService = CodingService();
+
   bool _isLoading = false;
   bool _isEditMode = false;
 
@@ -26,6 +27,7 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
   final TextEditingController _sellingPriceController = TextEditingController();
   final TextEditingController _profitMarginController = TextEditingController(text: "0.00");
   final TextEditingController _profitPercentController = TextEditingController(text: "0.00 %");
+
 
   String _selectedCategory = "items";
   String? _selectedType;
@@ -58,7 +60,9 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
     try {
       final Box codingBox = Hive.box('coding_box');
       final String localKey = "${widget.companyCode}_$_selectedCategory";
-      List<CodingModel> items = [];
+      int maxCode = 0;
+
+            List<CodingModel> items = [];
 
       if (codingBox.containsKey(localKey)) {
         final rawData = codingBox.get(localKey);
@@ -76,17 +80,9 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
         );
       }
 
-      int maxCode = 0;
       for (var item in items) {
         int current = int.tryParse(item.code) ?? 0;
         if (current > maxCode) maxCode = current;
-      }
-      int nextCode = maxCode + 1;
-
-      if (mounted) {
-        setState(() {
-          _codeController.text = nextCode.toString();
-        });
       }
     } catch (e) {
       if (mounted) {
@@ -99,11 +95,9 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
-    // التحقق من وجود صلاحية للمعاينة أو الإضافة
     bool canView = PermissionsService().canViewCoding;
     bool canAdd = PermissionsService().canAddCodingItem;
 
-    // إذا لم تكن هناك صلاحية للمعاينة ولا للإضافة، نعرض رسالة
     if (!canView && !canAdd) {
       return Scaffold(
         appBar: AppBar(
@@ -158,7 +152,6 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
                     padding: const EdgeInsets.all(15),
                     child: Column(
                       children: [
-                        // أزرار الأقسام (تظهر إذا كانت صلاحية المعاينة أو الإضافة موجودة)
                         GlassCard(
                           child: Column(
                             children: [
@@ -167,7 +160,6 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
                               Wrap(
                                 spacing: 8, runSpacing: 8, alignment: WrapAlignment.center,
                                 children: [
-                                  // نعرض الأقسام التي يملك صلاحية معاينتها أو إضافتها
                                   if (PermissionsService().canViewCoding || PermissionsService().canAddSafe)
                                     _buildTinyCategory("safes", "الخزائن", Icons.account_balance_wallet),
                                   if (PermissionsService().canViewCoding || PermissionsService().canAddCodingItem)
@@ -178,14 +170,12 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
                                     _buildTinyCategory("customers", "العملاء", Icons.groups),
                                   if (PermissionsService().canViewCoding || PermissionsService().canAddStore)
                                     _buildTinyCategory("stores", "المخازن", Icons.store),
-                                  if (PermissionsService().canViewCoding || PermissionsService().canAddCodingItem) // types يمكن إضافتها
+                                  if (PermissionsService().canViewCoding || PermissionsService().canAddCodingItem)
                                     _buildTinyCategory("types", "التصنيف", Icons.payments),
                                   if (PermissionsService().canViewCoding || PermissionsService().canAddPaymentMethod)
                                     _buildTinyCategory("payment_methods", "طرق الدفع", Icons.credit_card),
                                   if (PermissionsService().canViewCoding || PermissionsService().canAddBank)
                                     _buildTinyCategory("banks", "البنوك", Icons.account_balance),
-                                  if (PermissionsService().canViewCoding || PermissionsService().canAddEmployee)
-                                    _buildTinyCategory("employees", "الموظفين", Icons.badge),
                                   if (PermissionsService().canViewCoding || PermissionsService().canAddBranch)
                                     _buildTinyCategory("branches", "الفروع", Icons.storefront),
                                 ],
@@ -194,7 +184,6 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
                           ),
                         ),
                         const SizedBox(height: 20),
-                        // نموذج الإدخال (يظهر فقط إذا كانت صلاحية الإضافة موجودة)
                         if (canAdd)
                           GlassCard(
                             child: Column(
@@ -243,12 +232,14 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
                                     Expanded(child: _buildField("نسبة الربح", _profitPercentController, Icons.percent, enabled: false)),
                                   ]),
                                 ],
+
+
+
                                 const SizedBox(height: 20),
                                 _buildActionButtons(),
                               ],
                             ),
                           ),
-                        // إذا لم تكن صلاحية الإضافة موجودة، نعرض رسالة
                         if (!canAdd)
                           Padding(
                             padding: EdgeInsets.all(20.0),
@@ -320,7 +311,6 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
 
     return Row(
       children: [
-        // زر الحفظ/تحديث (يظهر فقط إذا كانت صلاحية الإضافة موجودة)
         if (canAdd)
           Expanded(
             child: ElevatedButton.icon(
@@ -330,7 +320,6 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
               style: ElevatedButton.styleFrom(backgroundColor: AppTheme.warningFor(context), foregroundColor: AppTheme.onAccentFor(context)),
             ),
           ),
-        // زر المعاينة (يظهر فقط إذا كانت صلاحية المعاينة موجودة)
         if (canView)
           Expanded(
             child: ElevatedButton.icon(
@@ -340,7 +329,6 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
               style: ElevatedButton.styleFrom(backgroundColor: GlassStyle.fill10For(context), foregroundColor: Theme.of(context).colorScheme.onPrimary),
             ),
           ),
-        // زر التحديث (Refresh) يظهر دائماً لإعادة تحميل الكود القادم
         IconButton(
           onPressed: () {
             _clearControllers();
@@ -353,7 +341,6 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
   }
 
   void _handleSave() async {
-    // التحقق من صلاحية الإضافة
     if (!PermissionsService().canAddCodingItem) {
       _showSnackBar("ليس لديك صلاحية للحفظ", AppTheme.warningOrangeFor(context));
       return;
@@ -374,7 +361,11 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
 
     setState(() => _isLoading = true);
     try {
-      double cleanPercent = double.tryParse(_profitPercentController.text.replaceAll('%', '').trim()) ?? 0.0;
+            // ✅ حفظ تكويد عادي
+      double cleanPercent = double.tryParse(
+            _profitPercentController.text.replaceAll('%', '').trim(),
+          ) ??
+          0.0;
 
       final newCodingItem = CodingModel(
         code: _codeController.text,
@@ -394,11 +385,17 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
       );
 
       if (result['success'] == true) {
-        _showSnackBar(_isEditMode ? "تم التحديث بنجاح" : "تم الحفظ بنجاح", AppTheme.successStrongFor(context));
+        _showSnackBar(
+          _isEditMode ? "تم التحديث بنجاح" : "تم الحفظ بنجاح",
+          AppTheme.successStrongFor(context),
+        );
         _clearControllers();
         _loadNextCode();
       } else {
-        _showSnackBar("فشل عملية الحفظ: ${result['error']}", AppTheme.dangerStrongFor(context));
+        _showSnackBar(
+          "فشل عملية الحفظ: ${result['error']}",
+          AppTheme.dangerStrongFor(context),
+        );
       }
     } catch (e) {
       _showSnackBar("خطأ: $e", AppTheme.dangerStrongFor(context));
@@ -408,7 +405,6 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
   }
 
   void _showItemsModal() async {
-    // التحقق من صلاحية المعاينة
     if (!PermissionsService().canViewCoding) {
       _showSnackBar("ليس لديك صلاحية للمعاينة", AppTheme.warningOrangeFor(context));
       return;
@@ -416,12 +412,14 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
 
     setState(() => _isLoading = true);
     try {
+            // ✅ معاينة التكويد
       List<CodingModel> items = await _codingService.getCodingList(
         companyCode: widget.companyCode,
         category: _selectedCategory,
       );
       setState(() => _isLoading = false);
       if (!mounted) return;
+
       showModalBottomSheet(
         context: context,
         isScrollControlled: true,
@@ -434,132 +432,130 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
     }
   }
 
-  
-Widget _buildModal(List<CodingModel> initialItems) {
-  return StatefulBuilder(
-    builder: (BuildContext context, StateSetter setModalState) {
-      bool canAdd = PermissionsService().canAddCodingItem;
+  Widget _buildModal(List<CodingModel> initialItems) {
+    return StatefulBuilder(
+      builder: (BuildContext context, StateSetter setModalState) {
+        bool canAdd = PermissionsService().canAddCodingItem;
 
-      return Container(
-        height: MediaQuery.of(context).size.height * 0.7,
-        decoration: BoxDecoration(
-          color: AppTheme.modalPanelFor(context),
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        child: initialItems.isEmpty
-            ? Center(
-                child: Text(
-                  "القسم فارغ حالياً",
-                  style: TextStyle(
-                    color: AppTheme.textSoftFor(context),
-                    fontFamily: 'Cairo',
-                  ),
-                ),
-              )
-            : ListView.builder(
-                itemCount: initialItems.length,
-                itemBuilder: (c, i) => Material(
-                  color: Colors.transparent,
-                  child: ListTile(
-                    title: Text(
-                      initialItems[i].name,
-                      style: TextStyle(
-                        color: AppTheme.textMainFor(context),
-                        fontFamily: 'Cairo',
-                        fontSize: 14,
-                      ),
+        return Container(
+          height: MediaQuery.of(context).size.height * 0.7,
+          decoration: BoxDecoration(
+            color: AppTheme.modalPanelFor(context),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: initialItems.isEmpty
+              ? Center(
+                  child: Text(
+                    "القسم فارغ حالياً",
+                    style: TextStyle(
+                      color: AppTheme.textSoftFor(context),
+                      fontFamily: 'Cairo',
                     ),
-                    subtitle: Row(
-                      children: [
-                        Text(
-                          "كود: ${initialItems[i].code}",
-                          style: TextStyle(
-                            color: AppTheme.textMutedFor(context),
-                            fontFamily: 'Cairo',
-                            fontSize: 12,
-                          ),
+                  ),
+                )
+              : ListView.builder(
+                  itemCount: initialItems.length,
+                  itemBuilder: (c, i) => Material(
+                    color: Colors.transparent,
+                    child: ListTile(
+                      title: Text(
+                        initialItems[i].name,
+                        style: TextStyle(
+                          color: AppTheme.textMainFor(context),
+                          fontFamily: 'Cairo',
+                          fontSize: 14,
                         ),
-                        if (_selectedCategory == "types") ...[
-                          const SizedBox(width: 15),
+                      ),
+                      subtitle: Row(
+                        children: [
                           Text(
-                            "النوع: ${initialItems[i].type}",
+                            "كود: ${initialItems[i].code}",
                             style: TextStyle(
-                              color: initialItems[i].type == "وارد"
-                                  ? AppTheme.successFor(context)
-                                  : AppTheme.dangerFor(context),
+                              color: AppTheme.textMutedFor(context),
                               fontFamily: 'Cairo',
                               fontSize: 12,
-                              fontWeight: FontWeight.bold,
                             ),
                           ),
-                        ],
-                      ],
-                    ),
-                    // زر الحذف يظهر فقط إذا كانت صلاحية الإضافة موجودة
-                    trailing: canAdd
-                        ? IconButton(
-                            icon: Icon(
-                              Icons.delete,
-                              color: AppTheme.dangerStrongFor(context),
+                          if (_selectedCategory == "types") ...[
+                            const SizedBox(width: 15),
+                            Text(
+                              "النوع: ${initialItems[i].type}",
+                              style: TextStyle(
+                                color: initialItems[i].type == "وارد"
+                                    ? AppTheme.successFor(context)
+                                    : AppTheme.dangerFor(context),
+                                fontFamily: 'Cairo',
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
-                            onPressed: () async {
-                              setState(() => _isLoading = true);
-                              bool isDeleted =
-                                  await _codingService.deleteCode(
-                                companyCode: widget.companyCode,
-                                category: _selectedCategory,
-                                code: initialItems[i].code,
-                              );
-                              setState(() => _isLoading = false);
-                              if (isDeleted) {
-                                _showSnackBar(
-                                  "تم الحذف بنجاح",
-                                  AppTheme.successStrongFor(context),
+                          ],
+                        ],
+                      ),
+                      trailing: canAdd
+                          ? IconButton(
+                              icon: Icon(
+                                Icons.delete,
+                                color: AppTheme.dangerStrongFor(context),
+                              ),
+                              onPressed: () async {
+                                setState(() => _isLoading = true);
+                                bool isDeleted =
+                                    await _codingService.deleteCode(
+                                  companyCode: widget.companyCode,
+                                  category: _selectedCategory,
+                                  code: initialItems[i].code,
                                 );
-                                setModalState(() {
-                                  initialItems.removeAt(i);
-                                });
-                                _loadNextCode();
-                              } else {
-                                _showSnackBar(
-                                  "فشل الحذف، تحقق من الاتصال",
-                                  AppTheme.dangerStrongFor(context),
-                                );
-                              }
-                            },
-                          )
-                        : null,
-                    onTap: () {
-                      // يمكن التعديل فقط إذا كانت صلاحية الإضافة موجودة
-                      if (!canAdd) return;
-                      Navigator.pop(context);
-                      setState(() {
-                        _isEditMode = true;
-                        _nameController.text = initialItems[i].name;
-                        _codeController.text = initialItems[i].code;
-                        if (_selectedCategory == "types") {
-                          _selectedType = initialItems[i].type;
-                        }
-                        if (_selectedCategory == "items") {
-                          _barcodeController.text = initialItems[i].barcode;
-                          _wholesalePriceController.text =
-                              initialItems[i].wholesalePrice.toString();
-                          _sellingPriceController.text =
-                              initialItems[i].sellingPrice.toString();
-                          _profitMarginController.text =
-                              initialItems[i].profitMargin.toString();
-                          _profitPercentController.text =
-                              "${initialItems[i].profitPercent} %";
-                        }
-                      });
-                    },
+                                setState(() => _isLoading = false);
+                                if (isDeleted) {
+                                  _showSnackBar(
+                                    "تم الحذف بنجاح",
+                                    AppTheme.successStrongFor(context),
+                                  );
+                                  setModalState(() {
+                                    initialItems.removeAt(i);
+                                  });
+                                  _loadNextCode();
+                                } else {
+                                  _showSnackBar(
+                                    "فشل الحذف، تحقق من الاتصال",
+                                    AppTheme.dangerStrongFor(context),
+                                  );
+                                }
+                              },
+                            )
+                          : null,
+                      onTap: () {
+                        if (!canAdd) return;
+                        Navigator.pop(context);
+                        setState(() {
+                          _isEditMode = true;
+                          _nameController.text = initialItems[i].name;
+                          _codeController.text = initialItems[i].code;
+                          if (_selectedCategory == "types") {
+                            _selectedType = initialItems[i].type;
+                          }
+                          if (_selectedCategory == "items") {
+                            _barcodeController.text = initialItems[i].barcode;
+                            _wholesalePriceController.text =
+                                initialItems[i].wholesalePrice.toString();
+                            _sellingPriceController.text =
+                                initialItems[i].sellingPrice.toString();
+                            _profitMarginController.text =
+                                initialItems[i].profitMargin.toString();
+                            _profitPercentController.text =
+                                "${initialItems[i].profitPercent} %";
+                          }
+                        });
+                      },
+                    ),
                   ),
                 ),
-              ),
-      );
-    },
-  );
-}
+        );
+      },
+    );
+  }
+
 
 
   void _clearControllers() {
@@ -572,6 +568,8 @@ Widget _buildModal(List<CodingModel> initialItems) {
     _profitPercentController.text = "0.00 %";
     _selectedType = null;
     _isEditMode = false;
+
+
   }
 
   void _showSnackBar(String m, Color c) => ScaffoldMessenger.of(context).showSnackBar(
@@ -587,6 +585,9 @@ Widget _buildModal(List<CodingModel> initialItems) {
     _sellingPriceController.dispose();
     _profitMarginController.dispose();
     _profitPercentController.dispose();
+
+
+
     super.dispose();
   }
 }

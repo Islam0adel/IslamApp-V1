@@ -8,7 +8,8 @@ from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.database import get_db
-from app.core.models import Company
+from app.core.models import Company, Employee   # ⭐ Employee
+import datetime  # ⭐ جديد
 from app.core.schemas import CompanyModel
 
 router = APIRouter()
@@ -31,11 +32,14 @@ class UserRegister(BaseModel):
     uid: str
     company_code: str
     job_code: str
+    employee_code: Optional[str] = None   # ⭐ جديد
 
 class PermissionsUpdateModel(BaseModel):
     email: str
     permissions: dict
     allowed_branches: Optional[List[str]] = None
+    hr_viewable_employees: Optional[List[str]] = None
+    clear_hr_viewable_employees: bool = False
 
 
 # ==========================================
@@ -88,7 +92,50 @@ async def register(
         }
         user_ref.set(user_data_to_save)
 
-        return {"status": "success", "message": f"تم تسجيل {job_title} في {company_name}"}
+        # ============================================================
+        # ⭐ ربط الموظف (لو المستخدم أدخل كود الموظف)
+        # ============================================================
+        linked_employee = None
+        if user.employee_code and user.employee_code.strip():
+            emp_code_clean = user.employee_code.strip()
+
+            emp_stmt = select(Employee).where(
+                Employee.company_code == comp_code,
+                Employee.code == emp_code_clean,
+                Employee.is_deleted.is_(False),
+            )
+            emp_result = await session.execute(emp_stmt)
+            emp = emp_result.scalar_one_or_none()
+
+            if not emp:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"كود الموظف [{emp_code_clean}] غير موجود في هذه الشركة",
+                )
+
+            # تحقق: مش مربوط بحساب تاني
+            if emp.user_email and emp.user_email.strip().lower() != email_clean:
+                raise HTTPException(
+                    status_code=400,
+                    detail="هذا الموظف مربوط بحساب آخر بالفعل",
+                )
+
+            # اربط
+            emp.user_email = email_clean
+            emp.user_uid = user.uid
+            emp.updated_at = datetime.datetime.utcnow()
+            await session.commit()
+
+            linked_employee = {
+                "code": emp.code,
+                "name": emp.name,
+            }
+
+        return {
+            "status": "success",
+            "message": f"تم تسجيل {job_title} في {company_name}",
+            "linked_employee": linked_employee,   # ⭐
+        }
 
     except Exception as e:
         if isinstance(e, HTTPException):
@@ -390,11 +437,19 @@ async def update_user_permissions(data: PermissionsUpdateModel, request: Request
             "permissions": data.permissions,
             "updated_at": firestore.SERVER_TIMESTAMP
         }
+
         if data.allowed_branches is not None:
             update_data["allowed_branches"] = data.allowed_branches
+
+        # ⭐ جديد: فلترة الموظفين في HR
+        if data.clear_hr_viewable_employees:
+            update_data["hr_viewable_employees"] = None
+        elif data.hr_viewable_employees is not None:
+            update_data["hr_viewable_employees"] = data.hr_viewable_employees
         user_ref.update(update_data)
         return {"status": "success", "message": "تم تحديث الصلاحيات بنجاح"}
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+

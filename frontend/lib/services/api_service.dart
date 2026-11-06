@@ -62,12 +62,13 @@ class ApiService {
     catch (e) { throw e.toString(); }
   }
 
-  Future<void> register({
+    Future<void> register({
     required String name, 
     required String email, 
     required String password, 
     required String companyCode, 
-    required String jobCode
+    required String jobCode,
+    String? employeeCode,   // ⭐ جديد
   }) async {
     try {
       UserCredential userCredential = await _auth.createUserWithEmailAndPassword(
@@ -81,7 +82,9 @@ class ApiService {
           'email': email, 
           'uid': userCredential.user!.uid, 
           'company_code': companyCode, 
-          'job_code': jobCode
+          'job_code': jobCode,
+          if (employeeCode != null && employeeCode.trim().isNotEmpty)
+            'employee_code': employeeCode.trim(),   // ⭐
         }),
       );
       if (response.statusCode != 200) {
@@ -159,20 +162,32 @@ Future<void> updatePermissions(
   String email,
   Map<String, dynamic> permissions, {
   List<String>? allowedBranches,
+  List<String>? hrViewableEmployees,       // ⭐ جديد
+  bool clearHrViewableEmployees = false,   // ⭐ جديد
 }) async {
   try {
-    final body = {
+    final body = <String, dynamic>{
       'email': email,
       'permissions': permissions,
     };
+
     if (allowedBranches != null) {
       body['allowed_branches'] = allowedBranches;
     }
+
+    // ⭐ جديد: فلترة الموظفين في HR
+    if (clearHrViewableEmployees) {
+      body['hr_viewable_employees'] = null;
+    } else if (hrViewableEmployees != null) {
+      body['hr_viewable_employees'] = hrViewableEmployees;
+    }
+
     final response = await AuthHttp.post(
       Uri.parse('$baseUrl/auth/update-permissions'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode(body),
     );
+
     if (response.statusCode != 200) {
       throw jsonDecode(response.body)['detail'] ?? 'فشل تحديث الصلاحيات';
     }

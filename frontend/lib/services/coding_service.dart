@@ -30,7 +30,7 @@ class CodingService {
   // الأقسام
   // ============================================================
 
-  final List<String> categories = const [
+    final List<String> categories = const [
     'safes',
     'types',
     'branches',
@@ -39,6 +39,7 @@ class CodingService {
     'customers',
     'payment_methods',
     'items',
+    // ✅ employees انتقل لـ EmployeeService
   ];
 
 

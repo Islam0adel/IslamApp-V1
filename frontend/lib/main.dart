@@ -4,9 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-
+import 'services/employee_service.dart';   // ← NEW
 import 'core/theme.dart';
-
+import 'services/hr_service.dart';   // ← NEW (موحد)
 import 'views/auth/login_screen.dart';
 import 'views/auth/register_screen.dart';
 import 'views/dashboard/home_page.dart';
@@ -149,6 +149,53 @@ Future<void> syncAllDataIfNeeded(String companyCode) async {
       print("✅ التكويد: اكتملت المزامنة التزايدية");
     }
 
+    // ========================================================
+    // الموظفين (قسم مستقل عن التكويد)
+    // ========================================================
+
+    final String employeesKey = 'last_sync_employees_$companyCode';
+    final String? employeesLastSync = prefs.getString(employeesKey);
+
+    if (employeesLastSync == null) {
+      print("📥 الموظفين: تحميل كامل");
+
+      await EmployeeService().fetchAllEmployees(companyCode);
+
+      await prefs.setString(employeesKey, syncStartedAt);
+
+      print("✅ الموظفين: اكتمل التحميل الكامل");
+      print("💾 تم حفظ lastSync للموظفين: $syncStartedAt");
+    } else {
+      print("📡 الموظفين: مزامنة تزايدية منذ $employeesLastSync");
+
+      await EmployeeService().syncChangesFromServer(
+        companyCode,
+        employeesLastSync,
+      );
+
+      print("✅ الموظفين: اكتملت المزامنة التزايدية");
+    }
+
+        // ========================================================
+    // الموارد البشرية (HR) — مزامنة موحدة
+    // ========================================================
+    // HRService().syncAll() بيزامن 4 أقسام:
+    //   1. attendance      (6 شهور أول مرة / delta بعد كده)
+    //   2. vacations       (full أول مرة / delta بعد كده)
+    //   3. adjustments     (6 شهور أول مرة / delta بعد كده)
+    //   4. employee_settings (full أول مرة / delta بعد كده)
+    //
+    // ⚠️ نفس الـ SharedPreferences keys القديمة →
+    //    الأجهزة اللي عملت sync قبل كده مش هتفقد lastSync
+    // ========================================================
+
+    try {
+      print("📥 HR: بدء المزامنة الموحدة...");
+      final hrResults = await HRService().syncAll(companyCode);
+      print("✅ HR: اكتملت المزامنة: $hrResults");
+    } catch (e) {
+      print("❌ HR: فشلت المزامنة: $e");
+    }
     // ========================================================
     // 3) الموردين
     // ========================================================
@@ -294,6 +341,8 @@ Future<void> main() async {
   await Hive.openBox('notifications_box');
   await Hive.openBox('notification_settings_box');
   await Hive.openBox('product_lookup_box');
+   // ✅ HR: طابور العمليات المعلقة (بدل الذاكرة)
+  await Hive.openBox('hr_pending_box');
 
   // ==========================================================
   // SharedPreferences

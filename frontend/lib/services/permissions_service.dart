@@ -42,6 +42,16 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
   Map<String, Map<String, bool>>? _permissions;
   List<String>? _allowedBranchCodes;
   String? _defaultBranchCode;
+    List<String>? _hrViewableEmployees;
+
+    /// ⭐ كود الموظف الحالي (لو مربوط بحساب Firebase)
+  String? _currentEmployeeCode;
+
+  /// ⭐ إيميل المستخدم الحالي (للـ fallback)
+  String? _currentUserEmail;
+
+  /// ⭐ SharedPreferences cached (للـ fallback)
+  SharedPreferences? _cachedPrefs;
 
   // ============================================================
   // حماية من التحميل المتكرر + تتبع المستخدم
@@ -53,9 +63,12 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
   /// آخر UID محفوظ — يستخدمه الـ listener لكشف تغيير المستخدم
   String? _cachedUid;
 
-  // ✅ NEW: Firestore snapshot listener
+    // ✅ NEW: Firestore snapshot listener
   StreamSubscription<DocumentSnapshot>? _firestoreSub;
   String? _listenedEmail;
+
+  /// ⭐ Hive listener — لإعادة حساب _currentEmployeeCode لما employees تتحمل
+  StreamSubscription<BoxEvent>? _employeesHiveSub;
 
   /// هل الصلاحيات محملة وجاهزة للاستخدام؟
   bool get isLoaded => _loaded;
@@ -115,7 +128,7 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
         .doc(email)
         .snapshots()
         .listen(
-      (snapshot) {
+      (snapshot) async {
         if (!snapshot.exists) return;
         final data = snapshot.data();
         if (data == null) return;
@@ -147,11 +160,31 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
           changed = true;
         }
 
-        final branchesData = data['allowed_branches'];
+                final branchesData = data['allowed_branches'];
         if (branchesData != null) {
           final newBranches = _parseBranchList(branchesData) ?? ['all'];
           _allowedBranchCodes = newBranches;
           Hive.box('coding_box').put('allowed_branches_$email', newBranches);
+          changed = true;
+        }
+
+        // ⭐ جديد: متابعة قائمة الموظفين المرئيين في HR
+        if (data.containsKey('hr_viewable_employees')) {
+          final rawViewable = data['hr_viewable_employees'];
+          List<String>? newViewable;
+          if (rawViewable == null) {
+            newViewable = null;
+          } else if (rawViewable is List) {
+            newViewable = rawViewable.map((e) => e.toString()).toList();
+          }
+
+          _hrViewableEmployees = newViewable;
+          final box = Hive.box('coding_box');
+          if (newViewable == null) {
+            await box.delete('hr_viewable_employees_$email');
+          } else {
+            await box.put('hr_viewable_employees_$email', newViewable);
+          }
           changed = true;
         }
 
@@ -168,19 +201,67 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
     _firestoreSub?.cancel();
     _firestoreSub = null;
     _listenedEmail = null;
+    _stopEmployeesHiveListener(); 
     print('🔌 إيقاف الاستماع للصلاحيات');
   }
+  // ============================================================
+  // ⭐ Hive Listener: إعادة حساب _currentEmployeeCode
+  //
+  // السبب: main.dart بينادي loadPermissions قبل sync،
+  // فـ employees مش موجودة في Hive وقت أول حساب.
+  //
+  // لما employees تتحمل من السيرفر، Hive بيبعت event،
+  // فبنعيد الحساب تلقائياً.
+  // ============================================================
 
+  void _startEmployeesHiveListener() {
+    if (_employeesHiveSub != null) return;
+
+    try {
+      _employeesHiveSub = Hive.box('coding_box')
+          .watch()
+          .listen((event) {
+        final key = event.key?.toString() ?? '';
+
+        // نستمع فقط لتغييرات employees
+        if (!key.endsWith('_employees')) return;
+
+        print('📦 [Hive] employees تحدثت → إعادة حساب employee_code');
+
+        final wasNull = _currentEmployeeCode == null;
+        _currentEmployeeCode = null;  // ⭐ نعيد الحساب من الأول
+        _tryComputeCurrentEmployeeCode();
+
+        // لو حصل ربط جديد، أعلم المستمعين
+        if (wasNull && _currentEmployeeCode != null) {
+          print('🎉 تم ربط الحساب بموظف: $_currentEmployeeCode');
+          notifyListeners();
+        }
+      });
+    } catch (e) {
+      print('⚠️ فشل تسجيل Hive listener: $e');
+    }
+  }
+
+  void _stopEmployeesHiveListener() {
+    _employeesHiveSub?.cancel();
+    _employeesHiveSub = null;
+  }
   // ============================================================
   // تصفير الحالة الداخلية (بدون لمس _cachedUid)
   // ============================================================
 
-  void _resetState() {
+    void _resetState() {
     _loadFuture = null;
     _loaded = false;
     _permissions = null;
     _allowedBranchCodes = null;
     _defaultBranchCode = null;
+    _hrViewableEmployees = null;
+    _currentEmployeeCode = null;
+    _currentUserEmail = null;
+    _cachedPrefs = null;
+    _stopEmployeesHiveListener();   // ⭐
   }
 
   // ============================================================
@@ -205,11 +286,13 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
   }
 
   /// إعادة تعيين الحالة يدويًا (اختياري — الـ listener بيعملها تلقائيًا)
-  void reset() {
+    void reset() {
     _resetState();
-    _stopFirestoreListener();                          // ← NEW
+    _stopFirestoreListener();
     _cachedUid = null;
-    notifyListeners();                                 // ← NEW
+    _currentUserEmail = null;   // ⭐
+    _cachedPrefs = null;        // ⭐
+    notifyListeners();
   }
 
   // ============================================================
@@ -248,14 +331,22 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
       // الصلاحيات المحلية
       // ----------------------------------------------------------
 
-      final localPermissions =
+            final localPermissions =
           box.get(permissionsKey);
 
       if (localPermissions is Map) {
-        _permissions =
-            _convertToPermissionsMap(
-          localPermissions,
-        );
+        // ⭐ دمج: قيم Hive + القيم الافتراضية للمفاتيح الناقصة
+        final fromHive = _convertToPermissionsMap(localPermissions);
+        final defaults = _createDefaultPermissions(jobCode);
+
+        defaults.forEach((category, perms) {
+          fromHive.putIfAbsent(category, () => {});
+          perms.forEach((key, defaultValue) {
+            fromHive[category]!.putIfAbsent(key, () => defaultValue);
+          });
+        });
+
+        _permissions = fromHive;
       } else {
         _permissions =
             _createDefaultPermissions(
@@ -263,7 +354,7 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
         );
       }
 
-      // ----------------------------------------------------------
+            // ----------------------------------------------------------
       // الفروع المحلية
       // ----------------------------------------------------------
 
@@ -279,9 +370,38 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
         _allowedBranchCodes = ['all'];
       }
 
+            // ----------------------------------------------------------
+      // ⭐ جديد: الموظفين المرئيين في HR
+      // ----------------------------------------------------------
+
+      final localViewableEmps =
+          box.get('hr_viewable_employees_$email');
+
+      if (localViewableEmps is List) {
+        _hrViewableEmployees = localViewableEmps
+            .map((e) => e.toString())
+            .toList();
+      } else {
+        _hrViewableEmployees = null;  // كل الموظفين
+      }
+
+            // ----------------------------------------------------------
+      // ⭐ جديد: كود الموظف الحالي (لو مربوط بحساب Firebase)
+      // ----------------------------------------------------------
+      _currentUserEmail = email;
+      _cachedPrefs = prefs;
+      _currentEmployeeCode = null;
+
+      _tryComputeCurrentEmployeeCode();
+
       print(
-        '⚡ تم تحميل الصلاحيات والفروع من Hive',
+        '⚡ تم تحميل الصلاحيات والفروع والموظفين المرئيين من Hive',
       );
+      if (_currentEmployeeCode != null) {
+        print('👤 الموظف المرتبط بالحساب: $_currentEmployeeCode');
+      } else {
+        print('⚠️ الحساب مش مربوط بموظف (user_email: $email)');
+      }
 
       // ✅ الصلاحيات جاهزة من Hive
       _loaded = true;
@@ -291,12 +411,17 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
       // تحديث Firestore في الخلفية + بدء snapshot listener
       // ----------------------------------------------------------
 
-      // _refreshFromFirestore(
+            // _refreshFromFirestore(
       //   email,
       //   permissionsKey,
       //   branchesKey,
       // );
-      _startFirestoreListener(email);                  // ← NEW
+      _startFirestoreListener(email);
+
+      // ⭐ الاستماع لتغييرات Hive لإعادة حساب employee_code
+      // (لأن employees ممكن تتحمل بعد loadPermissions)
+      _startEmployeesHiveListener();
+
     } catch (e) {
       print(
         '❌ خطأ في loadPermissions: $e',
@@ -324,6 +449,70 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
     }
   }
 
+    // ============================================================
+  // ⭐ Helper: تطبيع الكود (trim + إزالة المسافات)
+  // ============================================================
+
+  String _normalizeCode(String code) => code.trim();
+
+  String _normalizeEmail(String email) => email.trim().toLowerCase();
+
+
+  // ============================================================
+  // ⭐ Helper: محاولة حساب _currentEmployeeCode من Hive
+  //
+  // بتتنادى:
+  // 1. من _doLoadPermissions (مرة واحدة)
+  // 2. من isCurrentEmployee() لو _currentEmployeeCode لسه null
+  //
+  // الفايدة:
+  // - لو employees لسه ما اتحملوش وقت loadPermissions، هيتحسب لاحقاً
+  // - لو user_email اتحط بعد التطبيق ما اشتغل، هيتحسب عند أول check
+  // ============================================================
+
+  void _tryComputeCurrentEmployeeCode() {
+    if (_currentEmployeeCode != null) return;
+    if (_currentUserEmail == null || _currentUserEmail!.isEmpty) return;
+    if (_cachedPrefs == null) return;
+
+    try {
+      final companyCode = _cachedPrefs!.getString('company_code') ?? '';
+      if (companyCode.isEmpty) return;
+
+      final box = Hive.box('coding_box');
+      final employeesRaw = box.get('${companyCode}_employees');
+      if (employeesRaw is! List) {
+        print('⚠️ [_tryComputeCurrentEmployeeCode] employees مش محمّلين في Hive بعد');
+        return;
+      }
+
+      final normalizedEmail = _normalizeEmail(_currentUserEmail!);
+
+      for (final item in employeesRaw) {
+        if (item is! Map) continue;
+        if (item['is_deleted'] == true) continue;
+        final userEmail = _normalizeEmail(
+          item['user_email']?.toString() ?? '',
+        );
+        if (userEmail.isNotEmpty && userEmail == normalizedEmail) {
+          _currentEmployeeCode = _normalizeCode(
+            item['code']?.toString() ?? '',
+          );
+          print('✅ [_tryComputeCurrentEmployeeCode] ربط: ${_currentEmployeeCode}');
+          return;
+        }
+      }
+
+      print('⚠️ [_tryComputeCurrentEmployeeCode] مفيش موظف مطابق لـ $normalizedEmail');
+    } catch (e) {
+      print('❌ [_tryComputeCurrentEmployeeCode] $e');
+    }
+  }
+
+
+  // ============================================================
+  // تحديث أولي من Firestore (بيتنفذ مرة واحدة مع التحميل)
+  // ============================================================
   // ============================================================
   // تحديث أولي من Firestore (بيتنفذ مرة واحدة مع التحميل)
   // ============================================================
@@ -473,10 +662,12 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
   // حفظ الصلاحيات
   // ============================================================
 
-  Future<void> savePermissions(
+    Future<void> savePermissions(
     Map<String, Map<String, bool>> permissions, {
     String? targetEmail,
     List<String>? allowedBranches,
+    List<String>? hrViewableEmployees,  // ⭐ جديد
+    bool clearHrViewableEmployees = false,  // ⭐ جديد
   }) async {
     final prefs =
         await SharedPreferences.getInstance();
@@ -534,6 +725,28 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
         notifyListeners();                             // ← NEW
       }
 
+            // ----------------------------------------------------------
+      // ⭐ جديد: حفظ الموظفين المرئيين في HR
+      // ----------------------------------------------------------
+
+      if (clearHrViewableEmployees) {
+        await box.delete('hr_viewable_employees_$email');
+
+        if (email == prefs.getString('user_email')) {
+          _hrViewableEmployees = null;
+        }
+      } else if (hrViewableEmployees != null) {
+        await box.put(
+          'hr_viewable_employees_$email',
+          hrViewableEmployees,
+        );
+
+        if (email == prefs.getString('user_email')) {
+          _hrViewableEmployees =
+              List<String>.from(hrViewableEmployees);
+        }
+      }
+
       // ----------------------------------------------------------
       // حفظ على السيرفر
       // ----------------------------------------------------------
@@ -541,8 +754,9 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
       await ApiService().updatePermissions(
         email,
         permissions,
-        allowedBranches:
-            allowedBranches,
+        allowedBranches: allowedBranches,
+        hrViewableEmployees: hrViewableEmployees,
+        clearHrViewableEmployees: clearHrViewableEmployees,
       );
 
       print(
@@ -739,6 +953,54 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
         'إظهار الإشعارات': false,
         'إظهار البحث عن المنتجات': false,
         'إظهار المستخدمين المتصلين': false,
+        'إظهار الموارد البشرية': false, 
+      },
+
+           // ========================================================
+      // الموارد البشرية (HR) — نظام جديد (21 صلاحية)
+      // ========================================================
+      'الموارد البشرية': {
+        // ─── A. فتح الصفحات (3) ───
+        'canOpenAttendancePage': false,
+        'canOpenVacationsPage': false,
+        'canOpenReportPage': false,
+
+        // ─── B. عمليات الحضور (3) ───
+        'canAddAttendance': false,
+        'canEditAttendance': false,
+        'canDeleteAttendance': false,
+
+        // ─── C. عمليات الإجازات (3) ───
+        'canAddVacation': false,
+        'canEditVacation': false,
+        'canDeleteVacation': false,
+
+        // ─── D. التسويات (5) ───
+        'canViewAdjustments': false,
+        'canAddBonus': false,
+        'canAddLoan': false,
+        'canEditAdjustment': false,
+        'canDeleteAdjustment': false,
+
+        // ─── E. الإعدادات (3) ───
+        'canEditWeeklyDay': false,
+        'canEditWorkSchedule': false,
+        'canEditDelayRules': false,
+
+                // ─── F. الخصم والراتب (3) ───
+        'canAddDirectDiscount': false,
+        'canViewSalaryAmounts': false,
+        'canExportReport': false,
+
+                // ─── G. إدارة الموظفين (2) ───
+        'canViewEmployees': false,
+        'canManageEmployees': false,
+
+               // ─── H. الموظف يشوف بياناته (1) ───
+        'canViewOwnHRData': false,
+
+        // ─── I. التقارير المجمعة (1) ⭐ جديد ───
+        'canViewBranchSalaryReport': false,
       },
     };
 
@@ -1139,4 +1401,204 @@ bool get canViewExtendedReport => hasPermission('التقارير', 'التقر�
     // الافتراضي = true لو المفتاح غير موجود (للمستخدمين القدامى)
     return _permissions?['صلاحيات عامة']?['إظهار المستخدمين المتصلين'] ?? true;
   }
+
+    // ============================================================
+  // الموارد البشرية (HR) — نظام جديد (21 صلاحية + فلترة)
+  // ============================================================
+
+  /// هل يظهر قسم HR في القائمة الرئيسية؟
+  bool get canShowHR =>
+      _permissions?['صلاحيات عامة']?['إظهار الموارد البشرية'] ?? false;
+
+  // ─────────────────────────────────────────────────────────
+  // A. فتح الصفحات (3)
+  // ─────────────────────────────────────────────────────────
+
+  bool get canOpenAttendancePage =>
+      _permissions?['الموارد البشرية']?['canOpenAttendancePage'] ?? false;
+
+  bool get canOpenVacationsPage =>
+      _permissions?['الموارد البشرية']?['canOpenVacationsPage'] ?? false;
+
+  bool get canOpenReportPage =>
+      _permissions?['الموارد البشرية']?['canOpenReportPage'] ?? false;
+
+  // ─────────────────────────────────────────────────────────
+  // B. عمليات الحضور (3)
+  // ─────────────────────────────────────────────────────────
+
+  bool get canAddAttendance =>
+      _permissions?['الموارد البشرية']?['canAddAttendance'] ?? false;
+
+  bool get canEditAttendance =>
+      _permissions?['الموارد البشرية']?['canEditAttendance'] ?? false;
+
+  bool get canDeleteAttendance =>
+      _permissions?['الموارد البشرية']?['canDeleteAttendance'] ?? false;
+
+  // ─────────────────────────────────────────────────────────
+  // C. عمليات الإجازات (3)
+  // ─────────────────────────────────────────────────────────
+
+  bool get canAddVacation =>
+      _permissions?['الموارد البشرية']?['canAddVacation'] ?? false;
+
+  bool get canEditVacation =>
+      _permissions?['الموارد البشرية']?['canEditVacation'] ?? false;
+
+  bool get canDeleteVacation =>
+      _permissions?['الموارد البشرية']?['canDeleteVacation'] ?? false;
+
+  // ─────────────────────────────────────────────────────────
+  // D. التسويات (5)
+  // ─────────────────────────────────────────────────────────
+
+  bool get canViewAdjustments =>
+      _permissions?['الموارد البشرية']?['canViewAdjustments'] ?? false;
+
+  bool get canAddBonus =>
+      _permissions?['الموارد البشرية']?['canAddBonus'] ?? false;
+
+  bool get canAddLoan =>
+      _permissions?['الموارد البشرية']?['canAddLoan'] ?? false;
+
+  bool get canEditAdjustment =>
+      _permissions?['الموارد البشرية']?['canEditAdjustment'] ?? false;
+
+  bool get canDeleteAdjustment =>
+      _permissions?['الموارد البشرية']?['canDeleteAdjustment'] ?? false;
+
+  // ─────────────────────────────────────────────────────────
+  // E. الإعدادات (3)
+  // ─────────────────────────────────────────────────────────
+
+  bool get canEditWeeklyDay =>
+      _permissions?['الموارد البشرية']?['canEditWeeklyDay'] ?? false;
+
+  bool get canEditWorkSchedule =>
+      _permissions?['الموارد البشرية']?['canEditWorkSchedule'] ?? false;
+
+  bool get canEditDelayRules =>
+      _permissions?['الموارد البشرية']?['canEditDelayRules'] ?? false;
+
+  // ─────────────────────────────────────────────────────────
+  // F. الخصم والراتب (3)
+  // ─────────────────────────────────────────────────────────
+
+  bool get canAddDirectDiscount =>
+      _permissions?['الموارد البشرية']?['canAddDirectDiscount'] ?? false;
+
+  bool get canViewSalaryAmounts =>
+      _permissions?['الموارد البشرية']?['canViewSalaryAmounts'] ?? false;
+
+    bool get canExportReport =>
+      _permissions?['الموارد البشرية']?['canExportReport'] ?? false;
+
+    // ─────────────────────────────────────────────────────────
+  // G. إدارة الموظفين (2)
+  // ─────────────────────────────────────────────────────────
+
+  /// عرض قائمة الموظفين والبروفايل (read-only)
+  bool get canViewEmployees =>
+      _permissions?['الموارد البشرية']?['canViewEmployees'] ?? false;
+
+  /// إدارة الموظفين (إضافة/تعديل/حذف)
+  bool get canManageEmployees =>
+      _permissions?['الموارد البشرية']?['canManageEmployees'] ?? false;
+
+  // ─────────────────────────────────────────────────────────
+  // H. الموظف يشوف بياناته (1) ⭐ جديد
+  // ─────────────────────────────────────────────────────────
+
+  /// الموظف يشوف بياناته هو فقط (بروفايل + راتب + حضور + إجازات + سلف)
+  /// - يشتغل فقط لو مربوط بحساب Firebase (user_email)
+  /// - بيسمح له بالوصول حتى لو canViewSalaryAmounts / canViewEmployees = false
+  bool get canViewOwnHRData =>
+      _permissions?['الموارد البشرية']?['canViewOwnHRData'] ?? false;
+
+    /// ⭐ عرض تقرير إجمالي الرواتب لكل فرع
+  bool get canViewBranchSalaryReport =>
+      _permissions?['الموارد البشرية']?['canViewBranchSalaryReport'] ??
+      false;
+    /// كود الموظف المرتبط بالحساب الحالي (null لو مش مربوط)
+  ///
+  /// ⭐ fallback: لو لسه ما اتحسبش، بيحاول يحسبه دلوقتي
+  String? get currentEmployeeCode {
+    if (_currentEmployeeCode == null) {
+      _tryComputeCurrentEmployeeCode();
+    }
+    return _currentEmployeeCode;
+  }
+
+  /// هل الموظف ده هو المستخدم الحالي؟
+  ///
+  /// ⭐ fallback: لو _currentEmployeeCode لسه null، بيحاول يحسبه
+  /// ⭐ trim للمقارنة (يمنع مشاكل المسافات)
+  bool isCurrentEmployee(String employeeCode) {
+    if (_currentEmployeeCode == null) {
+      _tryComputeCurrentEmployeeCode();
+    }
+
+    if (_currentEmployeeCode == null) return false;
+
+    return _normalizeCode(_currentEmployeeCode!) ==
+        _normalizeCode(employeeCode);
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // I. فلترة الموظفين
+  // ─────────────────────────────────────────────────────────
+
+  /// قائمة الموظفين المرئيين (null = الكل في الفروع المسموحة)
+  List<String>? get hrViewableEmployees => _hrViewableEmployees;
+
+  /// هل يمكن رؤية موظف معين؟
+  ///
+  /// الأولويات:
+  /// 1) ⭐ لو الموظف هو نفسه + canViewOwnHRData = true → نعم (دائماً)
+  /// 2) لو canViewEmployees = false → لا (إلا لو هو نفسه من البند 1)
+  /// 3) تحقق من الفرع المسموح
+  /// 4) تحقق من قائمة الموظفين المحددة
+  bool canViewEmployee(String employeeCode, String? branchCode) {
+    // 1) الموظف نفسه + canViewOwnHRData
+    if (canViewOwnHRData && isCurrentEmployee(employeeCode)) {
+      return true;
+    }
+
+    // 2) canViewEmployees = false → لا يشوف حد تاني
+    if (!canViewEmployees) {
+      return false;
+    }
+
+    // 3) تحقق من الفرع
+    if (branchCode != null && !canAccessBranch(branchCode)) {
+      return false;
+    }
+
+    // 4) تحقق من قائمة الموظفين المحددة
+    final viewable = _hrViewableEmployees;
+    if (viewable != null && viewable.isNotEmpty) {
+      return viewable.contains(employeeCode);
+    }
+
+    return true;
+  }
+
+  /// ⭐ هل يمكن رؤية الراتب/المبالغ المالية لهذا الموظف؟
+  ///
+  /// المنطق:
+  /// 1) لو الموظف هو نفسه + canViewOwnHRData = true → نعم (دائماً)
+  /// 2) غير كده → يعتمد على canViewSalaryAmounts
+  bool canSeeEmployeeSalary(String employeeCode) {
+    // الموظف نفسه + canViewOwnHRData
+    if (canViewOwnHRData && isCurrentEmployee(employeeCode)) {
+      return true;
+    }
+
+    // otherwise — الصلاحية العامة
+    return canViewSalaryAmounts;
+  }
+
+
+
 }

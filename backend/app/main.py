@@ -3,6 +3,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routes import auth, transactions, coding, inventory, supplier, supplier_settlement
 from app.routes import sync, notifications, product_lookup
+from app.routes import employees
+from app.routes import hr  # ← NEW (ملف واحد لكل HR)
 from app.core.auth_middleware import authenticate_http_request
 from app.core.database import create_tables, AsyncSessionLocal
 from app.core.models import Company
@@ -47,6 +49,7 @@ async def startup():
 app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 app.include_router(transactions.router, prefix="/transactions", tags=["Transactions"])
 app.include_router(coding.router, prefix="/coding", tags=["Coding"])
+app.include_router(employees.router, prefix="/employees", tags=["Employees"])
 app.include_router(inventory.router, prefix="/inventory", tags=["Inventory"])
 app.include_router(supplier.router, prefix="/supplier", tags=["Supplier"])
 app.include_router(sync.router, prefix="/sync", tags=["Sync"])
@@ -58,6 +61,9 @@ app.include_router(
     tags=["Supplier Settlement"],
 )
 
+# ✅ HR Routes
+# ✅ HR Routes (موحدة)
+app.include_router(hr.router, prefix="/hr", tags=["HR"])
 @app.get("/")
 async def root():
     return {

@@ -456,7 +456,7 @@ void _handleMessage(dynamic message) {
         );
         break;
 
-      // ======================================================
+            // ======================================================
       // التسويات
       // ======================================================
 
@@ -468,7 +468,61 @@ void _handleMessage(dynamic message) {
           ),
         );
         break;
+            // ======================================================
+      // حضور HR
+      // ======================================================
 
+      case 'hr_attendance':
+        _updateHRAttendanceBox(
+          payload,
+          isDelete ? 'delete' : action,
+        );
+        break;
+
+      // ======================================================
+      // إجازات HR
+      // ======================================================
+
+      case 'hr_vacation':
+        _updateHRVacationBox(
+          payload,
+          isDelete ? 'delete' : action,
+        );
+        break;
+
+            // ======================================================
+      // تسويات HR
+      // ======================================================
+
+      case 'hr_adjustment':
+        _updateHRAdjustmentBox(
+          payload,
+          isDelete ? 'delete' : action,
+        );
+        break;
+
+      // ======================================================
+      // إعدادات الموظف في HR (جديد — كان ناقص)
+      // ======================================================
+
+      case 'hr_employee_settings':
+        _updateHREmployeeSettingsBox(
+          payload,
+          isDelete ? 'delete' : action,
+        );
+        break;
+
+      // ======================================================
+      // الموظفين
+      // ======================================================
+
+      case 'employee':
+        _updateEmployeeBox(
+          payload,
+          isDelete ? 'delete' : action,
+        );
+        break;
+      
       default:
         print("⚠️ نوع غير معروف: $type");
     }
@@ -1198,4 +1252,282 @@ void _scheduleDailySummaryRefresh({
       "✅ تم تحديث التسوية [$docId] في Hive",
     );
   }
+
+    // ============================================================
+  // 11. تحديث الموظفين
+  //
+  // الموظفين بيخزنوا في نفس coding_box بمفتاح
+  // "${companyCode}_employees"
+  // ============================================================
+
+  void _updateEmployeeBox(
+    Map<String, dynamic> payload,
+    String action,
+  ) {
+    final dynamic companyCode = payload['company_code'];
+    final dynamic code = payload['code'];
+
+    if (companyCode == null || code == null) {
+      print("⚠️ بيانات موظف ناقصة");
+      return;
+    }
+
+    final String key = "${companyCode}_employees";
+
+    List<Map<String, dynamic>> list = [];
+
+    if (_codingBox.containsKey(key)) {
+      final raw = _codingBox.get(key);
+
+      if (raw is List) {
+        list = raw
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .where((e) => e['is_deleted'] != true)
+            .toList();
+      }
+    }
+
+    // إزالة النسخة القديمة
+    list.removeWhere(
+      (item) => item['code']?.toString() == code.toString(),
+    );
+
+    // DELETE
+    if (action == 'delete') {
+      if (list.isEmpty) {
+        unawaited(_codingBox.delete(key));
+      } else {
+        unawaited(_codingBox.put(key, list));
+      }
+
+      print("🗑️ تم حذف الموظف [$code] من Hive");
+      return;
+    }
+
+    // INSERT / UPDATE
+    payload['is_deleted'] = false;
+    list.add(payload);
+
+    list.sort((a, b) {
+      final int aCode = int.tryParse(a['code']?.toString() ?? '0') ?? 0;
+      final int bCode = int.tryParse(b['code']?.toString() ?? '0') ?? 0;
+      return aCode.compareTo(bCode);
+    });
+
+    unawaited(_codingBox.put(key, list));
+
+    print("✅ تم تحديث الموظف [$code]");
+  }
+    // ============================================================
+  // 11. تحديث حضور HR
+  // ============================================================
+
+  void _updateHRAttendanceBox(
+    Map<String, dynamic> payload,
+    String action,
+  ) {
+    final dynamic companyCode = payload['company_code'];
+    final dynamic empCode = payload['employee_code'];
+    final dynamic date = payload['date'];
+
+    if (companyCode == null || empCode == null || date == null) {
+      print("⚠️ بيانات حضور HR ناقصة");
+      return;
+    }
+
+    final String key = "${companyCode}_hr_attendance";
+
+    List<Map<String, dynamic>> list = [];
+
+    if (_codingBox.containsKey(key)) {
+      final raw = _codingBox.get(key);
+      if (raw is List) {
+        list = raw
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .where((e) => e['is_deleted'] != true)
+            .toList();
+      }
+    }
+
+    list.removeWhere((e) =>
+        e['employee_code']?.toString() == empCode.toString() &&
+        e['date']?.toString() == date.toString());
+
+    if (action == 'delete') {
+      if (list.isEmpty) {
+        unawaited(_codingBox.delete(key));
+      } else {
+        unawaited(_codingBox.put(key, list));
+      }
+      print("🗑️ حذف حضور HR [$empCode/$date]");
+      return;
+    }
+
+    payload['is_deleted'] = false;
+    list.add(payload);
+
+    unawaited(_codingBox.put(key, list));
+    print("✅ تحديث حضور HR [$empCode/$date]");
+  }
+
+  // ============================================================
+  // 12. تحديث إجازات HR
+  // ============================================================
+
+  void _updateHRVacationBox(
+    Map<String, dynamic> payload,
+    String action,
+  ) {
+    final dynamic companyCode = payload['company_code'];
+    final dynamic id = payload['id'];
+
+    if (companyCode == null || id == null) {
+      print("⚠️ بيانات إجازة HR ناقصة");
+      return;
+    }
+
+    final String key = "${companyCode}_hr_vacations";
+
+    List<Map<String, dynamic>> list = [];
+
+    if (_codingBox.containsKey(key)) {
+      final raw = _codingBox.get(key);
+      if (raw is List) {
+        list = raw
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .where((e) => e['is_deleted'] != true)
+            .toList();
+      }
+    }
+
+    list.removeWhere((e) => e['id']?.toString() == id.toString());
+
+    if (action == 'delete') {
+      if (list.isEmpty) {
+        unawaited(_codingBox.delete(key));
+      } else {
+        unawaited(_codingBox.put(key, list));
+      }
+      print("🗑️ حذف إجازة HR [$id]");
+      return;
+    }
+
+    payload['is_deleted'] = false;
+    list.add(payload);
+
+    unawaited(_codingBox.put(key, list));
+    print("✅ تحديث إجازة HR [$id]");
+  }
+
+  // ============================================================
+  // 13. تحديث تسويات HR
+  // ============================================================
+
+  void _updateHRAdjustmentBox(
+    Map<String, dynamic> payload,
+    String action,
+  ) {
+    final dynamic companyCode = payload['company_code'];
+    final dynamic id = payload['id'];
+
+    if (companyCode == null || id == null) {
+      print("⚠️ بيانات تسوية HR ناقصة");
+      return;
+    }
+
+    final String key = "${companyCode}_hr_adjustments";
+
+    List<Map<String, dynamic>> list = [];
+
+    if (_codingBox.containsKey(key)) {
+      final raw = _codingBox.get(key);
+      if (raw is List) {
+        list = raw
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .where((e) => e['is_deleted'] != true)
+            .toList();
+      }
+    }
+
+    list.removeWhere((e) => e['id']?.toString() == id.toString());
+
+    if (action == 'delete') {
+      if (list.isEmpty) {
+        unawaited(_codingBox.delete(key));
+      } else {
+        unawaited(_codingBox.put(key, list));
+      }
+      print("🗑️ حذف تسوية HR [$id]");
+      return;
+    }
+
+    payload['is_deleted'] = false;
+    list.add(payload);
+
+    unawaited(_codingBox.put(key, list));
+    print("✅ تحديث تسوية HR [$id]");
+  }
+  
+  // ============================================================
+  // 14. تحديث إعدادات HR (جديد)
+  //
+  // ⚠️ HREmployeeSettings مفيش is_deleted
+  // (الإعدادات بتتعدل، مش بتتحذف)
+  // ============================================================
+
+  void _updateHREmployeeSettingsBox(
+    Map<String, dynamic> payload,
+    String action,
+  ) {
+    final dynamic companyCode = payload['company_code'];
+    final dynamic empCode = payload['employee_code'];
+
+    if (companyCode == null || empCode == null) {
+      print("⚠️ بيانات إعدادات HR ناقصة");
+      return;
+    }
+
+    final String key = "${companyCode}_hr_employee_settings";
+
+    List<Map<String, dynamic>> list = [];
+
+    if (_codingBox.containsKey(key)) {
+      final raw = _codingBox.get(key);
+      if (raw is List) {
+        list = raw
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      }
+    }
+
+    // إزالة النسخة القديمة (سجل واحد لكل موظف)
+    list.removeWhere(
+      (e) => e['employee_code']?.toString() == empCode.toString(),
+    );
+
+    // delete (نادرًا ما يحصل — للإكمال فقط)
+    if (action == 'delete') {
+      if (list.isEmpty) {
+        unawaited(_codingBox.delete(key));
+      } else {
+        unawaited(_codingBox.put(key, list));
+      }
+      print("🗑️ حذف إعدادات HR [$empCode]");
+      return;
+    }
+
+    // insert / update
+    payload.remove('action');
+    list.add(payload);
+
+    unawaited(_codingBox.put(key, list));
+
+    print("✅ تحديث إعدادات HR [$empCode]");
+  }
+  
 }

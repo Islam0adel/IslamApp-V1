@@ -23,6 +23,7 @@ import 'product_lookup_page.dart';
 import '../../services/notifications_service.dart';
 import '../../services/presence_service.dart';
 import '../../views/widgets/online_users_list.dart';
+import '../../pages/hr/hr_dashboard_page.dart';   // ← NEW
 
 class HomePage extends StatefulWidget {
   final String userName;
@@ -696,7 +697,7 @@ class _HomePageState extends State<HomePage>
     );
   }
 
-  Widget _buildHeader() {
+    Widget _buildHeader() {
     return GlassCard(
       child: Row(
         children: [
@@ -706,8 +707,23 @@ class _HomePageState extends State<HomePage>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(widget.companyName, style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 16, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
-                Text("مرحبا: ${widget.userName}", style: TextStyle(color: AppTheme.textMutedFor(context), fontSize: 12, fontFamily: 'Cairo')),
+                Text(
+                  widget.companyName,
+                  style: TextStyle(
+                    color: AppTheme.textMainFor(context),
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    fontFamily: 'Cairo',
+                  ),
+                ),
+                Text(
+                  "مرحبا: ${widget.userName}",
+                  style: TextStyle(
+                    color: AppTheme.textMutedFor(context),
+                    fontSize: 12,
+                    fontFamily: 'Cairo',
+                  ),
+                ),
               ],
             ),
           ),
@@ -715,13 +731,18 @@ class _HomePageState extends State<HomePage>
             ValueListenableBuilder<Box>(
               valueListenable: Hive.box('notifications_box').listenable(),
               builder: (context, box, _) {
-                final unread = NotificationsService.instance.unreadCount(companyCode: widget.companyCode);
+                final unread = NotificationsService.instance
+                    .unreadCount(companyCode: widget.companyCode);
                 return Stack(
                   clipBehavior: Clip.none,
                   children: [
                     IconButton(
                       tooltip: 'الإشعارات',
-                      icon: Icon(Icons.notifications_none_rounded, color: AppTheme.textMainFor(context), size: 26),
+                      icon: Icon(
+                        Icons.notifications_none_rounded,
+                        color: AppTheme.textMainFor(context),
+                        size: 26,
+                      ),
                       onPressed: _showNotificationsPreview,
                     ),
                     if (unread > 0)
@@ -730,31 +751,64 @@ class _HomePageState extends State<HomePage>
                         right: 2,
                         child: Container(
                           padding: const EdgeInsets.all(4),
-                          constraints: const BoxConstraints(minWidth: 17, minHeight: 17),
-                          decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
-                          child: Text(unread > 99 ? '99+' : '$unread', textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+                          constraints: const BoxConstraints(
+                            minWidth: 17,
+                            minHeight: 17,
+                          ),
+                          decoration: const BoxDecoration(
+                            color: Colors.red,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Text(
+                            unread > 99 ? '99+' : '$unread',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                         ),
                       ),
                   ],
                 );
               },
             ),
-          if (!_isLoadingBranches && PermissionsService().canChangeBranch && !PermissionsService().hasSingleBranch())
+          if (!_isLoadingBranches &&
+              PermissionsService().canChangeBranch &&
+              !PermissionsService().hasSingleBranch())
             InkWell(
               onTap: _showBranchSelectionDialog,
               borderRadius: BorderRadius.circular(8),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: GlassStyle.warningFill15For(context),
-                  border: Border.all(color: GlassStyle.warningBorder50For(context)),
+                  border: Border.all(
+                    color: GlassStyle.warningBorder50For(context),
+                  ),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.swap_horiz, color: AppTheme.warningFor(context), size: 16),
+                    Icon(
+                      Icons.swap_horiz,
+                      color: AppTheme.warningFor(context),
+                      size: 16,
+                    ),
                     const SizedBox(width: 4),
-                    Text("تغيير الفرع", style: TextStyle(color: AppTheme.warningFor(context), fontSize: 11, fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
+                    Text(
+                      "تغيير الفرع",
+                      style: TextStyle(
+                        color: AppTheme.warningFor(context),
+                        fontSize: 11,
+                        fontFamily: 'Cairo',
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -763,6 +817,7 @@ class _HomePageState extends State<HomePage>
       ),
     );
   }
+
 
   Widget _buildSmallInfo(String label, String value, IconData icon, Color color) {
     return Container(
@@ -777,43 +832,82 @@ class _HomePageState extends State<HomePage>
         children: [
           Icon(icon, color: color, size: 16),
           const SizedBox(width: 6),
-          Text("$label: ", style: TextStyle(color: AppTheme.textSoftFor(context), fontSize: 11, fontFamily: 'Cairo')),
-          Text(value, style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 12, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+          Text(
+            "$label: ",
+            style: TextStyle(
+              color: AppTheme.textSoftFor(context),
+              fontSize: 11,
+              fontFamily: 'Cairo',
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              color: AppTheme.textMainFor(context),
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              fontFamily: 'Cairo',
+            ),
+          ),
         ],
       ),
     );
   }
+
+
+      // ⭐ هل فيه أي صلاحية داخل HR؟ (لعرض HR في القائمة)
+  bool _hasAnyHrPage() {
+    final ps = PermissionsService();
+    return ps.canViewEmployees ||
+        ps.canViewOwnHRData ||        // ⭐ جديد
+        ps.canOpenAttendancePage ||
+        ps.canOpenVacationsPage ||
+        ps.canOpenReportPage;
+  }
+
 
   Widget _buildMenuGrid() {
     List<Widget> menuItems = [];
 
     if (_permissionsLoaded && PermissionsService().canShowTreasury) {
       menuItems.add(
-        _menuItem("حركة الخزينة", Icons.account_balance_wallet_rounded, AppTheme.successFor(context), () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (c) => DailyPage(
-                companyCode: widget.companyCode,
-                selectedBranchCode: _selectedBranchCode,
-                userName: widget.userName,
+        _menuItem(
+          "حركة الخزينة",
+          Icons.account_balance_wallet_rounded,
+          AppTheme.successFor(context),
+          () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (c) => DailyPage(
+                  companyCode: widget.companyCode,
+                  selectedBranchCode: _selectedBranchCode,
+                  userName: widget.userName,
+                ),
               ),
-            ),
-          );
-        }),
+            );
+          },
+        ),
       );
     }
 
     if (_permissionsLoaded && PermissionsService().canShowCoding) {
       menuItems.add(
-        _menuItem("التكويد", Icons.code_rounded, AppTheme.warningFor(context), () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (c) => CodingPage(companyCode: widget.companyCode)),
-          ).then((_) {
-            _loadBranchesAndCheck(showDialog: false);
-          });
-        }),
+        _menuItem(
+          "التكويد",
+          Icons.code_rounded,
+          AppTheme.warningFor(context),
+          () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (c) => CodingPage(companyCode: widget.companyCode),
+              ),
+            ).then((_) {
+              _loadBranchesAndCheck(showDialog: false);
+            });
+          },
+        ),
       );
     }
 
@@ -841,79 +935,146 @@ class _HomePageState extends State<HomePage>
 
     if (_permissionsLoaded && PermissionsService().canShowInventory) {
       menuItems.add(
-        _menuItem("حركة الجرد", Icons.inventory_2_rounded, AppTheme.warningOrangeSoftFor(context), () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (c) => InventoryPage(
-                companyCode: widget.companyCode,
-                selectedBranchCode: _selectedBranchCode,
+        _menuItem(
+          "حركة الجرد",
+          Icons.inventory_2_rounded,
+          AppTheme.warningOrangeSoftFor(context),
+          () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (c) => InventoryPage(
+                  companyCode: widget.companyCode,
+                  selectedBranchCode: _selectedBranchCode,
+                ),
               ),
-            ),
-          );
-        }),
+            );
+          },
+        ),
       );
     }
 
     if (_permissionsLoaded && PermissionsService().canShowInventory) {
       menuItems.add(
-        _menuItem("رصيد المخزون", Icons.storage_rounded, AppTheme.extraTealFor(context), () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (c) => StockBalancePage(
-                companyCode: widget.companyCode,
-                selectedBranchCode: _selectedBranchCode,
+        _menuItem(
+          "رصيد المخزون",
+          Icons.storage_rounded,
+          AppTheme.extraTealFor(context),
+          () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (c) => StockBalancePage(
+                  companyCode: widget.companyCode,
+                  selectedBranchCode: _selectedBranchCode,
+                ),
               ),
-            ),
-          );
-        }),
+            );
+          },
+        ),
       );
     }
 
     if (_permissionsLoaded && PermissionsService().canShowReports) {
       menuItems.add(
-        _menuItem("التقارير", Icons.analytics_rounded, AppTheme.extraPurpleFor(context), () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (c) => ReportsDashboardPage(
-                companyCode: widget.companyCode,
-                selectedBranchCode: _selectedBranchCode,
+        _menuItem(
+          "التقارير",
+          Icons.analytics_rounded,
+          AppTheme.extraPurpleFor(context),
+          () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (c) => ReportsDashboardPage(
+                  companyCode: widget.companyCode,
+                  selectedBranchCode: _selectedBranchCode,
+                ),
               ),
-            ),
-          );
-        }),
+            );
+          },
+        ),
       );
     }
 
     if (_permissionsLoaded && PermissionsService().canShowProductLookup) {
       menuItems.add(
-        _menuItem("البحث عن المنتجات", Icons.qr_code_scanner_rounded, AppTheme.extraTealFor(context), () {
-          Navigator.push(context, MaterialPageRoute(builder: (c) => const ProductLookupPage()));
-        }),
+        _menuItem(
+          "البحث عن المنتجات",
+          Icons.qr_code_scanner_rounded,
+          AppTheme.extraTealFor(context),
+          () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (c) => const ProductLookupPage()),
+            );
+          },
+        ),
+      );
+    }
+
+    // الموارد البشرية
+    if (_permissionsLoaded &&
+        PermissionsService().canShowHR &&
+        _hasAnyHrPage()) {
+      menuItems.add(
+        _menuItem(
+          "الموارد البشرية",
+          Icons.badge_rounded,
+          AppTheme.extraBlueGreyFor(context),
+          () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (c) => const HRDashboardPage(),
+              ),
+            );
+          },
+        ),
       );
     }
 
     if (_permissionsLoaded && PermissionsService().canShowNotifications) {
       menuItems.add(
-        _menuItem("الإشعارات", Icons.notifications_active_rounded, AppTheme.infoSoftFor(context), () {
-          Navigator.push(context, MaterialPageRoute(builder: (c) => NotificationsPage(companyCode: widget.companyCode)));
-        }),
+        _menuItem(
+          "الإشعارات",
+          Icons.notifications_active_rounded,
+          AppTheme.infoSoftFor(context),
+          () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (c) =>
+                    NotificationsPage(companyCode: widget.companyCode),
+              ),
+            );
+          },
+        ),
       );
     }
 
     menuItems.add(
-      _menuItem("الاعدادات", Icons.settings_rounded, AppTheme.extraBlueGreyFor(context), () async {
-        await Navigator.push(context, MaterialPageRoute(builder: (c) => const SettingsPage()));
-      }),
+      _menuItem(
+        "الاعدادات",
+        Icons.settings_rounded,
+        AppTheme.extraBlueGreyFor(context),
+        () async {
+          await Navigator.push(
+            context,
+            MaterialPageRoute(builder: (c) => const SettingsPage()),
+          );
+        },
+      ),
     );
 
     if (menuItems.isEmpty) {
       return Center(
         child: Text(
           "لا توجد صلاحيات متاحة لك",
-          style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo', fontSize: 14),
+          style: TextStyle(
+            color: AppTheme.textSoftFor(context),
+            fontFamily: 'Cairo',
+            fontSize: 14,
+          ),
         ),
       );
     }

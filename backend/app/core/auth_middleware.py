@@ -23,7 +23,7 @@ _PUBLIC_PATHS = {
 }
 _COMPANY_PATH_PREFIXES = (
     "/transactions/", "/coding/", "/inventory/", "/supplier/",
-    "/supplier-settlement/", "/sync/",
+    "/supplier-settlement/", "/sync/","/employees/","/hr/",
 )
 
 
@@ -154,7 +154,7 @@ async def authenticate_http_request(request: Request, call_next):
 
         # المسارات التي تحمل كود الشركة في عنوان URL.
         parts = [part for part in request.url.path.split("/") if part]
-        if parts and parts[0] in {"transactions", "coding", "inventory", "supplier", "supplier-settlement", "sync"}:
+        if parts and parts[0] in {"transactions", "coding", "inventory", "supplier", "supplier-settlement", "sync","employees","hr"}:
             for marker in ("list", "changes", "updates", "last_serial", "summary", "ws", "delete"):
                 if marker in parts:
                     idx = parts.index(marker) + 1
