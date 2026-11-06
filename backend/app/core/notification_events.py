@@ -16,7 +16,14 @@ _SECTION_MAP = {
     "settlement": ("settlements", "التسويات"),
     "coding": ("coding", "التكويد"),
     "inventory": ("inventory", "الجرد"),
+    # ✅ HR — جديد
+    "hr_attendance": ("hr_attendance", "حضور الموارد البشرية"),
+    "hr_vacation": ("hr_vacations", "إجازات الموارد البشرية"),
+    "hr_adjustment": ("hr_adjustments", "تسويات الموارد البشرية"),
+    "hr_employee_settings": ("hr_employees", "إعدادات الموظفين"),
+    "employee": ("hr_employees", "بيانات الموظفين"),
 }
+
 _ACTION_NAMES = {"add": "إضافة", "edit": "تعديل", "delete": "حذف"}
 _RECIPIENT_CACHE: Dict[str, tuple[float, list[dict]]] = {}
 _RECIPIENT_CACHE_SECONDS = 20
@@ -59,6 +66,15 @@ def _branch_allowed(profile: Dict[str, Any], branch_code: str) -> bool:
     return "all" in [str(value).lower() for value in allowed] or branch_code in [str(value) for value in allowed]
 
 
+# ✅ HR: خرائط الصلاحيات
+_HR_SECTION_KEYS = {
+    "hr_attendance": ("canOpenAttendancePage",),
+    "hr_vacations": ("canOpenVacationsPage",),
+    "hr_adjustments": ("canViewAdjustments",),
+    "hr_employees": ("canViewEmployees", "canViewOwnHRData"),
+}
+
+
 def _can_view_section(profile: Dict[str, Any], section: str) -> bool:
     permissions = profile.get("permissions")
     if not isinstance(permissions, dict) or not permissions:
@@ -66,6 +82,18 @@ def _can_view_section(profile: Dict[str, Any], section: str) -> bool:
     job_code = str(profile.get("job_code", "1"))
     if job_code == "99":
         return True
+
+    # ============ HR sections ============
+    if section in _HR_SECTION_KEYS:
+        hr_perms = permissions.get("الموارد البشرية", {})
+        if not isinstance(hr_perms, dict):
+            return True
+        for key in _HR_SECTION_KEYS[section]:
+            if bool(hr_perms.get(key, False)):
+                return True
+        return False
+
+    # ============ Existing sections ============
     category, key, fallback_keys = {
         "daily": ("حركة الخزينة", "المعاينة", ("ادخال اذون", "إظهار حركة الخزينة")),
         "purchases": ("حركة الموردين", "المعاينة", ("معاينة", "إظهار حركة الموردين")),
@@ -98,7 +126,19 @@ def _preference_enabled(pref: Optional[NotificationPreference], section: str, ac
 
 def _summary(data: Dict[str, Any]) -> str:
     parts = []
-    for key, label in (("name", "الاسم"), ("supplier_name", "المورد"), ("statement", "البيان"), ("category", "التصنيف"), ("serial", "رقم الحركة"), ("code", "الكود"), ("store_code", "المخزن")):
+    # ✅ إضافة حقول HR
+    for key, label in (
+        ("name", "الاسم"),
+        ("employee_code", "الموظف"),
+        ("supplier_name", "المورد"),
+        ("statement", "البيان"),
+        ("category", "التصنيف"),
+        ("serial", "رقم الحركة"),
+        ("code", "الكود"),
+        ("store_code", "المخزن"),
+        ("date", "التاريخ"),
+        ("month", "الشهر"),
+    ):
         value = data.get(key)
         if value is not None and str(value).strip():
             parts.append(f"{label}: {value}")
@@ -141,7 +181,7 @@ async def prepare_and_persist_event(company_code: str, message: dict) -> dict:
                 event_id=event_id, company_code=str(company_code), branch_code=branch_code,
                 actor_uid=actor_uid, actor_email=actor_email, actor_name=actor_name,
                 section=section, action=action, entity_id=entity_id,
-                details={key: payload.get(key) for key in ("serial", "code", "name", "supplier_name", "category", "amount", "is_deleted") if payload.get(key) is not None},
+                details={key: payload.get(key) for key in ("serial", "code", "name", "supplier_name", "category", "amount", "is_deleted", "employee_code", "date", "month") if payload.get(key) is not None},
                 created_at=now,
             ))
 

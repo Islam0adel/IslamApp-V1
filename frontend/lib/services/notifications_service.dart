@@ -19,12 +19,18 @@ class NotificationsService {
   Box get _box => Hive.box(_boxName);
   Box get _settings => Hive.box(_settingsBoxName);
 
-  static const Map<String, String> _sections = {
+    static const Map<String, String> _sections = {
     'transaction': 'daily',
     'supplier': 'purchases',
     'settlement': 'settlements',
     'coding': 'coding',
     'inventory': 'inventory',
+    // ✅ HR
+    'hr_attendance': 'hr_attendance',
+    'hr_vacation': 'hr_vacations',
+    'hr_adjustment': 'hr_adjustments',
+    'hr_employee_settings': 'hr_employees',
+    'employee': 'hr_employees',
   };
 
   static const Map<String, String> _sectionNames = {
@@ -33,6 +39,11 @@ class NotificationsService {
     'settlements': 'التسويات',
     'coding': 'التكويد',
     'inventory': 'الجرد',
+    // ✅ HR
+    'hr_attendance': 'حضور الموارد البشرية',
+    'hr_vacations': 'إجازات الموارد البشرية',
+    'hr_adjustments': 'تسويات الموارد البشرية',
+    'hr_employees': 'بيانات الموظفين',
   };
 
   static const Map<String, String> _actionNames = {
@@ -86,8 +97,7 @@ class NotificationsService {
       final branchCode = (data['branch_code'] ?? '').toString();
       final allowedBranches = PermissionsService().allowedBranches;
       if (branchCode.isNotEmpty && allowedBranches != null && !allowedBranches.contains('all') && !allowedBranches.contains(branchCode)) return;
-      final canAccessSection = section == 'daily' ? PermissionsService().canShowTreasury : section == 'purchases' ? PermissionsService().canShowSuppliers : section == 'settlements' ? PermissionsService().canShowSupplierSettlements : section == 'coding' ? PermissionsService().canShowCoding : PermissionsService().canShowInventory;
-      if (!canAccessSection) return;
+      if (!_canAccessSection(section)) return;
 
       final eventId = (event['event_id'] ?? '').toString();
       final localKey = eventId.isNotEmpty ? eventId : '${companyCode}_${type}_${action}_${data['id'] ?? data['serial'] ?? data['code'] ?? ''}_${data['updated_at'] ?? data['date'] ?? ''}';
@@ -130,6 +140,34 @@ class NotificationsService {
     'category': 'التصنيف', 'serial': 'رقم الحركة', 'code': 'الكود',
     'branch_code': 'الفرع',
   }[key] ?? key;
+
+    // ⭐ Helper موحد لفحص صلاحية الوصول للقسم
+  bool _canAccessSection(String section) {
+    final ps = PermissionsService();
+    switch (section) {
+      case 'daily':
+        return ps.canShowTreasury;
+      case 'purchases':
+        return ps.canShowSuppliers;
+      case 'settlements':
+        return ps.canShowSupplierSettlements;
+      case 'coding':
+        return ps.canShowCoding;
+      case 'inventory':
+        return ps.canShowInventory;
+      // ✅ HR
+      case 'hr_attendance':
+        return ps.canOpenAttendancePage || ps.canAddAttendance;
+      case 'hr_vacations':
+        return ps.canOpenVacationsPage || ps.canAddVacation;
+      case 'hr_adjustments':
+        return ps.canViewAdjustments;
+      case 'hr_employees':
+        return ps.canViewEmployees || ps.canViewOwnHRData;
+      default:
+        return false;
+    }
+  }
 
   Future<void> refreshFromServer({String? companyCode}) {
     final company = companyCode ?? _companyCode;
@@ -278,19 +316,36 @@ class NotificationsService {
     }
   }
 
+    // ============================================================
+  // حفظ الإعدادات على السيرفر (Neon)
+  //
+  // ⭐ بتستخدم _sectionNames.keys تلقائيًا — فلو أضفت قسم جديد
+  //    في _sectionNames (زي HR)، هيتبعت للسيرفر تلقائي.
+  // ============================================================
+
   Future<void> _saveRemoteSettings() async {
     try {
-      final sections = {for (final key in _sectionNames.keys) key: sectionEnabled(key)};
-      final actions = {for (final key in const ['add', 'edit', 'delete']) key: eventEnabled(key)};
+      final sections = {
+        for (final key in _sectionNames.keys) key: sectionEnabled(key)
+      };
+      final actions = {
+        for (final key in const ['add', 'edit', 'delete'])
+          key: eventEnabled(key)
+      };
       await AuthHttp.put(
         Uri.parse('${ApiConstants.baseUrl}/notifications/settings'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'sections': sections, 'actions': actions, 'retention_days': retentionDays}),
+        body: jsonEncode({
+          'sections': sections,
+          'actions': actions,
+          'retention_days': retentionDays,
+        }),
       ).timeout(const Duration(seconds: 8));
     } catch (e) {
       print('⚠️ تعذر حفظ إعدادات الإشعارات في Neon: $e');
     }
   }
+
 
   List<Map<String, dynamic>> getNotifications({String? companyCode}) {
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
@@ -301,8 +356,7 @@ class NotificationsService {
       final branch = (item['branch_code'] ?? '').toString();
       final branchAllowed = branch.isEmpty || allowedBranches == null || allowedBranches.contains('all') || allowedBranches.contains(branch);
       final section = (item['section'] ?? '').toString();
-      final canAccess = section == 'daily' ? PermissionsService().canShowTreasury : section == 'purchases' ? PermissionsService().canShowSuppliers : section == 'settlements' ? PermissionsService().canShowSupplierSettlements : section == 'coding' ? PermissionsService().canShowCoding : PermissionsService().canShowInventory;
-      return sameUser && sameCompany && branchAllowed && canAccess;
+      return sameUser && sameCompany && branchAllowed && _canAccessSection(section);
     }).toList();
     items.sort((a, b) => (b['created_at'] ?? '').toString().compareTo((a['created_at'] ?? '').toString()));
     return items;
@@ -390,7 +444,7 @@ class NotificationsService {
   bool eventEnabled(String event) => _settings.get('event_$event', defaultValue: true) == true;
 
   Future<void> _resetAndLoadSettings() async {
-    for (final key in const ['daily', 'purchases', 'settlements', 'coding', 'inventory']) {
+    for (final key in _sectionNames.keys) {
       await _settings.delete('enabled_$key');
     }
     for (final key in const ['add', 'edit', 'delete']) {

@@ -900,7 +900,7 @@ class _HRReportPageState extends State<HRReportPage> {
                   _statChip('غائب', '${r.absentDays}',
                       AppTheme.dangerFor(context)),
                   _statChip('إجازة', '${r.vacationDays}',
-                      AppTheme.extraTealFor(context)),
+                      AppTheme.extraPurpleDeepFor(context)),
                   if (r.futureDays > 0)
                     _statChip('قادم', '${r.futureDays}',
                         AppTheme.textMutedFor(context)),
@@ -1210,7 +1210,7 @@ class _HRReportPageState extends State<HRReportPage> {
             children: [
               _legendItem(AppTheme.successFor(context), 'حاضر'),
               _legendItem(AppTheme.dangerFor(context), 'غائب'),
-              _legendItem(AppTheme.extraTealFor(context), 'إجازة'),
+              _legendItem(AppTheme.extraPurpleDeepFor(context), 'إجازة'),
               _legendItem(AppTheme.warningOrangeSoftFor(context), 'متأخر'),
               _legendItem(AppTheme.infoFor(context), 'إذن'),
             ],
@@ -1257,7 +1257,7 @@ class _HRReportPageState extends State<HRReportPage> {
       case 'absent':
         return AppTheme.dangerFor(context);
       case 'vacation':
-        return AppTheme.extraTealFor(context);
+        return AppTheme.extraPurpleDeepFor(context);
       case 'permission':
         return AppTheme.infoFor(context);
       case 'future':

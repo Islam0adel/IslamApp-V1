@@ -16,12 +16,17 @@ class NotificationSettingsPage extends StatefulWidget {
 class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
   final NotificationsService _service = NotificationsService.instance;
 
-  static const sections = <String, String>{
+    static const sections = <String, String>{
     'daily': 'اليوميات',
     'purchases': 'المشتريات والموردين',
     'settlements': 'التسويات',
     'coding': 'التكويد',
     'inventory': 'الجرد',
+    // ✅ HR
+    'hr_attendance': 'حضور الموارد البشرية',
+    'hr_vacations': 'إجازات الموارد البشرية',
+    'hr_adjustments': 'تسويات الموارد البشرية',
+    'hr_employees': 'بيانات الموظفين',
   };
 
   static const events = <String, String>{

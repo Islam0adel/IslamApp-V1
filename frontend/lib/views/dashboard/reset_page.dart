@@ -192,6 +192,18 @@ class _ResetPageState extends State<ResetPage> {
                           () => _resetService.resetSupplier(_companyCode),
                         ),
                       ),
+                      const SizedBox(height: 15),
+
+                      // ⭐ إعادة تعيين الموارد البشرية
+                      _buildResetButton(
+                        icon: Icons.badge_rounded,
+                        label: 'إعادة تعيين الموارد البشرية',
+                        color: AppTheme.accentAltFor(context),
+                        onPressed: () => _resetWithConfirmation(
+                          'إعادة تعيين الموارد البشرية',
+                          () => _resetService.resetHR(_companyCode),
+                        ),
+                      ),
                       const SizedBox(height: 25),
                       Divider(color: GlassStyle.line24For(context)),
                       const SizedBox(height: 25),

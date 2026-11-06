@@ -11,7 +11,11 @@ from app.core.models import Notification, NotificationPreference
 from app.core.notification_events import _branch_allowed, _can_view_section
 
 router = APIRouter()
-_SECTIONS = {"daily", "purchases", "settlements", "coding", "inventory"}
+_SECTIONS = {
+    "daily", "purchases", "settlements", "coding", "inventory",
+    # ✅ HR
+    "hr_attendance", "hr_vacations", "hr_adjustments", "hr_employees",
+}
 _ACTIONS = {"add", "edit", "delete"}
 _RETENTION = {0, 30, 90, 365}
 

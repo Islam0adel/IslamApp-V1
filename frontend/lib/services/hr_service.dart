@@ -4,7 +4,7 @@ import 'dart:convert';
 
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
+import 'dart:async';  // عشان unawaited
 import '../models/hr_models.dart';
 import '../core/constants.dart';
 import '../core/hr_constants.dart';
@@ -36,6 +36,13 @@ class HRService {
   /// طابور العمليات المعلقة (pending)
   /// بدل ما كانت في الذاكرة وبتضيع عند قفل التطبيق
   final Box _pendingBox = Hive.box('hr_pending_box');
+
+  /// ⭐ مفاتيح pending شغالة الرفع دلوقتي (in-memory فقط)
+  /// الفايدة:
+  ///   - الـ UI يعتبرها "محفوظة" فوراً (مفيش انتظار)
+  ///   - الـ pending تفضل في Hive كضمان لو المستخدم قفل التطبيق
+  ///   - لو الرفع فشل، تشيلها من الـ Set → ترجع pending تاني
+  final Set<String> _uploadingKeys = {};
 
 
   // ============================================================
@@ -172,10 +179,6 @@ class HRService {
   }
 
 
-  /// جلب حضور موظف في شهر كامل (Map: date → attendance)
-  ///
-  /// ⚠️ مهم: لو Hive فاضي للشهر، بيرجع للسيرفر (server fallback)
-  /// — ده الفرق الرئيسي عن النسخة القديمة.
   Future<Map<String, HRAttendanceModel>> getEmployeeMonthAttendance({
     required String companyCode,
     required String employeeCode,
@@ -204,23 +207,18 @@ class HRService {
       }
     }
 
-    // لو Hive فيه بيانات للشهر ده → رجّعها فورًا
+    // ⭐ لو Hive فيه بيانات → رجّعها فوراً (سريع)
     if (result.isNotEmpty) return result;
 
-    // ---------- 2) Server fallback (جديد!) ----------
+    // ---------- 2) Server fallback (للشهور القديمة) ----------
     try {
       final url = Uri.parse(
         "$baseUrl/hr/attendance/employee/$companyCode/$employeeCode",
-      ).replace(
-        queryParameters: {'month': month},
-      );
+      ).replace(queryParameters: {'month': month});
 
       final response = await AuthHttp.get(url);
 
-      if (!_ok(response.statusCode)) {
-        print("❌ [attendance month] HTTP ${response.statusCode}");
-        return result;
-      }
+      if (!_ok(response.statusCode)) return result;
 
       final List<dynamic> data = jsonDecode(response.body);
       final list = <Map<String, dynamic>>[];
@@ -239,15 +237,12 @@ class HRService {
         await _mergeIntoHive(
           localKey,
           list,
-          uniqueKeyBuilder: (m) =>
-              '${m['employee_code']}_${m['date']}',
+          uniqueKeyBuilder: (m) => '${m['employee_code']}_${m['date']}',
         );
       }
 
       return result;
-
     } catch (e) {
-      print("❌ [attendance month] $e");
       return result;
     }
   }
@@ -532,28 +527,7 @@ class HRService {
   }
 
 
-  // ============================================================
-  // =============== 2. PENDING QUEUE ==========================
-  // ============================================================
-  //
-  // العمليات اللي المستخدم عملها لسه ما اتبعتتش للسيرفر.
-  // بتُحفظ في Hive (مش في الذاكرة) عشان ما تضيعش لو التطبيق اتقفل.
-  //
-  // كل pending عنده action:
-  // - 'save'   → المستخدم ضاف/عدّل سجل
-  // - 'delete' → المستخدم حذف سجل موجود
-  // ============================================================
 
-  /// هل فيه pending save/delete لهذا الموظف/اليوم؟
-  bool hasPending(
-    String companyCode,
-    String employeeCode,
-    String date,
-  ) {
-    return _pendingBox.containsKey(
-      _pendingKey(companyCode, employeeCode, date),
-    );
-  }
 
   /// جلب الـ pending model (لو موجود وaction=save)
   HRAttendanceModel? getPendingModel(
@@ -629,7 +603,18 @@ class HRService {
     );
   }
 
-  /// جلب كل الـ pending لشركة معينة (للمعالجة أو العدّ)
+  /// هل فيه pending لهذا الموظف/اليوم؟ (بيستثني اللي under upload)
+  bool hasPending(
+    String companyCode,
+    String employeeCode,
+    String date,
+  ) {
+    final key = _pendingKey(companyCode, employeeCode, date);
+    if (_uploadingKeys.contains(key)) return false;
+    return _pendingBox.containsKey(key);
+  }
+
+  /// كل الـ pending للشركة (بيستثني اللي under upload)
   List<Map<String, dynamic>> getAllPendingForCompany(String companyCode) {
     final prefix = '${companyCode}_';
     final result = <Map<String, dynamic>>[];
@@ -637,6 +622,7 @@ class HRService {
     for (final key in _pendingBox.keys) {
       final keyStr = key.toString();
       if (!keyStr.startsWith(prefix)) continue;
+      if (_uploadingKeys.contains(keyStr)) continue;  // ⭐
 
       final raw = _pendingBox.get(key);
       if (raw is! Map) continue;
@@ -647,6 +633,11 @@ class HRService {
     }
 
     return result;
+  }
+
+  /// ⭐ هل فيه رفع شغال دلوقتي للشركة؟
+  bool hasUploadingForCompany(String companyCode) {
+    return _uploadingKeys.any((k) => k.startsWith('${companyCode}_'));
   }
 
   /// حذف كل pending لشركة معينة (عند logout أو reset)
@@ -667,10 +658,16 @@ class HRService {
 
   /// رفع كل pending لموظف معين (يُستخدم في زر "حفظ")
   ///
-  /// يرجّع map فيه: success, saved_count, deleted_count, errors
+    /// رفع كل pending لموظف معين (يُستخدم في زر "حفظ")
+  ///
+  /// ⭐ تحسين: كل السجلات بترفع متوازية (batched 5 at a time)
+  /// عشان 3 أيام ماتاخدش 3 ثواني — تاخد ~500ms
+  ///
+  /// ⭐ onProgress: عشان الـ UI يعرض "2 من 5"
   Future<Map<String, dynamic>> commitPending({
     required String companyCode,
     required String employeeCode,
+    void Function(int done, int total)? onProgress,
   }) async {
     final prefix = '${companyCode}_${employeeCode}_';
     final keys = <dynamic>[];
@@ -681,21 +678,27 @@ class HRService {
       }
     }
 
+    final total = keys.length;
+    int done = 0;
     int saved = 0;
     int deleted = 0;
     final errors = <String>[];
 
-    for (final key in keys) {
-      final raw = _pendingBox.get(key);
-      if (raw is! Map) continue;
+    onProgress?.call(0, total);
 
-      final map = Map<String, dynamic>.from(raw);
-      final action = map['action']?.toString() ?? 'save';
-
+    Future<void> processOne(dynamic key) async {
       try {
+        final raw = _pendingBox.get(key);
+        if (raw is! Map) {
+          return;
+        }
+
+        final map = Map<String, dynamic>.from(raw);
+        final action = map['action']?.toString() ?? 'save';
+
         if (action == 'delete') {
-          // نحتاج id من Hive (السجل الأصلي)
-          final date = key.toString().split('_').last;
+          final keyStr = key.toString();
+          final date = keyStr.split('_').last;
           final localKey = _attendanceKey(companyCode);
 
           int? existingId;
@@ -726,16 +729,13 @@ class HRService {
               errors.add('delete $date failed');
             }
           } else {
-            // مفيش سجل أصلاً → احذف من pending
             await _pendingBox.delete(key);
           }
-
         } else {
-          // action == 'save'
           final data = map['data'];
           if (data is! Map) {
             await _pendingBox.delete(key);
-            continue;
+            return;
           }
 
           final model = HRAttendanceModel.fromMap(
@@ -750,10 +750,20 @@ class HRService {
             errors.add('save ${model.date}: ${result['error']}');
           }
         }
-
       } catch (e) {
         errors.add('$key: $e');
+      } finally {
+        done++;
+        onProgress?.call(done, total);
       }
+    }
+
+    // ⭐ تنفيذ متوازي — batches of 5 عشان ما نغرقش السيرفر
+    const batchSize = 5;
+    for (int i = 0; i < keys.length; i += batchSize) {
+      final end = (i + batchSize).clamp(0, keys.length);
+      final batch = keys.sublist(i, end);
+      await Future.wait(batch.map(processOne));
     }
 
     return {
@@ -762,6 +772,197 @@ class HRService {
       'deleted_count': deleted,
       'errors': errors,
     };
+  }
+
+    // ============================================================
+  // ⭐ commitPendingFast — حفظ فوري + رفع في الخلفية
+  //
+  // الفرق عن commitPending:
+  //   - commitPending: بترجع بعد ما كل الرفع يخلص (المستخدم يستنى)
+  //   - commitPendingFast: بترجع فوراً، الرفع في الخلفية
+  //
+  // الضمانات:
+  //   1. الـ pending تفضل في Hive لحد ما الرفع ينجح (مفيش فقدان)
+  //   2. _uploadingKeys بيخلي الـ UI يعتبرها "محفوظة" فوراً
+  //   3. لو الرفع فشل، _uploadingKeys بتشيل المفتاح → ترجع pending
+  // ============================================================
+
+  Future<Map<String, dynamic>> commitPendingFast({
+    required String companyCode,
+    required String employeeCode,
+  }) async {
+    final prefix = '${companyCode}_${employeeCode}_';
+    final keys = <dynamic>[];
+
+    for (final key in _pendingBox.keys) {
+      if (key.toString().startsWith(prefix)) {
+        keys.add(key);
+      }
+    }
+
+    if (keys.isEmpty) {
+      return {
+        'success': true,
+        'pending_count': 0,
+        'saved_count': 0,
+        'deleted_count': 0,
+      };
+    }
+
+    // نسخة من الـ pending (لأن الـ Hive ممكن يتغير أثناء الرفع)
+    final snapshot = <dynamic, Map<String, dynamic>>{};
+    for (final key in keys) {
+      final raw = _pendingBox.get(key);
+      if (raw is Map) {
+        snapshot[key] = Map<String, dynamic>.from(raw);
+        _uploadingKeys.add(key.toString());  // ⭐ mark as uploading
+      }
+    }
+
+    // ⭐ نبدأ الرفع في الخلفية (fire-and-forget)
+    unawaited(_uploadInBackground(
+      companyCode: companyCode,
+      snapshot: snapshot,
+    ));
+
+    return {
+      'success': true,
+      'pending_count': keys.length,
+      'saved_count': 0,  // مش معروف لسه — الرفع في الخلفية
+      'deleted_count': 0,
+    };
+  }
+
+  /// ⭐ الرفع الفعلي في الخلفية
+  Future<void> _uploadInBackground({
+    required String companyCode,
+    required Map<dynamic, Map<String, dynamic>> snapshot,
+  }) async {
+    int saved = 0;
+    int deleted = 0;
+    final errors = <String>[];
+
+    // batches of 5 عشان ما نغرقش السيرفر
+    final entries = snapshot.entries.toList();
+    const batchSize = 5;
+
+    for (int i = 0; i < entries.length; i += batchSize) {
+      final end = (i + batchSize).clamp(0, entries.length);
+      final batch = entries.sublist(i, end);
+
+      await Future.wait(batch.map((entry) async {
+        final key = entry.key;
+        final map = entry.value;
+
+        try {
+          final action = map['action']?.toString() ?? 'save';
+
+          if (action == 'delete') {
+            final keyStr = key.toString();
+            final date = keyStr.split('_').last;
+            final localKey = _attendanceKey(companyCode);
+
+            int? existingId;
+            if (_codingBox.containsKey(localKey)) {
+              final listRaw = _codingBox.get(localKey);
+              if (listRaw is List) {
+                for (final item in listRaw) {
+                  if (item is! Map) continue;
+                  final m = Map<String, dynamic>.from(item);
+                  if (m['employee_code']?.toString() ==
+                          map['data']?['employee_code']?.toString() &&
+                      m['date']?.toString() == date) {
+                    existingId = int.tryParse(m['id']?.toString() ?? '');
+                    break;
+                  }
+                }
+              }
+            }
+
+            if (existingId != null) {
+              final ok = await deleteAttendance(
+                companyCode: companyCode,
+                attendanceId: existingId,
+              );
+              if (ok) {
+                deleted++;
+                await _pendingBox.delete(key);
+              } else {
+                errors.add('delete $date failed');
+              }
+            } else {
+              await _pendingBox.delete(key);
+            }
+          } else {
+            final data = map['data'];
+            if (data is! Map) {
+              await _pendingBox.delete(key);
+              return;
+            }
+
+            final model = HRAttendanceModel.fromMap(
+              Map<String, dynamic>.from(data),
+            );
+
+            final result = await saveAttendance(model: model);
+            if (result['success'] == true) {
+              saved++;
+              await _pendingBox.delete(key);
+            } else {
+              errors.add('save ${model.date}: ${result['error']}');
+            }
+          }
+        } catch (e) {
+          errors.add('$key: $e');
+        } finally {
+          // ⭐ نشيلها من _uploadingKeys في الحالتين
+          _uploadingKeys.remove(key.toString());
+        }
+      }));
+    }
+
+    if (errors.isEmpty) {
+      print(
+        '✅ [background upload] saved=$saved deleted=$deleted',
+      );
+    } else {
+      print(
+        '⚠️ [background upload] ${errors.length} failed, '
+        'saved=$saved deleted=$deleted',
+      );
+    }
+  }
+
+  /// ⭐ جديد: إعادة رفع كل pending للشركة (يُستخدم عند WebSocket reconnect)
+  ///
+  /// لو المستخدم قفل التطبيق أثناء الحفظ، الـ pending بيفضل في Hive.
+  /// الدالة دي بتحاول ترفعه في المرة الجاية.
+  Future<void> retryAllPending(String companyCode) async {
+    final prefix = '${companyCode}_';
+    final byEmployee = <String, Set<String>>{};
+
+    for (final key in _pendingBox.keys) {
+      final keyStr = key.toString();
+      if (!keyStr.startsWith(prefix)) continue;
+
+      // key = "{company}_{employee}_{date}"
+      final withoutCompany = keyStr.substring(prefix.length);
+      final lastUnderscore = withoutCompany.lastIndexOf('_');
+      if (lastUnderscore <= 0) continue;
+      final employee = withoutCompany.substring(0, lastUnderscore);
+      if (employee.isEmpty) continue;
+
+      byEmployee.putIfAbsent(employee, () => {}).add(keyStr);
+    }
+
+    for (final emp in byEmployee.keys) {
+      try {
+        await commitPending(companyCode: companyCode, employeeCode: emp);
+        print('✅ [retry] pending saved for employee $emp');
+      } catch (e) {
+        print('❌ [retry] failed for employee $emp: $e');
+      }
+    }
   }
 
 
@@ -1532,10 +1733,6 @@ class HRService {
       '${companyCode}_hr_employee_settings';
 
 
-  /// جلب إعدادات موظف معين
-  ///
-  /// لو مفيش سجل على السيرفر، الباك بيرجع القيم الافتراضية
-  /// (مع delay_rules: {} — اللي الفرونت بيدمجها مع HRConstants)
   Future<HREmployeeSettingsModel> getEmployeeSettings({
     required String companyCode,
     required String employeeCode,
@@ -1556,7 +1753,7 @@ class HRService {
       }
     }
 
-    // ---------- 2) السيرفر ----------
+    // ---------- 2) Server fallback ----------
     try {
       final response = await AuthHttp.get(
         Uri.parse(
@@ -1569,16 +1766,13 @@ class HRService {
         final model = HREmployeeSettingsModel.fromMap(
           Map<String, dynamic>.from(data),
         );
-
         await _saveToSettingsHive(localKey, model);
-
         return model;
       }
     } catch (e) {
       print("❌ [employee-settings get] $e");
     }
 
-    // ---------- Fallback: القيم الافتراضية ----------
     return HREmployeeSettingsModel(
       companyCode: companyCode,
       employeeCode: employeeCode,

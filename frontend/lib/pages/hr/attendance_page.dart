@@ -11,7 +11,7 @@ import '../../services/hr_service.dart';
 import '../../services/hr_report_service.dart';
 import '../../models/employee_model.dart';
 import '../../models/hr_models.dart';
-
+import 'dart:async';  // عشان unawaited
 
 /// صفحة الحضور والانصراف
 ///
@@ -233,12 +233,10 @@ class _AttendancePageState extends State<AttendancePage> {
   }
 
 
-  // ============================================================
-  // تحميل بيانات الشهر
+    // ============================================================
+  // تحميل بيانات الشهر — من Hive فقط (local-first)
   //
-  // ⭐ HRService بيتولى:
-  // - Hive أولاً
-  // - Server fallback لو Hive فاضي (للشهور القديمة)
+  // ⭐ لو عايز تجيب من السيرفر: اضغط زر "تحديث" (بينادي _refreshFromServer)
   // ============================================================
 
   Future<void> _loadMonthData({bool showLoader = true}) async {
@@ -248,20 +246,17 @@ class _AttendancePageState extends State<AttendancePage> {
     try {
       final monthStr = _monthStr(_selectedMonth);
 
-      // 1) إعدادات الموظف
       final settings = await _hrService.getEmployeeSettings(
         companyCode: _companyCode,
         employeeCode: _selectedEmployee!.code,
       );
 
-      // 2) حضور الشهر (Hive أو server fallback)
       final attendance = await _hrService.getEmployeeMonthAttendance(
         companyCode: _companyCode,
         employeeCode: _selectedEmployee!.code,
         month: monthStr,
       );
 
-      // 3) الإجازات
       final vacations = await _hrService.getVacations(
         companyCode: _companyCode,
         fromDate: '$monthStr-01',
@@ -270,16 +265,14 @@ class _AttendancePageState extends State<AttendancePage> {
         employeeCode: _selectedEmployee!.code,
       );
 
-            final vacationSet = vacations.map((v) => v.date).toSet();
+      final vacationSet = vacations.map((v) => v.date).toSet();
 
-      // ⭐ جديد: تحميل خصومات الشهر (للعرض على الأيام)
       final monthAdjustments = await _hrService.getAdjustmentsForMonth(
         companyCode: _companyCode,
         month: monthStr,
         branchCode: _selectedEmployee!.branchCode,
       );
 
-      // نفلتر على الموظف الحالي والخصومات فقط
       final deductions = monthAdjustments
           .where((a) =>
               a.employeeCode == _selectedEmployee!.code &&
@@ -291,13 +284,46 @@ class _AttendancePageState extends State<AttendancePage> {
           _employeeSettings = settings;
           _attendanceMap = attendance;
           _vacationDates = vacationSet;
-          _monthAdjustments = deductions;  // ⭐ جديد
+          _monthAdjustments = deductions;
           _isLoading = false;
         });
       }
     } catch (e) {
       print("❌ خطأ في تحميل بيانات الشهر: $e");
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  /// ⭐ تحديث من السيرفر — متوازي عشان يكون سريع
+  Future<void> _refreshFromServer() async {
+    setState(() => _isLoading = true);
+
+    try {
+      // ✅ تحميل متوازي بدل sequential
+      await Future.wait([
+        _hrService.fetchAllAttendance(_companyCode),
+        _hrService.fetchAllVacations(_companyCode),
+        _hrService.fetchAllAdjustments(_companyCode),
+        _hrService.fetchAllEmployeeSettings(_companyCode),
+      ]);
+
+      await _reportService.invalidateCache(companyCode: _companyCode);
+
+      if (!mounted) return;
+      _showSnackBar(
+        "تم التحديث من السيرفر ✅",
+        AppTheme.successStrongFor(context),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      _showSnackBar(
+        "فشل التحديث: $e",
+        AppTheme.dangerStrongFor(context),
+      );
+    } finally {
+      if (mounted) {
+        await _loadMonthData(showLoader: false);
+      }
     }
   }
 
@@ -344,84 +370,16 @@ class _AttendancePageState extends State<AttendancePage> {
   }
 
 
-  // ============================================================
-  // تأكيد الحفظ عند التغيير
-  //
-  // ⭐ pending دلوقتي في Hive (بيتحفظ تلقائيًا)، فمفيش خطر
-  // من فقدان البيانات. لكن بنسأل المستخدم عشان يبقى على علم.
-  // ============================================================
-
+  /// قبل التنقل (تغيير موظف/شهر/خروج) — نحفظ تلقائياً بدون سؤال
   Future<bool> _confirmSaveIfNeeded() async {
     if (!_hasUnsavedChanges) return true;
 
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.dialogBackground(context),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(15),
-        ),
-        title: Text(
-          'تعديلات غير محفوظة',
-          style: TextStyle(
-            color: AppTheme.textMainFor(context),
-            fontFamily: 'Cairo',
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        content: Text(
-          'لديك $_pendingCount تعديل لم يُرفع للسيرفر. ماذا تريد أن تفعل؟',
-          style: TextStyle(
-            color: AppTheme.textMutedFor(context),
-            fontFamily: 'Cairo',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, 'cancel'),
-            child: Text(
-              'إلغاء',
-              style: TextStyle(
-                color: AppTheme.textMutedFor(context),
-                fontFamily: 'Cairo',
-              ),
-            ),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, 'discard'),
-            child: Text(
-              'تجاهل',
-              style: TextStyle(
-                color: AppTheme.dangerFor(context),
-                fontFamily: 'Cairo',
-              ),
-            ),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, 'save'),
-            child: Text(
-              'حفظ',
-              style: TextStyle(
-                color: AppTheme.successStrongFor(context),
-                fontFamily: 'Cairo',
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
+    // ⭐ نحفظ فوراً بدون سؤال (optimistic save)
+    await _saveAll();
 
-    if (result == 'save') {
-      await _saveAll();
-      return !_hasUnsavedChanges;
-    } else if (result == 'discard') {
-      // ⭐ مسح pending من Hive
-      await _hrService.clearPending(_companyCode);
-      if (mounted) setState(() {});
-      return true;
-    }
-    return false;
+    // نرجع true دايماً — مفيش خطر فقدان
+    // (الـ pending في Hive، والرفع في الخلفية)
+    return true;
   }
 
 
@@ -575,7 +533,7 @@ class _AttendancePageState extends State<AttendancePage> {
     if (!mounted) return;
     setState(() {}); // تحديث UI (الـ pending بقى في Hive)
     _showSnackBar(
-      "تم التسجيل — اضغط حفظ لتأكيد الكل",
+      "تم التسجيل ✅",
       AppTheme.successFor(context),
     );
   }
@@ -629,7 +587,7 @@ class _AttendancePageState extends State<AttendancePage> {
       if (!mounted) return;
       setState(() {});
       _showSnackBar(
-        "تم التعديل — اضغط حفظ لتأكيد الكل",
+        "تم التعديل ✅",
         AppTheme.successFor(context),
       );
     }
@@ -857,23 +815,23 @@ class _AttendancePageState extends State<AttendancePage> {
     return 'خصم ${days.toStringAsFixed(2)} يوم';
   }
   // ============================================================
-  // حفظ الكل (رفع pending من Hive → السيرفر)
+  // ⭐ حفظ فوري — الـ UI يتحدّث فوراً + الرفع في الخلفية
   //
-  // ⭐ HRService.commitPending بيتولى:
-  // - قراءة كل pending من Hive
-  // - لكل pending:
-  //   * save → saveAttendance (POST /save)
-  //   * delete → deleteAttendance (DELETE /delete/{id})
-  // - إزالة pending الناجح من Hive
-  // - إرجاع تقرير (saved_count, deleted_count, errors)
+  // التصميم:
+  //   1. نحوّل الـ pending لـ local committed (optimistic save)
+  //   2. نبدأ الرفع fire-and-forget
+  //   3. المستخدم يشوف "تم الحفظ" فوراً
+  //
+  // الضمان:
+  //   - الـ pending تفضل في Hive لحد ما الرفع ينجح
+  //   - لو المستخدم قفل التطبيق → retryAllPending يرفعها لما يرجع
   // ============================================================
 
-    Future<void> _saveAll() async {
+  Future<void> _saveAll() async {
     if (_selectedEmployee == null) return;
     if (!_hasUnsavedChanges) return;
     if (_isSaving) return;
 
-    // ⭐ فحص الصلاحية
     if (!_canSaveChanges) {
       _showSnackBar(
         "ليس لديك صلاحية حفظ التعديلات",
@@ -882,57 +840,38 @@ class _AttendancePageState extends State<AttendancePage> {
       return;
     }
 
-    setState(() => _isSaving = true);
+    final pendingCount = _pendingCount;
 
-    try {
-      final result = await _hrService.commitPending(
-        companyCode: _companyCode,
-        employeeCode: _selectedEmployee!.code,
-      );
+    // ✅ 1) Optimistic local save: نمسك الـ effective map (اللي فيه الـ pending)
+    //    ونخليه هو الـ attendanceMap — يعني الأيام تظهر كأنها محفوظة
+    final effective = _getEffectiveMap();
 
-      if (result['success'] == true) {
-        // ⭐ إبطال كاش التقرير (كل الشهور لهذا الموظف)
-        await _reportService.invalidateCache(
-          companyCode: _companyCode,
-          employeeCode: _selectedEmployee!.code,
-        );
+    setState(() {
+      _attendanceMap = effective;
+    });
 
-        // ⭐ reload من السيرفر (عشان نضمن إن البيانات متزامنة)
-        await _loadMonthData(showLoader: false);
+    // ✅ 2) نبدأ الرفع في الخلفية (fire-and-forget) — مش بنستنى
+    unawaited(_hrService.commitPendingFast(
+      companyCode: _companyCode,
+      employeeCode: _selectedEmployee!.code,
+    ));
 
-        if (!mounted) return;
+    // ✅ 3) نمسح كاش التقرير (fire-and-forget)
+    unawaited(_reportService.invalidateCache(
+      companyCode: _companyCode,
+      employeeCode: _selectedEmployee!.code,
+    ));
 
-        final savedCount = result['saved_count'] as int? ?? 0;
-        final deletedCount = result['deleted_count'] as int? ?? 0;
+    // ✅ 4) setState عشان النقط البرتقالية تختفي فوراً
+    setState(() {});
 
-        String message = "تم حفظ $savedCount تعديل";
-        if (deletedCount > 0) {
-          message += " وحذف $deletedCount سجل";
-        }
-
-        _showSnackBar(message, AppTheme.successStrongFor(context));
-      } else {
-        if (!mounted) return;
-
-        final errors = result['errors'] as List?;
-        final errMsg = errors?.isNotEmpty == true
-            ? errors!.first.toString()
-            : 'خطأ غير معروف';
-
-        _showSnackBar(
-          "فشل الحفظ: $errMsg",
-          AppTheme.dangerStrongFor(context),
-        );
-      }
-    } catch (e) {
-      if (!mounted) return;
-      _showSnackBar(
-        "خطأ: $e",
-        AppTheme.dangerStrongFor(context),
-      );
-    } finally {
-      if (mounted) setState(() => _isSaving = false);
-    }
+    // ✅ 5) snackbar سريع
+    _showSnackBar(
+      pendingCount > 1
+          ? "تم حفظ $pendingCount تعديل ✅"
+          : "تم الحفظ ✅",
+      AppTheme.successStrongFor(context),
+    );
   }
 
 
@@ -996,22 +935,11 @@ class _AttendancePageState extends State<AttendancePage> {
             // ============================================
             // زر الحفظ (مع badge عدد التعديلات)
             // ============================================
-            if (_isSaving)
-              Padding(
-                padding: const EdgeInsets.all(14),
-                child: SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: AppTheme.accentFor(context),
-                  ),
-                ),
-              )
-                        else if (_canSaveChanges)
+            if (_canSaveChanges)
               Stack(
                 clipBehavior: Clip.none,
                 children: [
+                  
                   IconButton(
                     icon: Icon(
                       _hasUnsavedChanges
@@ -1058,13 +986,13 @@ class _AttendancePageState extends State<AttendancePage> {
                 ],
               ),
 
-            // زر التحديث من السيرفر
+                        // زر التحديث من السيرفر
             IconButton(
               icon: Icon(
                 Icons.refresh_rounded,
                 color: AppTheme.textMainFor(context),
               ),
-              onPressed: _isSaving ? null : () => _loadMonthData(),
+              onPressed: _isSaving ? null : _refreshFromServer,
               tooltip: 'تحديث من السيرفر',
             ),
           ],

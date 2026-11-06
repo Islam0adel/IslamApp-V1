@@ -189,10 +189,18 @@ Future<void> syncAllDataIfNeeded(String companyCode) async {
     //    الأجهزة اللي عملت sync قبل كده مش هتفقد lastSync
     // ========================================================
 
-    try {
+        try {
       print("📥 HR: بدء المزامنة الموحدة...");
       final hrResults = await HRService().syncAll(companyCode);
       print("✅ HR: اكتملت المزامنة: $hrResults");
+
+      // ⭐ إعادة رفع أي pending قديم (لو المستخدم قفل التطبيق أثناء الحفظ)
+      try {
+        await HRService().retryAllPending(companyCode);
+        print("✅ HR: تم رفع pending القديمة");
+      } catch (e) {
+        print("⚠️ HR: فشل رفع pending القديمة: $e");
+      }
     } catch (e) {
       print("❌ HR: فشلت المزامنة: $e");
     }
