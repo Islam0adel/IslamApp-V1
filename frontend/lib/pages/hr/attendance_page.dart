@@ -370,16 +370,76 @@ class _AttendancePageState extends State<AttendancePage> {
   }
 
 
-  /// قبل التنقل (تغيير موظف/شهر/خروج) — نحفظ تلقائياً بدون سؤال
   Future<bool> _confirmSaveIfNeeded() async {
     if (!_hasUnsavedChanges) return true;
 
-    // ⭐ نحفظ فوراً بدون سؤال (optimistic save)
-    await _saveAll();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.dialogBackground(context),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(15),
+        ),
+        title: Text(
+          'تعديلات غير محفوظة',
+          style: TextStyle(
+            color: AppTheme.textMainFor(context),
+            fontFamily: 'Cairo',
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: Text(
+          'لديك $_pendingCount تعديل لم يُحفظ. ماذا تريد أن تفعل؟',
+          style: TextStyle(
+            color: AppTheme.textMutedFor(context),
+            fontFamily: 'Cairo',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'cancel'),
+            child: Text(
+              'إلغاء',
+              style: TextStyle(
+                color: AppTheme.textMutedFor(context),
+                fontFamily: 'Cairo',
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'discard'),
+            child: Text(
+              'تجاهل',
+              style: TextStyle(
+                color: AppTheme.dangerFor(context),
+                fontFamily: 'Cairo',
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'save'),
+            child: Text(
+              'حفظ',
+              style: TextStyle(
+                color: AppTheme.successStrongFor(context),
+                fontFamily: 'Cairo',
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
 
-    // نرجع true دايماً — مفيش خطر فقدان
-    // (الـ pending في Hive، والرفع في الخلفية)
-    return true;
+    if (result == 'save') {
+      await _saveAll();
+      return true;
+    } else if (result == 'discard') {
+      await _hrService.clearPending(_companyCode);
+      if (mounted) setState(() {});
+      return true;
+    }
+    return false;
   }
 
 
@@ -531,11 +591,7 @@ class _AttendancePageState extends State<AttendancePage> {
     await _hrService.addPendingSave(model);
 
     if (!mounted) return;
-    setState(() {}); // تحديث UI (الـ pending بقى في Hive)
-    _showSnackBar(
-      "تم التسجيل ✅",
-      AppTheme.successFor(context),
-    );
+    setState(() {});
   }
 
 
@@ -586,10 +642,6 @@ class _AttendancePageState extends State<AttendancePage> {
 
       if (!mounted) return;
       setState(() {});
-      _showSnackBar(
-        "تم التعديل ✅",
-        AppTheme.successFor(context),
-      );
     }
   }
 
@@ -603,10 +655,9 @@ class _AttendancePageState extends State<AttendancePage> {
   // - لو السجل مش موجود (كان pending save بس) → امسح الـ pending
   // ============================================================
 
-    Future<void> _deleteDay(String dateStr) async {
+  Future<void> _deleteDay(String dateStr) async {
     if (_selectedEmployee == null) return;
 
-    // ⭐ فحص الصلاحية
     if (!PermissionsService().canDeleteAttendance) {
       _showSnackBar(
         "ليس لديك صلاحية حذف الحضور",
@@ -615,9 +666,45 @@ class _AttendancePageState extends State<AttendancePage> {
       return;
     }
 
-    final existing = _attendanceMap[dateStr];
+    // ⭐ لو السجل ده لسه بيترفع دلوقتي، استنى لحد ما يخلص (3 ثواني max)
+    if (_hrService.isUploadingKey(
+      _companyCode,
+      _selectedEmployee!.code,
+      dateStr,
+    )) {
+      _showSnackBar(
+        "جاري الحفظ... انتظر لحظة",
+        AppTheme.warningFor(context),
+      );
+      int waited = 0;
+      while (_hrService.isUploadingKey(
+            _companyCode,
+            _selectedEmployee!.code,
+            dateStr,
+          ) &&
+          waited < 3000) {
+        await Future.delayed(const Duration(milliseconds: 100));
+        waited += 100;
+      }
+    }
 
-    if (existing != null && existing.id != null) {
+    // ⭐ نقرأ من Hive (فيه id محدّث من الرفع) + الـ pending (لو لسه مرفوعش)
+    final freshMap = await _hrService.getEmployeeMonthAttendance(
+      companyCode: _companyCode,
+      employeeCode: _selectedEmployee!.code,
+      month: _monthStr(_selectedMonth),
+    );
+    final hiveRecord = freshMap[dateStr];
+    final pendingRecord = _hrService.getPendingModel(
+      _companyCode,
+      _selectedEmployee!.code,
+      dateStr,
+    );
+
+    final existing = hiveRecord ?? pendingRecord;
+    final hasServerId = (existing?.id != null);
+
+    if (hasServerId) {
       // سجل موجود على السيرفر → pending delete
       await _hrService.addPendingDelete(
         companyCode: _companyCode,
@@ -625,20 +712,22 @@ class _AttendancePageState extends State<AttendancePage> {
         date: dateStr,
       );
     } else {
-      // سجل جديد (كان pending save بس) → امسح الـ pending
+      // سجل جديد (لسه مرفوعش) → امسحه من Hive مباشرة + امسح pending
       await _hrService.removePending(
         _companyCode,
         _selectedEmployee!.code,
         dateStr,
       );
+
+      // امسح من _attendanceMap (لأنه مش موجود على السيرفر)
+      _attendanceMap.remove(dateStr);
+
+      // لو الـ pending كان save لسه مرفوعش، شيله من Hive كمان
+      // (بس عمليًا هو مش في Hive، موجود في pending بس)
     }
 
     if (!mounted) return;
     setState(() {});
-    _showSnackBar(
-      "تم الحذف — اضغط حفظ لتأكيد الكل",
-      AppTheme.warningOrangeSoftFor(context),
-    );
   }
 
 
@@ -842,30 +931,34 @@ class _AttendancePageState extends State<AttendancePage> {
 
     final pendingCount = _pendingCount;
 
-    // ✅ 1) Optimistic local save: نمسك الـ effective map (اللي فيه الـ pending)
-    //    ونخليه هو الـ attendanceMap — يعني الأيام تظهر كأنها محفوظة
+    // 1) Optimistic local save: نمسك الـ effective map
     final effective = _getEffectiveMap();
-
     setState(() {
       _attendanceMap = effective;
     });
 
-    // ✅ 2) نبدأ الرفع في الخلفية (fire-and-forget) — مش بنستنى
+    // 2) الرفع في الخلفية + onCompleted يعيد تحميل الخريطة
+    //    (عشان id السجلات يتحدّث ويبقى الحذف شغال بعد كده)
     unawaited(_hrService.commitPendingFast(
       companyCode: _companyCode,
       employeeCode: _selectedEmployee!.code,
+      onCompleted: () {
+        if (mounted) {
+          _loadMonthData(showLoader: false);
+        }
+      },
     ));
 
-    // ✅ 3) نمسح كاش التقرير (fire-and-forget)
+    // 3) امسح كاش التقرير
     unawaited(_reportService.invalidateCache(
       companyCode: _companyCode,
       employeeCode: _selectedEmployee!.code,
     ));
 
-    // ✅ 4) setState عشان النقط البرتقالية تختفي فوراً
+    // 4) تحديث الـ UI
     setState(() {});
 
-    // ✅ 5) snackbar سريع
+    // 5) الرسالة
     _showSnackBar(
       pendingCount > 1
           ? "تم حفظ $pendingCount تعديل ✅"

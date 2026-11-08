@@ -79,7 +79,7 @@ class _EmployeesListPageState extends State<EmployeesListPage> {
   // Load data
   // ============================================================
 
-  Future<void> _loadData() async {
+  Future<void> _loadData({bool forceRefresh = false}) async {
     setState(() => _isLoading = true);
 
     try {
@@ -97,6 +97,7 @@ class _EmployeesListPageState extends State<EmployeesListPage> {
       // تحميل الموظفين
       final all = await _employeeService.getEmployeesList(
         companyCode: _companyCode,
+        forceRefresh: forceRefresh,
       );
 
       // فلترة حسب الصلاحيات
@@ -107,7 +108,21 @@ class _EmployeesListPageState extends State<EmployeesListPage> {
 
       _applyFilters();
 
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+        if (forceRefresh) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text(
+                'تم التحديث من السيرفر ✅',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontFamily: 'Cairo'),
+              ),
+              backgroundColor: AppTheme.successStrongFor(context),
+            ),
+          );
+        }
+      }
     } catch (e) {
       print("❌ خطأ في تحميل الموظفين: $e");
       if (mounted) setState(() => _isLoading = false);
@@ -393,8 +408,8 @@ class _EmployeesListPageState extends State<EmployeesListPage> {
               Icons.refresh_rounded,
               color: AppTheme.textMainFor(context),
             ),
-            onPressed: _isLoading ? null : _loadData,
-            tooltip: 'تحديث',
+            onPressed: _isLoading ? null : () => _loadData(forceRefresh: true),
+            tooltip: 'تحديث من السيرفر',
           ),
           // Add
           if (PermissionsService().canManageEmployees)

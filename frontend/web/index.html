@@ -33,6 +33,28 @@
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
+  <!--
+    ⭐ تسجيل Service Worker الخاص بـ FCM في scope خاص
+    (Flutter يستخدم scope '/' لـ flutter_service_worker.js،
+    فلازم نستخدم scope مختلف لـ FCM لتجنب التعارض)
+  -->
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", function () {
+        navigator.serviceWorker
+          .register("firebase-messaging-sw.js", {
+            scope: "/firebase-cloud-messaging-push-scope/",
+          })
+          .then(function (reg) {
+            console.log("✅ FCM Service Worker registered:", reg.scope);
+          })
+          .catch(function (err) {
+            console.warn("⚠️ FCM SW registration failed:", err);
+          });
+      });
+    }
+  </script>
+
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

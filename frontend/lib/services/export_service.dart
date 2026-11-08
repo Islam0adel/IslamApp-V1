@@ -955,21 +955,42 @@ class ExportService {
   // هل الحقل رقم عشري؟
   // ============================================================
 
-  static bool _isDecimalField(
-    String key,
-  ) {
-    final lower =
-        key.toLowerCase();
+  static bool _isDecimalField(String key) {
+    final lower = key.toLowerCase();
 
-    return lower.contains('سعر') ||
+    // ── كلمات عربية (أي مكان في الاسم) ──
+    if (lower.contains('سعر') ||
         lower.contains('قيمة') ||
         lower.contains('مبلغ') ||
         lower.contains('إجمالي') ||
-        lower.contains('الاجمالي') ||
-        lower.contains('amount') ||
+        lower.contains('الاجمالي')) {
+      return true;
+    }
+
+    // ── كلمات إنجليزية عامة (أي مكان) ──
+    // آمنة لأنها نادرة في حقول غير مالية
+    if (lower.contains('amount') ||
         lower.contains('price') ||
         lower.contains('total') ||
-        lower.contains('value');
+        lower.contains('value')) {
+      return true;
+    }
+
+    // ── حقول HR المالية (نهاية الاسم فقط) ──
+    // استخدام endsWith عشان نتجنب:
+    //   payment_method  (نص — مش مالي)
+    //   salary_currency (نص)
+    //   bonus_count     (عدد صحيح)
+    //   net_weight      (وزن)
+    if (lower.endsWith('_pay') ||
+        lower.endsWith('_salary') ||
+        lower.endsWith('_bonus') ||
+        lower.endsWith('_deduction') ||
+        lower.endsWith('_loan')) {
+      return true;
+    }
+
+    return false;
   }
 
   // ============================================================

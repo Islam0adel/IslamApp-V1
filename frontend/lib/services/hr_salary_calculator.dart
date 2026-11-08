@@ -426,7 +426,8 @@ class HRSalaryCalculator {
 
     final basePay = elapsedDays * dailyRate;
 
-    var netSalary = basePay -
+    // ⭐ الباك مبقاش بيقص لصفر — نطابق نفس السلوك
+    final netSalary = basePay -
         absenceDeduction -
         permissionDeduction -
         delayDeduction -
@@ -435,10 +436,7 @@ class HRSalaryCalculator {
         overtimeBonus +
         bonusesTotal;
 
-    // لو الصافي سالب، نخليه صفر (مطابق للباك)
-    if (netSalary < 0) {
-      netSalary = 0.0;
-    }
+    final debtRemaining = netSalary < 0 ? -netSalary : 0.0;
 
     // ============================================================
     // 9) Return Map (نفس شكل الباك بالضبط)
@@ -493,6 +491,7 @@ class HRSalaryCalculator {
       'loans_total': _round2(loansTotal),
 
       'net_salary': _round2(netSalary),
+      'debt_remaining': _round2(debtRemaining),  // ⭐ جديد
 
       // التفاصيل
       'adjustment_lines': adjustmentLines,

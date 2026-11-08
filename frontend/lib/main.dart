@@ -5,6 +5,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'services/employee_service.dart';   // ← NEW
+import 'services/fcm_service.dart';   // ⭐ FCM
 import 'core/theme.dart';
 import 'services/hr_service.dart';   // ← NEW (موحد)
 import 'views/auth/login_screen.dart';
@@ -334,6 +335,9 @@ Future<void> main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
+  // ⭐ تهيئة FCM (Service Worker مسجل في index.html)
+  await FcmService.instance.initialize();
+
   // ==========================================================
   // Hive
   // ==========================================================
@@ -382,6 +386,10 @@ if (rememberMe && userName != null && companyCode != null) {
     // الأثر: يضيف ~50-70ms لزمن بدء التطبيق (مقبول جدًا)
     // --------------------------------------------------------
     await PermissionsService().loadPermissions();
+
+    // ⭐ استعادة تسجيل جهاز FCM لو المستخدم فعّل إشعارات النظام سابقاً
+    // (لا يطلب إذن جديد — يستخدم الإذن الموجود)
+    unawaited(FcmService.instance.restoreRegistrationIfEnabled());
 
     // --------------------------------------------------------
     // تشغيل WebSocket

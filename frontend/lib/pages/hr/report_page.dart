@@ -376,6 +376,9 @@ class _HRReportPageState extends State<HRReportPage> {
                 'إجمالي الخصومات': -r.deductionsTotal,
               if (r.loansTotal > 0) 'إجمالي السلف': -r.loansTotal,
               'صافي الراتب': r.netSalary,
+              // ⭐ الرصيد السالب — بيوضح إن الموظف مدين
+              if (r.netSalary < 0)
+                'مدين للشركة (يُخصم لاحقًا)': r.debtRemaining,
             }
           : <String, dynamic>{
               'حاضر': r.presentDays,
@@ -486,6 +489,9 @@ class _HRReportPageState extends State<HRReportPage> {
                 'إجمالي الخصومات': -r.deductionsTotal,
               if (r.loansTotal > 0) 'إجمالي السلف': -r.loansTotal,
               'صافي الراتب': r.netSalary,
+              // ⭐ الرصيد السالب
+              if (r.netSalary < 0)
+                '⚠️ مدين للشركة (يُخصم لاحقًا)': r.debtRemaining,
             }
           : <String, dynamic>{
               'حاضر': r.presentDays,

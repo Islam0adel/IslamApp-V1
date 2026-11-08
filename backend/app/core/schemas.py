@@ -610,3 +610,12 @@ class HREmployeeSettingsModel(BaseModel):
     flexible_hours: Optional[bool] = False
     delay_rules: Optional[Dict[str, float]] = None
     use_fixed_month_days: Optional[bool] = True  
+
+
+# ============================================================
+# FCM Device Registration
+# ============================================================
+class FcmDeviceModel(BaseModel):
+    """تسجيل جهاز لإشعارات النظام"""
+    fcm_token: str
+    platform: Optional[str] = "web"

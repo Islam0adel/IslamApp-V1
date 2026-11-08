@@ -3,7 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-
+import '../../services/export_service.dart'; 
 import '../../core/theme.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../services/hr_report_service.dart';
@@ -27,8 +27,10 @@ class _BranchSalariesPageState extends State<BranchSalariesPage> {
   final HRReportService _reportService = HRReportService();
 
   String _companyCode = '';
+  String _companyName = '';      // ⭐ جديد
   bool _isLoading = false;
   bool _hasLoaded = false;
+  bool _isExporting = false;     // ⭐ جديد
 
   String _selectedMonth = '';
   String? _selectedBranch; // null = كل الشركة
@@ -59,6 +61,7 @@ class _BranchSalariesPageState extends State<BranchSalariesPage> {
   Future<void> _loadInitialData() async {
     final prefs = await SharedPreferences.getInstance();
     _companyCode = prefs.getString('company_code') ?? '';
+    _companyName = prefs.getString('company_name') ?? 'الشركة';  // ⭐
 
     if (_companyCode.isEmpty) return;
 
@@ -163,6 +166,173 @@ class _BranchSalariesPageState extends State<BranchSalariesPage> {
     }
   }
 
+  // ============================================================
+  // ⭐ تصدير PDF — مربوط بصلاحية canExportReport
+  // ============================================================
+
+  String _branchLabel() {
+    if (_selectedBranch == null) return 'كل الفروع';
+    for (final b in _branches) {
+      if (b['code'] == _selectedBranch) return b['name'] ?? _selectedBranch!;
+    }
+    return _selectedBranch!;
+  }
+
+
+  Future<void> _exportPDF() async {
+    // ⭐ حماية مزدوجة: الزر مخفي أصلًا لو مفيش صلاحية، بس للتأكيد
+    if (!PermissionsService().canExportReport) {
+      _showSnackBar(
+        "ليس لديك صلاحية تصدير التقارير",
+        AppTheme.dangerFor(context),
+      );
+      return;
+    }
+
+    if (_data == null) {
+      _showSnackBar(
+        "لا توجد بيانات للتصدير",
+        AppTheme.warningOrangeFor(context),
+      );
+      return;
+    }
+
+    if (_isExporting) return;
+
+    setState(() => _isExporting = true);
+
+    try {
+      final totals = _data!['totals'] as Map<String, dynamic>? ?? {};
+      final employees = _data!['employees'] as List<dynamic>? ?? [];
+      final canSeeAmounts = PermissionsService().canViewSalaryAmounts;
+
+      if (employees.isEmpty) {
+        _showSnackBar(
+          "لا يوجد موظفون في هذا الفرع للتصدير",
+          AppTheme.warningOrangeFor(context),
+        );
+        return;
+      }
+
+      // ── صفوف الموظفين ──
+      final rows = <Map<String, dynamic>>[];
+      for (final e in employees) {
+        if (e is! Map) continue;
+        final emp = Map<String, dynamic>.from(e);
+
+        double toD(dynamic v) {
+          if (v is num) return v.toDouble();
+          return double.tryParse(v?.toString() ?? '') ?? 0.0;
+        }
+
+        rows.add({
+          'employee_code': emp['employee_code']?.toString() ?? '',
+          'employee_name': emp['employee_name']?.toString() ?? '',
+          'branch_code': emp['branch_code']?.toString() ?? '',
+          'base_pay': canSeeAmounts ? toD(emp['base_pay']) : '-',
+          'absence_deduction':
+              canSeeAmounts ? -toD(emp['absence_deduction']) : '-',
+          'delay_deduction':
+              canSeeAmounts ? -toD(emp['delay_deduction']) : '-',
+          'overtime_bonus':
+              canSeeAmounts ? toD(emp['overtime_bonus']) : '-',
+          'bonuses_total':
+              canSeeAmounts ? toD(emp['bonuses_total']) : '-',
+          'deductions_total':
+              canSeeAmounts ? -toD(emp['deductions_total']) : '-',
+          'loans_total': canSeeAmounts ? -toD(emp['loans_total']) : '-',
+          'net_salary': canSeeAmounts ? toD(emp['net_salary']) : '-',
+        });
+      }
+
+      // ── الملخص ──
+      final summary = <String, dynamic>{
+        'عدد الموظفين': totals['employees_count'] ?? rows.length,
+      };
+
+      if (canSeeAmounts) {
+        final absence = _toD(totals['total_absence_deduction']);
+        final delay = _toD(totals['total_delay_deduction']);
+        final overtime = _toD(totals['total_overtime_bonus']);
+        final bonuses = _toD(totals['total_bonuses']);
+        final deductions = _toD(totals['total_deductions']);
+        final loans = _toD(totals['total_loans']);
+
+        summary['إجمالي الراتب المستحق'] =
+            _toD(totals['total_base_pay']);
+        if (absence > 0) summary['خصم غياب'] = -absence;
+        if (delay > 0) summary['خصم تأخير'] = -delay;
+        if (overtime > 0) summary['إضافي'] = overtime;
+        if (bonuses > 0) summary['مكافآت'] = bonuses;
+        if (deductions > 0) summary['خصومات'] = -deductions;
+        if (loans > 0) summary['سلف'] = -loans;
+        summary['صافي الإجمالي'] =
+            _toD(totals['total_net_salary']);
+      }
+
+      await ExportService.exportToPDF(
+        data: rows,
+        title:
+            'إجمالي الرواتب - ${_branchLabel()} - $_selectedMonth',
+        headers: [
+          'الكود',
+          'الاسم',
+          'الفرع',
+          'المستحق',
+          'غياب',
+          'تأخير',
+          'إضافي',
+          'مكافآت',
+          'خصومات',
+          'سلف',
+          'الصافي',
+        ],
+        keys: [
+          'employee_code',
+          'employee_name',
+          'branch_code',
+          'base_pay',
+          'absence_deduction',
+          'delay_deduction',
+          'overtime_bonus',
+          'bonuses_total',
+          'deductions_total',
+          'loans_total',
+          'net_salary',
+        ],
+        companyName: _companyName,
+        branchName: _branchLabel(),
+        period: 'شهر $_selectedMonth',
+        summary: summary,
+        totalAmount: canSeeAmounts
+            ? _toD(totals['total_net_salary'])
+            : null,
+      );
+
+      if (mounted) {
+        _showSnackBar(
+          "تم تصدير PDF بنجاح ✅",
+          AppTheme.successStrongFor(context),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        _showSnackBar(
+          "خطأ في التصدير: $e",
+          AppTheme.dangerStrongFor(context),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isExporting = false);
+    }
+  }
+
+
+  // ⭐ helper
+  double _toD(dynamic v) {
+    if (v is num) return v.toDouble();
+    return double.tryParse(v?.toString() ?? '') ?? 0.0;
+  }
 
   void _showSnackBar(String message, Color color) {
     if (!mounted) return;
@@ -205,6 +375,29 @@ class _BranchSalariesPageState extends State<BranchSalariesPage> {
         elevation: 0,
         iconTheme: IconThemeData(color: AppTheme.textMainFor(context)),
         actions: [
+          // ⭐ زر تصدير PDF (مخفي لو مفيش canExportReport)
+          if (PermissionsService().canExportReport &&
+              _data != null &&
+              _hasLoaded)
+            IconButton(
+              icon: _isExporting
+                  ? SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: AppTheme.textMainFor(context),
+                      ),
+                    )
+                  : Icon(
+                      Icons.picture_as_pdf_rounded,
+                      color: AppTheme.textMainFor(context),
+                    ),
+              onPressed: _isExporting ? null : _exportPDF,
+              tooltip: 'تصدير PDF',
+            ),
+
+          // زر التحديث
           IconButton(
             icon: Icon(
               Icons.refresh_rounded,

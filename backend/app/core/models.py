@@ -1548,3 +1548,63 @@ class HREmployeeSettings(Base):
         default=True,
         server_default="true",
     )
+
+
+# ==========================================
+# 16. FCM Device Tokens (Push Notifications)
+# ==========================================
+class UserFcmToken(Base):
+    """
+    رموز الأجهزة المسجّلة لإشعارات النظام (FCM).
+    مستخدم واحد قد يملك عدة أجهزة.
+    """
+    __tablename__ = "user_fcm_tokens"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+        autoincrement=True,
+    )
+
+    user_uid = Column(
+        String(128),
+        nullable=False,
+        index=True,
+    )
+
+    company_code = Column(
+        String(50),
+        nullable=False,
+        index=True,
+    )
+
+    fcm_token = Column(
+        Text,
+        nullable=False,
+        unique=True,
+    )
+
+    # web / android / ios
+    platform = Column(
+        String(20),
+        nullable=False,
+        default="web",
+    )
+
+    created_at = Column(
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        Index("idx_fcm_tokens_user_company", "user_uid", "company_code"),
+        Index("idx_fcm_tokens_company", "company_code"),
+    )

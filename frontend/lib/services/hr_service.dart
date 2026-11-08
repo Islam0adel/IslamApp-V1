@@ -1,7 +1,6 @@
 // lib/services/hr_service.dart
 
 import 'dart:convert';
-
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';  // عشان unawaited
@@ -566,30 +565,27 @@ class HRService {
     return raw['action'] == 'delete';
   }
 
-  /// إضافة pending save (تعديل/إضافة)
-  Future<void> addPendingSave(HRAttendanceModel model) async {
-    await _pendingBox.put(
-      _pendingKey(model.companyCode, model.employeeCode, model.date),
-      {
-        'action': 'save',
-        'data': model.toMap(),
-      },
-    );
+    Future<void> addPendingSave(HRAttendanceModel model) async {
+    final key = _pendingKey(model.companyCode, model.employeeCode, model.date);
+    // ⭐ لو كان بيترفع دلوقتي، نلغي علامة الرفع عشان الـ UI يشوف الـ pending الجديد
+    _uploadingKeys.remove(key);
+    await _pendingBox.put(key, {
+      'action': 'save',
+      'data': model.toMap(),
+    });
   }
 
-  /// إضافة pending delete
   Future<void> addPendingDelete({
     required String companyCode,
     required String employeeCode,
     required String date,
   }) async {
-    await _pendingBox.put(
-      _pendingKey(companyCode, employeeCode, date),
-      {
-        'action': 'delete',
-        'data': null,
-      },
-    );
+    final key = _pendingKey(companyCode, employeeCode, date);
+    _uploadingKeys.remove(key);
+    await _pendingBox.put(key, {
+      'action': 'delete',
+      'data': null,
+    });
   }
 
   /// إزالة pending (بعد ما اترفع بنجاح)
@@ -790,59 +786,54 @@ class HRService {
   Future<Map<String, dynamic>> commitPendingFast({
     required String companyCode,
     required String employeeCode,
+    void Function()? onCompleted,   // ⭐ جديد
   }) async {
     final prefix = '${companyCode}_${employeeCode}_';
     final keys = <dynamic>[];
 
     for (final key in _pendingBox.keys) {
-      if (key.toString().startsWith(prefix)) {
-        keys.add(key);
-      }
+      if (key.toString().startsWith(prefix)) keys.add(key);
     }
 
     if (keys.isEmpty) {
       return {
-        'success': true,
-        'pending_count': 0,
-        'saved_count': 0,
-        'deleted_count': 0,
+        'success': true, 'pending_count': 0,
+        'saved_count': 0, 'deleted_count': 0,
       };
     }
 
-    // نسخة من الـ pending (لأن الـ Hive ممكن يتغير أثناء الرفع)
     final snapshot = <dynamic, Map<String, dynamic>>{};
     for (final key in keys) {
       final raw = _pendingBox.get(key);
       if (raw is Map) {
         snapshot[key] = Map<String, dynamic>.from(raw);
-        _uploadingKeys.add(key.toString());  // ⭐ mark as uploading
+        _uploadingKeys.add(key.toString());
       }
     }
 
-    // ⭐ نبدأ الرفع في الخلفية (fire-and-forget)
     unawaited(_uploadInBackground(
       companyCode: companyCode,
       snapshot: snapshot,
+      onCompleted: onCompleted,
     ));
 
     return {
       'success': true,
       'pending_count': keys.length,
-      'saved_count': 0,  // مش معروف لسه — الرفع في الخلفية
+      'saved_count': 0,
       'deleted_count': 0,
     };
   }
 
-  /// ⭐ الرفع الفعلي في الخلفية
   Future<void> _uploadInBackground({
     required String companyCode,
     required Map<dynamic, Map<String, dynamic>> snapshot,
+    void Function()? onCompleted,
   }) async {
     int saved = 0;
     int deleted = 0;
     final errors = <String>[];
 
-    // batches of 5 عشان ما نغرقش السيرفر
     final entries = snapshot.entries.toList();
     const batchSize = 5;
 
@@ -852,16 +843,13 @@ class HRService {
 
       await Future.wait(batch.map((entry) async {
         final key = entry.key;
-        final map = entry.value;
+        final uploadedMap = entry.value;
+        final uploadedAction = uploadedMap['action']?.toString() ?? 'save';
 
         try {
-          final action = map['action']?.toString() ?? 'save';
-
-          if (action == 'delete') {
-            final keyStr = key.toString();
-            final date = keyStr.split('_').last;
+          if (uploadedAction == 'delete') {
+            final date = key.toString().split('_').last;
             final localKey = _attendanceKey(companyCode);
-
             int? existingId;
             if (_codingBox.containsKey(localKey)) {
               final listRaw = _codingBox.get(localKey);
@@ -869,8 +857,9 @@ class HRService {
                 for (final item in listRaw) {
                   if (item is! Map) continue;
                   final m = Map<String, dynamic>.from(item);
-                  if (m['employee_code']?.toString() ==
-                          map['data']?['employee_code']?.toString() &&
+                  final emp = uploadedMap['data']?['employee_code']?.toString()
+                      ?? m['employee_code']?.toString();
+                  if (m['employee_code']?.toString() == emp &&
                       m['date']?.toString() == date) {
                     existingId = int.tryParse(m['id']?.toString() ?? '');
                     break;
@@ -878,7 +867,6 @@ class HRService {
                 }
               }
             }
-
             if (existingId != null) {
               final ok = await deleteAttendance(
                 companyCode: companyCode,
@@ -886,28 +874,26 @@ class HRService {
               );
               if (ok) {
                 deleted++;
-                await _pendingBox.delete(key);
+                await _safeDeletePending(key, uploadedMap);
               } else {
                 errors.add('delete $date failed');
               }
             } else {
-              await _pendingBox.delete(key);
+              await _safeDeletePending(key, uploadedMap);
             }
           } else {
-            final data = map['data'];
+            final data = uploadedMap['data'];
             if (data is! Map) {
-              await _pendingBox.delete(key);
+              await _safeDeletePending(key, uploadedMap);
               return;
             }
-
             final model = HRAttendanceModel.fromMap(
               Map<String, dynamic>.from(data),
             );
-
             final result = await saveAttendance(model: model);
             if (result['success'] == true) {
               saved++;
-              await _pendingBox.delete(key);
+              await _safeDeletePending(key, uploadedMap);
             } else {
               errors.add('save ${model.date}: ${result['error']}');
             }
@@ -915,22 +901,42 @@ class HRService {
         } catch (e) {
           errors.add('$key: $e');
         } finally {
-          // ⭐ نشيلها من _uploadingKeys في الحالتين
           _uploadingKeys.remove(key.toString());
         }
       }));
     }
 
-    if (errors.isEmpty) {
-      print(
-        '✅ [background upload] saved=$saved deleted=$deleted',
-      );
-    } else {
-      print(
-        '⚠️ [background upload] ${errors.length} failed, '
-        'saved=$saved deleted=$deleted',
-      );
+    print('✅ [bg upload] saved=$saved deleted=$deleted errors=${errors.length}');
+
+    if (onCompleted != null) {
+      try { onCompleted(); } catch (_) {}
     }
+  }
+
+  /// ⭐ يمسح الـ pending فقط لو لسه نفس اللي اترفع
+  /// (لو المستخدم عدّل/حذف أثناء الرفع، الـ pending الجديد بيفضل)
+  Future<void> _safeDeletePending(
+    dynamic key,
+    Map<String, dynamic> uploadedMap,
+  ) async {
+    final current = _pendingBox.get(key);
+    if (current is! Map) return;
+    final currentMap = Map<String, dynamic>.from(current);
+
+    final sameAction = currentMap['action'] == uploadedMap['action'];
+    final sameData =
+        jsonEncode(currentMap['data']) == jsonEncode(uploadedMap['data']);
+
+    if (sameAction && sameData) {
+      await _pendingBox.delete(key);
+    }
+  }
+
+  /// ⭐ هل المفتاح ده تحت الرفع؟
+  bool isUploadingKey(String companyCode, String employeeCode, String date) {
+    return _uploadingKeys.contains(
+      _pendingKey(companyCode, employeeCode, date),
+    );
   }
 
   /// ⭐ جديد: إعادة رفع كل pending للشركة (يُستخدم عند WebSocket reconnect)

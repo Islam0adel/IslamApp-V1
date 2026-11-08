@@ -7,6 +7,11 @@ class ApiConstants {
   // رابط Hugging Face (الرابط ده هو اللي هيكون شغال لما ترفع على Vercel)
   static const String baseUrl = "https://islamadel-islam-app-api.hf.space";
 
+    /// ⭐ VAPID Key من Firebase Console → Project Settings
+  /// → Cloud Messaging → Web Push certificates
+  /// (public key — آمن للعرض في الكود)
+  static const String fcmVapidKey = 'BLqLyqfb7CyW29n62s-Lxa6L2pTyrPv-6WN2ZYDu5Mdi1j1xmIyInk2ubBj-3xENkACLo7794dG6WUNlMQn8OaQ';
+
   static const String LAST_SYNC_DAILY = 'last_sync_daily_';
   static const String LAST_SYNC_SUPPLIER = 'last_sync_supplier_';
   static const String LAST_SYNC_INVENTORY = 'last_sync_inventory_';

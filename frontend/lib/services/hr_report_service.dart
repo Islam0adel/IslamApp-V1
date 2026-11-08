@@ -325,6 +325,7 @@ class HRReportService {
       'loans_total': report.loansTotal,
 
       'net_salary': report.netSalary,
+      'debt_remaining': report.debtRemaining,   // ⭐ إضافة
 
       // التفاصيل
       'adjustment_lines': report.adjustmentLines
@@ -529,29 +530,14 @@ class HRReportService {
 
 
   // ============================================================
-  // ⭐ جديد: جلب إجمالي رواتب كل الفروع/فرع
+  // ⭐ إجمالي رواتب الفروع/الشركة
+  //
+  // الترتيب:
+  //   1. Cache (30 دقيقة)
+  //   2. حساب محلي من Hive (لو !forceRefresh)
+  //   3. Backend (لو forceRefresh أو الحساب المحلي فشل)
   // ============================================================
 
-  /// يجيب إجمالي رواتب كل الموظفين في فرع/شركة لشهر.
-  ///
-  /// - [branchCode] = null → كل الشركة
-  /// - [branchCode] = "B01" → فرع محدد
-  ///
-    // ============================================================
-  // ⭐ جلب إجمالي رواتب كل الفروع/فرع (مع Cache)
-  // ============================================================
-
-  /// يجيب إجمالي رواتب كل الموظفين في فرع/شركة لشهر.
-  ///
-  /// - [branchCode] = null → كل الشركة
-  /// - [branchCode] = "B01" → فرع محدد
-  /// - [forceRefresh] = true → يتخطى الـ cache ويجيب من السيرفر
-  ///
-  /// الترتيب:
-  ///   1. Cache (30 دقيقة) — لو !forceRefresh
-  ///   2. السيرفر
-  ///
-  /// Returns null لو فشل الاتصال.
   Future<Map<String, dynamic>?> getBranchSalariesTotals({
     required String companyCode,
     required String month,
@@ -561,7 +547,7 @@ class HRReportService {
     final cacheKey =
         'branch_salaries_${companyCode}__${month}__${branchCode ?? "all"}';
 
-    // -------- 1) Cache --------
+    // ---------- 1) Cache (لو !forceRefresh) ----------
     if (!forceRefresh) {
       final cached = _codingBox.get(cacheKey);
       if (cached is Map) {
@@ -578,7 +564,28 @@ class HRReportService {
       }
     }
 
-    // -------- 2) السيرفر --------
+    // ---------- 2) حساب محلي من Hive (لو !forceRefresh) ----------
+    if (!forceRefresh) {
+      try {
+        final local = await _calculateBranchTotalsLocally(
+          companyCode: companyCode,
+          month: month,
+          branchCode: branchCode,
+        );
+        if (local != null) {
+          await _codingBox.put(cacheKey, {
+            '_cached_at': DateTime.now().toUtc().toIso8601String(),
+            ...local,
+          });
+          print('🧮 [branch-salaries] حساب محلي');
+          return local;
+        }
+      } catch (e) {
+        print('⚠️ [branch-salaries] local calc failed: $e');
+      }
+    }
+
+    // ---------- 3) Backend ----------
     try {
       final url = Uri.parse(
         '$baseUrl/hr/reports/branches/salaries',
@@ -593,23 +600,134 @@ class HRReportService {
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         print('❌ [branch-salaries] HTTP ${response.statusCode}');
-        print('   Body: ${response.body}');
         return null;
       }
 
       final data = jsonDecode(response.body) as Map<String, dynamic>;
 
-      // حفظ في الـ cache
       await _codingBox.put(cacheKey, {
         '_cached_at': DateTime.now().toUtc().toIso8601String(),
         ...data,
       });
 
-      print('✅ [branch-salaries] من السيرفر');
+      print('🌐 [branch-salaries] من السيرفر');
       return data;
     } catch (e) {
       print('❌ [branch-salaries] $e');
       return null;
     }
   }
+
+  // ============================================================
+  // ⭐ حساب الإجماليات محلياً من Hive
+  // ============================================================
+
+  Future<Map<String, dynamic>?> _calculateBranchTotalsLocally({
+    required String companyCode,
+    required String month,
+    String? branchCode,
+  }) async {
+    // 1) الموظفين من Hive
+    final localKey = '${companyCode}_employees';
+    final raw = _codingBox.get(localKey);
+    if (raw is! List || raw.isEmpty) return null;
+
+    final employees = <Map<String, dynamic>>[];
+    for (final item in raw) {
+      if (item is! Map) continue;
+      final map = Map<String, dynamic>.from(item);
+      if (map['is_deleted'] == true) continue;
+      if (branchCode != null && branchCode.isNotEmpty) {
+        if (map['branch_code']?.toString() != branchCode) continue;
+      }
+      employees.add(map);
+    }
+
+    if (employees.isEmpty) return null;
+
+    // 2) حساب كل موظف
+    final employeesData = <Map<String, dynamic>>[];
+    double totalBasePay = 0.0;
+    double totalAbsence = 0.0;
+    double totalDelay = 0.0;
+    double totalOvertime = 0.0;
+    double totalBonuses = 0.0;
+    double totalDeductions = 0.0;
+    double totalLoans = 0.0;
+    double totalNet = 0.0;
+    int count = 0;
+
+    for (final emp in employees) {
+      try {
+        final report = await _calculateLocally(
+          companyCode: companyCode,
+          employeeCode: emp['code'].toString(),
+          month: month,
+          includePending: false,
+        );
+        if (report == null) continue;
+
+        count++;
+        totalBasePay += report.basePay;
+        totalAbsence += report.absenceDeduction;
+        totalDelay += report.lateDeduction;
+        totalOvertime += report.overtimeBonus;
+        totalBonuses += report.bonusesTotal;
+        totalDeductions += report.deductionsTotal;
+        totalLoans += report.loansTotal;
+        totalNet += report.netSalary;
+
+        employeesData.add({
+          'employee_code': report.employeeCode,
+          'employee_name': report.employeeName,
+          'branch_code': report.branchCode,
+          'base_pay': report.basePay,
+          'absence_deduction': report.absenceDeduction,
+          'delay_deduction': report.lateDeduction,
+          'overtime_bonus': report.overtimeBonus,
+          'bonuses_total': report.bonusesTotal,
+          'deductions_total': report.deductionsTotal,
+          'loans_total': report.loansTotal,
+          'net_salary': report.netSalary,
+          'present_days': report.presentDays,
+          'absent_days': report.absentDays,
+          'vacation_days': report.vacationDays,
+        });
+      } catch (e) {
+        print('⚠️ [branch-totals-local] ${emp['code']}: $e');
+      }
+    }
+
+    if (employeesData.isEmpty) return null;
+
+    // 3) ترتيب حسب الكود
+    employeesData.sort((a, b) {
+      final aCode =
+          int.tryParse(a['employee_code']?.toString() ?? '0') ?? 0;
+      final bCode =
+          int.tryParse(b['employee_code']?.toString() ?? '0') ?? 0;
+      return aCode.compareTo(bCode);
+    });
+
+    return {
+      'company_code': companyCode,
+      'month': month,
+      'branch_code': branchCode ?? 'all',
+      'totals': {
+        'employees_count': count,
+        'total_base_pay': _round2(totalBasePay),
+        'total_absence_deduction': _round2(totalAbsence),
+        'total_delay_deduction': _round2(totalDelay),
+        'total_overtime_bonus': _round2(totalOvertime),
+        'total_bonuses': _round2(totalBonuses),
+        'total_deductions': _round2(totalDeductions),
+        'total_loans': _round2(totalLoans),
+        'total_net_salary': _round2(totalNet),
+      },
+      'employees': employeesData,
+    };
+  }
+
+  // ⭐ helper للتقريب
+  static double _round2(double v) => (v * 100).round() / 100;
 }

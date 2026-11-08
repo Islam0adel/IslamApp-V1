@@ -39,14 +39,14 @@ class EmployeeService {
 
   Future<List<EmployeeModel>> getEmployeesList({
     required String companyCode,
+    bool forceRefresh = false,   // ⭐ جديد
   }) async {
     final String localKey = _localKey(companyCode);
 
     // ----------------------------------------------------------
-    // 1) Hive
+    // 1) Hive (لو !forceRefresh)
     // ----------------------------------------------------------
-
-    if (_codingBox.containsKey(localKey)) {
+    if (!forceRefresh && _codingBox.containsKey(localKey)) {
       final dynamic rawData = _codingBox.get(localKey);
 
       if (rawData is List) {
@@ -73,12 +73,12 @@ class EmployeeService {
     }
 
     // ----------------------------------------------------------
-    // 2) السيرفر
+    // 2) السيرفر (لو forceRefresh، أو Hive فاضي)
     // ----------------------------------------------------------
-
     print(
-      "⚠️ لا توجد بيانات محلية للموظفين، "
-      "جاري تحميلها من السيرفر...",
+      forceRefresh
+          ? "🔄 تحديث الموظفين من السيرفر (forceRefresh)"
+          : "⚠️ لا توجد بيانات محلية للموظفين، جاري تحميلها من السيرفر...",
     );
 
     try {
@@ -88,8 +88,7 @@ class EmployeeService {
 
       if (response.statusCode != 200) {
         print(
-          "❌ خطأ من السيرفر [employees]: "
-          "${response.statusCode}",
+          "❌ خطأ من السيرفر [employees]: ${response.statusCode}",
         );
         return [];
       }
@@ -110,8 +109,10 @@ class EmployeeService {
       }
 
       cleanList.sort((a, b) {
-        final int aCode = int.tryParse(a['code']?.toString() ?? '0') ?? 0;
-        final int bCode = int.tryParse(b['code']?.toString() ?? '0') ?? 0;
+        final int aCode =
+            int.tryParse(a['code']?.toString() ?? '0') ?? 0;
+        final int bCode =
+            int.tryParse(b['code']?.toString() ?? '0') ?? 0;
         return aCode.compareTo(bCode);
       });
 
@@ -125,7 +126,6 @@ class EmployeeService {
       return cleanList
           .map((item) => EmployeeModel.fromMap(item))
           .toList();
-
     } catch (e) {
       print("❌ فشل الاتصال بالسيرفر [employees]: $e");
       return [];

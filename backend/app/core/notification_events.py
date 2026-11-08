@@ -9,6 +9,7 @@ from app.core.database import AsyncSessionLocal
 from app.core.firebase_setup import db as firebase_db
 from app.core.models import AuditLog, Notification, NotificationPreference
 from app.core.request_context import current_user_context
+from app.core.fcm_service import send_push_to_user_bg   # ⭐ NEW
 
 _SECTION_MAP = {
     "transaction": ("daily", "اليوميات"),
@@ -66,7 +67,6 @@ def _branch_allowed(profile: Dict[str, Any], branch_code: str) -> bool:
     return "all" in [str(value).lower() for value in allowed] or branch_code in [str(value) for value in allowed]
 
 
-# ✅ HR: خرائط الصلاحيات
 _HR_SECTION_KEYS = {
     "hr_attendance": ("canOpenAttendancePage",),
     "hr_vacations": ("canOpenVacationsPage",),
@@ -83,8 +83,18 @@ def _can_view_section(profile: Dict[str, Any], section: str) -> bool:
     if job_code == "99":
         return True
 
-    # ============ HR sections ============
+    # ⭐ master toggle: "إظهار الإشعارات"
+    # لو قافل الإشعارات من الصلاحيات → مش هيوصله أي إشعار (داخلي أو Push)
+    global_permissions = permissions.get("صلاحيات عامة", {})
+    if isinstance(global_permissions, dict):
+        if global_permissions.get("إظهار الإشعارات") is False:
+            return False
+
+    # ⭐ HR sections: محتاج كمان "إظهار الموارد البشرية" يكون مفتوح
     if section in _HR_SECTION_KEYS:
+        if isinstance(global_permissions, dict):
+            if global_permissions.get("إظهار الموارد البشرية") is False:
+                return False
         hr_perms = permissions.get("الموارد البشرية", {})
         if not isinstance(hr_perms, dict):
             return True
@@ -93,7 +103,7 @@ def _can_view_section(profile: Dict[str, Any], section: str) -> bool:
                 return True
         return False
 
-    # ============ Existing sections ============
+
     category, key, fallback_keys = {
         "daily": ("حركة الخزينة", "المعاينة", ("ادخال اذون", "إظهار حركة الخزينة")),
         "purchases": ("حركة الموردين", "المعاينة", ("معاينة", "إظهار حركة الموردين")),
@@ -126,7 +136,6 @@ def _preference_enabled(pref: Optional[NotificationPreference], section: str, ac
 
 def _summary(data: Dict[str, Any]) -> str:
     parts = []
-    # ✅ إضافة حقول HR
     for key, label in (
         ("name", "الاسم"),
         ("employee_code", "الموظف"),
@@ -171,6 +180,9 @@ async def prepare_and_persist_event(company_code: str, message: dict) -> dict:
     title = f"{_ACTION_NAMES[action]} في {section_title}"
     now = datetime.utcnow()
 
+    # ⭐ قائمة المستخدمين الذين سيتم إرسال Push لهم (يُملأ داخل الـ loop)
+    push_targets: list[dict] = []
+
     async with AsyncSessionLocal() as session:
         try:
             preferences_result = await session.execute(
@@ -204,8 +216,33 @@ async def prepare_and_persist_event(company_code: str, message: dict) -> dict:
                         is_read=recipient_uid == actor_uid,
                         read_at=now if recipient_uid == actor_uid else None,
                     ))
+                    # ⭐ نفس المستخدم مرّ بكل الفحوصات → جدوله للـ Push
+                    # (بس مش نبعت للمستخدم اللي عمل الحركة نفسه — هو شايفها في الواجهة)
+                    if recipient_uid != actor_uid:
+                        push_targets.append({
+                            "user_uid": recipient_uid,
+                            "company_code": str(company_code),
+                            "title": title,
+                            "body": body,
+                            "data": {
+                                "type": event_type,
+                                "section": section,
+                                "action": action,
+                                "event_id": event_id,
+                            },
+                        })
+
             await session.commit()
         except Exception as exc:
             await session.rollback()
             print(f"⚠️ تعذر حفظ الإشعار/سجل التدقيق في Neon | company={company_code} | error={exc}")
+            push_targets = []   # ⭐ لا ترسل Push لو الـ commit فشل
+
+    # ⭐ جدولة إرسال Push بعد الـ commit الناجح (fire-and-forget)
+    for target in push_targets:
+        try:
+            send_push_to_user_bg(**target)
+        except Exception as _e:
+            print(f"⚠️ Failed to schedule push: {_e}")
+
     return message

@@ -1,14 +1,17 @@
 import time
 from datetime import datetime, timedelta
 from typing import Any, Dict
-
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.models import Notification, NotificationPreference
+from app.core.models import Notification, NotificationPreference, UserFcmToken
 from app.core.notification_events import _branch_allowed, _can_view_section
+from app.core.schemas import FcmDeviceModel
+from app.core.fcm_service import is_fcm_enabled
+
+
 
 router = APIRouter()
 _SECTIONS = {
@@ -261,3 +264,108 @@ async def delete_notification(notification_id: int, request: Request, db: AsyncS
     await db.delete(item)
     await db.commit()
     return {"status": "success"}
+
+
+# ============================================================
+# FCM Device Registration (System Push Notifications)
+# ============================================================
+
+@router.post("/register-device")
+async def register_device(
+    request: Request,
+    data: FcmDeviceModel,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    تسجيل جهاز جديد لإرسال إشعارات النظام.
+
+    - إذا كان الرمز موجوداً مسبقاً لنفس المستخدم → يحدّث platform
+    - إذا كان الرمز موجوداً لمستخدم آخر (نفس الجهاز، حساب آخر) → ينقل الملكية
+    - إذا لم يكن موجوداً → ينشئ سجل جديد
+    """
+    profile = _profile(request)
+    uid = str(profile["uid"])
+    company = str(profile["company_code"])
+    token = (data.fcm_token or "").strip()
+    platform = (data.platform or "web").strip().lower()
+
+    if not token:
+        raise HTTPException(status_code=400, detail="FCM token مطلوب")
+
+    # هل الرمز موجود؟
+    existing = await db.execute(
+        select(UserFcmToken).where(UserFcmToken.fcm_token == token)
+    )
+    row = existing.scalar_one_or_none()
+
+    if row is None:
+        db.add(UserFcmToken(
+            user_uid=uid,
+            company_code=company,
+            fcm_token=token,
+            platform=platform,
+        ))
+    else:
+        # نفس الجهاز، لكن لمستخدم آخر → ننقل الملكية
+        if row.user_uid != uid or row.company_code != company:
+            row.user_uid = uid
+            row.company_code = company
+        row.platform = platform
+        row.updated_at = datetime.utcnow()
+
+    await db.commit()
+
+    return {
+        "status": "success",
+        "fcm_enabled": is_fcm_enabled(),
+    }
+
+
+@router.delete("/register-device")
+async def unregister_device(
+    request: Request,
+    fcm_token: str = Query(..., min_length=1),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    إلغاء تسجيل جهاز (يُستدعى عند:
+      - تسجيل الخروج
+      - إيقاف إشعارات النظام من الإعدادات
+      - حذف بيانات المتصفح)
+    """
+    profile = _profile(request)
+    uid = str(profile["uid"])
+
+    await db.execute(
+        delete(UserFcmToken).where(
+            UserFcmToken.fcm_token == fcm_token.strip(),
+            UserFcmToken.user_uid == uid,
+        )
+    )
+    await db.commit()
+    return {"status": "success"}
+
+
+@router.get("/device-status")
+async def device_status(
+    request: Request,
+    fcm_token: str = Query(..., min_length=1),
+    db: AsyncSession = Depends(get_db),
+):
+    """فحص: هل الجهاز ده مسجل للمستخدم الحالي؟"""
+    profile = _profile(request)
+    uid = str(profile["uid"])
+
+    result = await db.execute(
+        select(UserFcmToken).where(
+            UserFcmToken.fcm_token == fcm_token.strip(),
+            UserFcmToken.user_uid == uid,
+        )
+    )
+    row = result.scalar_one_or_none()
+
+    return {
+        "registered": row is not None,
+        "platform": row.platform if row else None,
+        "fcm_enabled": is_fcm_enabled(),
+    }
