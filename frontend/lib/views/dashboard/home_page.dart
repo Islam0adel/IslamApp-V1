@@ -24,7 +24,8 @@ import '../../services/notifications_service.dart';
 import '../../services/presence_service.dart';
 import '../../views/widgets/online_users_list.dart';
 import '../../pages/hr/hr_dashboard_page.dart';   // ← NEW
-
+import '../../services/notification_router.dart';   // ⭐ Deep Link
+import '../../services/deep_link_service.dart';   // ⭐ Pending pattern
 class HomePage extends StatefulWidget {
   final String userName;
   final String companyName;
@@ -59,7 +60,11 @@ class _HomePageState extends State<HomePage>
   Timer? _permissionsDebounce;
   bool _branchCheckInProgress = false;
   bool _branchDialogOpen = false;
-
+    // ⭐ App Badge
+  Box? _notificationsBoxRef;
+    // ⭐ Deep Link
+  StreamSubscription<Map<String, dynamic>>? _deepLinkSub;
+  bool _syncReady = false;   // هل المزامنة خلصت؟
   @override
   void initState() {
     super.initState();
@@ -83,9 +88,28 @@ class _HomePageState extends State<HomePage>
       }
     });
 
+    // ⭐ App Badge
+    _notificationsBoxRef = Hive.box('notifications_box');
+    _notificationsBoxRef!.listenable().addListener(_syncAppBadge);
+
+    // ⭐ Deep Link: استمع للإشعارات المعلقة القادمة من SW
+    _deepLinkSub = DeepLinkService.instance.pendingStream.listen(
+      _onDeepLinkReceived,
+    );
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadAllData();
+      _syncAppBadge();
     });
+  }
+
+  // ⭐ يحدّث شارة العدد بناءً على عدد الإشعارات غير المقروءة
+  void _syncAppBadge() {
+    if (!mounted) return;
+    final unread = NotificationsService.instance.unreadCount(
+      companyCode: widget.companyCode,
+    );
+    NotificationsService.instance.syncAppBadge(unread);
   }
 
   void _onPermissionsChanged() {
@@ -94,6 +118,9 @@ class _HomePageState extends State<HomePage>
     setState(() {
       _permissionsLoaded = PermissionsService().isLoaded;
     });
+
+    // ⭐ الصلاحيات تتغير → unreadCount قد يتغير
+    _syncAppBadge();
 
     _permissionsDebounce?.cancel();
     _permissionsDebounce = Timer(const Duration(milliseconds: 400), () {
@@ -115,6 +142,10 @@ class _HomePageState extends State<HomePage>
       });
 
       await _loadBranchesAndCheck(showDialog: true);
+
+      // ⭐ المزامنة تمت (أو على الأقل الفروع + الصلاحيات جاهزة)
+      _syncReady = true;
+      await _consumeDeepLinkIfAny();
     } catch (e) {
       print("خطأ في تحميل البيانات: $e");
 
@@ -123,6 +154,37 @@ class _HomePageState extends State<HomePage>
           _permissionsLoaded = true;
         });
       }
+
+      // حتى لو فيه خطأ، نحاول نفتح الإشعار (يمكن البيانات موجودة أصلاً)
+      _syncReady = true;
+      await _consumeDeepLinkIfAny();
+    }
+  }
+
+  // ⭐ فتح الإشعار المعلق (لو موجود)
+  Future<void> _consumeDeepLinkIfAny() async {
+    if (!_syncReady || !mounted) return;
+
+    final pending = DeepLinkService.instance.consumePendingNotification();
+    if (pending == null) return;
+
+    // مهلة صغيرة عشان الـ UI يهدأ
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    if (!mounted) return;
+
+    await NotificationRouter.openNotification(pending);
+  }
+
+  // ⭐ callback: إشعار وصل من SW بعد ما التطبيق مفتوح
+  void _onDeepLinkReceived(Map<String, dynamic> notification) {
+    // لو المزامنة جاهزة → افتح فوراً
+    // لو لا → سيبه في pending، _consumeDeepLinkIfAny هيتولى لاحقاً
+    if (_syncReady) {
+      _consumeDeepLinkIfAny();
+    } else {
+      debugPrint(
+        '⏳ Deep link received قبل المزامنة — سيُفتح بعدها',
+      );
     }
   }
 
@@ -335,7 +397,6 @@ class _HomePageState extends State<HomePage>
     int remainingSeconds = seconds % 60;
     return '${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
   }
-
   Future<void> _showNotificationsPreview() async {
     if (!mounted) return;
 
@@ -397,6 +458,31 @@ class _HomePageState extends State<HomePage>
       }
     }
 
+    // ⭐ helper محلي لصفوف dialog المساعدة (عشان ما يتعارضش مع أي method تانية)
+    Widget buildHelpRow(
+      BuildContext ctx,
+      IconData icon,
+      String text,
+      Color color,
+    ) {
+      return Row(
+        children: [
+          Icon(icon, color: color, size: 22),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                fontFamily: 'Cairo',
+                color: AppTheme.textMainFor(ctx),
+                fontSize: 13,
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -419,14 +505,96 @@ class _HomePageState extends State<HomePage>
                 title: Row(
                   children: [
                     Expanded(
-                      child: Text(
-                        'آخر الإشعارات',
-                        style: TextStyle(
-                          color: AppTheme.textMainFor(context),
-                          fontFamily: 'Cairo',
-                          fontWeight: FontWeight.bold,
-                          fontSize: 17,
-                        ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'آخر الإشعارات',
+                            style: TextStyle(
+                              color: AppTheme.textMainFor(context),
+                              fontFamily: 'Cairo',
+                              fontWeight: FontWeight.bold,
+                              fontSize: 17,
+                            ),
+                          ),
+                          if (latestItems.isNotEmpty)
+                            Text(
+                              '${latestItems.length} إشعار',
+                              style: TextStyle(
+                                color: AppTheme.textMutedFor(context),
+                                fontFamily: 'Cairo',
+                                fontSize: 10,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    // ⭐ زر شرح Swipe Actions
+                    IconButton(
+                      tooltip: 'إجراءات سريعة',
+                      onPressed: () {
+                        showDialog<void>(
+                          context: dialogContext,
+                          builder: (helpCtx) => AlertDialog(
+                            backgroundColor:
+                                AppTheme.dialogBackground(helpCtx),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(15),
+                            ),
+                            title: Text(
+                              'إجراءات سريعة',
+                              style: TextStyle(
+                                fontFamily: 'Cairo',
+                                color: AppTheme.textMainFor(helpCtx),
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            content: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                buildHelpRow(
+                                  helpCtx,
+                                  Icons.arrow_forward_rounded,
+                                  'اسحب يميناً = تحديد كمقروء',
+                                  AppTheme.successStrongFor(helpCtx),
+                                ),
+                                const SizedBox(height: 12),
+                                buildHelpRow(
+                                  helpCtx,
+                                  Icons.arrow_back_rounded,
+                                  'اسحب يساراً = حذف',
+                                  AppTheme.dangerStrongFor(helpCtx),
+                                ),
+                                const SizedBox(height: 12),
+                                buildHelpRow(
+                                  helpCtx,
+                                  Icons.touch_app_rounded,
+                                  'اضغط عادي = فتح الصفحة',
+                                  AppTheme.accentFor(helpCtx),
+                                ),
+                              ],
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(helpCtx),
+                                child: Text(
+                                  'فهمت',
+                                  style: TextStyle(
+                                    fontFamily: 'Cairo',
+                                    color: AppTheme.accentFor(helpCtx),
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                      icon: Icon(
+                        Icons.info_outline_rounded,
+                        color: AppTheme.infoFor(context),
+                        size: 20,
                       ),
                     ),
                     IconButton(
@@ -506,7 +674,12 @@ class _HomePageState extends State<HomePage>
                             final body =
                                 (item['body'] ?? '').toString().trim();
 
-                            return Material(
+                            // ⭐ key فريد — يتغير مع read عشان يعيد البناء
+                            final swipeKey = ValueKey(
+                              'home_notif_${item['id']}_${isRead ? 'r' : 'u'}',
+                            );
+
+                            final card = Material(
                               color: Colors.transparent,
                               child: ListTile(
                                 dense: true,
@@ -567,11 +740,183 @@ class _HomePageState extends State<HomePage>
                                   }
 
                                   if (dialogContext.mounted) {
-                                    setDialogState(() {});
+                                    Navigator.pop(dialogContext);
                                   }
                                   if (mounted) setState(() {});
+
+                                  await Future<void>.delayed(
+                                    const Duration(milliseconds: 150),
+                                  );
+                                  await NotificationRouter.openNotification(
+                                    Map<String, dynamic>.from(item),
+                                  );
                                 },
                               ),
+                            );
+
+                            return Dismissible(
+                              key: swipeKey,
+                              direction: DismissDirection.horizontal,
+
+                              // Swipe يمين → [✓] markRead
+                              background: Container(
+                                alignment: Alignment.centerRight,   // ⭐ شمال → يمين
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.successStrongFor(context)
+                                      .withValues(alpha: 0.85),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      isRead
+                                          ? Icons.check_circle_rounded
+                                          : Icons.done_rounded,
+                                      color: Colors.white,
+                                      size: 22,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      'تم القراءة',
+                                      style: const TextStyle(
+                                        fontFamily: 'Cairo',
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+
+                              // Swipe يسار → [🗑️] حذف
+                              secondaryBackground: Container(
+                                alignment: Alignment.centerLeft,   // ⭐ يمين → شمال
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.dangerStrongFor(context)
+                                      .withValues(alpha: 0.85),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  mainAxisAlignment: MainAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'حذف',
+                                      style: const TextStyle(
+                                        fontFamily: 'Cairo',
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    const Icon(
+                                      Icons.delete_outline_rounded,
+                                      color: Colors.white,
+                                      size: 22,
+                                    ),
+                                  ],
+                                ),
+                              ),
+
+                              confirmDismiss: (direction) async {
+                                // ─── Swipe يمين → markRead فقط ───
+                                if (direction ==
+                                    DismissDirection.startToEnd) {
+                                  if (!isRead) {
+                                    await NotificationsService.instance
+                                        .markRead(
+                                      item['id'].toString(),
+                                    );
+                                  }
+                                  if (mounted) setState(() {});
+                                  return false;
+                                }
+
+                                // ─── Swipe يسار → حذف ───
+                                if (direction ==
+                                    DismissDirection.endToStart) {
+                                  final confirmed = await showDialog<bool>(
+                                    context: context,
+                                    builder: (ctx) => AlertDialog(
+                                      backgroundColor:
+                                          AppTheme.dialogBackground(context),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius:
+                                            BorderRadius.circular(15),
+                                      ),
+                                      title: Text(
+                                        'حذف الإشعار',
+                                        style: TextStyle(
+                                          fontFamily: 'Cairo',
+                                          color:
+                                              AppTheme.textMainFor(context),
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      content: Text(
+                                        'هل تريد حذف هذا الإشعار نهائياً؟',
+                                        style: TextStyle(
+                                          fontFamily: 'Cairo',
+                                          color:
+                                              AppTheme.textMutedFor(context),
+                                        ),
+                                      ),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () =>
+                                              Navigator.pop(ctx, false),
+                                          child: Text(
+                                            'إلغاء',
+                                            style: TextStyle(
+                                              fontFamily: 'Cairo',
+                                              color: AppTheme.textMutedFor(
+                                                  context),
+                                            ),
+                                          ),
+                                        ),
+                                        TextButton(
+                                          onPressed: () =>
+                                              Navigator.pop(ctx, true),
+                                          child: Text(
+                                            'حذف',
+                                            style: TextStyle(
+                                              fontFamily: 'Cairo',
+                                              color:
+                                                  AppTheme.dangerStrongFor(
+                                                      context),
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+
+                                  if (confirmed == true) {
+                                    await NotificationsService.instance
+                                        .deleteNotification(
+                                      notificationId:
+                                          item['id'].toString(),
+                                    );
+                                    if (mounted) setState(() {});
+                                    return true;
+                                  }
+                                  return false;
+                                }
+
+                                return false;
+                              },
+
+                              child: card,
                             );
                           },
                         ),
@@ -1199,6 +1544,9 @@ class _HomePageState extends State<HomePage>
     await prefs.remove('job_title');
     await prefs.remove('user_email');
 
+    // ⭐ 3.5) امسح شارة العدد
+    await NotificationsService.instance.syncAppBadge(0);
+
     // 4) signOut
     await FirebaseAuth.instance.signOut();
 
@@ -1218,6 +1566,16 @@ class _HomePageState extends State<HomePage>
     WidgetsBinding.instance.removeObserver(this);
     PermissionsService().removeListener(_onPermissionsChanged);
     _permissionsDebounce?.cancel();
+
+    // ⭐ إزالة مستمع الشارة
+    try {
+      _notificationsBoxRef?.listenable().removeListener(_syncAppBadge);
+    } catch (_) {}
+    _notificationsBoxRef = null;
+
+    // ⭐ إزالة مستمع Deep Link
+    _deepLinkSub?.cancel();
+    _deepLinkSub = null;
 
     // ⚠️ مفيش PresenceService.stop() هنا — بيتنادى في _handleLogout بس
     // عشان لو المستخدم عمل logout، already handled

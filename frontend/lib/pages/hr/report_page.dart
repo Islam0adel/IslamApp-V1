@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hive_flutter/hive_flutter.dart'; 
 import '../../services/permissions_service.dart';
 import '../../core/theme.dart';
 import '../../views/widgets/glass_card.dart';
@@ -323,6 +324,31 @@ class _HRReportPageState extends State<HRReportPage> {
     }
   }
 
+  // ============================================================
+  // ⭐ اسم الفرع من Hive (بدل الكود)
+  // ============================================================
+
+  String _getBranchName(String? code) {
+    if (code == null || code.isEmpty || code == 'all') {
+      return 'كل الفروع';
+    }
+    try {
+      final box = Hive.box('coding_box');
+      final raw = box.get(
+        '${_companyCode}_branches',
+        defaultValue: [],
+      );
+      if (raw is List) {
+        for (final item in raw) {
+          if (item is! Map) continue;
+          if (item['code']?.toString() == code) {
+            return item['name']?.toString() ?? code;
+          }
+        }
+      }
+    } catch (_) {}
+    return code;
+  }
 
   // ============================================================
   // تصدير PDF
@@ -415,7 +441,7 @@ class _HRReportPageState extends State<HRReportPage> {
           'note',
         ],
         companyName: _companyName,
-        branchName: r.branchCode,
+        branchName: _getBranchName(r.branchCode), 
         employee: r.employeeName,
         period: periodLabel,
         summary: summary,
@@ -528,7 +554,7 @@ class _HRReportPageState extends State<HRReportPage> {
           'note',
         ],
         companyName: _companyName,
-        branchName: r.branchCode,
+        branchName: _getBranchName(r.branchCode),  
         employee: r.employeeName,
         period: periodLabel,
         summary: summary,

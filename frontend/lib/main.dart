@@ -14,7 +14,8 @@ import 'views/dashboard/home_page.dart';
 import 'views/auth/forgot_password_screen.dart';
 
 import 'firebase_options.dart';
-
+import 'services/deep_link_service.dart';   // ⭐ Deep Link
+import 'core/navigator_key.dart';           // ⭐ Global NavigatorKey
 import 'services/global_sync_service.dart';
 import 'services/daily_service.dart';
 import 'services/supplier_service.dart';
@@ -44,15 +45,13 @@ StreamSubscription? supplierSyncSubscription;
 bool _isSyncing = false;
 
 // ============================================================
-// Sync Manager
+// Sync Manager — Batching
 //
-// lastSync موجود
-//      ↓
-// Incremental Sync
-//
-// lastSync غير موجود
-//      ↓
-// Full Sync مرة واحدة فقط
+// الترتيب:
+//   Batch 1: [اليوميات, التسويات, التكويد]   — 3 parallel
+//   Batch 2: [الموظفين, HR, الموردين]         — 3 parallel
+//   Batch 3: [الجرد]                          — 1
+//   retryPending → الأرصدة
 // ============================================================
 
 Future<void> syncAllDataIfNeeded(String companyCode) async {
@@ -66,207 +65,136 @@ Future<void> syncAllDataIfNeeded(String companyCode) async {
 
   try {
     final prefs = await SharedPreferences.getInstance();
-
-    // ========================================================
-    // وقت بداية عملية المزامنة
-    // ========================================================
     final syncStartedAt = DateTime.now().toUtc().toIso8601String();
 
-    // ========================================================
-    // 1) اليوميات
-    // ========================================================
-
-    final String dailyKey = 'last_sync_daily_$companyCode';
-    final String? dailyLastSync = prefs.getString(dailyKey);
-
-    if (dailyLastSync == null) {
-      print("📥 اليوميات: تحميل كامل");
-
-      await DailyService().syncAllTransactions(companyCode);
-
-      // مهم جداً:
-      // تسجيل وقت بداية الـ Full Sync
-      await prefs.setString(dailyKey, syncStartedAt);
-
-      print("✅ اليوميات: اكتمل التحميل الكامل");
-      print("💾 تم حفظ lastSync لليوميات: $syncStartedAt");
-    } else {
-      print("📡 اليوميات: مزامنة تزايدية منذ $dailyLastSync");
-
-      await DailyService().syncChangesFromServer(
-        companyCode,
-        dailyLastSync,
-      );
-
-      print("✅ اليوميات: اكتملت المزامنة التزايدية");
-    }
-
-    // ========================================================
-    // التسويات
-    // ========================================================
-
-    final String settlementKey = 'last_sync_settlement_$companyCode';
-    final String? settlementLastSync = prefs.getString(settlementKey);
-
-    if (settlementLastSync == null) {
-      print("📥 التسويات: تحميل كامل");
-
-      await SupplierSettlementService().fetchAllSettlements(companyCode);
-
-      await prefs.setString(settlementKey, syncStartedAt);
-    } else {
-      print("📡 التسويات: مزامنة تزايدية منذ $settlementLastSync");
-
-      await SupplierSettlementService().syncChangesFromServer(
-        companyCode,
-        settlementLastSync,
-      );
-    }
-
-    // ========================================================
-    // 2) التكويد
-    // ========================================================
-
-    final String codingKey = 'last_sync_coding_$companyCode';
-    final String? codingLastSync = prefs.getString(codingKey);
-
-    if (codingLastSync == null) {
-      print("📥 التكويد: تحميل كامل");
-
-      await CodingService().fetchAllCoding(companyCode);
-
-      await prefs.setString(codingKey, syncStartedAt);
-
-      print("✅ التكويد: اكتمل التحميل الكامل");
-      print("💾 تم حفظ lastSync للتكويد: $syncStartedAt");
-    } else {
-      print("📡 التكويد: مزامنة تزايدية منذ $codingLastSync");
-
-      await CodingService().syncChangesFromServer(
-        companyCode,
-        codingLastSync,
-      );
-
-      print("✅ التكويد: اكتملت المزامنة التزايدية");
-    }
-
-    // ========================================================
-    // الموظفين (قسم مستقل عن التكويد)
-    // ========================================================
-
-    final String employeesKey = 'last_sync_employees_$companyCode';
-    final String? employeesLastSync = prefs.getString(employeesKey);
-
-    if (employeesLastSync == null) {
-      print("📥 الموظفين: تحميل كامل");
-
-      await EmployeeService().fetchAllEmployees(companyCode);
-
-      await prefs.setString(employeesKey, syncStartedAt);
-
-      print("✅ الموظفين: اكتمل التحميل الكامل");
-      print("💾 تم حفظ lastSync للموظفين: $syncStartedAt");
-    } else {
-      print("📡 الموظفين: مزامنة تزايدية منذ $employeesLastSync");
-
-      await EmployeeService().syncChangesFromServer(
-        companyCode,
-        employeesLastSync,
-      );
-
-      print("✅ الموظفين: اكتملت المزامنة التزايدية");
-    }
-
-        // ========================================================
-    // الموارد البشرية (HR) — مزامنة موحدة
-    // ========================================================
-    // HRService().syncAll() بيزامن 4 أقسام:
-    //   1. attendance      (6 شهور أول مرة / delta بعد كده)
-    //   2. vacations       (full أول مرة / delta بعد كده)
-    //   3. adjustments     (6 شهور أول مرة / delta بعد كده)
-    //   4. employee_settings (full أول مرة / delta بعد كده)
-    //
-    // ⚠️ نفس الـ SharedPreferences keys القديمة →
-    //    الأجهزة اللي عملت sync قبل كده مش هتفقد lastSync
-    // ========================================================
-
-        try {
-      print("📥 HR: بدء المزامنة الموحدة...");
-      final hrResults = await HRService().syncAll(companyCode);
-      print("✅ HR: اكتملت المزامنة: $hrResults");
-
-      // ⭐ إعادة رفع أي pending قديم (لو المستخدم قفل التطبيق أثناء الحفظ)
+    // ⭐ helper: sync قسم مع lastSync management
+    Future<void> syncOneWithLastSync({
+      required String name,
+      required String lastSyncKey,
+      required Future<void> Function() full,
+      required Future<void> Function(String since) incremental,
+    }) async {
       try {
-        await HRService().retryAllPending(companyCode);
-        print("✅ HR: تم رفع pending القديمة");
+        final lastSync = prefs.getString(lastSyncKey);
+        if (lastSync == null) {
+          await full();
+          await prefs.setString(lastSyncKey, syncStartedAt);
+        } else {
+          await incremental(lastSync);
+        }
+        print("  ✅ $name");
       } catch (e) {
-        print("⚠️ HR: فشل رفع pending القديمة: $e");
+        print("  ❌ $name: $e");
       }
+    }
+
+    // ⭐ helper: sync قسم مخصص (زي HR اللي بيدير lastSync بنفسه)
+    Future<void> syncOneCustom({
+      required String name,
+      required Future<void> Function() runner,
+    }) async {
+      try {
+        await runner();
+        print("  ✅ $name");
+      } catch (e) {
+        print("  ❌ $name: $e");
+      }
+    }
+
+    // ──────────────────────────────────────────────────────
+    // Batch 1: [اليوميات, التسويات, التكويد]
+    // ──────────────────────────────────────────────────────
+    print("📦 Batch 1: [اليوميات, التسويات, التكويد]");
+    await Future.wait([
+      syncOneWithLastSync(
+        name: 'اليوميات',
+        lastSyncKey: 'last_sync_daily_$companyCode',
+        full: () => DailyService().syncAllTransactions(companyCode),
+        incremental: (since) =>
+            DailyService().syncChangesFromServer(companyCode, since),
+      ),
+      syncOneWithLastSync(
+        name: 'التسويات',
+        lastSyncKey: 'last_sync_settlement_$companyCode',
+        full: () =>
+            SupplierSettlementService().fetchAllSettlements(companyCode),
+        incremental: (since) =>
+            SupplierSettlementService()
+                .syncChangesFromServer(companyCode, since),
+      ),
+      syncOneWithLastSync(
+        name: 'التكويد',
+        lastSyncKey: 'last_sync_coding_$companyCode',
+        full: () => CodingService().fetchAllCoding(companyCode),
+        incremental: (since) =>
+            CodingService().syncChangesFromServer(companyCode, since),
+      ),
+    ]);
+
+    // ──────────────────────────────────────────────────────
+    // Batch 2: [الموظفين, HR, الموردين]
+    // ──────────────────────────────────────────────────────
+    print("📦 Batch 2: [الموظفين, HR, الموردين]");
+    await Future.wait([
+      syncOneWithLastSync(
+        name: 'الموظفين',
+        lastSyncKey: 'last_sync_employees_$companyCode',
+        full: () => EmployeeService().fetchAllEmployees(companyCode),
+        incremental: (since) =>
+            EmployeeService().syncChangesFromServer(companyCode, since),
+      ),
+      syncOneCustom(
+        name: 'HR',
+        runner: () async {
+          await HRService().syncAll(companyCode);
+        },
+      ),
+      syncOneWithLastSync(
+        name: 'الموردين',
+        lastSyncKey: 'last_sync_supplier_$companyCode',
+        full: () => SupplierService().fetchAllSupplier(companyCode),
+        incremental: (since) =>
+            SupplierService().syncChangesFromServer(companyCode, since),
+      ),
+    ]);
+
+    // ──────────────────────────────────────────────────────
+    // Batch 3: [الجرد]
+    // ──────────────────────────────────────────────────────
+    print("📦 Batch 3: [الجرد]");
+    await Future.wait([
+      syncOneWithLastSync(
+        name: 'الجرد',
+        lastSyncKey: 'last_sync_inventory_$companyCode',
+        full: () => InventoryService().fetchAllInventory(companyCode),
+        incremental: (since) =>
+            InventoryService().syncChangesFromServer(companyCode, since),
+      ),
+    ]);
+
+    // ──────────────────────────────────────────────────────
+    // retryPending
+    // ──────────────────────────────────────────────────────
+    try {
+      await HRService().retryAllPending(companyCode);
+      print("  ✅ retryPending");
     } catch (e) {
-      print("❌ HR: فشلت المزامنة: $e");
-    }
-    // ========================================================
-    // 3) الموردين
-    // ========================================================
-
-    final String supplierKey = 'last_sync_supplier_$companyCode';
-    final String? supplierLastSync = prefs.getString(supplierKey);
-
-    if (supplierLastSync == null) {
-      print("📥 الموردين: تحميل كامل");
-
-      await SupplierService().fetchAllSupplier(companyCode);
-
-      await prefs.setString(supplierKey, syncStartedAt);
-
-      print("✅ الموردين: اكتمل التحميل الكامل");
-      print("💾 تم حفظ lastSync للموردين: $syncStartedAt");
-    } else {
-      print("📡 الموردين: مزامنة تزايدية منذ $supplierLastSync");
-
-      await SupplierService().syncChangesFromServer(
-        companyCode,
-        supplierLastSync,
-      );
-
-      print("✅ الموردين: اكتملت المزامنة التزايدية");
+      print("  ❌ retryPending: $e");
     }
 
-    // ========================================================
-    // 4) الجرد
-    // ========================================================
-
-    final String inventoryKey = 'last_sync_inventory_$companyCode';
-    final String? inventoryLastSync = prefs.getString(inventoryKey);
-
-    if (inventoryLastSync == null) {
-      print("📥 الجرد: تحميل كامل");
-
-      await InventoryService().fetchAllInventory(companyCode);
-
-      await prefs.setString(inventoryKey, syncStartedAt);
-
-      print("✅ الجرد: اكتمل التحميل الكامل");
-      print("💾 تم حفظ lastSync للجرد: $syncStartedAt");
-    } else {
-      print("📡 الجرد: مزامنة تزايدية منذ $inventoryLastSync");
-
-      await InventoryService().syncChangesFromServer(
-        companyCode,
-        inventoryLastSync,
-      );
-
-      print("✅ الجرد: اكتملت المزامنة التزايدية");
+    // ──────────────────────────────────────────────────────
+    // الأرصدة المحلية
+    // ──────────────────────────────────────────────────────
+    try {
+      await DailyService().getDailySummaryLocal(companyCode);
+      print("  ✅ الأرصدة المحلية");
+    } catch (e) {
+      print("  ❌ الأرصدة المحلية: $e");
     }
 
-    // ========================================================
-    // تحديث الأرصدة المحلية فقط
-    // ========================================================
-
-    await DailyService().getDailySummaryLocal(companyCode);
-
-    print("✅ تم تحديث الأرصدة المحلية");
-    print("✅ اكتملت المزامنة المركزية بنجاح");
+    print("═══════════════════════════════════════");
+    print("✅ اكتملت المزامنة");
+    print("═══════════════════════════════════════");
   } catch (e) {
     print("❌ فشلت المزامنة المركزية: $e");
   } finally {
@@ -387,9 +315,11 @@ if (rememberMe && userName != null && companyCode != null) {
     // --------------------------------------------------------
     await PermissionsService().loadPermissions();
 
-    // ⭐ استعادة تسجيل جهاز FCM لو المستخدم فعّل إشعارات النظام سابقاً
-    // (لا يطلب إذن جديد — يستخدم الإذن الموجود)
+    // ⭐ استعادة تسجيل جهاز FCM
     unawaited(FcmService.instance.restoreRegistrationIfEnabled());
+
+    // ⭐ Deep Link Service (يستمع لرسائل SW + URL param)
+    DeepLinkService.instance.initialize();
 
     // --------------------------------------------------------
     // تشغيل WebSocket
@@ -575,6 +505,7 @@ Future<void> _syncWhenAppResumes() async {
     return MaterialApp(
       title: 'IslamApp V1.0',
       debugShowCheckedModeBanner: false,
+      navigatorKey: appNavigatorKey,   // ⭐ Deep Linking
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: _themeMode,

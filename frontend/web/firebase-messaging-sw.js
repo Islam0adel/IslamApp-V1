@@ -1,10 +1,4 @@
 // web/firebase-messaging-sw.js
-//
-// Service Worker يستقبل إشعارات FCM عندما يكون التطبيق
-// مغلقاً أو في الخلفية (يُسجَّل تلقائياً بواسطة Firebase SDK).
-//
-// يعرض الإشعارات مستخدماً data-only messages (بدون notification payload)
-// للحصول على تحكم كامل في المحتوى والأيقونة.
 
 importScripts("https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js");
 importScripts("https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js");
@@ -21,12 +15,75 @@ firebase.initializeApp({
 
 const messaging = firebase.messaging();
 
-// استقبل الرسائل في الخلفية واعرضها
-messaging.onBackgroundMessage((payload) => {
+// ============================================================
+// IndexedDB helpers for badge count (shared with window)
+// ============================================================
+function openBadgeDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open("islam_badge_db", 1);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains("badge")) {
+        db.createObjectStore("badge");
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function getBadgeCount() {
+  try {
+    const db = await openBadgeDb();
+    return new Promise((resolve) => {
+      const tx = db.transaction("badge", "readonly");
+      const req = tx.objectStore("badge").get("count");
+      req.onsuccess = () => resolve(parseInt(req.result) || 0);
+      req.onerror = () => resolve(0);
+    });
+  } catch (_) {
+    return 0;
+  }
+}
+
+async function putBadgeCount(count) {
+  try {
+    const db = await openBadgeDb();
+    await new Promise((resolve) => {
+      const tx = db.transaction("badge", "readwrite");
+      tx.objectStore("badge").put(count, "count");
+      tx.oncomplete = resolve;
+      tx.onerror = resolve;
+    });
+  } catch (_) {}
+}
+
+async function updateAppBadge(count) {
+  try {
+    if (count > 0) {
+      if (self.registration && "setAppBadge" in self.registration) {
+        await self.registration.setAppBadge(count);
+      } else if (self.navigator && "setAppBadge" in self.navigator) {
+        await self.navigator.setAppBadge(count);
+      }
+    } else {
+      if (self.registration && "clearAppBadge" in self.registration) {
+        await self.registration.clearAppBadge();
+      } else if (self.navigator && "clearAppBadge" in self.navigator) {
+        await self.navigator.clearAppBadge();
+      }
+    }
+  } catch (_) {}
+}
+
+// ============================================================
+// Background message handler
+// ============================================================
+messaging.onBackgroundMessage(async (payload) => {
   console.log("[firebase-messaging-sw.js] Background message:", payload);
 
   const data = payload.data || {};
-  const title = data.title || "إشعار جديد";
+  const title = data.title || "IslamApp";
   const body = data.body || "";
 
   const notificationOptions = {
@@ -35,7 +92,6 @@ messaging.onBackgroundMessage((payload) => {
     badge: "/icons/Icon-192.png",
     dir: "rtl",
     lang: "ar",
-    // tag: يمنع تراكم إشعارات متعددة لنفس الحدث
     tag: data.event_id || "default",
     data: {
       type: data.type || "",
@@ -45,26 +101,66 @@ messaging.onBackgroundMessage((payload) => {
     },
   };
 
+  // ⭐ زيادة العدد على الأيقونة (فتح بقراءة العدد من IndexedDB، +1، حفظ، تحديث)
+  try {
+    const oldCount = await getBadgeCount();
+    const newCount = oldCount + 1;
+    await putBadgeCount(newCount);
+    await updateAppBadge(newCount);
+  } catch (e) {
+    console.warn("[SW] Badge increment failed:", e);
+  }
+
   self.registration.showNotification(title, notificationOptions);
 });
 
-// عند الضغط على إشعار → ركّز على التطبيق أو افتحه
+// ============================================================
+// ⭐ Notification click → Deep Link
+//
+// حالتان:
+//   A. التطبيق مفتوح → نبعت postMessage للتاب المفتوح
+//   B. التطبيق مقفول → نفتح URL فيه ?notif=<json>
+// ============================================================
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
+
+  const notifData = (event.notification && event.notification.data) || {};
+  const payload = {
+    section: notifData.section || "",
+    action: notifData.action || "",
+    type: notifData.type || "",
+    event_id: notifData.event_id || "",
+  };
 
   event.waitUntil(
     clients
       .matchAll({ type: "window", includeUncontrolled: true })
       .then((clientList) => {
-        // لو التطبيق مفتوح بالفعل → ركّز عليه
+        // ─── A. التطبيق مفتوح ───
         for (const client of clientList) {
-          if ("focus" in client) {
-            return client.focus();
-          }
+          try {
+            if (
+              client.url &&
+              client.url.indexOf(location.origin) === 0 &&
+              "postMessage" in client
+            ) {
+              client.postMessage({
+                type: "deep_link",
+                payload: payload,
+              });
+              if ("focus" in client) {
+                return client.focus();
+              }
+            }
+          } catch (_) {}
         }
-        // لو مقفول → افتحه
+
+        // ─── B. التطبيق مقفول → افتح URL فيه notif param ───
+        const encoded = encodeURIComponent(JSON.stringify(payload));
+        const targetUrl = "/?notif=" + encoded;
+
         if (clients.openWindow) {
-          return clients.openWindow("/");
+          return clients.openWindow(targetUrl);
         }
       })
   );

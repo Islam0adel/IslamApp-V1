@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
-
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-
+import 'app_badge.dart';
 import '../core/constants.dart';
 import 'auth_http.dart';
 import 'permissions_service.dart';
@@ -401,6 +401,39 @@ class NotificationsService {
     try { await AuthHttp.post(Uri.parse('${ApiConstants.baseUrl}/notifications/read-all')); } catch (_) {}
   }
 
+  // ⭐ حذف إشعار واحد (by event_key أو server_id)
+  Future<void> deleteNotification({required String notificationId}) async {
+    final entry = _findEntry(notificationId);
+    if (entry == null) return;
+
+    final item = Map<String, dynamic>.from(entry.value as Map);
+    final serverId = (item['server_id'] ?? '').toString();
+    final eventKey = (item['event_key'] ?? item['id'] ?? notificationId).toString();
+
+    // امسح من Hive أولاً (سريع + optimistic)
+    await _box.delete(entry.key);
+
+    // ثم امسح من السيرفر (fire-and-forget)
+    try {
+      if (serverId.isNotEmpty) {
+        await AuthHttp.delete(
+          Uri.parse('${ApiConstants.baseUrl}/notifications/$serverId'),
+        );
+      } else {
+        // لو الإشعار لسه متزامنش (offline-created) → مش محتاج نحذفه من السيرفر
+        // (السيرفر مش عارفه أصلاً)
+        debugPrint(
+          'ℹ️ deleteNotification: local-only (event=$eventKey)',
+        );
+      }
+    } catch (e) {
+      debugPrint('⚠️ deleteNotification remote failed: $e');
+      // مش مشكلة — الإشعار اتمسح محلياً، والمرة الجاية _refreshFromServer
+      // مش هيجيبه تاني (لأن السيرفر مسحه أو مش عارفه)
+    }
+  }
+
+
   Future<void> clear({String? companyCode}) async {
     for (final item in getNotifications(companyCode: companyCode)) {
       final entry = _findEntry(item['id'].toString());
@@ -453,6 +486,17 @@ class NotificationsService {
     await _settings.put('retention_days', 90);
     await loadSettingsFromServer();
   }
+
+  // ============================================================
+  // ⭐ App Badge (الشارة الحمراء على أيقونة التطبيق)
+  // ============================================================
+
+  /// تحديث شارة العدد على أيقونة التطبيق
+  /// (تعمل فقط على PWA المثبتة — Chrome/Edge/Safari)
+  Future<void> syncAppBadge(int count) async {
+    await jsSyncAppBadge(count < 0 ? 0 : count);
+  }
+
 
   void setCompany(String companyCode) {
     final uid = FirebaseAuth.instance.currentUser?.uid ?? '';

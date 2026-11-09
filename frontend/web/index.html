@@ -38,6 +38,70 @@
     (Flutter يستخدم scope '/' لـ flutter_service_worker.js،
     فلازم نستخدم scope مختلف لـ FCM لتجنب التعارض)
   -->
+    
+  <!-- ⭐ App Badge helpers (window + shared IndexedDB with SW) -->
+  <script>
+    window.appBadge = (function () {
+      let dbPromise = null;
+
+      function openDb() {
+        if (dbPromise) return dbPromise;
+        dbPromise = new Promise((resolve, reject) => {
+          const req = indexedDB.open("islam_badge_db", 1);
+          req.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains("badge")) {
+              db.createObjectStore("badge");
+            }
+          };
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        });
+        return dbPromise;
+      }
+
+      async function put(key, value) {
+        try {
+          const db = await openDb();
+          return new Promise((resolve) => {
+            const tx = db.transaction("badge", "readwrite");
+            tx.objectStore("badge").put(value, key);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => resolve();
+          });
+        } catch (_) {}
+      }
+
+      return {
+        set: async function (count) {
+          count = Math.max(0, parseInt(count) || 0);
+          await put("count", count);
+          try {
+            if (count > 0) {
+              if ("setAppBadge" in navigator) {
+                await navigator.setAppBadge(count);
+              }
+            } else {
+              if ("clearAppBadge" in navigator) {
+                await navigator.clearAppBadge();
+              }
+            }
+          } catch (e) {
+            console.warn("appBadge.set error:", e);
+          }
+        },
+        clear: async function () {
+          await put("count", 0);
+          try {
+            if ("clearAppBadge" in navigator) {
+              await navigator.clearAppBadge();
+            }
+          } catch (e) {}
+        },
+      };
+    })();
+  </script>
+
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", function () {

@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
 from app.core.firebase_setup import db as firebase_db
-from app.core.models import AuditLog, Notification, NotificationPreference
+from app.core.models import AuditLog, Notification, NotificationPreference ,Employee
 from app.core.request_context import current_user_context
 from app.core.fcm_service import send_push_to_user_bg   # ⭐ NEW
 
@@ -133,12 +133,48 @@ def _preference_enabled(pref: Optional[NotificationPreference], section: str, ac
     actions = pref.actions if isinstance(pref.actions, dict) else {}
     return sections.get(section, True) is not False and actions.get(action, True) is not False
 
+# ============================================================
+# ⭐ إثراء payload الـ HR باسم الموظف (بدل الكود)
+# ============================================================
+
+async def _enrich_hr_payload(
+    company_code: str,
+    data: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    لو الـ payload فيه employee_code (زي hr_attendance, hr_vacations,
+    hr_adjustments) → يجيب اسم الموظف من Neon ويضيفه كـ employee_name.
+    
+    كمان لو فيه supplier_code → يجيب اسم المورد (لو احتجنا لاحقاً).
+    """
+    if not company_code:
+        return data
+
+    employee_code = data.get("employee_code")
+    if employee_code and not data.get("employee_name"):
+        try:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(Employee.name).where(
+                        Employee.company_code == str(company_code),
+                        Employee.code == str(employee_code),
+                        Employee.is_deleted.is_(False),
+                    )
+                )
+                name = result.scalar_one_or_none()
+                if name:
+                    data["employee_name"] = str(name)
+        except Exception as exc:
+            print(f"⚠️ employee lookup failed | code={employee_code} | {exc}")
+
+    return data
+
 
 def _summary(data: Dict[str, Any]) -> str:
     parts = []
     for key, label in (
         ("name", "الاسم"),
-        ("employee_code", "الموظف"),
+        ("employee_name", "الموظف"),   # ⭐ الاسم (مش الكود)
         ("supplier_name", "المورد"),
         ("statement", "البيان"),
         ("category", "التصنيف"),
@@ -173,7 +209,11 @@ async def prepare_and_persist_event(company_code: str, message: dict) -> dict:
     message["actor_name"] = actor_name
     payload["actor_uid"] = actor_uid
     payload["actor_name"] = actor_name
+
+    # ⭐ إثراء HR payload باسم الموظف (بدل الكود)
+    payload = await _enrich_hr_payload(str(company_code), payload)
     message["data"] = payload
+
     branch_code = str(payload.get("branch_code", "") or "")
     entity_id = str(payload.get("id") or payload.get("doc_id") or payload.get("serial") or payload.get("code") or "")
     body = _summary(payload)

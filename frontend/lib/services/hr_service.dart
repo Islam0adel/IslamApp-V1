@@ -1997,84 +1997,104 @@ class HRService {
 
 
   // ============================================================
-  // ============ 6. SYNC ALL (Helper للـ main.dart) ============
+  // ============ 6. SYNC ALL — 4 submodules parallel ===========
   // ============================================================
+  //
+  // ⚡ 4 submodules parallel (بدل 8s sequential → 2-3s)
+  //
+  // كل submodule:
+  //   - بيمسك أخطاءه بنفسه (try/catch)
+  //   - بيكتب مفاتيح مختلفة في Hive → مفيش race
 
-  /// مزامنة كل بيانات HR مرة واحدة
-  ///
-  /// ⚠️ convenience method — يستدعيها main.dart بدل ما يستدعي
-  /// كل sync منفصل.
-  ///
-  /// بترجع map فيه: نجاح/فشل لكل قسم (عشان نقدر نعرض تقرير).
   Future<Map<String, dynamic>> syncAll(String companyCode) async {
     final results = <String, dynamic>{};
 
     final prefs = await SharedPreferences.getInstance();
     final syncStartedAt = DateTime.now().toUtc().toIso8601String();
 
-    // ---------- Attendance ----------
-    try {
-      final key = 'last_sync_hr_attendance_$companyCode';
-      final lastSync = prefs.getString(key);
+    Future<void> syncAttendance() async {
+      try {
+        final key = 'last_sync_hr_attendance_$companyCode';
+        final lastSync = prefs.getString(key);
 
-      if (lastSync == null) {
-        await fetchAllAttendance(companyCode);
-        await prefs.setString(key, syncStartedAt);
-      } else {
-        await syncChangesFromServer(companyCode, lastSync);
+        if (lastSync == null) {
+          await fetchAllAttendance(companyCode);
+          await prefs.setString(key, syncStartedAt);
+        } else {
+          await syncChangesFromServer(companyCode, lastSync);
+        }
+        results['attendance'] = 'ok';
+        print('  ✅ [HR] attendance');
+      } catch (e) {
+        results['attendance'] = 'error: $e';
+        print('  ❌ [HR] attendance: $e');
       }
-      results['attendance'] = 'ok';
-    } catch (e) {
-      results['attendance'] = 'error: $e';
     }
 
-    // ---------- Vacations ----------
-    try {
-      final key = 'last_sync_hr_vacations_$companyCode';
-      final lastSync = prefs.getString(key);
+    Future<void> syncVacations() async {
+      try {
+        final key = 'last_sync_hr_vacations_$companyCode';
+        final lastSync = prefs.getString(key);
 
-      if (lastSync == null) {
-        await fetchAllVacations(companyCode);
-        await prefs.setString(key, syncStartedAt);
-      } else {
-        await syncVacationsChangesFromServer(companyCode, lastSync);
+        if (lastSync == null) {
+          await fetchAllVacations(companyCode);
+          await prefs.setString(key, syncStartedAt);
+        } else {
+          await syncVacationsChangesFromServer(companyCode, lastSync);
+        }
+        results['vacations'] = 'ok';
+        print('  ✅ [HR] vacations');
+      } catch (e) {
+        results['vacations'] = 'error: $e';
+        print('  ❌ [HR] vacations: $e');
       }
-      results['vacations'] = 'ok';
-    } catch (e) {
-      results['vacations'] = 'error: $e';
     }
 
-    // ---------- Adjustments ----------
-    try {
-      final key = 'last_sync_hr_adjustments_$companyCode';
-      final lastSync = prefs.getString(key);
+    Future<void> syncAdjustments() async {
+      try {
+        final key = 'last_sync_hr_adjustments_$companyCode';
+        final lastSync = prefs.getString(key);
 
-      if (lastSync == null) {
-        await fetchAllAdjustments(companyCode);
-        await prefs.setString(key, syncStartedAt);
-      } else {
-        await syncAdjustmentsChangesFromServer(companyCode, lastSync);
+        if (lastSync == null) {
+          await fetchAllAdjustments(companyCode);
+          await prefs.setString(key, syncStartedAt);
+        } else {
+          await syncAdjustmentsChangesFromServer(companyCode, lastSync);
+        }
+        results['adjustments'] = 'ok';
+        print('  ✅ [HR] adjustments');
+      } catch (e) {
+        results['adjustments'] = 'error: $e';
+        print('  ❌ [HR] adjustments: $e');
       }
-      results['adjustments'] = 'ok';
-    } catch (e) {
-      results['adjustments'] = 'error: $e';
     }
 
-    // ---------- Employee Settings ----------
-    try {
-      final key = 'last_sync_hr_employee_settings_$companyCode';
-      final lastSync = prefs.getString(key);
+    Future<void> syncSettings() async {
+      try {
+        final key = 'last_sync_hr_employee_settings_$companyCode';
+        final lastSync = prefs.getString(key);
 
-      if (lastSync == null) {
-        await fetchAllEmployeeSettings(companyCode);
-        await prefs.setString(key, syncStartedAt);
-      } else {
-        await syncEmployeeSettingsChangesFromServer(companyCode, lastSync);
+        if (lastSync == null) {
+          await fetchAllEmployeeSettings(companyCode);
+          await prefs.setString(key, syncStartedAt);
+        } else {
+          await syncEmployeeSettingsChangesFromServer(companyCode, lastSync);
+        }
+        results['employee_settings'] = 'ok';
+        print('  ✅ [HR] settings');
+      } catch (e) {
+        results['employee_settings'] = 'error: $e';
+        print('  ❌ [HR] settings: $e');
       }
-      results['employee_settings'] = 'ok';
-    } catch (e) {
-      results['employee_settings'] = 'error: $e';
     }
+
+    // ⚡ الأربعة في نفس الوقت
+    await Future.wait([
+      syncAttendance(),
+      syncVacations(),
+      syncAdjustments(),
+      syncSettings(),
+    ]);
 
     return results;
   }
