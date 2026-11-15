@@ -394,15 +394,24 @@ if (rememberMe && userName != null && companyCode != null) {
 }
 
 
-  // ⭐ ضبط لون المتصفح الافتراضي عند أول تشغيل
+  // ⭐ ضبط لون الخلفية وشريط المتصفح أول ما التطبيق يفتح
   if (kIsWeb) {
     try {
       final metaThemeColor = html.document.querySelector('meta[name="theme-color"]');
       if (metaThemeColor != null) {
         metaThemeColor.setAttribute('content', savedTheme == 'light' ? '#ffffff' : '#020617');
       }
+      // ⭐ تغيير لون خلفية الصفحة
+      html.document.body?.style.backgroundColor = savedTheme == 'light' ? '#ffffff' : '#020617';
     } catch (_) {}
   }
+
+  runApp(
+    IslamApp(
+      initialScreen: initialScreen,
+      initialThemeMode: savedTheme == 'light' ? ThemeMode.light : ThemeMode.dark,
+    ),
+  );
 
   runApp(
     IslamApp(
@@ -534,26 +543,26 @@ Future<void> _syncWhenAppResumes() async {
       _themeMode = themeMode;
     });
 
-    // ⭐ تعديل لون شريط المتصفح في الويب (Theme Color) فوراً
     if (kIsWeb) {
       try {
+        // تغيير لون شريط المتصفح
         final metaThemeColor = html.document.querySelector('meta[name="theme-color"]');
         if (metaThemeColor != null) {
           metaThemeColor.setAttribute('content', themeMode == ThemeMode.light ? '#ffffff' : '#020617');
         }
+        
+        // ⭐ السطر ده اللي هيحل مشكلة الشريط اللي تحت (بيغير لون خلفية الصفحة نفسها)
+        html.document.body?.style.backgroundColor = themeMode == ThemeMode.light ? '#ffffff' : '#020617';
+        
       } catch (e) {
         print("⚠️ Failed to update theme-color: $e");
       }
     }
 
-    // ✅ حفظ الاختيار على الجهاز
+    // حفظ الاختيار على الجهاز
     try {
       final prefs = await SharedPreferences.getInstance();
-
-      await prefs.setString(
-        'theme_mode',
-        themeMode == ThemeMode.light ? 'light' : 'dark',
-      );
+      await prefs.setString('theme_mode', themeMode == ThemeMode.light ? 'light' : 'dark');
     } catch (e) {
       print("⚠️ فشل حفظ الثيم: $e");
     }
