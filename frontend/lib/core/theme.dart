@@ -357,7 +357,7 @@ class AppTheme {
   static const Color datePickerSurface = Color.fromARGB(255, 30, 30, 30);
 
   /// لون نص الإصدار "IslamApp V1.0" أعلى الصفحة الرئيسية (أخضر شفاف).
-  static const Color brandVersionText = Color.fromARGB(213, 123, 248, 51);
+  static const Color brandVersionText = Color.fromARGB(214, 255, 119, 51);
 
   // ==========================================================================
   // 8) ThemeData

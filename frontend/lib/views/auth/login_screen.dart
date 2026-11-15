@@ -206,8 +206,8 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                         cacheWidth: 260, 
                         cacheHeight: 260,
                       ),
-                      const SizedBox(height: 0),
-                      // ⭐ النص الجديد
+                      const SizedBox(height: 3),
+                      // // ⭐ النص الجديد
                       Text(
                         'Islam App',
                         style: TextStyle(
