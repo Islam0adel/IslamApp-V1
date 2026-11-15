@@ -1,4 +1,7 @@
+# backend/app/core/auth_middleware.py
+
 import json
+import os
 import time
 from typing import Any, Dict, Optional
 
@@ -12,18 +15,71 @@ from app.core.firebase_setup import db as firebase_db
 from app.core.models import Company
 from app.core.request_context import current_user_context
 
-# ذاكرة قصيرة لتقليل قراءات Firestore المتكررة، مع إعادة التحقق من Firebase ID token في كل طلب.
+
+# ============================================================
+# ⭐ SUPER_ADMIN_EMAILS (من .env) — للتحقق الفوري
+# ============================================================
+SUPER_ADMIN_EMAILS = {
+    e.strip().lower()
+    for e in os.getenv("SUPER_ADMIN_EMAILS", "").split(",")
+    if e.strip()
+}
+
+
+# ============================================================
+# ⭐ الأدوار
+# ============================================================
+
+_JOB_CODE_TO_ROLE = {
+    "99": "super_admin",
+    "201": "admin",
+    "200": "employee",
+    "1": "employee",
+}
+
+
+def _effective_role(profile: Dict[str, Any]) -> str:
+    """
+    يحسب الدور الفعلي:
+      1. لو email في SUPER_ADMIN_EMAILS → super_admin (الأولوية)
+      2. وإلا: role من Firestore
+      3. وإلا: من job_code (توافق خلفي)
+      4. وإلا: employee
+    """
+    email = str(profile.get("email", "")).strip().lower()
+    if email and email in SUPER_ADMIN_EMAILS:
+        return "super_admin"
+
+    role = str(profile.get("role", "")).strip()
+    if role in ("super_admin", "admin", "employee"):
+        return role
+
+    job_code = str(profile.get("job_code", "1"))
+    return _JOB_CODE_TO_ROLE.get(job_code, "employee")
+
+
+# ============================================================
+# Cache
+# ============================================================
+
 _PROFILE_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
 _COMPANY_CACHE: Dict[str, tuple[float, bool]] = {}
 _CACHE_SECONDS = 15
+
 _PUBLIC_PATHS = {
     "/",
     "/auth/verify-user",
     "/auth/verify-reset",
+    # ⭐ Endpoints عامة (قبل الدخول)
+    "/auth/resolve-identifier",
+    "/auth/check-phone",
+    "/auth/complete-registration",
+    "/auth/request-registration",   # ⭐ جديد
 }
+
 _COMPANY_PATH_PREFIXES = (
     "/transactions/", "/coding/", "/inventory/", "/supplier/",
-    "/supplier-settlement/", "/sync/","/employees/","/hr/",
+    "/supplier-settlement/", "/sync/", "/employees/", "/hr/",
 )
 
 
@@ -70,7 +126,9 @@ def _allowed_branches(profile: Dict[str, Any]) -> list[str]:
 
 
 def allowed_branches_for_profile(profile: Dict[str, Any]) -> Optional[list[str]]:
-    if str(profile.get("job_code", "1")) == "99":
+    """None = كل الفروع مسموحة، list = فروع محددة."""
+    role = _effective_role(profile)
+    if role in ("super_admin", "admin"):
         return None
     branches = _allowed_branches(profile)
     if not branches or "all" in [branch.lower() for branch in branches]:
@@ -78,35 +136,60 @@ def allowed_branches_for_profile(profile: Dict[str, Any]) -> Optional[list[str]]
     return branches
 
 
+# ============================================================
+# Middleware
+# ============================================================
+
 async def authenticate_http_request(request: Request, call_next):
-    if request.method == "OPTIONS" or request.url.path in _PUBLIC_PATHS or request.url.path.startswith(("/docs", "/redoc", "/openapi.json")):
+    if (
+        request.method == "OPTIONS"
+        or request.url.path in _PUBLIC_PATHS
+        or request.url.path.startswith(("/docs", "/redoc", "/openapi.json"))
+    ):
         return await call_next(request)
 
     authorization = request.headers.get("authorization", "")
+
+    # ============================================================
+    # /auth/register (خاص — يتحقق من تطابق token مع البيانات)
+    # ============================================================
     if request.url.path == "/auth/register":
         if not authorization.lower().startswith("bearer "):
             return JSONResponse(status_code=401, content={"detail": "يجب توثيق حساب Firebase لإتمام التسجيل"})
         try:
-            decoded_register = admin_auth.verify_id_token(authorization.split(" ", 1)[1].strip(), clock_skew_seconds=60)
+            decoded_register = admin_auth.verify_id_token(
+                authorization.split(" ", 1)[1].strip(), clock_skew_seconds=60
+            )
             raw_body = await request.body()
             register_data = json.loads(raw_body.decode("utf-8")) if raw_body else {}
             if not isinstance(register_data, dict):
                 raise ValueError("Invalid registration body")
+
             async def receive_register_body():
                 return {"type": "http.request", "body": raw_body, "more_body": False}
             request._receive = receive_register_body
         except Exception as exc:
             print(f"⚠️ رفض تسجيل غير موثق: {exc}")
             return JSONResponse(status_code=401, content={"detail": "تعذر توثيق حساب Firebase للتسجيل"})
-        if str(decoded_register.get("uid", "")) != str(register_data.get("uid", "")) or str(decoded_register.get("email", "")).strip().lower() != str(register_data.get("email", "")).strip().lower():
+
+        if (
+            str(decoded_register.get("uid", "")) != str(register_data.get("uid", ""))
+            or str(decoded_register.get("email", "")).strip().lower()
+            != str(register_data.get("email", "")).strip().lower()
+        ):
             return JSONResponse(status_code=403, content={"detail": "بيانات حساب Firebase لا تطابق بيانات التسجيل"})
         return await call_next(request)
 
+    # ============================================================
+    # التحقق من Firebase token
+    # ============================================================
     if not authorization.lower().startswith("bearer "):
         return JSONResponse(status_code=401, content={"detail": "يجب تسجيل الدخول لإكمال الطلب"})
 
     try:
-        decoded = admin_auth.verify_id_token(authorization.split(" ", 1)[1].strip(), clock_skew_seconds=60)
+        decoded = admin_auth.verify_id_token(
+            authorization.split(" ", 1)[1].strip(), clock_skew_seconds=60
+        )
         uid = str(decoded.get("uid", ""))
         email = str(decoded.get("email", "")).strip().lower()
         if not uid or not email:
@@ -119,18 +202,38 @@ async def authenticate_http_request(request: Request, call_next):
     if profile is None:
         return JSONResponse(status_code=401, content={"detail": "الحساب غير مسجل أو غير صالح"})
 
+    # ⭐ التحقق من حالة الحساب
+    user_status = str(profile.get("status", "active")).lower()
+    if user_status == "pending":
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "حسابك قيد المراجعة. يرجى إكمال التسجيل."},
+        )
+    if user_status == "suspended":
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "تم إيقاف حسابك. يرجى التواصل مع الإدارة."},
+        )
+
+    # ⭐ الدور الفعلي
+    role = _effective_role(profile)
+
     company_code = str(profile.get("company_code", ""))
-    job_code = str(profile.get("job_code", "1"))
     if not company_code:
         return JSONResponse(status_code=403, content={"detail": "الحساب غير مرتبط بشركة"})
-    try:
-        if job_code != "99" and not await _company_is_active(company_code):
-            return JSONResponse(status_code=403, content={"detail": "الشركة غير موجودة أو موقوفة"})
-    except Exception as exc:
-        print(f"⚠️ تعذر التحقق من حالة الشركة: {exc}")
-        return JSONResponse(status_code=503, content={"detail": "تعذر التحقق من حالة الشركة مؤقتًا"})
 
-    # قراءة جسم JSON وإعادته كما هو حتى تتمكن FastAPI من تحليله لاحقًا.
+    # ⭐ الشركة موقوفة؟ (super_admin معفي)
+    if role != "super_admin":
+        try:
+            if not await _company_is_active(company_code):
+                return JSONResponse(status_code=403, content={"detail": "الشركة غير موجودة أو موقوفة"})
+        except Exception as exc:
+            print(f"⚠️ تعذر التحقق من حالة الشركة: {exc}")
+            return JSONResponse(status_code=503, content={"detail": "تعذر التحقق من حالة الشركة مؤقتًا"})
+
+    # ============================================================
+    # قراءة الـ JSON body وإعادته كما هو
+    # ============================================================
     body: Dict[str, Any] = {}
     content_type = request.headers.get("content-type", "").lower()
     if "application/json" in content_type:
@@ -147,14 +250,20 @@ async def authenticate_http_request(request: Request, call_next):
             return {"type": "http.request", "body": raw_body, "more_body": False}
         request._receive = receive_body
 
-    if job_code != "99":
+    # ============================================================
+    # فحوصات الشركة/الفرع (لمستخدمي الشركة فقط — Super Admin معفي)
+    # ============================================================
+    if role != "super_admin":
         supplied_company = body.get("company_code")
         if supplied_company is not None and str(supplied_company) != company_code:
             return JSONResponse(status_code=403, content={"detail": "غير مسموح بالوصول إلى بيانات شركة أخرى"})
 
-        # المسارات التي تحمل كود الشركة في عنوان URL.
+        # فحص URL
         parts = [part for part in request.url.path.split("/") if part]
-        if parts and parts[0] in {"transactions", "coding", "inventory", "supplier", "supplier-settlement", "sync","employees","hr"}:
+        if parts and parts[0] in {
+            "transactions", "coding", "inventory", "supplier",
+            "supplier-settlement", "sync", "employees", "hr",
+        }:
             for marker in ("list", "changes", "updates", "last_serial", "summary", "ws", "delete"):
                 if marker in parts:
                     idx = parts.index(marker) + 1
@@ -162,22 +271,33 @@ async def authenticate_http_request(request: Request, call_next):
                         return JSONResponse(status_code=403, content={"detail": "غير مسموح بالوصول إلى بيانات شركة أخرى"})
                     break
 
+        # فحص الفرع
         branches = _allowed_branches(profile)
         if branches and "all" not in [branch.lower() for branch in branches]:
             parts = [part for part in request.url.path.split("/") if part]
             if len(parts) >= 5 and parts[0] == "transactions" and parts[1] == "delete" and parts[3] not in branches:
                 return JSONResponse(status_code=403, content={"detail": "غير مسموح بالوصول إلى هذا الفرع"})
+
             requested_branch = body.get("branch_code") or request.query_params.get("branch_code")
             if requested_branch:
                 requested_branch = str(requested_branch)
-                is_all_query = request.method == "GET" and requested_branch.lower() in {"all", "الكل", "كل الفروع"}
-                if not is_all_query and (requested_branch.lower() in {"all", "الكل", "كل الفروع"} or requested_branch not in branches):
+                is_all_query = request.method == "GET" and requested_branch.lower() in {
+                    "all", "الكل", "كل الفروع",
+                }
+                if not is_all_query and (
+                    requested_branch.lower() in {"all", "الكل", "كل الفروع"}
+                    or requested_branch not in branches
+                ):
                     return JSONResponse(status_code=403, content={"detail": "غير مسموح بالوصول إلى هذا الفرع"})
 
+    # ============================================================
+    # إعداد profile للاستخدام في الـ endpoints
+    # ============================================================
     profile["uid"] = uid
     profile["email"] = email
     profile["company_code"] = company_code
-    profile["job_code"] = job_code
+    profile["role"] = role            # ⭐ جديد
+    profile["job_code"] = str(profile.get("job_code", "1"))  # توافق خلفي
     request.state.auth_user = profile
     token = current_user_context.set(profile)
     try:

@@ -2,6 +2,8 @@ import 'dart:async';
 import 'services/permissions_service.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'services/employee_service.dart';   // ← NEW
@@ -9,10 +11,10 @@ import 'services/fcm_service.dart';   // ⭐ FCM
 import 'core/theme.dart';
 import 'services/hr_service.dart';   // ← NEW (موحد)
 import 'views/auth/login_screen.dart';
-import 'views/auth/register_screen.dart';
+import 'views/auth/phone_entry_screen.dart';
 import 'views/dashboard/home_page.dart';
 import 'views/auth/forgot_password_screen.dart';
-
+import 'views/auth/verify_email_screen.dart';
 import 'firebase_options.dart';
 import 'services/deep_link_service.dart';   // ⭐ Deep Link
 import 'core/navigator_key.dart';           // ⭐ Global NavigatorKey
@@ -304,7 +306,7 @@ Future<void> main() async {
 
 if (rememberMe && userName != null && companyCode != null) {
     // --------------------------------------------------------
-    // ✅ NEW: تحميل الصلاحيات أولاً (سريع — من Hive)
+    // ✅ تحميل الصلاحيات أولاً (سريع — من Hive)
     //
     // لماذا؟
     // - يضمن إن الصلاحيات جاهزة قبل ما WebSocket يستقبل أي event
@@ -315,6 +317,12 @@ if (rememberMe && userName != null && companyCode != null) {
     // --------------------------------------------------------
     await PermissionsService().loadPermissions();
 
+    // ⭐ بعد loadPermissions، الدور محمّل تلقائياً من prefs
+    final savedRole = prefs.getString('role');
+    if (savedRole != null && savedRole.isNotEmpty) {
+      PermissionsService().setRole(savedRole);
+    }
+
     // ⭐ استعادة تسجيل جهاز FCM
     unawaited(FcmService.instance.restoreRegistrationIfEnabled());
 
@@ -322,27 +330,61 @@ if (rememberMe && userName != null && companyCode != null) {
     DeepLinkService.instance.initialize();
 
     // --------------------------------------------------------
-    // تشغيل WebSocket
-    //
-    // عند نجاح الاتصال:
-    // onWebSocketConnected
-    // ↓
-    // syncAllDataIfNeeded
+    // ⭐ فحص التحقق من الإيميل قبل فتح HomePage
     // --------------------------------------------------------
+    bool needsEmailVerification = false;
+    String currentEmail = '';
+    try {
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser != null) {
+        await currentUser.reload();
+        currentEmail = currentUser.email ?? '';
+        if (!currentUser.emailVerified && currentEmail.isNotEmpty) {
+          // فحص هل الحساب يحتاج تحقق (مستخدم جديد) أم لا (مستخدم قديم)
+          try {
+            final userDoc = await FirebaseFirestore.instance
+                .collection('users')
+                .doc(currentEmail.toLowerCase())
+                .get()
+                .timeout(const Duration(seconds: 5));
+            if (userDoc.exists) {
+              needsEmailVerification =
+                  userDoc.data()?['requires_email_verification'] == true;
+            }
+          } catch (_) {
+            // offline → نفترض الحساب قديم (لا نحجب)
+          }
+        }
+      }
+    } catch (e) {
+      print('⚠️ email verification check: $e');
+    }
 
-    initializeGlobalListener(companyCode);
+    if (needsEmailVerification) {
+      // ⭐ يحتاج تحقق → شاشة التحقق (بدون WebSocket)
+      initialScreen = VerifyEmailScreen(email: currentEmail);
+    } else {
+      // --------------------------------------------------------
+      // تشغيل WebSocket
+      //
+      // عند نجاح الاتصال:
+      // onWebSocketConnected
+      // ↓
+      // syncAllDataIfNeeded
+      // --------------------------------------------------------
+      initializeGlobalListener(companyCode);
 
-    // --------------------------------------------------------
-    // لا يوجد Sync إضافي هنا
-    //
-    // لمنع تكرار المزامنة.
-    // --------------------------------------------------------
-
-    initialScreen = HomePage(
-      userName: userName,
-      companyName: companyName ?? 'شركتي',
-      companyCode: companyCode,
-    );
+      // --------------------------------------------------------
+      // لا يوجد Sync إضافي هنا
+      //
+      // لمنع تكرار المزامنة.
+      // --------------------------------------------------------
+      initialScreen = HomePage(
+        userName: userName,
+        companyName: companyName ?? 'شركتي',
+        companyCode: companyCode,
+      );
+    }
 } else {
     initialScreen = const LoginScreen();
 }
@@ -512,7 +554,7 @@ Future<void> _syncWhenAppResumes() async {
       home: widget.initialScreen,
       routes: {
         '/login': (context) => const LoginScreen(),
-        '/register': (context) => const RegisterScreen(),
+        '/register': (context) => const PhoneEntryScreen(),
         '/forgot-password': (context) => const ForgotPasswordScreen(),
       },
       builder: (context, child) {

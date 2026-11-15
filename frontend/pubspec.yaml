@@ -83,10 +83,13 @@ flutter:
           weight: 700
 
 flutter_launcher_icons:
+  # المسار العام للصورة اللي هيتم توليد الأيقونات منها
+  image_path: "assets/images/app_icon.png"
+  
+  # android: true
+  
   web:
     generate: true
     image_path: "assets/images/app_icon.png"
     background_color: "#020617"
     theme_color: "#020617"
-  android: true
-  ios: true

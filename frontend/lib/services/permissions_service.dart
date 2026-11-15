@@ -42,6 +42,7 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
   Map<String, Map<String, bool>>? _permissions;
   List<String>? _allowedBranchCodes;
   String? _defaultBranchCode;
+  String? _currentRole;   // ⭐ جديد
     List<String>? _hrViewableEmployees;
 
     /// ⭐ كود الموظف الحالي (لو مربوط بحساب Firebase)
@@ -72,6 +73,69 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
 
   /// هل الصلاحيات محملة وجاهزة للاستخدام؟
   bool get isLoaded => _loaded;
+
+  // ============================================================
+  // ⭐ Role Getters
+  // ============================================================
+
+  /// الدور الحالي (super_admin / admin / employee)
+  String? get currentRole => _currentRole;
+
+  /// السوبر أدمن (صاحب البرنامج) — كل شيء مفتوح
+  bool get isSuperAdmin => _currentRole == 'super_admin';
+
+  /// مدير الشركة — كل شيء مفتوح ما عدا إدارة الشركات
+  bool get isAdmin =>
+      _currentRole == 'admin' || _currentRole == 'super_admin';
+
+  /// موظف عادي — Sandbox
+  bool get isEmployee =>
+      _currentRole == 'employee' || _currentRole == null;
+
+  /// إدارة الشركات (super_admin فقط)
+  bool get canManageCompanies => isSuperAdmin;
+
+  /// إدارة المستخدمين (admin + super_admin)
+  bool get canManageUsers => isAdmin;
+
+  /// إدارة الصلاحيات (admin + super_admin)
+  bool get canManagePermissions => isAdmin;
+
+  /// تحديث الدور يدوياً (بعد تسجيل دخول أو عند تغييره)
+  void setRole(String? role) {
+    final normalized = (role ?? '').trim();
+    if (_currentRole == normalized) return;
+    _currentRole = normalized;
+    notifyListeners();
+  }
+
+  /// ⭐ تحديث الفروع المسموحة فوراً (بعد login — قبل Firestore listener)
+  void setAllowedBranches(List<String>? branches) {
+    List<String> effective;
+    if (branches == null || branches.isEmpty) {
+      effective = ['all'];
+    } else {
+      effective = branches
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+      if (effective.isEmpty) effective = ['all'];
+    }
+
+    _allowedBranchCodes = effective;
+
+    // حفظ في Hive (للمرات القادمة)
+    final email = _currentUserEmail;
+    if (email != null && email.isNotEmpty) {
+      try {
+        Hive.box('coding_box').put('allowed_branches_$email', effective);
+      } catch (e) {
+        print('⚠️ save allowed_branches to Hive: $e');
+      }
+    }
+
+    notifyListeners();
+  }
 
   // ============================================================
   // ✅ معالج تغيير حالة الـ Auth
@@ -251,7 +315,7 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
   // تصفير الحالة الداخلية (بدون لمس _cachedUid)
   // ============================================================
 
-    void _resetState() {
+  void _resetState() {
     _loadFuture = null;
     _loaded = false;
     _permissions = null;
@@ -261,7 +325,8 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
     _currentEmployeeCode = null;
     _currentUserEmail = null;
     _cachedPrefs = null;
-    _stopEmployeesHiveListener();   // ⭐
+    _currentRole = null;   // ⭐
+    _stopEmployeesHiveListener();
   }
 
   // ============================================================
@@ -309,6 +374,10 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
       final jobCode =
           prefs.getString('job_code') ?? '1';
 
+      // ⭐ اقرأ role من prefs (بيتحفظ وقت login)
+      final role = prefs.getString('role');
+      _currentRole = (role != null && role.isNotEmpty) ? role : null;
+
       if (email.isEmpty) {
         print(
           '⚠️ PermissionsService: user_email غير موجود',
@@ -352,6 +421,17 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
             _createDefaultPermissions(
           jobCode,
         );
+      }
+
+      // ⭐ لو مفيش role محفوظ، احسبه من jobCode
+      if (_currentRole == null || _currentRole!.isEmpty) {
+        if (jobCode == '99') {
+          _currentRole = 'super_admin';
+        } else if (jobCode == '201') {
+          _currentRole = 'admin';
+        } else {
+          _currentRole = 'employee';
+        }
       }
 
             // ----------------------------------------------------------
@@ -830,6 +910,12 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
       _createDefaultPermissions(
     String jobCode,
   ) {
+    // ⭐ لو عندنا role محدث، نستخدمه
+    final effectiveRole = _currentRole ??
+        (jobCode == '99' || jobCode == '201'
+            ? 'admin'
+            : 'employee');
+
     final Map<String, Map<String, bool>>
         allPermissions = {
       // ========================================================
@@ -1005,21 +1091,30 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
     };
 
     // ==========================================================
-    // المدير / الأدمن
+    // super_admin + admin → كل شيء مفتوح
     // ==========================================================
 
-    if (jobCode == '99' ||
-        jobCode == '200') {
-      for (final category
-          in allPermissions.keys) {
-        for (final permission
-            in allPermissions[
-                    category]!
-                .keys) {
-          allPermissions[category]![
-              permission] = true;
+    if (effectiveRole == 'super_admin' || effectiveRole == 'admin') {
+      for (final category in allPermissions.keys) {
+        for (final permission in allPermissions[category]!.keys) {
+          allPermissions[category]![permission] = true;
         }
       }
+    } else {
+      // ⭐ employee → Sandbox: كل "إظهار X" = true، داخلي = false
+      final globalPerms = allPermissions['صلاحيات عامة']!;
+      globalPerms['إظهار حركة الخزينة'] = true;
+      globalPerms['إظهار التكويد'] = true;
+      globalPerms['إظهار التقارير'] = true;
+      globalPerms['إظهار حركة الموردين'] = true;
+      globalPerms['إظهار حركة الجرد'] = true;
+      globalPerms['إظهار الإشعارات'] = true;
+      globalPerms['إظهار البحث عن المنتجات'] = true;
+      globalPerms['إظهار الموارد البشرية'] = true;
+
+      // HR: يرى صفحته فقط
+      final hrPerms = allPermissions['الموارد البشرية']!;
+      hrPerms['canViewOwnHRData'] = true;
     }
 
     return allPermissions;

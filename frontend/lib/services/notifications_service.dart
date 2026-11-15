@@ -19,7 +19,7 @@ class NotificationsService {
   Box get _box => Hive.box(_boxName);
   Box get _settings => Hive.box(_settingsBoxName);
 
-    static const Map<String, String> _sections = {
+  static const Map<String, String> _sections = {
     'transaction': 'daily',
     'supplier': 'purchases',
     'settlement': 'settlements',
@@ -31,6 +31,8 @@ class NotificationsService {
     'hr_adjustment': 'hr_adjustments',
     'hr_employee_settings': 'hr_employees',
     'employee': 'hr_employees',
+    // ⭐ طلبات الانضمام
+    'registration_request': 'registration_requests',
   };
 
   static const Map<String, String> _sectionNames = {
@@ -44,6 +46,8 @@ class NotificationsService {
     'hr_vacations': 'إجازات الموارد البشرية',
     'hr_adjustments': 'تسويات الموارد البشرية',
     'hr_employees': 'بيانات الموظفين',
+    // ⭐ جديد
+    'registration_requests': 'طلبات الانضمام',
   };
 
   static const Map<String, String> _actionNames = {
@@ -108,9 +112,15 @@ class NotificationsService {
 
       final actorName = (event['actor_name'] ?? data['actor_name'] ?? data['employee'] ?? data['created_by'] ?? data['updated_by'] ?? '').toString();
       final detailParts = <String>[];
-      for (final key in ['name', 'supplier_name', 'statement', 'category', 'serial', 'code', 'branch_code']) {
+      // ⭐ لو طلب انضمام — اعرض بيانات مختلفة
+      final detailKeys = section == 'registration_requests'
+          ? ['name', 'phone_number', 'email', 'note']
+          : ['name', 'supplier_name', 'statement', 'category', 'serial', 'code', 'branch_code'];
+      for (final key in detailKeys) {
         final value = data[key];
-        if (value != null && value.toString().trim().isNotEmpty) detailParts.add('${_detailLabel(key)}: ${value.toString()}');
+        if (value != null && value.toString().trim().isNotEmpty) {
+          detailParts.add('${_detailLabel(key)}: ${value.toString()}');
+        }
         if (detailParts.length == 2) break;
       }
       await _box.put(localKey, <String, dynamic>{
@@ -139,9 +149,13 @@ class NotificationsService {
     'name': 'الاسم', 'supplier_name': 'المورد', 'statement': 'البيان',
     'category': 'التصنيف', 'serial': 'رقم الحركة', 'code': 'الكود',
     'branch_code': 'الفرع',
+    // ⭐ جديد
+    'phone_number': 'الموبايل',
+    'email': 'الإيميل',
+    'note': 'ملاحظات',
   }[key] ?? key;
 
-    // ⭐ Helper موحد لفحص صلاحية الوصول للقسم
+  // ⭐ Helper موحد لفحص صلاحية الوصول للقسم
   bool _canAccessSection(String section) {
     final ps = PermissionsService();
     switch (section) {
@@ -164,6 +178,9 @@ class NotificationsService {
         return ps.canViewAdjustments;
       case 'hr_employees':
         return ps.canViewEmployees || ps.canViewOwnHRData;
+      // ⭐ طلبات الانضمام — super_admin فقط
+      case 'registration_requests':
+        return ps.isSuperAdmin;
       default:
         return false;
     }

@@ -397,6 +397,27 @@ class _PermissionsPageState extends State<PermissionsPage> {
     // ✅ request ID: كل استدعاء بياخد رقم، والاستدعاء الأخير بس هو اللي بيفوز
     final requestId = ++_loadUserRequestId;
 
+    // ⭐ حماية: مفيش حد يحمل صلاحيات السوبر أدمن غير السوبر أدمن
+    if (!PermissionsService().isSuperAdmin) {
+      try {
+        final doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(userId)
+            .get();
+        if (doc.exists) {
+          final data = doc.data() ?? {};
+          final role = (data['role'] ?? '').toString().toLowerCase().trim();
+          final jc = (data['job_code'] ?? '1').toString().trim();
+          if (role == 'super_admin' || jc == '99') {
+            debugPrint(
+              '🚫 محاولة تحميل صلاحيات السوبر أدمن مرفوضة: $userId',
+            );
+            return;
+          }
+        }
+      } catch (_) {}
+    }
+
     try {
       // ============================================================
       // default: كل القيم false (مش يعتمد على jobCode)
@@ -1029,10 +1050,42 @@ class _PermissionsPageState extends State<PermissionsPage> {
                                     );
                                   }
 
-                                  usersList =
-                                      snapshot
-                                          .data!
-                                          .docs;
+                                  // ⭐ فلترة السوبر أدمن — يظهر فقط للسوبر أدمن
+                                  final isActorSuperAdmin =
+                                      PermissionsService().isSuperAdmin;
+                                  final allDocs = snapshot.data!.docs;
+
+                                  final visibleDocs = isActorSuperAdmin
+                                      ? allDocs
+                                      : allDocs.where((doc) {
+                                          final data = doc.data()
+                                              as Map<String, dynamic>? ?? {};
+                                          final role = (data['role'] ?? '')
+                                              .toString()
+                                              .trim()
+                                              .toLowerCase();
+                                          final jobCode = (data['job_code'] ?? '1')
+                                              .toString()
+                                              .trim();
+                                          // استبعد السوبر أدمن
+                                          return role != 'super_admin' &&
+                                              jobCode != '99';
+                                        }).toList();
+
+                                  if (visibleDocs.isEmpty) {
+                                    return Padding(
+                                      padding: const EdgeInsets.all(12.0),
+                                      child: Text(
+                                        'لا يوجد مستخدمون متاحون',
+                                        style: TextStyle(
+                                          color: AppTheme.textSoftFor(context),
+                                          fontFamily: 'Cairo',
+                                        ),
+                                      ),
+                                    );
+                                  }
+
+                                  usersList = visibleDocs;
 
                                   return DropdownButtonHideUnderline(
                                     child:

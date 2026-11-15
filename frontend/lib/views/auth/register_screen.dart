@@ -1,292 +1,292 @@
-import '../../core/theme.dart';
-import 'package:flutter/material.dart';
-import '../../views/widgets/glass_card.dart';
-import '../../services/api_service.dart';
+// import '../../core/theme.dart';
+// import 'package:flutter/material.dart';
+// import '../../views/widgets/glass_card.dart';
+// import '../../services/api_service.dart';
 
-class RegisterScreen extends StatefulWidget {
-  const RegisterScreen({super.key});
+// class RegisterScreen extends StatefulWidget {
+//   const RegisterScreen({super.key});
 
-  @override
-  State<RegisterScreen> createState() => _RegisterScreenState();
-}
+//   @override
+//   State<RegisterScreen> createState() => _RegisterScreenState();
+// }
 
-class _RegisterScreenState extends State<RegisterScreen> with TickerProviderStateMixin {
-  final _nameController = TextEditingController();
-  final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
-  final _compCodeController = TextEditingController();
-  final _jobCodeController = TextEditingController();
-  final _employeeCodeController = TextEditingController();
+// class _RegisterScreenState extends State<RegisterScreen> with TickerProviderStateMixin {
+//   final _nameController = TextEditingController();
+//   final _emailController = TextEditingController();
+//   final _passwordController = TextEditingController();
+//   final _compCodeController = TextEditingController();
+//   final _jobCodeController = TextEditingController();
+//   final _employeeCodeController = TextEditingController();
 
-  // Nodes للانتقال بزر انتر
-  final FocusNode _nameNode = FocusNode();
-  final FocusNode _emailNode = FocusNode();
-  final FocusNode _passNode = FocusNode();
-  final FocusNode _compNode = FocusNode();
-  final FocusNode _jobNode = FocusNode();
-  final FocusNode _employeeNode = FocusNode();
+//   // Nodes للانتقال بزر انتر
+//   final FocusNode _nameNode = FocusNode();
+//   final FocusNode _emailNode = FocusNode();
+//   final FocusNode _passNode = FocusNode();
+//   final FocusNode _compNode = FocusNode();
+//   final FocusNode _jobNode = FocusNode();
+//   final FocusNode _employeeNode = FocusNode();
 
-  late AnimationController _animController;
-  final _apiService = ApiService();
-  bool _isLoading = false;
+//   late AnimationController _animController;
+//   final _apiService = ApiService();
+//   bool _isLoading = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _animController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 800),
-    )..forward();
-  }
+//   @override
+//   void initState() {
+//     super.initState();
+//     _animController = AnimationController(
+//       vsync: this,
+//       duration: const Duration(milliseconds: 800),
+//     )..forward();
+//   }
 
-  @override
-  void dispose() {
-    _nameController.dispose();
-    _emailController.dispose();
-    _passwordController.dispose();
-    _compCodeController.dispose();
-    _jobCodeController.dispose();
-    _employeeCodeController.dispose();
-    _nameNode.dispose();
-    _emailNode.dispose();
-    _passNode.dispose();
-    _compNode.dispose();
-    _jobNode.dispose();
-    _employeeNode.dispose();
-    _animController.dispose();
-    super.dispose();
-  }
+//   @override
+//   void dispose() {
+//     _nameController.dispose();
+//     _emailController.dispose();
+//     _passwordController.dispose();
+//     _compCodeController.dispose();
+//     _jobCodeController.dispose();
+//     _employeeCodeController.dispose();
+//     _nameNode.dispose();
+//     _emailNode.dispose();
+//     _passNode.dispose();
+//     _compNode.dispose();
+//     _jobNode.dispose();
+//     _employeeNode.dispose();
+//     _animController.dispose();
+//     super.dispose();
+//   }
 
-  void _handleRegister() async {
-    if (_nameController.text.isEmpty ||
-        _emailController.text.isEmpty ||
-        _passwordController.text.isEmpty ||
-        _compCodeController.text.isEmpty ||
-        _jobCodeController.text.isEmpty) {
-      _showSnackBar(
-        'برجاء ملء جميع الحقول بما فيها أكواد التفعيل',
-        AppTheme.warningOrangeFor(context),
-      );
-      return;
-    }
+//   void _handleRegister() async {
+//     if (_nameController.text.isEmpty ||
+//         _emailController.text.isEmpty ||
+//         _passwordController.text.isEmpty ||
+//         _compCodeController.text.isEmpty ||
+//         _jobCodeController.text.isEmpty) {
+//       _showSnackBar(
+//         'برجاء ملء جميع الحقول بما فيها أكواد التفعيل',
+//         AppTheme.warningOrangeFor(context),
+//       );
+//       return;
+//     }
 
-    setState(() => _isLoading = true);
-    try {
-      await _apiService.register(
-        name: _nameController.text.trim(),
-        email: _emailController.text.trim(),
-        password: _passwordController.text,
-        companyCode: _compCodeController.text.trim(),
-        jobCode: _jobCodeController.text.trim(),
-        employeeCode: _employeeCodeController.text.trim(),
-      );
+//     setState(() => _isLoading = true);
+//     try {
+//       await _apiService.register(
+//         name: _nameController.text.trim(),
+//         email: _emailController.text.trim(),
+//         password: _passwordController.text,
+//         companyCode: _compCodeController.text.trim(),
+//         jobCode: _jobCodeController.text.trim(),
+//         employeeCode: _employeeCodeController.text.trim(),
+//       );
 
-      if (mounted) {
-        _showSnackBar(
-          'تم إنشاء الحساب بنجاح كـ ${_jobCodeController.text}',
-          AppTheme.successStrongFor(context),
-        );
-        Navigator.pop(context);
-      }
-    } catch (e) {
-      _showSnackBar(e.toString(), AppTheme.dangerFor(context));
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
+//       if (mounted) {
+//         _showSnackBar(
+//           'تم إنشاء الحساب بنجاح كـ ${_jobCodeController.text}',
+//           AppTheme.successStrongFor(context),
+//         );
+//         Navigator.pop(context);
+//       }
+//     } catch (e) {
+//       _showSnackBar(e.toString(), AppTheme.dangerFor(context));
+//     } finally {
+//       if (mounted) setState(() => _isLoading = false);
+//     }
+//   }
 
-  void _showSnackBar(String msg, Color color) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg, textAlign: TextAlign.center), backgroundColor: color),
-    );
-  }
+//   void _showSnackBar(String msg, Color color) {
+//     ScaffoldMessenger.of(context).showSnackBar(
+//       SnackBar(content: Text(msg, textAlign: TextAlign.center), backgroundColor: color),
+//     );
+//   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Container(
-        height: double.infinity,
-        width: double.infinity,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: AppTheme.registerGradient(context),
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 60),
-          child: Column(
-            children: [
-              FadeTransition(
-                opacity: _animController,
-                child: Column(
-                  children: [
-                    Icon(Icons.person_add_outlined, size: 80, color: AppTheme.textMainFor(context)),
-                    const SizedBox(height: 10),
-                    Text(
-                      'إنشاء حساب',
-                      style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 28, fontWeight: FontWeight.bold),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 30),
+//   @override
+//   Widget build(BuildContext context) {
+//     return Scaffold(
+//       body: Container(
+//         height: double.infinity,
+//         width: double.infinity,
+//         decoration: BoxDecoration(
+//           gradient: LinearGradient(
+//             colors: AppTheme.registerGradient(context),
+//             begin: Alignment.topLeft,
+//             end: Alignment.bottomRight,
+//           ),
+//         ),
+//         child: SingleChildScrollView(
+//           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 60),
+//           child: Column(
+//             children: [
+//               FadeTransition(
+//                 opacity: _animController,
+//                 child: Column(
+//                   children: [
+//                     Icon(Icons.person_add_outlined, size: 80, color: AppTheme.textMainFor(context)),
+//                     const SizedBox(height: 10),
+//                     Text(
+//                       'إنشاء حساب',
+//                       style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 28, fontWeight: FontWeight.bold),
+//                     ),
+//                   ],
+//                 ),
+//               ),
+//               const SizedBox(height: 30),
 
-              GlassCard(
-                child: Column(
-                  children: [
-                    _buildAnimatedField(
-                      index: 1,
-                      icon: Icons.person,
-                      label: 'الاسم الكامل',
-                      controller: _nameController,
-                      node: _nameNode,
-                      nextNode: _emailNode,
-                    ),
-                    _buildAnimatedField(
-                      index: 2,
-                      icon: Icons.email,
-                      label: 'البريد الإلكتروني',
-                      controller: _emailController,
-                      node: _emailNode,
-                      nextNode: _passNode,
-                    ),
-                    _buildAnimatedField(
-                      index: 3,
-                      icon: Icons.lock,
-                      label: 'كلمة المرور',
-                      controller: _passwordController,
-                      node: _passNode,
-                      nextNode: _compNode,
-                      isPass: true,
-                    ),
-                    _buildAnimatedField(
-                      index: 4,
-                      icon: Icons.business,
-                      label: 'كود الشركة',
-                      controller: _compCodeController,
-                      node: _compNode,
-                      nextNode: _jobNode,
-                    ),
-                    _buildAnimatedField(
-                      index: 5,
-                      icon: Icons.badge,
-                      label: 'كود الوظيفة (الافتراضي 1)',
-                      controller: _jobCodeController,
-                      node: _jobNode,
-                      nextNode: _employeeNode,
-                    ),
-                    _buildAnimatedField(
-                      index: 6,
-                      icon: Icons.person_pin_rounded,
-                      label: 'كود الموظف (اختياري)',
-                      controller: _employeeCodeController,
-                      node: _employeeNode,
-                      isLast: true,
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 10, right: 8),
-                      child: Text(
-                        '💡 لو موظف موجود، اكتب كوده لربط حسابك بملفك الوظيفي',
-                        style: TextStyle(
-                          color: AppTheme.textMutedFor(context),
-                          fontFamily: 'Cairo',
-                          fontSize: 10,
-                        ),
-                      ),
-                    ),
+//               GlassCard(
+//                 child: Column(
+//                   children: [
+//                     _buildAnimatedField(
+//                       index: 1,
+//                       icon: Icons.person,
+//                       label: 'الاسم الكامل',
+//                       controller: _nameController,
+//                       node: _nameNode,
+//                       nextNode: _emailNode,
+//                     ),
+//                     _buildAnimatedField(
+//                       index: 2,
+//                       icon: Icons.email,
+//                       label: 'البريد الإلكتروني',
+//                       controller: _emailController,
+//                       node: _emailNode,
+//                       nextNode: _passNode,
+//                     ),
+//                     _buildAnimatedField(
+//                       index: 3,
+//                       icon: Icons.lock,
+//                       label: 'كلمة المرور',
+//                       controller: _passwordController,
+//                       node: _passNode,
+//                       nextNode: _compNode,
+//                       isPass: true,
+//                     ),
+//                     _buildAnimatedField(
+//                       index: 4,
+//                       icon: Icons.business,
+//                       label: 'كود الشركة',
+//                       controller: _compCodeController,
+//                       node: _compNode,
+//                       nextNode: _jobNode,
+//                     ),
+//                     _buildAnimatedField(
+//                       index: 5,
+//                       icon: Icons.badge,
+//                       label: 'كود الوظيفة (الافتراضي 1)',
+//                       controller: _jobCodeController,
+//                       node: _jobNode,
+//                       nextNode: _employeeNode,
+//                     ),
+//                     _buildAnimatedField(
+//                       index: 6,
+//                       icon: Icons.person_pin_rounded,
+//                       label: 'كود الموظف (اختياري)',
+//                       controller: _employeeCodeController,
+//                       node: _employeeNode,
+//                       isLast: true,
+//                     ),
+//                     Padding(
+//                       padding: const EdgeInsets.only(bottom: 10, right: 8),
+//                       child: Text(
+//                         '💡 لو موظف موجود، اكتب كوده لربط حسابك بملفك الوظيفي',
+//                         style: TextStyle(
+//                           color: AppTheme.textMutedFor(context),
+//                           fontFamily: 'Cairo',
+//                           fontSize: 10,
+//                         ),
+//                       ),
+//                     ),
 
-                    const SizedBox(height: 30),
+//                     const SizedBox(height: 30),
 
-                    SizedBox(
-                      width: double.infinity,
-                      child: _isLoading
-                          ? Center(child: CircularProgressIndicator(color: Theme.of(context).colorScheme.onPrimary))
-                          : ElevatedButton(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: AppTheme.authActionBackground(context),
-                                padding: const EdgeInsets.symmetric(vertical: 15),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                              ),
-                              onPressed: _handleRegister,
-                              child: Text('إتمام التسجيل', style: TextStyle(fontSize: 18, color: Theme.of(context).colorScheme.onPrimary)),
-                            ),
-                    ),
-                  ],
-                ),
-              ),
+//                     SizedBox(
+//                       width: double.infinity,
+//                       child: _isLoading
+//                           ? Center(child: CircularProgressIndicator(color: Theme.of(context).colorScheme.onPrimary))
+//                           : ElevatedButton(
+//                               style: ElevatedButton.styleFrom(
+//                                 backgroundColor: AppTheme.authActionBackground(context),
+//                                 padding: const EdgeInsets.symmetric(vertical: 15),
+//                                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+//                               ),
+//                               onPressed: _handleRegister,
+//                               child: Text('إتمام التسجيل', style: TextStyle(fontSize: 18, color: Theme.of(context).colorScheme.onPrimary)),
+//                             ),
+//                     ),
+//                   ],
+//                 ),
+//               ),
 
-              const SizedBox(height: 20),
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: Text('لديك حساب بالفعل؟ سجل دخولك', style: TextStyle(color: AppTheme.textSoftFor(context))),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+//               const SizedBox(height: 20),
+//               TextButton(
+//                 onPressed: () => Navigator.pop(context),
+//                 child: Text('لديك حساب بالفعل؟ سجل دخولك', style: TextStyle(color: AppTheme.textSoftFor(context))),
+//               ),
+//             ],
+//           ),
+//         ),
+//       ),
+//     );
+//   }
 
-  Widget _buildAnimatedField({
-    required int index,
-    required IconData icon,
-    required String label,
-    required TextEditingController controller,
-    required FocusNode node,
-    FocusNode? nextNode,
-    bool isPass = false,
-    bool isLast = false,
-  }) {
-    return AnimatedBuilder(
-      animation: _animController,
-      builder: (context, child) {
-        final slide = Tween<Offset>(begin: const Offset(0, 0.5), end: Offset.zero)
-            .animate(CurvedAnimation(
-              parent: _animController,
-              curve: Interval(0.2 + (index * 0.1), 1.0, curve: Curves.easeOut),
-            ));
+//   Widget _buildAnimatedField({
+//     required int index,
+//     required IconData icon,
+//     required String label,
+//     required TextEditingController controller,
+//     required FocusNode node,
+//     FocusNode? nextNode,
+//     bool isPass = false,
+//     bool isLast = false,
+//   }) {
+//     return AnimatedBuilder(
+//       animation: _animController,
+//       builder: (context, child) {
+//         final slide = Tween<Offset>(begin: const Offset(0, 0.5), end: Offset.zero)
+//             .animate(CurvedAnimation(
+//               parent: _animController,
+//               curve: Interval(0.2 + (index * 0.1), 1.0, curve: Curves.easeOut),
+//             ));
 
-        return SlideTransition(
-          position: slide,
-          child: FadeTransition(
-            opacity: _animController,
-            child: Padding(
-              padding: const EdgeInsets.only(bottom: 15),
-              child: TextField(
-                controller: controller,
-                focusNode: node,
-                obscureText: isPass,
-                style: TextStyle(color: AppTheme.textMainFor(context)),
-                textInputAction: isLast ? TextInputAction.done : TextInputAction.next,
-                onSubmitted: (_) {
-                  if (isLast) {
-                    _handleRegister();
-                  } else {
-                    FocusScope.of(context).requestFocus(nextNode);
-                  }
-                },
-                decoration: InputDecoration(
-                  prefixIcon: Icon(icon, color: AppTheme.textSoftFor(context)),
-                  labelText: label,
-                  labelStyle: TextStyle(color: AppTheme.textSoftFor(context)),
-                  filled: true,
-                  fillColor: AppTheme.inputFill(context),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(15),
-                    borderSide: BorderSide(color: AppTheme.inputBorder(context)),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(15),
-                    borderSide: BorderSide(color: AppTheme.inputFocus(context)),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
+//         return SlideTransition(
+//           position: slide,
+//           child: FadeTransition(
+//             opacity: _animController,
+//             child: Padding(
+//               padding: const EdgeInsets.only(bottom: 15),
+//               child: TextField(
+//                 controller: controller,
+//                 focusNode: node,
+//                 obscureText: isPass,
+//                 style: TextStyle(color: AppTheme.textMainFor(context)),
+//                 textInputAction: isLast ? TextInputAction.done : TextInputAction.next,
+//                 onSubmitted: (_) {
+//                   if (isLast) {
+//                     _handleRegister();
+//                   } else {
+//                     FocusScope.of(context).requestFocus(nextNode);
+//                   }
+//                 },
+//                 decoration: InputDecoration(
+//                   prefixIcon: Icon(icon, color: AppTheme.textSoftFor(context)),
+//                   labelText: label,
+//                   labelStyle: TextStyle(color: AppTheme.textSoftFor(context)),
+//                   filled: true,
+//                   fillColor: AppTheme.inputFill(context),
+//                   enabledBorder: OutlineInputBorder(
+//                     borderRadius: BorderRadius.circular(15),
+//                     borderSide: BorderSide(color: AppTheme.inputBorder(context)),
+//                   ),
+//                   focusedBorder: OutlineInputBorder(
+//                     borderRadius: BorderRadius.circular(15),
+//                     borderSide: BorderSide(color: AppTheme.inputFocus(context)),
+//                   ),
+//                 ),
+//               ),
+//             ),
+//           ),
+//         );
+//       },
+//     );
+//   }
+// }

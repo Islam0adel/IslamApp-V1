@@ -1,29 +1,17 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <!--
-    If you are serving your web app in a path other than the root, change the
-    href value below to reflect the base path you are serving from.
-
-    The path provided below has to start and end with a slash "/" in order for
-    it to work correctly.
-
-    For more details:
-    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
-
-    This is a placeholder for base href that will be replaced by the value of
-    the `--base-href` argument provided to `flutter build`.
-  -->
   <base href="$FLUTTER_BASE_HREF">
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="description" content="IslamApp - Advanced Financial System">
 
-  <!-- iOS meta tags & icons -->
+  <!-- iOS meta tags (full screen, no white bar) -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="frontend">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="IslamApp">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
   <!-- Favicon -->
@@ -31,19 +19,278 @@
 
   <title>IslamApp</title>
   <link rel="manifest" href="manifest.json">
+
+  <!-- ============================================================ -->
+  <!-- ⭐ Animated Loading Screen -->
+  <!-- ============================================================ -->
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+  /* ⭐ نفس gradient شاشة التحميل — مفيش لون مصمت خالص */
+  background: linear-gradient(135deg, #0a0e27 0%, #020617 50%, #0f172a 100%);
+  background-attachment: fixed;
+}
+
+    .loading-container {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      position: fixed;
+      top: 0; left: 0;
+      width: 100vw; height: 100vh;
+      background: linear-gradient(135deg, #0a0e27 0%, #020617 50%, #0f172a 100%);
+      z-index: 99999;
+      overflow: hidden;
+      opacity: 1;
+      transition: opacity 0.1s linear; 
+      will-change: opacity;
+    }
+
+    .loading-container::before {
+      content: '';
+      position: absolute;
+      top: 50%; left: 50%;
+      width: 200vw; height: 200vw;
+      transform: translate(-50%, -50%) scale(0.4);
+      background: radial-gradient(
+        circle,
+        rgba(96, 165, 250, 0.18) 0%,
+        rgba(167, 139, 250, 0.08) 30%,
+        transparent 65%
+      );
+      animation: bgPulse 4s ease-in-out infinite;
+      animation-delay: 1s;
+      pointer-events: none;
+    }
+
+    @keyframes bgPulse {
+      0%, 100% { opacity: 0; transform: translate(-50%, -50%) scale(0.4); }
+      50%      { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    }
+
+    .loading-text {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI',
+                   Roboto, 'Helvetica Neue', Arial, sans-serif;
+      font-size: clamp(18px, 2vw, 24px);
+      font-weight: 100;
+      letter-spacing: 1px;
+      direction: ltr;
+      position: relative;
+      z-index: 1;
+      padding: 0 20px;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    .loading-text .char {
+      display: inline-block;
+      color: #ffffff;
+      opacity: 0;
+      transform: translateY(-100vh);
+      will-change: transform, opacity, color, text-shadow;
+      /* ⭐ fall مرة واحدة + color pulse loop */
+      animation-name: letterFall, colorPulse;
+      animation-duration: 1s, 3s;
+      animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1), ease-in-out;
+      animation-fill-mode: forwards, none;
+      animation-iteration-count: 1, infinite;
+    }
+
+    .loading-text .space {
+      display: inline-block;
+      width: 0.35em;
+    }
+
+    @keyframes letterFall {
+      0%   { opacity: 0; transform: translateY(-100vh) rotate(-20deg) scale(0.5); }
+      55%  { opacity: 1; transform: translateY(15px) rotate(5deg) scale(1.15); }
+      75%  { transform: translateY(-8px) rotate(-3deg) scale(0.95); }
+      90%  { transform: translateY(3px) rotate(1deg) scale(1.02); }
+      100% { opacity: 1; transform: translateY(0) rotate(0) scale(1); }
+    }
+
+    @keyframes colorPulse {
+      0%, 100% {
+        color: #ffffff;
+        text-shadow:
+          0 0 18px rgba(255, 255, 255, 0.35),
+          0 0 36px rgba(96, 165, 250, 0.25);
+      }
+      25% {
+        color: #60a5fa;
+        text-shadow:
+          0 0 24px rgba(96, 165, 250, 0.9),
+          0 0 48px rgba(96, 165, 250, 0.4);
+      }
+      50% {
+        color: #a78bfa;
+        text-shadow:
+          0 0 24px rgba(167, 139, 250, 0.9),
+          0 0 48px rgba(167, 139, 250, 0.4);
+      }
+      75% {
+        color: #22d3ee;
+        text-shadow:
+          0 0 24px rgba(34, 211, 238, 0.9),
+          0 0 48px rgba(34, 211, 238, 0.4);
+      }
+    }
+    /* ⭐ غلاف عمودي للوجو + الاسم + النقط */
+    .loading-content {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px; /* مسافة بين اللوجو والاسم */
+      position: relative;
+      z-index: 1;
+    }
+
+    /* ⭐ تنسيق اللوجو */
+    .loading-logo {
+      width: 120px;
+      height: 120px;
+      object-fit: contain;
+      filter: drop-shadow(0 0 15px rgba(96, 165, 250, 0.3));
+      /* ⭐ تأخير 250ms عشان يظهر مع أول حرف "I" */
+      animation: logoFadeIn 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) 250ms forwards;
+      opacity: 0;
+      transform: scale(0.6);
+    }
+
+    @keyframes logoFadeIn {
+      to {
+        opacity: 1;
+        transform: scale(1);
+      }
+    }
+
+    /* ⭐ 4 نقط تحميل — تظهر بعد ما الاسم يكتمل */
+    .loading-dots {
+      display: flex;
+      gap: 12px;
+      opacity: 0;
+      /* تبدأ تظهر بعد 700ms (بعد ما آخر حرف يستقر) */
+      animation: dotsFadeIn 0.35s ease-out 0.7s forwards;
+    }
+
+    .loading-dots .dot {
+      display: inline-block;
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #60a5fa;
+      box-shadow: 0 0 8px rgba(96, 165, 250, 0.5);
+      opacity: 0.3;
+      /* ⭐ الوميض المتتابع */
+      animation: dotPulse 1.2s ease-in-out infinite;
+      will-change: transform, opacity, background;
+    }
+
+    /* ⭐ تأخير متتابع عشان الوميض يكون زي الموجة */
+    .loading-dots .dot:nth-child(1) { animation-delay: 0s; }
+    .loading-dots .dot:nth-child(2) { animation-delay: 0.15s; }
+    .loading-dots .dot:nth-child(3) { animation-delay: 0.30s; }
+    .loading-dots .dot:nth-child(4) { animation-delay: 0.45s; }
+
+    @keyframes dotsFadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes dotPulse {
+      0%, 100% {
+        opacity: 0.3;
+        transform: scale(1);
+        background: #60a5fa;
+        box-shadow: 0 0 8px rgba(96, 165, 250, 0.5);
+      }
+      50% {
+        opacity: 1;
+        transform: scale(1.35);
+        background: #a78bfa;
+        box-shadow: 0 0 16px rgba(167, 139, 250, 0.9);
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .loading-text .char {
+        animation: colorPulse 3s ease-in-out infinite;
+        opacity: 1; transform: none; color: #60a5fa;
+      }
+      .loading-container::before { animation: none; opacity: 0.5; }
+      /* ⭐ نقط ثابتة (من غير وميض) */
+      .loading-dots { animation: none; opacity: 1; transform: none; }
+      .loading-dots .dot {
+        animation: none;
+        opacity: 0.7;
+      }
+    }
+  </style>
 </head>
 <body>
-  <!--
-    ⭐ تسجيل Service Worker الخاص بـ FCM في scope خاص
-    (Flutter يستخدم scope '/' لـ flutter_service_worker.js،
-    فلازم نستخدم scope مختلف لـ FCM لتجنب التعارض)
-  -->
+
+  <!-- ============================================================ -->
+  <!-- ⭐ Loading Screen -->
+  <!-- ============================================================ -->
+<div id="loading-indicator" class="loading-container">
+  <div class="loading-content">
+    <!-- ⭐ اللوجو الجديد -->
+    <img src="icons/Icon-192.png" alt="IslamApp Logo" class="loading-logo" />
     
-  <!-- ⭐ App Badge helpers (window + shared IndexedDB with SW) -->
+    <div class="loading-text" id="loading-text" aria-label="Islam App"></div>
+    
+    <div class="loading-dots">
+      <span class="dot"></span>
+      <span class="dot"></span>
+      <span class="dot"></span>
+      <span class="dot"></span>
+    </div>
+  </div>
+</div>
+
+  <!-- ============================================================ -->
+  <!-- ⭐ Inject Letters -->
+  <!-- ============================================================ -->
+  <script>
+    (function () {
+      const text = 'Islam App';
+      const container = document.getElementById('loading-text');
+      if (!container) return;
+
+      let letterIndex = 0;
+      for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (ch === ' ') {
+          const space = document.createElement('span');
+          space.className = 'space';
+          space.innerHTML = '&nbsp;';
+          container.appendChild(space);
+          continue;
+        }
+        const span = document.createElement('span');
+        span.className = 'char';
+        span.textContent = ch;
+        // Fall delayed by letterIndex * 120ms
+        // Color pulse starts at 1800ms (after last letter lands)
+        span.style.animationDelay = `${letterIndex * 120}ms, 1800ms`;
+        container.appendChild(span);
+        letterIndex++;
+      }
+    })();
+  </script>
+
+  <!-- ============================================================ -->
+  <!-- ⭐ App Badge helpers -->
+  <!-- ============================================================ -->
   <script>
     window.appBadge = (function () {
       let dbPromise = null;
-
       function openDb() {
         if (dbPromise) return dbPromise;
         dbPromise = new Promise((resolve, reject) => {
@@ -59,7 +306,6 @@
         });
         return dbPromise;
       }
-
       async function put(key, value) {
         try {
           const db = await openDb();
@@ -71,37 +317,29 @@
           });
         } catch (_) {}
       }
-
       return {
         set: async function (count) {
           count = Math.max(0, parseInt(count) || 0);
           await put("count", count);
           try {
             if (count > 0) {
-              if ("setAppBadge" in navigator) {
-                await navigator.setAppBadge(count);
-              }
+              if ("setAppBadge" in navigator) await navigator.setAppBadge(count);
             } else {
-              if ("clearAppBadge" in navigator) {
-                await navigator.clearAppBadge();
-              }
+              if ("clearAppBadge" in navigator) await navigator.clearAppBadge();
             }
-          } catch (e) {
-            console.warn("appBadge.set error:", e);
-          }
+          } catch (e) { console.warn("appBadge.set error:", e); }
         },
         clear: async function () {
           await put("count", 0);
-          try {
-            if ("clearAppBadge" in navigator) {
-              await navigator.clearAppBadge();
-            }
-          } catch (e) {}
+          try { if ("clearAppBadge" in navigator) await navigator.clearAppBadge(); } catch (e) {}
         },
       };
     })();
   </script>
 
+  <!-- ============================================================ -->
+  <!-- ⭐ FCM Service Worker -->
+  <!-- ============================================================ -->
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", function () {
@@ -109,16 +347,54 @@
           .register("firebase-messaging-sw.js", {
             scope: "/firebase-cloud-messaging-push-scope/",
           })
-          .then(function (reg) {
-            console.log("✅ FCM Service Worker registered:", reg.scope);
-          })
-          .catch(function (err) {
-            console.warn("⚠️ FCM SW registration failed:", err);
-          });
+          .then(function (reg) { console.log("✅ FCM SW registered:", reg.scope); })
+          .catch(function (err) { console.warn("⚠️ FCM SW failed:", err); });
       });
     }
   </script>
 
+  <!-- Flutter Bootstrap -->
   <script src="flutter_bootstrap.js" async></script>
+
+  <!-- ============================================================ -->
+  <!-- ⭐ Loading Screen Hide Logic (only on Flutter's signal) -->
+  <!-- ============================================================ -->
+  <script>
+    (function () {
+      const loadingStart = Date.now();
+      const HARD_TIMEOUT_MS = 30000; // ⭐ 30s بدل 20s
+      let hiding = false;
+
+      function hide(reason) {
+        if (hiding) return;
+        hiding = true;
+
+        const el = document.getElementById('loading-indicator');
+        if (!el) return;
+
+        const elapsed = Date.now() - loadingStart;
+        console.log(`[Loading] hiding (${reason}) — visible for ${elapsed}ms`);
+
+        // fade out
+el.style.opacity = '0';
+el.style.pointerEvents = 'none';   // ⭐ ما تحجبش الكليكات أثناء الـ fade
+setTimeout(() => {
+  if (el.parentNode) el.parentNode.removeChild(el);
+}, 800);
+      }
+
+      // ⭐ Public API called from Flutter once first screen is rendered
+      window.__hideLoadingScreen = function () {
+        hide('flutter-ready');
+      };
+
+      // ⭐ Safety fallback: if Flutter never calls, hide after 20s
+      setTimeout(() => hide('safety-timeout'), HARD_TIMEOUT_MS);
+            // ⭐ Also listen to Flutter's CustomEvent (universal_html dispatch)
+      window.addEventListener('flutter-first-screen-ready', function () {
+        hide('flutter-event');
+      });
+    })();
+  </script>
 </body>
 </html>

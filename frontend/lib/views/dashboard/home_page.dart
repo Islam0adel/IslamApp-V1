@@ -23,6 +23,7 @@ import 'product_lookup_page.dart';
 import '../../services/notifications_service.dart';
 import '../../services/presence_service.dart';
 import '../../views/widgets/online_users_list.dart';
+import '../../services/web_loading_helper.dart'; 
 import '../../pages/hr/hr_dashboard_page.dart';   // ← NEW
 import '../../services/notification_router.dart';   // ⭐ Deep Link
 import '../../services/deep_link_service.dart';   // ⭐ Pending pattern
@@ -88,7 +89,7 @@ class _HomePageState extends State<HomePage>
       }
     });
 
-    // ⭐ App Badge
+    // ⭐ App Badge: راقب تغيرات notifications_box وحدّث الشارة
     _notificationsBoxRef = Hive.box('notifications_box');
     _notificationsBoxRef!.listenable().addListener(_syncAppBadge);
 
@@ -98,6 +99,9 @@ class _HomePageState extends State<HomePage>
     );
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      // ⭐ إخفاء شاشة التحميل (لو Home هي أول شاشة)
+      hideWebLoadingScreen();
+
       _loadAllData();
       _syncAppBadge();
     });
@@ -1046,8 +1050,16 @@ class _HomePageState extends State<HomePage>
     return GlassCard(
       child: Row(
         children: [
-          Icon(Icons.business, color: AppTheme.warningFor(context), size: 30),
-          const SizedBox(width: 12),
+          // ⭐ اللوجو الجديد بدلاً من أيقونة الشركة
+          Image.asset(
+            'assets/images/app_icon.png',
+            width: 50,
+            height: 50,
+            // استخدام cacheWidth/Height بضعف الحجم عشان يطلع نضيف على الموبايل
+            cacheWidth: 90, 
+            cacheHeight: 90,
+          ),
+          const SizedBox(width: 0),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,

@@ -13,6 +13,8 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'permissions_service.dart';
+
+import '../views/dashboard/company_users_page.dart';
 import '../core/navigator_key.dart';
 
 // ─── History pages ───
@@ -123,6 +125,11 @@ class NotificationRouter {
       case 'hr_employees':
         page = const EmployeesListPage();
         break;
+
+      // ⭐ طلبات الانضمام — super_admin فقط → يفتح CompanyUsersPage
+      case 'registration_requests':
+        page = const _RegistrationRequestsRedirect();
+        break;
     }
 
     if (page == null) return;
@@ -133,7 +140,8 @@ class NotificationRouter {
 
     await navigator.push(MaterialPageRoute(builder: (_) => page!));
   }
-
+  // (يتم إضافة _RegistrationRequestsRedirect بعد الفئة)
+  
   // ⭐ نفس منطق NotificationsService._canAccessSection
   static bool _canAccessSection(String section) {
     final ps = PermissionsService();
@@ -162,4 +170,40 @@ class NotificationRouter {
         return false;
     }
   }
+  
+}
+
+// ============================================================
+// Wrapper بسيط يفتح CompanyUsersPage للسوبر أدمن
+// ============================================================
+class _RegistrationRequestsRedirect extends StatelessWidget {
+  const _RegistrationRequestsRedirect();
+
+  @override
+  Widget build(BuildContext context) {
+    // نستخدم FutureBuilder عشان نجيب بيانات الشركة
+    return FutureBuilder<Map<String, dynamic>>(
+      future: _resolveCompanyInfo(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return Scaffold(
+            appBar: AppBar(title: const Text('طلبات الانضمام')),
+            body: const Center(child: CircularProgressIndicator()),
+          );
+        }
+        final info = snapshot.data!;
+        return CompanyUsersPage(
+          companyCode: info['company_code'] as String? ?? '',
+          companyName: info['company_name'] as String? ?? 'كل الشركات',
+        );
+      },
+    );
+  }
+
+Future<Map<String, dynamic>> _resolveCompanyInfo() {
+  return Future.value({
+    'company_code': '',
+    'company_name': 'كل الشركات',
+  });
+}
 }

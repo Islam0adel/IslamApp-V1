@@ -3,8 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../services/api_service.dart';
+import '../../services/permissions_service.dart';
 import '../dashboard/home_page.dart';
-import '../../main.dart'; // ✅ استيراد syncAllDataIfNeeded و initializeGlobalListener
+import 'verify_email_screen.dart';
+import '../../main.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../../services/web_loading_helper.dart'; 
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -34,6 +38,11 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
       vsync: this,
       duration: const Duration(milliseconds: 1000),
     )..forward();
+
+    // ⭐ إخفاء شاشة التحميل بعد أول frame من LoginScreen
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      hideWebLoadingScreen();
+    });
   }
 
   void _loadSavedCredentials() async {
@@ -66,6 +75,43 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
         _passwordController.text,
       );
 
+      // ⭐ فحص حالة الحساب
+      final userStatus =
+          (result['user_status'] ?? 'active').toString().toLowerCase();
+      if (userStatus == 'pending') {
+        _showSnackBar(
+          'حسابك قيد المراجعة. اضغط "إنشاء حساب" لإكمال التسجيل.',
+          AppTheme.warningOrangeFor(context),
+        );
+        await FirebaseAuth.instance.signOut();
+        return;
+      }
+      if (userStatus == 'suspended') {
+        _showSnackBar(
+          'تم إيقاف حسابك. يرجى التواصل مع الإدارة.',
+          AppTheme.dangerStrongFor(context),
+        );
+        await FirebaseAuth.instance.signOut();
+        return;
+      }
+
+      // ⭐ فحص التحقق من الإيميل
+      final requiresVerification =
+          result['requires_email_verification'] == true;
+      final emailVerified = result['email_verified'] == true;
+      if (requiresVerification && !emailVerified) {
+        final email = (result['email'] ?? '').toString();
+        if (!mounted) return;
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => VerifyEmailScreen(email: email),
+          ),
+        );
+        return;
+      }
+
+      // ⭐ حفظ البيانات
       final prefs = await SharedPreferences.getInstance();
       if (_rememberMe) {
         await prefs.setString('saved_email', _emailController.text.trim());
@@ -77,33 +123,42 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
         await prefs.setBool('remember_me', false);
       }
 
-      // حفظ بيانات المستخدم وصلاحياته (مهم جداً للخطوات الجاية)
-      await prefs.setString('user_name', result['name']);
-      await prefs.setString('company_name', result['company_name']);
-      await prefs.setString('company_code', result['company_code']);
-      await prefs.setString('job_code', result['job_code']); // حفظ كود الوظيفة
-      await prefs.setString('job_title', result['job_title']); // حفظ مسمى الوظيفة
-      await prefs.setString('user_email', _emailController.text.trim());
+      await prefs.setString('user_name', result['name'] ?? '');
+      await prefs.setString('company_name', result['company_name'] ?? '');
+      await prefs.setString('company_code', result['company_code'] ?? '');
+      await prefs.setString('job_code', result['job_code'] ?? '1');
+      await prefs.setString('job_title', result['job_title'] ?? '');
+      await prefs.setString('role', result['role'] ?? 'employee');
+      await prefs.setString('user_email', result['email'] ?? _emailController.text.trim());
+      // ⭐ branch_code (لمشكلة الفرع)
+      if ((result['branch_code'] ?? '').toString().isNotEmpty) {
+        await prefs.setString('selected_branch_code', result['branch_code']);
+      }
 
-    // تشغيل WebSocket فقط.
-// تشغيل WebSocket.
-// عند نجاح الاتصال، Global Sync سيشغل المزامنة المركزية مرة واحدة.
-initializeGlobalListener(
-  result['company_code'],
-);
+      // ⭐ حدّث الدور في PermissionsService فوراً
+      PermissionsService().setRole(result['role']?.toString());
 
-      if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => HomePage(
-              userName: result['name'],
-              companyName: result['company_name'],
-              companyCode: result['company_code'],
-            ),
-          ),
+      // ⭐ حدّث الفروع المسموحة فوراً (قبل Firestore listener)
+      final allowedBranches = result['allowed_branches'];
+      if (allowedBranches is List) {
+        PermissionsService().setAllowedBranches(
+          allowedBranches.map((e) => e.toString()).toList(),
         );
       }
+
+      initializeGlobalListener(result['company_code'] ?? '');
+
+      if (!mounted) return;
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => HomePage(
+            userName: result['name'] ?? '',
+            companyName: result['company_name'] ?? '',
+            companyCode: result['company_code'] ?? '',
+          ),
+        ),
+      );
     } catch (e) {
       _showSnackBar(e.toString(), AppTheme.dangerFor(context));
     } finally {
@@ -140,16 +195,36 @@ initializeGlobalListener(
                 FadeTransition(
                   opacity: _animController,
                   child: Column(
+                    
                     children: [
-                      Icon(Icons.lock_person_rounded, size: 90, color: AppTheme.textMainFor(context)),
-                      SizedBox(height: 15),
+                      // ⭐ اللوجو الجديد بدلاً من أيقونة القفل
+                      Image.asset(
+                        'assets/images/app_icon.png', // تأكد أن هذا هو مسار اللوجو في مجلد assets
+                        width: 100,
+                        height: 100,
+                        // استخدام cacheWidth و cacheHeight لضمان أعلى جودة وأقل استهلاك للرام
+                        cacheWidth: 260, 
+                        cacheHeight: 260,
+                      ),
+                      const SizedBox(height: 0),
+                      // ⭐ النص الجديد
+                      Text(
+                        'Islam App',
+                        style: TextStyle(
+                          color: AppTheme.textMainFor(context),
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      // النص الفرعي (تسجيل الدخول)
                       Text(
                         'تسجيل الدخول',
                         style: TextStyle(
-                          color: AppTheme.textMainFor(context),
-                          fontSize: 32,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 1.2,
+                          color: AppTheme.textSoftFor(context),
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
                     ],
@@ -163,8 +238,8 @@ initializeGlobalListener(
                     children: [
                       _buildAnimatedField(
                         index: 1,
-                        icon: Icons.email_outlined,
-                        label: 'البريد الإلكتروني',
+                        icon: Icons.person_search_rounded,
+                        label: 'البريد / الموبايل / اسم المستخدم',
                         controller: _emailController,
                         node: _emailNode,
                         nextNode: _passNode,

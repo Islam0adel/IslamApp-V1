@@ -18,6 +18,8 @@ _SECTIONS = {
     "daily", "purchases", "settlements", "coding", "inventory",
     # ✅ HR
     "hr_attendance", "hr_vacations", "hr_adjustments", "hr_employees",
+    # ⭐ طلبات الانضمام (للسوبر أدمن فقط)
+    "registration_requests",
 }
 _ACTIONS = {"add", "edit", "delete"}
 _RETENTION = {0, 30, 90, 365}

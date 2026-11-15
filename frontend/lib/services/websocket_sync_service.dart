@@ -93,13 +93,9 @@ Future<void> connect(String companyCode) async {
       return;
     }
 
-    final String url =
-        '${ApiConstants.baseUrl}/sync/ws/$companyCode';
-
+    final String url = '${ApiConstants.baseUrl}/sync/ws/$companyCode';
     final Uri wsUri = Uri.parse(
-      url
-          .replaceFirst('http://', 'ws://')
-          .replaceFirst('https://', 'wss://'),
+      url.replaceFirst('http://', 'ws://').replaceFirst('https://', 'wss://'),
     );
 
     print('🔌 محاولة الاتصال بـ WebSocket الموثق للشركة: $companyCode');
@@ -107,52 +103,45 @@ Future<void> connect(String companyCode) async {
     final channel = WebSocketChannel.connect(wsUri);
     _channel = channel;
 
-    // انتظر اكتمال فتح قناة WebSocket قبل إرسال بيانات المصادقة.
-    await channel.ready;
-
-    // لو تم إلغاء الاتصال أثناء انتظار فتح القناة، لا تكمل.
-    if (_manualDisconnect || !identical(_channel, channel)) {
-      await channel.sink.close();
-      return;
-    }
-
-    // استمع للرسائل قبل إرسال التوكن لتجنب فقد تأكيد المصادقة.
+    // ⭐⭐⭐ استمع للرسائل قبل ready — يمنع ضياع auth_success على الويب
     channel.stream.listen(
       (message) {
         if (!identical(_channel, channel)) return;
+        print('🔔 WebSocket raw: $message');   // ← log تشخيصي
         _handleMessage(message);
       },
       onError: (error) {
         if (!identical(_channel, channel)) return;
-
         print("❌ خطأ في WebSocket: $error");
-
         _isConnected = false;
         _isConnecting = false;
         _channel = null;
-
         _scheduleReconnect();
       },
       onDone: () {
         if (!identical(_channel, channel)) return;
-
         print("🔌 تم قطع اتصال WebSocket");
-
         _isConnected = false;
         _isConnecting = false;
         _channel = null;
-
         if (_manualDisconnect) {
           print("ℹ️ الاتصال تم قطعه يدويًا، لن يتم إعادة الاتصال");
           return;
         }
-
         _scheduleReconnect();
       },
       cancelOnError: true,
     );
 
-    // إرسال التوكن كأول رسالة دون وضعه في عنوان الاتصال.
+    // انتظر فتح القناة (بعد listen — عشان ما تضيعش رسائل)
+    await channel.ready;
+
+    if (_manualDisconnect || !identical(_channel, channel)) {
+      await channel.sink.close();
+      return;
+    }
+
+    // إرسال auth
     channel.sink.add(
       jsonEncode({
         'type': 'auth',
@@ -160,9 +149,22 @@ Future<void> connect(String companyCode) async {
       }),
     );
 
-    // لا نضع _isConnected = true هنا.
-    // يصبح الاتصال جاهزًا فقط عند استلام auth_success.
     print("⏳ تم إرسال بيانات المصادقة، في انتظار تأكيد السيرفر");
+
+    // ⭐ Timeout 15s — لو auth_success ما وصلش، أعد المحاولة
+    Future.delayed(const Duration(seconds: 15), () {
+      if (!_isConnected &&
+          identical(_channel, channel) &&
+          !_manualDisconnect) {
+        print('⚠️ لم يتم استقبال auth_success بعد 15 ثانية — إعادة المحاولة');
+        try {
+          channel.sink.close();
+        } catch (_) {}
+        _channel = null;
+        _isConnecting = false;
+        _scheduleReconnect();
+      }
+    });
   } catch (e) {
     _isConnected = false;
     _isConnecting = false;

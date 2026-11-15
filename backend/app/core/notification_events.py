@@ -1,3 +1,6 @@
+# backend/app/core/notification_events.py
+
+import os
 import uuid
 import time
 from datetime import datetime
@@ -7,9 +10,43 @@ from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
 from app.core.firebase_setup import db as firebase_db
-from app.core.models import AuditLog, Notification, NotificationPreference ,Employee
+from app.core.models import AuditLog, Notification, NotificationPreference, Employee
 from app.core.request_context import current_user_context
-from app.core.fcm_service import send_push_to_user_bg   # ⭐ NEW
+from app.core.fcm_service import send_push_to_user_bg
+
+
+# ============================================================
+# ⭐ SUPER_ADMIN_EMAILS (من .env)
+# ============================================================
+SUPER_ADMIN_EMAILS = {
+    e.strip().lower()
+    for e in os.getenv("SUPER_ADMIN_EMAILS", "").split(",")
+    if e.strip()
+}
+
+_JOB_CODE_TO_ROLE = {
+    "99": "super_admin",
+    "201": "admin",
+    "200": "employee",
+    "1": "employee",
+}
+
+
+def _effective_role(profile: Dict[str, Any]) -> str:
+    """نفس المنطق في auth_middleware."""
+    email = str(profile.get("email", "")).strip().lower()
+    if email and email in SUPER_ADMIN_EMAILS:
+        return "super_admin"
+    role = str(profile.get("role", "")).strip()
+    if role in ("super_admin", "admin", "employee"):
+        return role
+    job_code = str(profile.get("job_code", "1"))
+    return _JOB_CODE_TO_ROLE.get(job_code, "employee")
+
+
+# ============================================================
+# Section Map
+# ============================================================
 
 _SECTION_MAP = {
     "transaction": ("daily", "اليوميات"),
@@ -17,7 +54,7 @@ _SECTION_MAP = {
     "settlement": ("settlements", "التسويات"),
     "coding": ("coding", "التكويد"),
     "inventory": ("inventory", "الجرد"),
-    # ✅ HR — جديد
+    # ✅ HR
     "hr_attendance": ("hr_attendance", "حضور الموارد البشرية"),
     "hr_vacation": ("hr_vacations", "إجازات الموارد البشرية"),
     "hr_adjustment": ("hr_adjustments", "تسويات الموارد البشرية"),
@@ -46,7 +83,9 @@ def _company_recipients(company_code: str) -> list[dict]:
         return cached[1]
     users = []
     if firebase_db is not None:
-        for user_doc in firebase_db.collection("users").where("company_code", "==", str(company_code)).stream():
+        for user_doc in firebase_db.collection("users").where(
+            "company_code", "==", str(company_code)
+        ).stream():
             profile = user_doc.to_dict() or {}
             profile["uid"] = str(profile.get("uid", ""))
             profile["email"] = str(profile.get("email", user_doc.id)).strip().lower()
@@ -57,14 +96,19 @@ def _company_recipients(company_code: str) -> list[dict]:
 
 
 def _branch_allowed(profile: Dict[str, Any], branch_code: str) -> bool:
-    if str(profile.get("job_code", "1")) == "99":
+    """⭐ يستخدم role بدل job_code."""
+    role = _effective_role(profile)
+    if role in ("super_admin", "admin"):
         return True
     allowed = profile.get("allowed_branches", ["all"])
     if not branch_code or not allowed or allowed == "all":
         return True
     if isinstance(allowed, str):
         return allowed.lower() == "all" or allowed == branch_code
-    return "all" in [str(value).lower() for value in allowed] or branch_code in [str(value) for value in allowed]
+    return (
+        "all" in [str(value).lower() for value in allowed]
+        or branch_code in [str(value) for value in allowed]
+    )
 
 
 _HR_SECTION_KEYS = {
@@ -76,21 +120,33 @@ _HR_SECTION_KEYS = {
 
 
 def _can_view_section(profile: Dict[str, Any], section: str) -> bool:
+    """
+    ⭐ يستخدم role بدل job_code.
+    
+    - super_admin: كل شيء (بما فيهم registration_requests)
+    - admin: كل شيء (ما عدا registration_requests)
+    - employee: حسب permissions
+    """
+    role = _effective_role(profile)
+
+    # ⭐ طلبات الانضمام — super_admin فقط
+    if section == "registration_requests":
+        return role == "super_admin"
+
+    # super_admin + admin يشوفوا كل شيء
+    if role in ("super_admin", "admin"):
+        return True
+
     permissions = profile.get("permissions")
     if not isinstance(permissions, dict) or not permissions:
         return True
-    job_code = str(profile.get("job_code", "1"))
-    if job_code == "99":
-        return True
 
-    # ⭐ master toggle: "إظهار الإشعارات"
-    # لو قافل الإشعارات من الصلاحيات → مش هيوصله أي إشعار (داخلي أو Push)
     global_permissions = permissions.get("صلاحيات عامة", {})
     if isinstance(global_permissions, dict):
         if global_permissions.get("إظهار الإشعارات") is False:
             return False
 
-    # ⭐ HR sections: محتاج كمان "إظهار الموارد البشرية" يكون مفتوح
+    # HR
     if section in _HR_SECTION_KEYS:
         if isinstance(global_permissions, dict):
             if global_permissions.get("إظهار الموارد البشرية") is False:
@@ -103,7 +159,7 @@ def _can_view_section(profile: Dict[str, Any], section: str) -> bool:
                 return True
         return False
 
-
+    # Sections عادية
     category, key, fallback_keys = {
         "daily": ("حركة الخزينة", "المعاينة", ("ادخال اذون", "إظهار حركة الخزينة")),
         "purchases": ("حركة الموردين", "المعاينة", ("معاينة", "إظهار حركة الموردين")),
@@ -111,13 +167,22 @@ def _can_view_section(profile: Dict[str, Any], section: str) -> bool:
         "coding": ("التكويد", "معاينة", ("المعاينة", "إظهار التكويد")),
         "inventory": ("حركة الجرد", "المعاينة", ("معاينة", "إظهار حركة الجرد")),
     }.get(section, ("", "", ()))
-    global_permissions = permissions.get("صلاحيات عامة", {})
+
     global_key = {
-        "daily": "إظهار حركة الخزينة", "purchases": "إظهار حركة الموردين",
-        "settlements": "إظهار التسويات", "coding": "إظهار التكويد", "inventory": "إظهار حركة الجرد",
+        "daily": "إظهار حركة الخزينة",
+        "purchases": "إظهار حركة الموردين",
+        "settlements": "إظهار التسويات",
+        "coding": "إظهار التكويد",
+        "inventory": "إظهار حركة الجرد",
     }.get(section)
-    if isinstance(global_permissions, dict) and global_key in global_permissions and not bool(global_permissions[global_key]):
+
+    if (
+        isinstance(global_permissions, dict)
+        and global_key in global_permissions
+        and not bool(global_permissions[global_key])
+    ):
         return False
+
     section_permissions = permissions.get(category)
     if not isinstance(section_permissions, dict):
         return True
@@ -126,27 +191,27 @@ def _can_view_section(profile: Dict[str, Any], section: str) -> bool:
     return any(explicit) if explicit else True
 
 
-def _preference_enabled(pref: Optional[NotificationPreference], section: str, action: str) -> bool:
+def _preference_enabled(
+    pref: Optional[NotificationPreference], section: str, action: str
+) -> bool:
     if pref is None:
         return True
     sections = pref.sections if isinstance(pref.sections, dict) else {}
     actions = pref.actions if isinstance(pref.actions, dict) else {}
-    return sections.get(section, True) is not False and actions.get(action, True) is not False
+    return (
+        sections.get(section, True) is not False
+        and actions.get(action, True) is not False
+    )
+
 
 # ============================================================
-# ⭐ إثراء payload الـ HR باسم الموظف (بدل الكود)
+# إثراء HR payload باسم الموظف
 # ============================================================
 
 async def _enrich_hr_payload(
     company_code: str,
     data: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """
-    لو الـ payload فيه employee_code (زي hr_attendance, hr_vacations,
-    hr_adjustments) → يجيب اسم الموظف من Neon ويضيفه كـ employee_name.
-    
-    كمان لو فيه supplier_code → يجيب اسم المورد (لو احتجنا لاحقاً).
-    """
     if not company_code:
         return data
 
@@ -174,7 +239,7 @@ def _summary(data: Dict[str, Any]) -> str:
     parts = []
     for key, label in (
         ("name", "الاسم"),
-        ("employee_name", "الموظف"),   # ⭐ الاسم (مش الكود)
+        ("employee_name", "الموظف"),
         ("supplier_name", "المورد"),
         ("statement", "البيان"),
         ("category", "التصنيف"),
@@ -204,36 +269,65 @@ async def prepare_and_persist_event(company_code: str, message: dict) -> dict:
     context = current_user_context.get() or {}
     actor_uid = str(context.get("uid", ""))
     actor_email = str(context.get("email", ""))
-    actor_name = str(context.get("name", "") or payload.get("employee") or payload.get("userName") or payload.get("created_by") or payload.get("updated_by") or "مستخدم")
+    actor_name = str(
+        context.get("name", "")
+        or payload.get("employee")
+        or payload.get("userName")
+        or payload.get("created_by")
+        or payload.get("updated_by")
+        or "مستخدم"
+    )
     message["actor_uid"] = actor_uid
     message["actor_name"] = actor_name
     payload["actor_uid"] = actor_uid
     payload["actor_name"] = actor_name
 
-    # ⭐ إثراء HR payload باسم الموظف (بدل الكود)
+    # ⭐ إثراء HR payload باسم الموظف
     payload = await _enrich_hr_payload(str(company_code), payload)
     message["data"] = payload
 
     branch_code = str(payload.get("branch_code", "") or "")
-    entity_id = str(payload.get("id") or payload.get("doc_id") or payload.get("serial") or payload.get("code") or "")
+    entity_id = str(
+        payload.get("id")
+        or payload.get("doc_id")
+        or payload.get("serial")
+        or payload.get("code")
+        or ""
+    )
     body = _summary(payload)
     title = f"{_ACTION_NAMES[action]} في {section_title}"
     now = datetime.utcnow()
 
-    # ⭐ قائمة المستخدمين الذين سيتم إرسال Push لهم (يُملأ داخل الـ loop)
     push_targets: list[dict] = []
 
     async with AsyncSessionLocal() as session:
         try:
             preferences_result = await session.execute(
-                select(NotificationPreference).where(NotificationPreference.company_code == str(company_code))
+                select(NotificationPreference).where(
+                    NotificationPreference.company_code == str(company_code)
+                )
             )
             preferences = {row.user_uid: row for row in preferences_result.scalars().all()}
+
             session.add(AuditLog(
-                event_id=event_id, company_code=str(company_code), branch_code=branch_code,
-                actor_uid=actor_uid, actor_email=actor_email, actor_name=actor_name,
-                section=section, action=action, entity_id=entity_id,
-                details={key: payload.get(key) for key in ("serial", "code", "name", "supplier_name", "category", "amount", "is_deleted", "employee_code", "date", "month") if payload.get(key) is not None},
+                event_id=event_id,
+                company_code=str(company_code),
+                branch_code=branch_code,
+                actor_uid=actor_uid,
+                actor_email=actor_email,
+                actor_name=actor_name,
+                section=section,
+                action=action,
+                entity_id=entity_id,
+                details={
+                    key: payload.get(key)
+                    for key in (
+                        "serial", "code", "name", "supplier_name",
+                        "category", "amount", "is_deleted",
+                        "employee_code", "date", "month",
+                    )
+                    if payload.get(key) is not None
+                },
                 created_at=now,
             ))
 
@@ -248,16 +342,25 @@ async def prepare_and_persist_event(company_code: str, message: dict) -> dict:
                     pref = preferences.get(recipient_uid)
                     if not _preference_enabled(pref, section, action):
                         continue
+
                     session.add(Notification(
-                        event_id=event_id, recipient_uid=recipient_uid,
-                        recipient_email=recipient_email, company_code=str(company_code), branch_code=branch_code,
-                        section=section, action=action, actor_uid=actor_uid, actor_name=actor_name,
-                        title=title, body=body, entity_id=entity_id, created_at=now,
+                        event_id=event_id,
+                        recipient_uid=recipient_uid,
+                        recipient_email=recipient_email,
+                        company_code=str(company_code),
+                        branch_code=branch_code,
+                        section=section,
+                        action=action,
+                        actor_uid=actor_uid,
+                        actor_name=actor_name,
+                        title=title,
+                        body=body,
+                        entity_id=entity_id,
+                        created_at=now,
                         is_read=recipient_uid == actor_uid,
                         read_at=now if recipient_uid == actor_uid else None,
                     ))
-                    # ⭐ نفس المستخدم مرّ بكل الفحوصات → جدوله للـ Push
-                    # (بس مش نبعت للمستخدم اللي عمل الحركة نفسه — هو شايفها في الواجهة)
+
                     if recipient_uid != actor_uid:
                         push_targets.append({
                             "user_uid": recipient_uid,
@@ -276,9 +379,8 @@ async def prepare_and_persist_event(company_code: str, message: dict) -> dict:
         except Exception as exc:
             await session.rollback()
             print(f"⚠️ تعذر حفظ الإشعار/سجل التدقيق في Neon | company={company_code} | error={exc}")
-            push_targets = []   # ⭐ لا ترسل Push لو الـ commit فشل
+            push_targets = []
 
-    # ⭐ جدولة إرسال Push بعد الـ commit الناجح (fire-and-forget)
     for target in push_targets:
         try:
             send_push_to_user_bg(**target)

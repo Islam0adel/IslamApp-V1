@@ -7,6 +7,8 @@ __pycache__/
 .flutter-plugins
 .dart_tool/
 .vscode
+project_structure.txt
+رفع الملفات علي جيت.txt
 # frontend/assets/images/app_icon.png
 # frontend/web/icons/Icon-512.png
 # frontend\web\icons\Icon-maskable-512.png

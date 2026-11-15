@@ -31,6 +31,8 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
     'hr_vacations': 'إجازات الموارد البشرية',
     'hr_adjustments': 'تسويات الموارد البشرية',
     'hr_employees': 'بيانات الموظفين',
+    // ⭐ جديد — يظهر فقط للسوبر أدمن
+    'registration_requests': 'طلبات الانضمام',
   };
 
   static const events = <String, String>{
@@ -344,7 +346,11 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
 
               _buildSectionTitle('الأقسام'),
               _buildSwitchSection(
-                items: sections,
+                // ⭐ فلترة: registration_requests للسوبر أدمن فقط
+                items: PermissionsService().isSuperAdmin
+                    ? sections
+                    : Map<String, String>.from(sections)
+                      ..remove('registration_requests'),
                 isEnabled: _service.sectionEnabled,
                 update: _service.setSectionEnabled,
               ),

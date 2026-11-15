@@ -80,3 +80,8 @@ flutter run -d edge --web-browser-flag "--user-data-dir=./edge_profile"
 flutter clean
 ثم
 flutter pub get
+ـــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــ
+flutter build web --release
+cd build/web
+python -m http.server 8080
+وبعدين افتح http://localhost:8080 في المتصفح.

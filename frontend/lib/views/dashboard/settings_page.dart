@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../main.dart'; 
 import '../../views/dashboard/admin_companies_screen.dart';
+import '../../views/dashboard/company_users_page.dart';
 // 1. استدعاء صفحة الصلاحيات الجديدة (تأكد من مسار الملف عندك)
 import '../../views/dashboard/permissions_page.dart'; 
 import '../../services/permissions_service.dart';
@@ -24,7 +25,6 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
   bool _isDark = true;
   String _userName = "جاري التحميل...";
   String _companyName = "شركتي";
-  String _jobCode = ""; // 2. متغير جديد لحفظ كود الوظيفة
   String _companyCode = "01";
   bool _isLoadingData = true;
   bool _showBranchDialog = true;
@@ -56,8 +56,7 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
       _companyName =
           prefs.getString('company_name') ?? "شركتي";
 
-      _jobCode =
-          prefs.getString('job_code') ?? "";
+      // ⭐ role محفوظ تلقائياً في PermissionsService
 
       _companyCode = prefs.getString('company_code') ?? "01";
 
@@ -259,23 +258,54 @@ if (PermissionsService().canShowNotifications) ...[
                       GlassCard(
                         child: Column(
                           children: [
-                            // 4. زر إدارة الصلاحيات محمي بشرط كود الوظيفة
-                            if (_jobCode == '99' || _jobCode == '200') ...[
-  _buildSettingRow(
-    icon: Icons.security_rounded,
-    title: 'إدارة الصلاحيات',
-    onTap: () async {
-      await Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => const PermissionsPage()),
-      );
-      // 🔥 إعادة تحميل الصلاحيات للمستخدم الحالي بعد العودة
-      // await PermissionsService().loadPermissions();
-      // setState(() {}); // تحديث الواجهة إن لزم
-    },
-  ),
-  Divider(color: GlassStyle.line10For(context), height: 20),
-],
+
+
+
+                            // ⭐ إدارة المستخدمين — admin + super_admin
+                            if (PermissionsService().canManageUsers) ...[
+                              _buildSettingRow(
+                                icon: Icons.people_alt_rounded,
+                                title: 'إدارة المستخدمين',
+                                onTap: () async {
+                                  await Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => CompanyUsersPage(
+                                        companyCode: PermissionsService()
+                                                    .isSuperAdmin
+                                            ? ''
+                                            : _companyCode,
+                                        companyName: PermissionsService()
+                                                .isSuperAdmin
+                                            ? 'كل الشركات'
+                                            : _companyName,
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                              Divider(
+                                  color: GlassStyle.line10For(context),
+                                  height: 20),
+                            ],
+
+                            // ⭐ إدارة الصلاحيات — admin + super_admin
+                            if (PermissionsService().canManagePermissions) ...[
+                              _buildSettingRow(
+                                icon: Icons.security_rounded,
+                                title: 'إدارة الصلاحيات',
+                                onTap: () async {
+                                  await Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                        builder: (_) => const PermissionsPage()),
+                                  );
+                                },
+                              ),
+                              Divider(
+                                  color: GlassStyle.line10For(context),
+                                  height: 20),
+                            ],
                             
                             _buildSettingRow(
                               icon: Icons.lock_reset_rounded,
@@ -307,16 +337,20 @@ if (PermissionsService().canShowNotifications) ...[
                             ),
                             Divider(color: GlassStyle.line10For(context), height: 20),
                             
-                            // زر إدارة الشركات محمي أيضاً لصاحب البرنامج (99)
-                            if (_jobCode == '99') ...[
-                              Divider(color: GlassStyle.line10For(context), height: 20),
+                            // زر إدارة الشركات — super_admin فقط
+                            if (PermissionsService().isSuperAdmin) ...[
+                              Divider(
+                                  color: GlassStyle.line10For(context),
+                                  height: 20),
                               _buildSettingRow(
                                 icon: Icons.business_center,
                                 title: 'إدارة الشركات',
                                 onTap: () {
                                   Navigator.push(
                                     context,
-                                    MaterialPageRoute(builder: (_) => const AdminCompaniesScreen()),
+                                    MaterialPageRoute(
+                                        builder: (_) =>
+                                            const AdminCompaniesScreen()),
                                   );
                                 },
                               ),
