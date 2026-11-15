@@ -1,40 +1,44 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
+
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
   <base href="$FLUTTER_BASE_HREF">
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="IslamApp - Advanced Financial System">
+  <meta name="description" content="A new Flutter project.">
 
-  <!-- ⭐ viewport-fit=cover عشان التطبيق يغطي الشاشة كلها (خلف النوتش وتحته) -->
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-
-  <!-- iOS meta tags -->
+  <!-- iOS meta tags & icons -->
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="IslamApp">
-  
-  <!-- ⭐ لون الشريط (هيتغير ديناميكياً من Flutter مع اللايت/الدارك) -->
-  <meta name="theme-color" content="#020617">
-
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="frontend">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
   <title>IslamApp</title>
   <link rel="manifest" href="manifest.json">
 
+  <!-- ⭐ ========== شاشة التحميل — CSS ========== -->
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
     html, body {
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      height: 100%;
       overflow: hidden;
       -webkit-tap-highlight-color: transparent;
-      background-color: #020617;
     }
 
     .loading-container {
@@ -42,14 +46,8 @@
       justify-content: center;
       align-items: center;
       position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      width: 100%;
-      height: 100%;
-      /* ⭐ padding-top فقط (للنوتش العلوي) — مفيش padding-bottom عشان مفيش شريط تحت */
-      padding-top: env(safe-area-inset-top);
+      top: 0; left: 0;
+      width: 100vw; height: 100vh;
       background: linear-gradient(135deg, #0a0e27 0%, #020617 50%, #0f172a 100%);
       z-index: 99999;
       overflow: hidden;
@@ -219,7 +217,7 @@
 </head>
 <body>
 
-  <!-- ⭐ شاشة التحميل -->
+  <!-- ⭐ ========== شاشة التحميل — HTML ========== -->
   <div id="loading-indicator" class="loading-container">
     <div class="loading-content">
       <img src="icons/Icon-192.png" alt="IslamApp Logo" class="loading-logo" />
@@ -233,8 +231,11 @@
     </div>
   </div>
 
-  <!-- ⭐ حقن الحروف -->
+  <script src="flutter_bootstrap.js" async></script>
+
+  <!-- ⭐ ========== حقن الحروف + إخفاء شاشة التحميل ========== -->
   <script>
+    // حقن الحروف
     (function () {
       const text = 'Islam App';
       const container = document.getElementById('loading-text');
@@ -258,77 +259,8 @@
         letterIndex++;
       }
     })();
-  </script>
 
-  <!-- ⭐ App Badge -->
-  <script>
-    window.appBadge = (function () {
-      let dbPromise = null;
-      function openDb() {
-        if (dbPromise) return dbPromise;
-        dbPromise = new Promise((resolve, reject) => {
-          const req = indexedDB.open("islam_badge_db", 1);
-          req.onupgradeneeded = (e) => {
-            const db = e.target.result;
-            if (!db.objectStoreNames.contains("badge")) {
-              db.createObjectStore("badge");
-            }
-          };
-          req.onsuccess = () => resolve(req.result);
-          req.onerror = () => reject(req.error);
-        });
-        return dbPromise;
-      }
-      async function put(key, value) {
-        try {
-          const db = await openDb();
-          return new Promise((resolve) => {
-            const tx = db.transaction("badge", "readwrite");
-            tx.objectStore("badge").put(value, key);
-            tx.oncomplete = () => resolve();
-            tx.onerror = () => resolve();
-          });
-        } catch (_) {}
-      }
-      return {
-        set: async function (count) {
-          count = Math.max(0, parseInt(count) || 0);
-          await put("count", count);
-          try {
-            if (count > 0) {
-              if ("setAppBadge" in navigator) await navigator.setAppBadge(count);
-            } else {
-              if ("clearAppBadge" in navigator) await navigator.clearAppBadge();
-            }
-          } catch (e) { console.warn("appBadge.set error:", e); }
-        },
-        clear: async function () {
-          await put("count", 0);
-          try { if ("clearAppBadge" in navigator) await navigator.clearAppBadge(); } catch (e) {}
-        },
-      };
-    })();
-  </script>
-
-  <!-- ⭐ FCM Service Worker -->
-  <script>
-    if ("serviceWorker" in navigator) {
-      window.addEventListener("load", function () {
-        navigator.serviceWorker
-          .register("firebase-messaging-sw.js", {
-            scope: "/firebase-cloud-messaging-push-scope/",
-          })
-          .then(function (reg) { console.log("✅ FCM SW registered:", reg.scope); })
-          .catch(function (err) { console.warn("⚠️ FCM SW failed:", err); });
-      });
-    }
-  </script>
-
-  <!-- Flutter Bootstrap -->
-  <script src="flutter_bootstrap.js" async></script>
-
-  <!-- ⭐ إخفاء شاشة التحميل -->
-  <script>
+    // إخفاء شاشة التحميل
     (function () {
       const loadingStart = Date.now();
       const HARD_TIMEOUT_MS = 30000;
