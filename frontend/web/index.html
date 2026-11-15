@@ -12,6 +12,8 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="IslamApp">
+  <!-- ⭐ السطر ده بيجبر الآيفون يخلي الشريط العلوي والسفلي بلون البرنامج الداكن -->
+  <meta name="theme-color" content="#020617">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
   <!-- Favicon -->
@@ -27,11 +29,14 @@
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
 html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
   overflow: hidden;
   -webkit-tap-highlight-color: transparent;
-  /* ⭐ نفس gradient شاشة التحميل — مفيش لون مصمت خالص */
   background: linear-gradient(135deg, #0a0e27 0%, #020617 50%, #0f172a 100%);
-  background-attachment: fixed;
+  background-color: #020617; /* لون احتياطي */
 }
 
     .loading-container {
@@ -39,14 +44,22 @@ html, body {
       justify-content: center;
       align-items: center;
       position: fixed;
-      top: 0; left: 0;
-      width: 100vw; height: 100vh;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: 100%;
+      height: 100%;
+      /* ⭐ التعديلات الجديدة: تمدد الخلفية خلف شريط الحالة والزر السفلي */
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
       background: linear-gradient(135deg, #0a0e27 0%, #020617 50%, #0f172a 100%);
       z-index: 99999;
       overflow: hidden;
       opacity: 1;
       transition: opacity 0.1s linear; 
       will-change: opacity;
+      box-sizing: border-box; /* ضروري جداً عشان الـ padding ميبوظش الحجم */
     }
 
     .loading-container::before {
