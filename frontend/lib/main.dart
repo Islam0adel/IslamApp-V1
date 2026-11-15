@@ -25,10 +25,6 @@ import 'services/inventory_service.dart';
 import 'services/coding_service.dart';
 import 'services/supplier_settlement_service.dart';
 
-import 'package:flutter/services.dart'; // ⭐ عشان التحكم في ألوان الأشرطة
-import 'package:flutter/foundation.dart' show kIsWeb; // ⭐ لفحص هل التطبيق ويب
-import 'package:universal_html/html.dart' as html; // ⭐ لتعديل لون المتصفح
-
 // ============================================================
 // Global Sync Service
 // ============================================================
@@ -393,33 +389,6 @@ if (rememberMe && userName != null && companyCode != null) {
     initialScreen = const LoginScreen();
 }
 
-
-  // ⭐ ضبط لون الخلفية وشريط المتصفح أول ما التطبيق يفتح
-  if (kIsWeb) {
-    try {
-      final metaThemeColor = html.document.querySelector('meta[name="theme-color"]');
-      if (metaThemeColor != null) {
-        metaThemeColor.setAttribute('content', savedTheme == 'light' ? '#ffffff' : '#020617');
-      }
-      // ⭐ تغيير لون خلفية الصفحة
-      html.document.body?.style.backgroundColor = savedTheme == 'light' ? '#ffffff' : '#020617';
-    } catch (_) {}
-  }
-
-  runApp(
-    IslamApp(
-      initialScreen: initialScreen,
-      initialThemeMode: savedTheme == 'light' ? ThemeMode.light : ThemeMode.dark,
-    ),
-  );
-
-  runApp(
-    IslamApp(
-      initialScreen: initialScreen,
-      initialThemeMode:
-          savedTheme == 'light' ? ThemeMode.light : ThemeMode.dark,
-    ),
-  );
   // ==========================================================
   // تشغيل التطبيق
   // ==========================================================
@@ -543,26 +512,14 @@ Future<void> _syncWhenAppResumes() async {
       _themeMode = themeMode;
     });
 
-    if (kIsWeb) {
-      try {
-        // تغيير لون شريط المتصفح
-        final metaThemeColor = html.document.querySelector('meta[name="theme-color"]');
-        if (metaThemeColor != null) {
-          metaThemeColor.setAttribute('content', themeMode == ThemeMode.light ? '#ffffff' : '#020617');
-        }
-        
-        // ⭐ السطر ده اللي هيحل مشكلة الشريط اللي تحت (بيغير لون خلفية الصفحة نفسها)
-        html.document.body?.style.backgroundColor = themeMode == ThemeMode.light ? '#ffffff' : '#020617';
-        
-      } catch (e) {
-        print("⚠️ Failed to update theme-color: $e");
-      }
-    }
-
-    // حفظ الاختيار على الجهاز
+    // ✅ حفظ الاختيار على الجهاز
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('theme_mode', themeMode == ThemeMode.light ? 'light' : 'dark');
+
+      await prefs.setString(
+        'theme_mode',
+        themeMode == ThemeMode.light ? 'light' : 'dark',
+      );
     } catch (e) {
       print("⚠️ فشل حفظ الثيم: $e");
     }
@@ -587,41 +544,25 @@ Future<void> _syncWhenAppResumes() async {
 
   @override
   Widget build(BuildContext context) {
-    // ⭐ تحديد هل الثيم الحالي غامق أم فاتح
-    final isDark = _themeMode == ThemeMode.dark ||
-        (_themeMode == ThemeMode.system &&
-            MediaQuery.of(context).platformBrightness == Brightness.dark);
-
-    return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: SystemUiOverlayStyle(
-        // ⭐ الشريط العلوي (الساعة والبطارية) شفاف ومحتواه ياخد لون الثيم
-        statusBarColor: Colors.transparent,
-        statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
-        statusBarBrightness: isDark ? Brightness.dark : Brightness.light, // للآيفون
-        // ⭐ الشريط السفلي (بتاع الآيفون أو الأندرويد) ياخد لون الثيم
-        systemNavigationBarColor: isDark ? const Color(0xFF020617) : Colors.white,
-        systemNavigationBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
-      ),
-      child: MaterialApp(
-        title: 'IslamApp V1.0',
-        debugShowCheckedModeBanner: false,
-        navigatorKey: appNavigatorKey,
-        theme: AppTheme.lightTheme,
-        darkTheme: AppTheme.darkTheme,
-        themeMode: _themeMode,
-        home: widget.initialScreen,
-        routes: {
-          '/login': (context) => const LoginScreen(),
-          '/register': (context) => const PhoneEntryScreen(),
-          '/forgot-password': (context) => const ForgotPasswordScreen(),
-        },
-        builder: (context, child) {
-          return Directionality(
-            textDirection: TextDirection.rtl,
-            child: child!,
-          );
-        },
-      ),
+    return MaterialApp(
+      title: 'IslamApp V1.0',
+      debugShowCheckedModeBanner: false,
+      navigatorKey: appNavigatorKey,   // ⭐ Deep Linking
+      theme: AppTheme.lightTheme,
+      darkTheme: AppTheme.darkTheme,
+      themeMode: _themeMode,
+      home: widget.initialScreen,
+      routes: {
+        '/login': (context) => const LoginScreen(),
+        '/register': (context) => const PhoneEntryScreen(),
+        '/forgot-password': (context) => const ForgotPasswordScreen(),
+      },
+      builder: (context, child) {
+        return Directionality(
+          textDirection: TextDirection.rtl,
+          child: child!,
+        );
+      },
     );
   }
 }
