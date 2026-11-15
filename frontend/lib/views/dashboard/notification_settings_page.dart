@@ -346,11 +346,10 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
 
               _buildSectionTitle('الأقسام'),
               _buildSwitchSection(
-                // ⭐ فلترة: registration_requests للسوبر أدمن فقط
                 items: PermissionsService().isSuperAdmin
                     ? sections
-                    : Map<String, String>.from(sections)
-                      ..remove('registration_requests'),
+                    : (Map<String, String>.from(sections)
+                        ..remove('registration_requests')),
                 isEnabled: _service.sectionEnabled,
                 update: _service.setSectionEnabled,
               ),
