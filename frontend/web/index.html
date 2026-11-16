@@ -263,7 +263,8 @@
     // إخفاء شاشة التحميل
     (function () {
       const loadingStart = Date.now();
-      const HARD_TIMEOUT_MS = 30000;
+      // ⭐ 45s = 15s sync wait + flutter init + احتياطي
+const HARD_TIMEOUT_MS = 45000;
       let hiding = false;
 
       function hide(reason) {

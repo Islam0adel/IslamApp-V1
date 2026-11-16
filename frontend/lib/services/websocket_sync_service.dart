@@ -45,6 +45,20 @@ class WebSocketSyncService {
   /// main.dart هو المسؤول عن syncAllDataIfNeeded().
   void Function()? onConnected;
 
+  // ⭐ جديد: يتم استدعاؤها لما الاتصال يفشل (سيرفر واقع، DNS، timeout)
+  void Function()? onConnectionFailed;
+
+  // ⭐ يمنع إطلاق onConnectionFailed أكتر من مرة لنفس محاولة الاتصال
+  bool _connectionFailedNotified = false;
+
+  void _notifyConnectionFailed() {
+    if (_connectionFailedNotified) return;
+    _connectionFailedNotified = true;
+    print('⚠️ WebSocket connection failed — notifying listeners');
+    final cb = onConnectionFailed;
+    if (cb != null) cb();
+  }
+
 
   // ============================================================
   // Hive Boxes
@@ -90,6 +104,7 @@ Future<void> connect(String companyCode) async {
       print('⚠️ تم إيقاف WebSocket لعدم وجود Firebase ID token صالح');
       _isConnected = false;
       _isConnecting = false;
+      _notifyConnectionFailed();
       return;
     }
 
@@ -116,6 +131,7 @@ Future<void> connect(String companyCode) async {
         _isConnected = false;
         _isConnecting = false;
         _channel = null;
+        _notifyConnectionFailed();
         _scheduleReconnect();
       },
       onDone: () {
@@ -162,6 +178,7 @@ Future<void> connect(String companyCode) async {
         } catch (_) {}
         _channel = null;
         _isConnecting = false;
+        _notifyConnectionFailed();
         _scheduleReconnect();
       }
     });
@@ -170,6 +187,7 @@ Future<void> connect(String companyCode) async {
     _isConnecting = false;
 
     print("❌ فشل الاتصال بـ WebSocket: $e");
+    _notifyConnectionFailed();
 
     if (!_manualDisconnect) {
       _scheduleReconnect();
@@ -292,6 +310,8 @@ _dailySummaryTimer = null;
 
     _isConnected = false;
 
+    _connectionFailedNotified = false;
+
 
     // ----------------------------------------------------------
     // إغلاق Channel
@@ -363,6 +383,7 @@ void _handleMessage(dynamic message) {
 
       _isConnected = true;
       _isConnecting = false;
+      _connectionFailedNotified = false;
 
       print("✅ تم تأكيد مصادقة WebSocket للشركة: $confirmedCompany");
 

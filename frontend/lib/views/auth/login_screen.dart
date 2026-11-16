@@ -9,6 +9,7 @@ import 'verify_email_screen.dart';
 import '../../main.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../services/web_loading_helper.dart'; 
+import '../widgets/app_loading_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -29,7 +30,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
   final _apiService = ApiService();
   bool _isLoading = false;
   bool _rememberMe = false;
-
+  bool _isSyncing = false; 
   @override
   void initState() {
     super.initState();
@@ -148,7 +149,26 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
 
       initializeGlobalListener(result['company_code'] ?? '');
 
+      // ⭐ انتظر المزامنة الأولى (بحد أقصى 15s) قبل الانتقال لـ HomePage
+      if (mounted) setState(() => _isSyncing = true);
+
+      // ⭐ وقت بداية عرض الـ Overlay (عشان نضمن حد أدنى للأنيميشن)
+      final overlayStartTime = DateTime.now();
+
+      await waitForSyncToComplete(
+        timeout: const Duration(seconds: 15),
+      );
+
+      // ⭐ ضمان عرض الأنيميشن لمدة كافية (1500ms) حتى لو sync خلصت بسرعة
+      const minDisplayTime = Duration(milliseconds: 1500);
+      final elapsed = DateTime.now().difference(overlayStartTime);
+      if (elapsed < minDisplayTime) {
+        await Future.delayed(minDisplayTime - elapsed);
+      }
+
       if (!mounted) return;
+      setState(() => _isSyncing = false);
+
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
@@ -162,7 +182,12 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     } catch (e) {
       _showSnackBar(e.toString(), AppTheme.dangerFor(context));
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _isSyncing = false;
+        });
+      }
     }
   }
 
@@ -175,166 +200,175 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
-        height: double.infinity,
-        width: double.infinity,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: AppTheme.authGradient(context),
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 25),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                // أنميشن الشعار
-                FadeTransition(
-                  opacity: _animController,
-                  child: Column(
-                    
-                    children: [
-                      // ⭐ اللوجو الجديد بدلاً من أيقونة القفل
-                      Image.asset(
-                        'assets/images/app_icon.png', // تأكد أن هذا هو مسار اللوجو في مجلد assets
-                        width: 100,
-                        height: 100,
-                        // استخدام cacheWidth و cacheHeight لضمان أعلى جودة وأقل استهلاك للرام
-                        cacheWidth: 260, 
-                        cacheHeight: 260,
-                      ),
-                      const SizedBox(height: 3),
-                      // // ⭐ النص الجديد
-                      Text(
-                        'Islam App',
-                        style: TextStyle(
-                          color: AppTheme.textMainFor(context),
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 1.2,
-                        ),
-                      ),
-                      const SizedBox(height: 5),
-                      // النص الفرعي (تسجيل الدخول)
-                      Text(
-                        'تسجيل الدخول',
-                        style: TextStyle(
-                          color: AppTheme.textSoftFor(context),
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 40),
-
-                // الكارت الزجاجي
-                GlassCard(
-                  child: Column(
-                    children: [
-                      _buildAnimatedField(
-                        index: 1,
-                        icon: Icons.person_search_rounded,
-                        label: 'البريد / الموبايل / اسم المستخدم',
-                        controller: _emailController,
-                        node: _emailNode,
-                        nextNode: _passNode,
-                      ),
-                      const SizedBox(height: 20),
-                      _buildAnimatedField(
-                        index: 2,
-                        icon: Icons.lock_outline,
-                        label: 'كلمة المرور',
-                        controller: _passwordController,
-                        node: _passNode,
-                        isPass: true,
-                        isLast: true, // يضغط Enter يسجل دخول علطول
-                      ),
-                      
-                      const SizedBox(height: 10),
-
-                      // خيار تذكرني ونسيت كلمة المرور
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      body: Stack(
+        children: [
+          // ⭐ المحتوى الأصلي في Container
+          Container(
+            height: double.infinity,
+            width: double.infinity,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: AppTheme.authGradient(context),
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+            ),
+            child: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 25),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // أنميشن الشعار
+                    FadeTransition(
+                      opacity: _animController,
+                      child: Column(
                         children: [
-                          Row(
-                            children: [
-                              Checkbox(
-                                value: _rememberMe,
-                                checkColor: AppTheme.checkboxCheck(context),
-                                activeColor: AppTheme.checkboxActive(context),
-                                onChanged: (val) => setState(() => _rememberMe = val!),
-                              ),
-                              Text('تذكرني', style: TextStyle(color: AppTheme.textSoftFor(context), fontSize: 13)),
-                            ],
+                          // ⭐ اللوجو الجديد بدلاً من أيقونة القفل
+                          Image.asset(
+                            'assets/images/app_icon.png',
+                            width: 100,
+                            height: 100,
+                            cacheWidth: 260,
+                            cacheHeight: 260,
                           ),
-                          TextButton(
-                              onPressed: () {
-                                Navigator.pushNamed(context, '/forgot-password'); // الانتقال لصفحة الاستعادة
-                              },
-                              child: Text('نسيت كلمة السر؟', style: TextStyle(color: AppTheme.textSoftFor(context), fontSize: 13)),
+                          const SizedBox(height: 0),
+                          // ⭐ النص الجديد
+                          Text(
+                            'Islam App',
+                            style: TextStyle(
+                              color: AppTheme.textMainFor(context),
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 1.2,
                             ),
+                          ),
+                          const SizedBox(height: 5),
+                          // النص الفرعي (تسجيل الدخول)
+                          Text(
+                            'تسجيل الدخول',
+                            style: TextStyle(
+                              color: AppTheme.textSoftFor(context),
+                              fontSize: 16,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
                         ],
                       ),
+                    ),
+                    const SizedBox(height: 40),
 
-                      const SizedBox(height: 25),
+                    // الكارت الزجاجي
+                    GlassCard(
+                      child: Column(
+                        children: [
+                          _buildAnimatedField(
+                            index: 1,
+                            icon: Icons.person_search_rounded,
+                            label: 'البريد / الموبايل / اسم المستخدم',
+                            controller: _emailController,
+                            node: _emailNode,
+                            nextNode: _passNode,
+                          ),
+                          const SizedBox(height: 20),
+                          _buildAnimatedField(
+                            index: 2,
+                            icon: Icons.lock_outline,
+                            label: 'كلمة المرور',
+                            controller: _passwordController,
+                            node: _passNode,
+                            isPass: true,
+                            isLast: true,
+                          ),
 
-                      // زر الدخول
-                      SizedBox(
-                        width: double.infinity,
-                        child: _isLoading
-                            ? Center(child: CircularProgressIndicator(color: Theme.of(context).colorScheme.onPrimary))
-                            : ElevatedButton(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: AppTheme.authActionBackground(context),
-                                  padding: const EdgeInsets.symmetric(vertical: 15),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                                  side: BorderSide(color: AppTheme.inputBorder(context)),
-                                ),
-                                onPressed: _handleLogin,
-                                child: Text(
-                                  'دخول',
-                                  style: TextStyle(fontSize: 20, color: Theme.of(context).colorScheme.onPrimary, fontWeight: FontWeight.bold),
-                                ),
+                          const SizedBox(height: 10),
+
+                          // خيار تذكرني ونسيت كلمة المرور
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Row(
+                                children: [
+                                  Checkbox(
+                                    value: _rememberMe,
+                                    checkColor: AppTheme.checkboxCheck(context),
+                                    activeColor: AppTheme.checkboxActive(context),
+                                    onChanged: (val) => setState(() => _rememberMe = val!),
+                                  ),
+                                  Text('تذكرني', style: TextStyle(color: AppTheme.textSoftFor(context), fontSize: 13)),
+                                ],
                               ),
-                      ),
-                    ],
-                  ),
-                ),
+                              TextButton(
+                                onPressed: () {
+                                  Navigator.pushNamed(context, '/forgot-password');
+                                },
+                                child: Text('نسيت كلمة السر؟', style: TextStyle(color: AppTheme.textSoftFor(context), fontSize: 13)),
+                              ),
+                            ],
+                          ),
 
-                const SizedBox(height: 30),
-                
-                // رابط إنشاء حساب
-                FadeTransition(
-                  opacity: _animController,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text('ليس لديك حساب؟', style: TextStyle(color: AppTheme.textSoftFor(context))),
-                      TextButton(
-                        onPressed: () => Navigator.pushNamed(context, '/register'),
-                        child: Text(
-                          'إنشاء حساب جديد',
-                          style: TextStyle(color: Theme.of(context).colorScheme.onPrimary, fontWeight: FontWeight.bold),
-                        ),
+                          const SizedBox(height: 25),
+
+                          // زر الدخول
+                          SizedBox(
+                            width: double.infinity,
+                            child: _isLoading
+                                ? Center(child: CircularProgressIndicator(color: Theme.of(context).colorScheme.onPrimary))
+                                : ElevatedButton(
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: AppTheme.authActionBackground(context),
+                                      padding: const EdgeInsets.symmetric(vertical: 15),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                                      side: BorderSide(color: AppTheme.inputBorder(context)),
+                                    ),
+                                    onPressed: _handleLogin,
+                                    child: Text(
+                                      'دخول',
+                                      style: TextStyle(fontSize: 20, color: Theme.of(context).colorScheme.onPrimary, fontWeight: FontWeight.bold),
+                                    ),
+                                  ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+
+                    const SizedBox(height: 30),
+
+                    // رابط إنشاء حساب
+                    FadeTransition(
+                      opacity: _animController,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text('ليس لديك حساب؟', style: TextStyle(color: AppTheme.textSoftFor(context))),
+                          TextButton(
+                            onPressed: () => Navigator.pushNamed(context, '/register'),
+                            child: Text(
+                              'إنشاء حساب جديد',
+                              style: TextStyle(color: Theme.of(context).colorScheme.onPrimary, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 40),
+                    Text(
+                      'executed by Islam Adel',
+                      style: TextStyle(color: AppTheme.textMutedFor(context), fontSize: 12, fontStyle: FontStyle.italic),
+                    ),
+                  ],
                 ),
-                
-                const SizedBox(height: 40),
-                Text(
-                  'executed by Islam Adel',
-                  style: TextStyle(color: AppTheme.textMutedFor(context), fontSize: 12, fontStyle: FontStyle.italic),
-                ),
-              ],
+              ),
             ),
           ),
-        ),
+
+          // ⭐⭐ شاشة تحميل المزامنة (نفس شكل HTML) ⭐⭐
+          if (_isSyncing)
+            const Positioned.fill(
+              child: AppLoadingScreen(),
+            ),
+        ],
       ),
     );
   }

@@ -173,6 +173,9 @@ class _NotificationsPageState extends State<NotificationsPage> {
             icon: const Icon(Icons.done_all),
             onPressed: () async {
               await _service.markAllRead(companyCode: widget.companyCode);
+              // ⭐ نادي syncAppBadge صراحةً
+              final unread = _service.unreadCount(companyCode: widget.companyCode);
+              await _service.syncAppBadge(unread);
               if (mounted) setState(() {});
             },
           ),
@@ -181,6 +184,8 @@ class _NotificationsPageState extends State<NotificationsPage> {
             icon: const Icon(Icons.delete_outline),
             onPressed: () async {
               await _service.clear(companyCode: widget.companyCode);
+              // ⭐ نادي syncAppBadge صراحةً
+              await _service.syncAppBadge(0);
               if (mounted) setState(() {});
             },
           ),

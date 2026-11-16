@@ -45,6 +45,9 @@ class GlobalSyncService {
   /// syncAllDataIfNeeded(companyCode)
   void Function()? onWebSocketConnected;
 
+  // ⭐ جديد: يتم استدعاؤها لما WebSocket يفشل يتصل
+  void Function()? onWebSocketConnectionFailed;
+
 
   // ============================================================
   // Hive Boxes
@@ -151,6 +154,17 @@ class GlobalSyncService {
       callback();
     }
   };
+
+  // ⭐ جديد
+  _wsService.onConnectionFailed = () {
+    print("⚠️ WebSocket connection failed");
+
+    final callback = onWebSocketConnectionFailed;
+
+    if (callback != null) {
+      callback();
+    }
+  };
 };
 
 
@@ -205,7 +219,8 @@ class GlobalSyncService {
     // أي Sync بعد إغلاق الخدمة.
     onWebSocketConnected =
         null;
-        _callbackAttached = false;
+    onWebSocketConnectionFailed = null;
+    _callbackAttached = false;
   }
 
 

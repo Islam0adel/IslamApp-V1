@@ -17,4 +17,6 @@ class ApiConstants {
   static const String LAST_SYNC_INVENTORY = 'last_sync_inventory_';
   static const String LAST_SYNC_SETTLEMENT = 'last_sync_settlement_';
   static const String LAST_SYNC_CODING = 'last_sync_coding_';
+  static const String LAST_SYNC_COMPANIES = 'last_sync_companies_';
+  static const String LAST_SYNC_USERS = 'last_sync_users_';
 }

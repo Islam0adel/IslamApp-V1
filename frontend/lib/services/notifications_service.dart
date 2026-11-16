@@ -395,6 +395,9 @@ class NotificationsService {
           : '${ApiConstants.baseUrl}/notifications/event/${item['event_key'] ?? id}/read';
       await AuthHttp.post(Uri.parse(endpoint));
     } catch (_) {}
+
+    // ⭐ نادي syncAppBadge مباشرة
+    await _syncBadgeForCompany(_companyCode);
   }
 
   MapEntry<dynamic, dynamic>? _findEntry(String id) {
@@ -408,7 +411,8 @@ class NotificationsService {
   }
 
   Future<void> markAllRead({String? companyCode}) async {
-    for (final item in getNotifications(companyCode: companyCode)) {
+    final targetCompany = companyCode ?? _companyCode;
+    for (final item in getNotifications(companyCode: targetCompany)) {
       if (item['read'] == true) continue;
       final entry = _findEntry(item['id'].toString());
       if (entry == null) continue;
@@ -416,6 +420,9 @@ class NotificationsService {
       await _box.put(entry.key, updated);
     }
     try { await AuthHttp.post(Uri.parse('${ApiConstants.baseUrl}/notifications/read-all')); } catch (_) {}
+
+    // ⭐ نادي syncAppBadge مباشرة (مش بس الاعتماد على الـ listener)
+    await _syncBadgeForCompany(targetCompany);
   }
 
   // ⭐ حذف إشعار واحد (by event_key أو server_id)
@@ -427,36 +434,35 @@ class NotificationsService {
     final serverId = (item['server_id'] ?? '').toString();
     final eventKey = (item['event_key'] ?? item['id'] ?? notificationId).toString();
 
-    // امسح من Hive أولاً (سريع + optimistic)
     await _box.delete(entry.key);
 
-    // ثم امسح من السيرفر (fire-and-forget)
     try {
       if (serverId.isNotEmpty) {
         await AuthHttp.delete(
           Uri.parse('${ApiConstants.baseUrl}/notifications/$serverId'),
         );
       } else {
-        // لو الإشعار لسه متزامنش (offline-created) → مش محتاج نحذفه من السيرفر
-        // (السيرفر مش عارفه أصلاً)
-        debugPrint(
-          'ℹ️ deleteNotification: local-only (event=$eventKey)',
-        );
+        debugPrint('ℹ️ deleteNotification: local-only (event=$eventKey)');
       }
     } catch (e) {
       debugPrint('⚠️ deleteNotification remote failed: $e');
-      // مش مشكلة — الإشعار اتمسح محلياً، والمرة الجاية _refreshFromServer
-      // مش هيجيبه تاني (لأن السيرفر مسحه أو مش عارفه)
     }
+
+    // ⭐ نادي syncAppBadge مباشرة
+    await _syncBadgeForCompany(_companyCode);
   }
 
 
   Future<void> clear({String? companyCode}) async {
-    for (final item in getNotifications(companyCode: companyCode)) {
+    final targetCompany = companyCode ?? _companyCode;
+    for (final item in getNotifications(companyCode: targetCompany)) {
       final entry = _findEntry(item['id'].toString());
       if (entry != null) await _box.delete(entry.key);
     }
     try { await AuthHttp.delete(Uri.parse('${ApiConstants.baseUrl}/notifications')); } catch (_) {}
+
+    // ⭐ نادي syncAppBadge مباشرة
+    await _syncBadgeForCompany(targetCompany);
   }
 
   int get retentionDays => (_settings.get('retention_days', defaultValue: 90) as num).toInt();
@@ -512,6 +518,26 @@ class NotificationsService {
   /// (تعمل فقط على PWA المثبتة — Chrome/Edge/Safari)
   Future<void> syncAppBadge(int count) async {
     await jsSyncAppBadge(count < 0 ? 0 : count);
+  }
+
+    // ⭐ دالة مساعدة: تحسب unread وتنادي syncAppBadge بعد تأخير بسيط
+  // (debounce عشان تتنادى مرة واحدة حتى لو حصلت عمليات كتير)
+  Timer? _badgeDebounceTimer;
+
+  Future<void> _syncBadgeForCompany(String? companyCode) async {
+    _badgeDebounceTimer?.cancel();
+    _badgeDebounceTimer = Timer(const Duration(milliseconds: 100), () async {
+      try {
+        final unread = unreadCount(companyCode: companyCode);
+        debugPrint('🔔 [Badge] syncAppBadge($unread) for company=$companyCode');
+        await jsSyncAppBadge(unread);
+      } catch (e) {
+        debugPrint('⚠️ [Badge] syncAppBadge failed: $e');
+      }
+    });
+
+    // انتظر شوية عشان الـ debounce ينفذ قبل ما نرجع
+    await Future.delayed(const Duration(milliseconds: 150));
   }
 
 

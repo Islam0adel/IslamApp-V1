@@ -24,6 +24,10 @@ import 'services/supplier_service.dart';
 import 'services/inventory_service.dart';
 import 'services/coding_service.dart';
 import 'services/supplier_settlement_service.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:universal_html/html.dart' as html;
+import 'services/company_service.dart';
+import 'services/user_service.dart';
 
 // ============================================================
 // Global Sync Service
@@ -45,6 +49,66 @@ StreamSubscription? supplierSyncSubscription;
 // ============================================================
 
 bool _isSyncing = false;
+
+// ⭐ يخلص لما أول مزامنة تخلص (نجحت أو فشلت)
+final Completer<void> _initialSyncCompleter = Completer<void>();
+
+// ⭐ يخلص لما WebSocket يفشل في الاتصال (سيرفر واقع)
+final Completer<void> _wsConnectionFailedCompleter = Completer<void>();
+// ⭐ آلية انتظار المزامنة للاستخدام من شاشات تانية (زي LoginScreen)
+Completer<void>? _waitSyncCompleter;
+
+Future<void> waitForSyncToComplete({
+  Duration timeout = const Duration(seconds: 15),
+}) async {
+  final startTime = DateTime.now();
+  final endTime = startTime.add(timeout);
+
+  print('⏳ waitForSyncToComplete: بداية الانتظار (max ${timeout.inSeconds}s)');
+
+  // ══════════════════════════════════════════════════════════
+  // المرحلة 1: انتظر لحد ما sync تبدأ
+  // (لأن initializeGlobalListener بيبدأ WebSocket async،
+  //  والـ sync مش هتبدأ غير بعد ما auth_success يرجع)
+  // ══════════════════════════════════════════════════════════
+  bool syncStarted = false;
+  while (DateTime.now().isBefore(endTime)) {
+    // لو sync بدأت → ننتقل للمرحلة 2
+    if (_isSyncing) {
+      syncStarted = true;
+      print('✅ sync بدأت — ننتقل لانتظار الانتهاء');
+      break;
+    }
+
+    // لو WebSocket فشل → مفيش sync هتيجي
+    if (_wsConnectionFailedCompleter.isCompleted) {
+      print('⚠️ WebSocket failed — مفيش sync هتيجي، فتح فوراً');
+      return;
+    }
+
+    await Future.delayed(const Duration(milliseconds: 200));
+  }
+
+  if (!syncStarted) {
+    print('⏱️ sync ما بدأتش خلال ${timeout.inSeconds}s — فتح فوراً');
+    return;
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // المرحلة 2: انتظر لحد ما sync تخلص (أو timeout)
+  // ══════════════════════════════════════════════════════════
+  while (_isSyncing && DateTime.now().isBefore(endTime)) {
+    await Future.delayed(const Duration(milliseconds: 200));
+  }
+
+  if (_isSyncing) {
+    final elapsed = DateTime.now().difference(startTime).inSeconds;
+    print('⏱️ sync لسه شغالة بعد ${elapsed}s — timeout، فتح بالبيانات المتاحة');
+  } else {
+    final elapsed = DateTime.now().difference(startTime).inMilliseconds;
+    print('✅ sync خلصت — إجمالي الانتظار: ${elapsed}ms');
+  }
+}
 
 // ============================================================
 // Sync Manager — Batching
@@ -161,6 +225,41 @@ Future<void> syncAllDataIfNeeded(String companyCode) async {
     ]);
 
     // ──────────────────────────────────────────────────────
+    // ⭐ مزامنة الشركات — للسوبر أدمن فقط
+    //
+    // الشركات "بيانات خاصة بالسوبر أدمن" — مش بتنزل عند أي حد تاني.
+    // الأدمن والموظفين مش بيعملوا sync للشركات (بياناتهم بتوصل من user.company_code)
+    // ──────────────────────────────────────────────────────
+    if (PermissionsService().isSuperAdmin) {
+      print("📦 [Super Admin] مزامنة الشركات...");
+      try {
+        await CompanyService().fetchAllCompanies();
+        print("  ✅ الشركات");
+      } catch (e) {
+        print("  ❌ الشركات: $e");
+      }
+    }
+
+    // ──────────────────────────────────────────────────────
+    // ⭐ مزامنة المستخدمين — للأدمن فقط (شركته فقط)
+    //
+    // الأدمن: عنده صلاحية إدارة مستخدمين شركته → نجيبهم مع الـ sync
+    // السوبر أدمن: بيجيب مستخدمي أي شركة عند فتح "إدارة المستخدمين"
+    //              (مش بنجيب "كل المستخدمين من كل الشركات" في الـ sync عشان قائمة ضخمة)
+    // الموظف العادي: مش بيعمل sync للمستخدمين خالص
+    // ──────────────────────────────────────────────────────
+    if (PermissionsService().currentRole == 'admin') {
+      print("📦 [Admin] مزامنة مستخدمي شركته...");
+      try {
+        await UserService().fetchAllUsers(companyCode: companyCode);
+        print("  ✅ المستخدمين");
+      } catch (e) {
+        print("  ❌ المستخدمين: $e");
+      }
+    }
+
+
+    // ──────────────────────────────────────────────────────
     // Batch 3: [الجرد]
     // ──────────────────────────────────────────────────────
     print("📦 Batch 3: [الجرد]");
@@ -201,6 +300,16 @@ Future<void> syncAllDataIfNeeded(String companyCode) async {
     print("❌ فشلت المزامنة المركزية: $e");
   } finally {
     _isSyncing = false;
+
+    // ⭐ إشارة إن أول مزامنة خلصت
+    if (!_initialSyncCompleter.isCompleted) {
+      _initialSyncCompleter.complete();
+    }
+
+    // ⭐ إشارة لأي شاشة منتظرة (زي LoginScreen)
+    if (_waitSyncCompleter != null && !_waitSyncCompleter!.isCompleted) {
+      _waitSyncCompleter!.complete();
+    }
   }
 }
 
@@ -221,6 +330,15 @@ void initializeGlobalListener(String companyCode) {
     syncAllDataIfNeeded(
       _syncService.currentCompanyCode ?? companyCode,
     );
+  };
+
+  // ⭐ جديد: WebSocket فشل → إشارة فورية
+  _syncService.onWebSocketConnectionFailed ??= () {
+    print("⚠️ WebSocket connection failed — signaling main()");
+
+    if (!_wsConnectionFailedCompleter.isCompleted) {
+      _wsConnectionFailedCompleter.complete();
+    }
   };
 
   // لو WebSocket شغال بالفعل لنفس الشركة
@@ -285,6 +403,9 @@ Future<void> main() async {
   await Hive.openBox('product_lookup_box');
    // ✅ HR: طابور العمليات المعلقة (بدل الذاكرة)
   await Hive.openBox('hr_pending_box');
+    // ⭐ Boxes جديدة — Companies + Users
+  await Hive.openBox('companies_box');
+  await Hive.openBox('users_box');
 
   // ==========================================================
   // SharedPreferences
@@ -372,13 +493,49 @@ if (rememberMe && userName != null && companyCode != null) {
       // ↓
       // syncAllDataIfNeeded
       // --------------------------------------------------------
+      // --------------------------------------------------------
+      // ⭐ فحص الإنترنت فوراً (بدون انتظار)
+      // --------------------------------------------------------
+      bool isOnline = true;
+      if (kIsWeb) {
+        try {
+          // ⭐ navigator.onLine بيرجع bool? (nullable)
+          // بناخد القيمة بـ ?? true يعني لو null نعتبره online
+          final onlineValue = html.window.navigator.onLine;
+          isOnline = onlineValue ?? true;
+          print("🌐 navigator.onLine = $onlineValue → isOnline = $isOnline");
+        } catch (e) {
+          print("⚠️ Failed to check onLine: $e");
+        }
+      }
+
+      // --------------------------------------------------------
+      // تشغيل WebSocket (في الخلفية — بدون انتظار)
+      // --------------------------------------------------------
       initializeGlobalListener(companyCode);
 
       // --------------------------------------------------------
-      // لا يوجد Sync إضافي هنا
-      //
-      // لمنع تكرار المزامنة.
+      // ⭐ منطق الانتظار:
+      //  • Online → استنى: (المزامنة تخلص) أو (WebSocket يفشل) أو (15s)
+      //  • Offline → افتح فوراً
       // --------------------------------------------------------
+      if (isOnline) {
+        print("⏳ ننتظر المزامنة (max 15s)...");
+        try {
+          await Future.any([
+            _initialSyncCompleter.future,
+            _wsConnectionFailedCompleter.future,
+          ]).timeout(const Duration(seconds: 15));
+          print("✅ المزامنة اكتملت أو الاتصال فشل — فتح التطبيق");
+        } on TimeoutException {
+          print("⏱️ 15s عدّت — فتح التطبيق بالبيانات الحالية");
+        } catch (e) {
+          print("⚠️ خطأ أثناء الانتظار: $e — فتح التطبيق");
+        }
+      } else {
+        print("📵 مفيش نت — فتح فوري");
+      }
+
       initialScreen = HomePage(
         userName: userName,
         companyName: companyName ?? 'شركتي',

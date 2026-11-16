@@ -932,6 +932,11 @@ class _HomePageState extends State<HomePage>
                           .markAllRead(
                         companyCode: widget.companyCode,
                       );
+                      // ⭐ نادي syncAppBadge صراحةً
+                      final unread = NotificationsService.instance.unreadCount(
+                        companyCode: widget.companyCode,
+                      );
+                      await NotificationsService.instance.syncAppBadge(unread);
                       if (dialogContext.mounted) setDialogState(() {});
                       if (mounted) setState(() {});
                     },
@@ -1059,7 +1064,7 @@ class _HomePageState extends State<HomePage>
             cacheWidth: 90, 
             cacheHeight: 90,
           ),
-          const SizedBox(width: 7),
+          const SizedBox(width: 0),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,

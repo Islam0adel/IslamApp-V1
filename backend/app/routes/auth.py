@@ -15,7 +15,7 @@ from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.database import get_db, AsyncSessionLocal
-from app.core.models import Company, Employee, Notification, AuditLog
+from app.core.models import Company, Employee, Notification, AuditLog, Branch, CodingRecord
 import datetime  # ⭐ جديد
 from app.core.schemas import CompanyModel
 from app.core.fcm_service import send_push_to_user_bg
@@ -170,6 +170,219 @@ def _default_employee_permissions() -> dict:
             "canManageEmployees": False, "canViewBranchSalaryReport": False,
         },
     }
+
+# ============================================================
+# ⭐ Helper: إنشاء موظف تلقائياً عند التسجيل
+# ============================================================
+
+async def _get_next_employee_code(
+    db: AsyncSession,
+    company_code: str,
+) -> str:
+    """الحصول على كود الموظف التالي للشركة (1, 2, 3...)."""
+    try:
+        from sqlalchemy import func, cast, Integer as SAInteger
+
+        stmt = select(func.max(cast(Employee.code, SAInteger))).where(
+            Employee.company_code == str(company_code),
+        )
+        result = await db.execute(stmt)
+        last_code = result.scalar() or 0
+        return str(int(last_code) + 1)
+    except Exception as e:
+        print(f"⚠️ _get_next_employee_code: {e}")
+        return "1"
+
+
+async def _auto_create_employee_if_needed(
+    db: AsyncSession,
+    user_email: str,
+    user_uid: str,
+    user_name: str,
+    user_phone: str,
+    company_code: str,
+    branch_code: str,
+) -> dict | None:
+    """
+    ينشئ سجل موظف تلقائياً لو المستخدم مش مربوط بموظف موجود.
+
+    ⭐ الأمان:
+      1) يتحقق إن company_code موجود ومش فاضي
+      2) يتحقق إن الشركة موجودة في DB و is_active=True
+      3) يتحقق إن branch_code (لو موجود) تابع للشركة فعلاً
+      4) لو branch_code مش صالح → يستخدم "" (كل الفروع)
+      5) الربط بالـ phone بيتحقق من نفس company_code
+
+    Returns: dict {code, name, linked, branch_code} أو None
+    """
+    email_clean = (user_email or "").strip().lower()
+    phone_clean = (user_phone or "").strip()
+    company_clean = str(company_code or "").strip()
+    branch_clean = str(branch_code or "").strip()
+
+    # ============================================================
+    # ⭐ 0. حماية: شركة مطلوبة
+    # ============================================================
+    if not email_clean or not company_clean:
+        print(f"⚠️ [Auto-Link] skipped: email='{email_clean}' company='{company_clean}'")
+        return None
+
+    try:
+        # ============================================================
+        # ⭐ 1. تحقق: الشركة موجودة ونشطة
+        # ============================================================
+        company_stmt = select(Company).where(
+            Company.code == company_clean,
+            Company.is_active.is_(True),
+        )
+        company_result = await db.execute(company_stmt)
+        company = company_result.scalar_one_or_none()
+
+        if not company:
+            print(
+                f"⚠️ [Auto-Link] skipped: company '{company_clean}' "
+                f"غير موجودة أو موقوفة"
+            )
+            return None
+
+        # ============================================================
+        # ⭐ 2. تحقق: branch_code (لو موجود) تابع للشركة
+        # ============================================================
+        final_branch_code = branch_clean
+        if branch_clean and branch_clean.lower() not in ("all", "الكل", "كل الفروع"):
+            # ابحث في جدول الفروع (Branch أو CodingRecord)
+            branch_stmt = select(Branch).where(
+                Branch.company_code == company_clean,
+                Branch.code == branch_clean,
+            )
+            branch_result = await db.execute(branch_stmt)
+            existing_branch = branch_result.scalar_one_or_none()
+
+            if not existing_branch:
+                # جرب CodingRecord (احتياطي — بعض الأنظمة تخزن الفروع هناك)
+                try:
+                    
+                    coding_branch_stmt = select(CodingRecord).where(
+                        CodingRecord.company_code == company_clean,
+                        CodingRecord.category == "branches",
+                        CodingRecord.code == branch_clean,
+                        CodingRecord.is_deleted.is_(False),
+                    )
+                    coding_branch_result = await db.execute(coding_branch_stmt)
+                    existing_coding_branch = coding_branch_result.scalar_one_or_none()
+
+                    if not existing_coding_branch:
+                        print(
+                            f"⚠️ [Auto-Link] branch '{branch_clean}' مش موجود "
+                            f"في شركة '{company_clean}' — استخدام '' (كل الفروع)"
+                        )
+                        final_branch_code = ""
+                except Exception as e:
+                    print(f"⚠️ [Auto-Link] branch check failed: {e} — استخدام ''")
+                    final_branch_code = ""
+        else:
+            # "all" أو "" أو "كل الفروع" → كل الفروع
+            final_branch_code = ""
+
+        print(
+            f"🔍 [Auto-Link] final company='{company_clean}' "
+            f"branch='{final_branch_code or "(all)"}'"
+        )
+
+        # ============================================================
+        # 3) موظف مربوط بنفس user_email (نفس الشركة)
+        # ============================================================
+        stmt = select(Employee).where(
+            Employee.company_code == company_clean,   # ✅ فرض الشركة
+            Employee.user_email == email_clean,
+            Employee.is_deleted.is_(False),
+        )
+        result = await db.execute(stmt)
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            if user_uid and not existing.user_uid:
+                existing.user_uid = user_uid
+                existing.updated_at = datetime.utcnow()
+                await db.commit()
+                print(f"🔗 [Auto-Link] ربط موظف موجود #{existing.code} بـ uid")
+            return {
+                "code": existing.code,
+                "name": existing.name,
+                "linked": True,
+                "branch_code": existing.branch_code or "",
+            }
+
+        # ============================================================
+        # 4) موظف بنفس phone (نفس الشركة، بدون user_email)
+        # ============================================================
+        if phone_clean:
+            stmt = select(Employee).where(
+                Employee.company_code == company_clean,   # ✅ فرض الشركة
+                Employee.phone == phone_clean,
+                Employee.user_email.is_(None) | (Employee.user_email == ""),
+                Employee.is_deleted.is_(False),
+            )
+            result = await db.execute(stmt)
+            existing_by_phone = result.scalar_one_or_none()
+
+            if existing_by_phone:
+                existing_by_phone.user_email = email_clean
+                existing_by_phone.user_uid = user_uid or ""
+                existing_by_phone.updated_at = datetime.utcnow()
+                await db.commit()
+                print(
+                    f"🔗 [Auto-Link] ربط موظف #{existing_by_phone.code} "
+                    f"بالإيميل {email_clean} (بواسطة phone في شركة {company_clean})"
+                )
+                return {
+                    "code": existing_by_phone.code,
+                    "name": existing_by_phone.name,
+                    "linked": True,
+                    "branch_code": existing_by_phone.branch_code or "",
+                }
+
+        # ============================================================
+        # 5) إنشاء موظف جديد — داخل شركة محددة + فرع محقق
+        # ============================================================
+        next_code = await _get_next_employee_code(db, company_clean)
+
+        new_emp = Employee(
+            company_code=company_clean,          # ✅ شركة محددة
+            code=next_code,
+            name=(user_name or email_clean or "موظف جديد").strip(),
+            phone=phone_clean,
+            email=email_clean,
+            user_uid=user_uid or "",
+            user_email=email_clean,
+            branch_code=final_branch_code,       # ✅ فرع محقق أو "" (كل الفروع)
+            status="active",
+            updated_at=datetime.utcnow(),
+        )
+        db.add(new_emp)
+        await db.commit()
+        await db.refresh(new_emp)
+
+        print(
+            f"✅ [Auto-Create] موظف جديد #{next_code} — "
+            f"{new_emp.name} | company={company_clean} "
+            f"| branch={final_branch_code or '(all)'} "
+            f"({email_clean})"
+        )
+        return {
+            "code": new_emp.code,
+            "name": new_emp.name,
+            "linked": False,
+            "branch_code": final_branch_code,
+        }
+
+    except Exception as e:
+        print(f"❌ _auto_create_employee_if_needed: {e}")
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        return None
 
 
 # ============================================================
@@ -922,10 +1135,12 @@ async def register(
         user_ref.set(user_data_to_save)
 
         # ============================================================
-        # ⭐ ربط الموظف (لو المستخدم أدخل كود الموظف)
+        # ⭐ ربط / إنشاء الموظف تلقائياً
         # ============================================================
         linked_employee = None
+
         if user.employee_code and user.employee_code.strip():
+            # ─── ربط يدوي ───
             emp_code_clean = user.employee_code.strip()
 
             emp_stmt = select(Employee).where(
@@ -942,14 +1157,12 @@ async def register(
                     detail=f"كود الموظف [{emp_code_clean}] غير موجود في هذه الشركة",
                 )
 
-            # تحقق: مش مربوط بحساب تاني
             if emp.user_email and emp.user_email.strip().lower() != email_clean:
                 raise HTTPException(
                     status_code=400,
                     detail="هذا الموظف مربوط بحساب آخر بالفعل",
                 )
 
-            # اربط
             emp.user_email = email_clean
             emp.user_uid = user.uid
             emp.updated_at = datetime.datetime.utcnow()
@@ -958,7 +1171,23 @@ async def register(
             linked_employee = {
                 "code": emp.code,
                 "name": emp.name,
+                "linked": True,
             }
+
+        # ⭐ لو مفيش ربط يدوي → إنشاء تلقائي
+        if linked_employee is None and email_clean not in SUPER_ADMIN_EMAILS:
+            try:
+                linked_employee = await _auto_create_employee_if_needed(
+                    db=session,
+                    user_email=email_clean,
+                    user_uid=user.uid,
+                    user_name=user.name,
+                    user_phone="",   # register مش بياخد phone_number
+                    company_code=comp_code,
+                    branch_code="",  # register مش بياخد branch_code
+                )
+            except Exception as e:
+                print(f"⚠️ auto-create employee failed in register: {e}")
 
         return {
             "status": "success",
@@ -1330,8 +1559,13 @@ async def complete_registration(
         if username_final:
             user_data["username"] = username_final
 
-        # ⭐ ربط الموظف في HR (اختياري)
+        # ============================================================
+        # ⭐ ربط / إنشاء الموظف تلقائياً
+        # ============================================================
+        linked_employee = None
+
         if data.employee_code and data.employee_code.strip():
+            # ─── ربط يدوي (المستخدم أدخل كود موظف موجود) ───
             emp_code = data.employee_code.strip()
             try:
                 async with AsyncSessionLocal() as session:
@@ -1349,10 +1583,36 @@ async def complete_registration(
                         emp.updated_at = datetime.datetime.utcnow()
                         await session.commit()
                         user_data["employee_code"] = emp_code
+                        linked_employee = {
+                            "code": emp.code,
+                            "name": emp.name,
+                            "linked": True,
+                        }
+                        print(f"🔗 [Manual] ربط المستخدم بموظف #{emp.code}")
                     else:
-                        print(f"⚠️ employee_code '{emp_code}' not found — skipped link")
+                        print(f"⚠️ employee_code '{emp_code}' not found — creating new")
             except Exception as e:
                 print(f"⚠️ employee link failed: {e}")
+
+        # ⭐ لو مفيش ربط يدوي (أو فشل) → إنشاء تلقائي
+        if linked_employee is None:
+            # ⚠️ لا ننشئ موظف للسوبر أدمن
+            if email_clean not in SUPER_ADMIN_EMAILS:
+                try:
+                    async with AsyncSessionLocal() as session:
+                        linked_employee = await _auto_create_employee_if_needed(
+                            db=session,
+                            user_email=email_clean,
+                            user_uid=uid,
+                            user_name=user_data.get("name", ""),
+                            user_phone=user_data.get("phone_number", ""),
+                            company_code=user_data.get("company_code", ""),
+                            branch_code=user_data.get("branch_code", ""),
+                        )
+                        if linked_employee:
+                            user_data["employee_code"] = linked_employee["code"]
+                except Exception as e:
+                    print(f"⚠️ auto-create employee failed: {e}")
 
         # 5. نحفظ المستند بالـ ID الخاص بالموبايل (بيبقى موجود)، 
         #    لكن كمان نعمل نسخة بمفتاح الإيميل للتوافق مع باقي النظام
@@ -1370,6 +1630,7 @@ async def complete_registration(
             "status": "success",
             "message": "تم إكمال التسجيل — يرجى التحقق من بريدك الإلكتروني",
             "email": email_clean,
+            "linked_employee": linked_employee,   # ⭐ جديد
         }
 
     except HTTPException:

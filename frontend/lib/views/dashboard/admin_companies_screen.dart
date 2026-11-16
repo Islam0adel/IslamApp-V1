@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import '../../core/theme.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import '../../services/api_service.dart';
+import '../../services/company_service.dart';
 import '../../views/widgets/glass_card.dart';
+import '../../services/permissions_service.dart';
 
 class AdminCompaniesScreen extends StatefulWidget {
   const AdminCompaniesScreen({super.key});
@@ -12,87 +13,86 @@ class AdminCompaniesScreen extends StatefulWidget {
 }
 
 class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
-  late final ApiService _api;
-  List<dynamic> _companies = [];
-  bool _isLoading = true;
-  String? _adminJobCode;
-
-  // controllers للإضافة
-  final TextEditingController _codeController = TextEditingController();
-  final TextEditingController _nameController = TextEditingController();
+  final CompanyService _service = CompanyService();
+  final _codeController = TextEditingController();
+  final _nameController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
-
-  // controllers للتعديل
-  final TextEditingController _editCodeController = TextEditingController();
-  final TextEditingController _editNameController = TextEditingController();
+  final _editCodeController = TextEditingController();
+  final _editNameController = TextEditingController();
   final _editFormKey = GlobalKey<FormState>();
-  String? _currentCompanyCode;  // ✅ مستخدم (يحتوي على الكود القديم)
+  String? _currentCompanyCode;
+  bool _isLoading = false;
 
   @override
   void initState() {
     super.initState();
-    _api = ApiService();
-    _loadAdminCode();
+    _loadFromHive();
   }
 
-  Future<void> _loadAdminCode() async {
-    final prefs = await SharedPreferences.getInstance();
-    _adminJobCode = prefs.getString('job_code');
-    if (_adminJobCode == '99') {
-      await _fetchCompanies();
-    } else {
-      setState(() => _isLoading = false);
+  Future<void> _loadFromHive() async {
+    // لو Hive فاضي، جيب من السيرفر أول مرة
+    if (_service.getCompaniesFromHive().isEmpty) {
+      await _refresh();
     }
   }
 
-  Future<void> _fetchCompanies() async {
+  Future<void> _refresh() async {
     setState(() => _isLoading = true);
     try {
-      final data = await _api.getAllCompanies('99');
-      setState(() {
-        _companies = data;
-        _isLoading = false;
-      });
+      await _service.fetchAllCompanies();
     } catch (e) {
-      setState(() => _isLoading = false);
-      _showSnackBar(e.toString(), AppTheme.dangerStrongFor(context));
+      if (mounted) {
+        _showSnackBar(e.toString(), AppTheme.dangerStrongFor(context));
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   Future<void> _addCompany() async {
-    if (_formKey.currentState!.validate()) {
-      try {
-        await _api.addCompany(
-          _codeController.text.trim(),
-          _nameController.text.trim(),
-          '99',
-        );
-        _codeController.clear();
-        _nameController.clear();
-        await _fetchCompanies();
-        _showSnackBar('✅ تم إضافة الشركة بنجاح', AppTheme.successStrongFor(context));
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _isLoading = true);
+    try {
+      await _service.addCompany(
+        code: _codeController.text.trim(),
+        name: _nameController.text.trim(),
+      );
+      _codeController.clear();
+      _nameController.clear();
+      if (mounted) {
+        _showSnackBar('✅ تم إضافة الشركة بنجاح',
+            AppTheme.successStrongFor(context));
         Navigator.pop(context);
-      } catch (e) {
+      }
+    } catch (e) {
+      if (mounted) {
         _showSnackBar(e.toString(), AppTheme.dangerStrongFor(context));
       }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   Future<void> _updateCompany() async {
-    if (_editFormKey.currentState!.validate()) {
-      try {
-        await _api.updateCompany(
-          oldCode: _currentCompanyCode!,
-          newCode: _editCodeController.text.trim(),
-          newName: _editNameController.text.trim(),
-          adminJobCode: '99',
-        );
-        await _fetchCompanies();
-        _showSnackBar('✅ تم تعديل الشركة بنجاح', AppTheme.successStrongFor(context));
+    if (!_editFormKey.currentState!.validate()) return;
+    setState(() => _isLoading = true);
+    try {
+      await _service.updateCompany(
+        oldCode: _currentCompanyCode!,
+        newCode: _editCodeController.text.trim(),
+        newName: _editNameController.text.trim(),
+      );
+      if (mounted) {
+        _showSnackBar('✅ تم تعديل الشركة بنجاح',
+            AppTheme.successStrongFor(context));
         Navigator.pop(context);
-      } catch (e) {
+      }
+    } catch (e) {
+      if (mounted) {
         _showSnackBar(e.toString(), AppTheme.dangerStrongFor(context));
       }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -100,39 +100,59 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('حذف الشركة', style: TextStyle(fontFamily: 'Cairo')),
-        content: Text('هل أنت متأكد من حذف شركة "$code"؟\nسيتم حذف جميع بياناتها بالكامل.'),
+        title: const Text('حذف الشركة',
+            style: TextStyle(fontFamily: 'Cairo')),
+        content: Text(
+            'هل أنت متأكد من حذف شركة "$code"؟\nسيتم حذف جميع بياناتها بالكامل.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('إلغاء')),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.dangerStrongFor(context)),
-            child: Text('حذف', style: TextStyle(color: Theme.of(context).colorScheme.onPrimary)),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.dangerStrongFor(context)),
+            child: Text('حذف',
+                style: TextStyle(color: Theme.of(context).colorScheme.onPrimary)),
           ),
         ],
       ),
     );
     if (confirm != true) return;
 
+    setState(() => _isLoading = true);
     try {
-      await _api.deleteCompany(code, '99');
-      await _fetchCompanies();
-      _showSnackBar('🗑️ تم حذف الشركة بنجاح', AppTheme.warningOrangeFor(context));
+      await _service.deleteCompany(code: code);
+      if (mounted) {
+        _showSnackBar('🗑️ تم حذف الشركة بنجاح',
+            AppTheme.warningOrangeFor(context));
+      }
     } catch (e) {
-      _showSnackBar(e.toString(), AppTheme.dangerStrongFor(context));
+      if (mounted) {
+        _showSnackBar(e.toString(), AppTheme.dangerStrongFor(context));
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  void _toggleCompany(String code, bool currentStatus) async {
+  Future<void> _toggleCompany(String code, bool currentStatus) async {
+    setState(() => _isLoading = true);
     try {
-      await _api.toggleCompanyStatus(code, !currentStatus, '99');
-      await _fetchCompanies();
-      _showSnackBar(
-        !currentStatus ? '✅ تم تفعيل الشركة' : '⛔ تم إيقاف الشركة',
-        AppTheme.warningOrangeFor(context),
-      );
+      await _service.toggleCompanyStatus(
+          code: code, isActive: !currentStatus);
+      if (mounted) {
+        _showSnackBar(
+          !currentStatus ? '✅ تم تفعيل الشركة' : '⛔ تم إيقاف الشركة',
+          AppTheme.warningOrangeFor(context),
+        );
+      }
     } catch (e) {
-      _showSnackBar(e.toString(), AppTheme.dangerStrongFor(context));
+      if (mounted) {
+        _showSnackBar(e.toString(), AppTheme.dangerStrongFor(context));
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -142,7 +162,8 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('إضافة شركة جديدة', style: TextStyle(fontFamily: 'Cairo')),
+        title: const Text('إضافة شركة جديدة',
+            style: TextStyle(fontFamily: 'Cairo')),
         content: Form(
           key: _formKey,
           child: Column(
@@ -150,21 +171,28 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
             children: [
               TextFormField(
                 controller: _codeController,
-                decoration: const InputDecoration(labelText: 'كود الشركة (مثال: 02)'),
-                validator: (v) => v!.trim().isEmpty ? 'مطلوب' : null,
+                decoration:
+                    const InputDecoration(labelText: 'كود الشركة (مثال: 02)'),
+                validator: (v) =>
+                    v!.trim().isEmpty ? 'مطلوب' : null,
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _nameController,
-                decoration: const InputDecoration(labelText: 'اسم الشركة'),
-                validator: (v) => v!.trim().isEmpty ? 'مطلوب' : null,
+                decoration:
+                    const InputDecoration(labelText: 'اسم الشركة'),
+                validator: (v) =>
+                    v!.trim().isEmpty ? 'مطلوب' : null,
               ),
             ],
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
-          ElevatedButton(onPressed: _addCompany, child: const Text('حفظ')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('إلغاء')),
+          ElevatedButton(
+              onPressed: _addCompany, child: const Text('حفظ')),
         ],
       ),
     );
@@ -178,7 +206,8 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('تعديل الشركة', style: TextStyle(fontFamily: 'Cairo')),
+        title: const Text('تعديل الشركة',
+            style: TextStyle(fontFamily: 'Cairo')),
         content: Form(
           key: _editFormKey,
           child: Column(
@@ -186,29 +215,40 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
             children: [
               TextFormField(
                 controller: _editCodeController,
-                decoration: const InputDecoration(labelText: 'كود الشركة'),
-                validator: (v) => v!.trim().isEmpty ? 'مطلوب' : null,
+                decoration:
+                    const InputDecoration(labelText: 'كود الشركة'),
+                validator: (v) =>
+                    v!.trim().isEmpty ? 'مطلوب' : null,
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _editNameController,
-                decoration: const InputDecoration(labelText: 'اسم الشركة'),
-                validator: (v) => v!.trim().isEmpty ? 'مطلوب' : null,
+                decoration:
+                    const InputDecoration(labelText: 'اسم الشركة'),
+                validator: (v) =>
+                    v!.trim().isEmpty ? 'مطلوب' : null,
               ),
             ],
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
-          ElevatedButton(onPressed: _updateCompany, child: const Text('تحديث')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('إلغاء')),
+          ElevatedButton(
+              onPressed: _updateCompany,
+              child: const Text('تحديث')),
           const SizedBox(width: 8),
           ElevatedButton(
             onPressed: () {
               Navigator.pop(ctx);
               _deleteCompany(code);
             },
-            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.dangerStrongFor(context)),
-            child: Text('حذف', style: TextStyle(color: Theme.of(context).colorScheme.onPrimary)),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.dangerStrongFor(context)),
+            child: Text('حذف',
+                style:
+                    TextStyle(color: Theme.of(context).colorScheme.onPrimary)),
           ),
         ],
       ),
@@ -223,15 +263,48 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_adminJobCode != '99') {
+    // ⭐ حماية: السوبر أدمن فقط
+    if (!PermissionsService().isSuperAdmin) {
       return Scaffold(
-        appBar: AppBar(title: const Text('غير مصرح')),
-        body: const Center(child: Text("هذة الصفحة خاصة بفريق IslamApp فقط")),
+        appBar: AppBar(
+          title: const Text('غير مصرح'),
+          centerTitle: true,
+        ),
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.lock_outline_rounded,
+                size: 64,
+                color: AppTheme.textMutedFor(context),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'هذه الصفحة للسوبر أدمن فقط',
+                style: TextStyle(
+                  fontFamily: 'Cairo',
+                  color: AppTheme.textMutedFor(context),
+                ),
+              ),
+            ],
+          ),
+        ),
       );
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('إدارة الشركات'), centerTitle: true),
+      appBar: AppBar(
+        title: const Text('إدارة الشركات'),
+        centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _isLoading ? null : _refresh,
+            tooltip: 'تحديث',
+          ),
+        ],
+      ),
       body: Stack(
         children: [
           Container(
@@ -243,66 +316,102 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
               ),
             ),
           ),
-          _isLoading
-              ? const Center(child: CircularProgressIndicator())
-              : Column(
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: ElevatedButton.icon(
-                        icon: const Icon(Icons.add_business),
-                        label: const Text('إضافة شركة جديدة'),
-                        onPressed: _showAddCompanyDialog,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppTheme.accentDeep,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
+          ValueListenableBuilder<Box>(
+            valueListenable: _service.companiesListenable,
+            builder: (context, box, _) {
+              final companies = _service.getCompaniesFromHive();
+
+              return Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.add_business),
+                      label: const Text('إضافة شركة جديدة'),
+                      onPressed: _isLoading ? null : _showAddCompanyDialog,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.accentDeep,
+                        padding:
+                            const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
                         ),
                       ),
                     ),
-                    Expanded(
-                      child: ListView.builder(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        itemCount: _companies.length,
-                        itemBuilder: (ctx, index) {
-                          final company = _companies[index];
-                          final code = company['code'];
-                          final name = company['name'];
-                          final isActive = company['is_active'] ?? true;
-                          return GestureDetector(
-                            onTap: () => _showEditCompanyDialog(code, name),
-                            child: GlassCard(
-                              margin: const EdgeInsets.only(bottom: 12),
-                              child: ListTile(
-                                leading: CircleAvatar(
-                                  backgroundColor: isActive ? AppTheme.successStrongFor(context) : AppTheme.dangerStrongFor(context),
-                                  child: Text(code ?? '??'),
-                                ),
-                                title: Text(
-                                  name ?? 'بدون اسم',
-                                  style: TextStyle(color: AppTheme.textMainFor(context)),
-                                ),
-                                subtitle: Text(
-                                  isActive ? '🟢 نشطة' : '🔴 موقوفة',
-                                  style: TextStyle(
-                                    color: isActive ? AppTheme.successFor(context) : AppTheme.dangerFor(context),
-                                  ),
-                                ),
-                                trailing: Switch(
-                                  value: isActive,
-                                  onChanged: (_) => _toggleCompany(code, isActive),
-                                  activeThumbColor: AppTheme.successStrongFor(context),
-                                ),
+                  ),
+                  if (_isLoading)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 16),
+                      child: LinearProgressIndicator(),
+                    ),
+                  Expanded(
+                    child: companies.isEmpty
+                        ? Center(
+                            child: Text(
+                              'لا توجد شركات',
+                              style: TextStyle(
+                                fontFamily: 'Cairo',
+                                color: AppTheme.textMutedFor(context),
                               ),
                             ),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                ),
+                          )
+                        : RefreshIndicator(
+                            onRefresh: _refresh,
+                            child: ListView.builder(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 16),
+                              itemCount: companies.length,
+                              itemBuilder: (ctx, index) {
+                                final company = companies[index];
+                                final code = company['code']?.toString() ?? '';
+                                final name = company['name']?.toString() ?? '';
+                                final isActive =
+                                    company['is_active'] != false;
+
+                                return GestureDetector(
+                                  onTap: () => _showEditCompanyDialog(code, name),
+                                  child: GlassCard(
+                                    margin: const EdgeInsets.only(bottom: 12),
+                                    child: ListTile(
+                                      leading: CircleAvatar(
+                                        backgroundColor: isActive
+                                            ? AppTheme.successStrongFor(context)
+                                            : AppTheme.dangerStrongFor(context),
+                                        child: Text(code),
+                                      ),
+                                      title: Text(
+                                        name,
+                                        style: TextStyle(
+                                            color: AppTheme.textMainFor(context)),
+                                      ),
+                                      subtitle: Text(
+                                        isActive ? '🟢 نشطة' : '🔴 موقوفة',
+                                        style: TextStyle(
+                                          color: isActive
+                                              ? AppTheme.successFor(context)
+                                              : AppTheme.dangerFor(context),
+                                        ),
+                                      ),
+                                      trailing: Switch(
+                                        value: isActive,
+                                        onChanged: _isLoading
+                                            ? null
+                                            : (_) =>
+                                                _toggleCompany(code, isActive),
+                                        activeThumbColor:
+                                            AppTheme.successStrongFor(context),
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                  ),
+                ],
+              );
+            },
+          ),
         ],
       ),
     );
