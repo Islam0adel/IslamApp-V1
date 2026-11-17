@@ -61,8 +61,7 @@ class _HomePageState extends State<HomePage>
   Timer? _permissionsDebounce;
   bool _branchCheckInProgress = false;
   bool _branchDialogOpen = false;
-    // ⭐ App Badge
-  Box? _notificationsBoxRef;
+
     // ⭐ Deep Link
   StreamSubscription<Map<String, dynamic>>? _deepLinkSub;
   bool _syncReady = false;   // هل المزامنة خلصت؟
@@ -89,9 +88,6 @@ class _HomePageState extends State<HomePage>
       }
     });
 
-    // ⭐ App Badge: راقب تغيرات notifications_box وحدّث الشارة
-    _notificationsBoxRef = Hive.box('notifications_box');
-    _notificationsBoxRef!.listenable().addListener(_syncAppBadge);
 
     // ⭐ Deep Link: استمع للإشعارات المعلقة القادمة من SW
     _deepLinkSub = DeepLinkService.instance.pendingStream.listen(
@@ -103,17 +99,7 @@ class _HomePageState extends State<HomePage>
       hideWebLoadingScreen();
 
       _loadAllData();
-      _syncAppBadge();
     });
-  }
-
-  // ⭐ يحدّث شارة العدد بناءً على عدد الإشعارات غير المقروءة
-  void _syncAppBadge() {
-    if (!mounted) return;
-    final unread = NotificationsService.instance.unreadCount(
-      companyCode: widget.companyCode,
-    );
-    NotificationsService.instance.syncAppBadge(unread);
   }
 
   void _onPermissionsChanged() {
@@ -123,8 +109,6 @@ class _HomePageState extends State<HomePage>
       _permissionsLoaded = PermissionsService().isLoaded;
     });
 
-    // ⭐ الصلاحيات تتغير → unreadCount قد يتغير
-    _syncAppBadge();
 
     _permissionsDebounce?.cancel();
     _permissionsDebounce = Timer(const Duration(milliseconds: 400), () {
@@ -932,11 +916,6 @@ class _HomePageState extends State<HomePage>
                           .markAllRead(
                         companyCode: widget.companyCode,
                       );
-                      // ⭐ نادي syncAppBadge صراحةً
-                      final unread = NotificationsService.instance.unreadCount(
-                        companyCode: widget.companyCode,
-                      );
-                      await NotificationsService.instance.syncAppBadge(unread);
                       if (dialogContext.mounted) setDialogState(() {});
                       if (mounted) setState(() {});
                     },
@@ -1561,9 +1540,6 @@ class _HomePageState extends State<HomePage>
     await prefs.remove('job_title');
     await prefs.remove('user_email');
 
-    // ⭐ 3.5) امسح شارة العدد
-    await NotificationsService.instance.syncAppBadge(0);
-
     // 4) signOut
     await FirebaseAuth.instance.signOut();
 
@@ -1586,9 +1562,7 @@ class _HomePageState extends State<HomePage>
 
     // ⭐ إزالة مستمع الشارة
     try {
-      _notificationsBoxRef?.listenable().removeListener(_syncAppBadge);
     } catch (_) {}
-    _notificationsBoxRef = null;
 
     // ⭐ إزالة مستمع Deep Link
     _deepLinkSub?.cancel();

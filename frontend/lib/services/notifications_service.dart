@@ -396,7 +396,6 @@ class NotificationsService {
       await AuthHttp.post(Uri.parse(endpoint));
     } catch (_) {}
 
-    // ⭐ نادي syncAppBadge مباشرة
     await _syncBadgeForCompany(_companyCode);
   }
 
@@ -421,7 +420,6 @@ class NotificationsService {
     }
     try { await AuthHttp.post(Uri.parse('${ApiConstants.baseUrl}/notifications/read-all')); } catch (_) {}
 
-    // ⭐ نادي syncAppBadge مباشرة (مش بس الاعتماد على الـ listener)
     await _syncBadgeForCompany(targetCompany);
   }
 
@@ -448,8 +446,6 @@ class NotificationsService {
       debugPrint('⚠️ deleteNotification remote failed: $e');
     }
 
-    // ⭐ نادي syncAppBadge مباشرة
-    await _syncBadgeForCompany(_companyCode);
   }
 
 
@@ -461,8 +457,6 @@ class NotificationsService {
     }
     try { await AuthHttp.delete(Uri.parse('${ApiConstants.baseUrl}/notifications')); } catch (_) {}
 
-    // ⭐ نادي syncAppBadge مباشرة
-    await _syncBadgeForCompany(targetCompany);
   }
 
   int get retentionDays => (_settings.get('retention_days', defaultValue: 90) as num).toInt();

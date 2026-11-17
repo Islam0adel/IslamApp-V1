@@ -8,7 +8,7 @@ from typing import Dict
 
 from fastapi import APIRouter, HTTPException, Header, Body, Query, Depends, Request
 from pydantic import BaseModel, EmailStr
-from app.core.firebase_setup import db  # ✅ كائن Firestore (للمستخدمين والصلاحيات)
+from app.core.firebase_setup import db, get_realtime_database  # Firestore + RTDB Admin
 from google.cloud import firestore
 from firebase_admin import auth as admin_auth
 from typing import Optional, List
@@ -2505,4 +2505,39 @@ async def update_user_permissions(data: PermissionsUpdateModel, request: Request
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/admin/presence/{email}")
+async def delete_presence_record(email: str, request: Request):
+    actor = getattr(request.state, "auth_user", {})
+    role = _effective_role(actor)
+    perms = actor.get("permissions", {})
+    general = perms.get("صلاحيات عامة", {}) if isinstance(perms, dict) else {}
+    if role not in ("admin", "super_admin") and not (
+        isinstance(general, dict) and general.get("صفحة الصلاحيات(الاعدادات)") is True
+    ):
+        raise HTTPException(status_code=403, detail="غير مصرح لك بحذف سجل الحضور")
+    target_email = email.strip().lower()
+    if not target_email or db is None:
+        raise HTTPException(status_code=503, detail="خدمة Firebase غير متاحة")
+    user_doc = db.collection("users").document(target_email).get()
+    if not user_doc.exists:
+        raise HTTPException(status_code=404, detail="المستخدم غير موجود")
+    target = user_doc.to_dict() or {}
+    target_role = _effective_role({**target, "email": target_email})
+    if target_role == "super_admin" and role != "super_admin":
+        raise HTTPException(status_code=403, detail="غير مسموح بحذف سجل صاحب البرنامج")
+    if role == "admin" and (str(target.get("company_code", "")) != str(actor.get("company_code", "")) or target_role == "admin"):
+        raise HTTPException(status_code=403, detail="غير مسموح بهذا المستخدم")
+    uid = str(target.get("uid", "")).strip()
+    if not uid:
+        raise HTTPException(status_code=404, detail="لا يوجد سجل حضور لهذا المستخدم")
+    try:
+        get_realtime_database().child("presence").child(uid).delete()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        print(f"⚠️ delete_presence_record({target_email}): {exc}")
+        raise HTTPException(status_code=502, detail="تعذر حذف سجل الحضور") from exc
+    return {"status": "success", "message": "تم حذف سجل الحضور"}
 

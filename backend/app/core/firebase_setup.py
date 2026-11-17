@@ -1,5 +1,5 @@
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import credentials, firestore, db as realtime_database
 import os
 import json
 
@@ -32,7 +32,11 @@ def setup_firebase():
                 else:
                     raise FileNotFoundError("❌ لم يتم العثور على ملف المفاتيح لا في السكرت ولا محلياً!")
 
-            firebase_admin.initialize_app(cred)
+            database_url = os.getenv("FIREBASE_DATABASE_URL") or os.getenv("FIREBASE_RTDB_URL") or "https://islam-app-d6139-default-rtdb.europe-west1.firebasedatabase.app/"
+            firebase_admin.initialize_app(
+                cred,
+                {"databaseURL": database_url} if database_url else None,
+            )
             
         return firestore.client()
         
@@ -43,6 +47,16 @@ def setup_firebase():
 
 # تصدير كائن db ليتم استخدامه في auth.py وباقي الأجزاء
 db = setup_firebase()
+
+
+def get_realtime_database():
+    """Returns the Admin RTDB client, requiring FIREBASE_DATABASE_URL in deployment."""
+    if not firebase_admin._apps:
+        raise RuntimeError("Firebase Admin is not initialized")
+    app = firebase_admin.get_app()
+    if not app.options.get("databaseURL"):
+        raise RuntimeError("FIREBASE_DATABASE_URL is not configured")
+    return realtime_database.reference("/", app=app)
 
 
 # ⭐ expose the default app for FCM (used by firebase_admin.messaging)
