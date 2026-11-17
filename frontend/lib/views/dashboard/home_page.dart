@@ -1064,7 +1064,7 @@ class _HomePageState extends State<HomePage>
             cacheWidth: 90, 
             cacheHeight: 90,
           ),
-          const SizedBox(width: 0),
+          const SizedBox(width: 4),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,

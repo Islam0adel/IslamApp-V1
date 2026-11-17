@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.database import get_db, AsyncSessionLocal
 from app.core.models import Company, Employee, Notification, AuditLog, Branch, CodingRecord
-import datetime  # ⭐ جديد
 from app.core.schemas import CompanyModel
 from app.core.fcm_service import send_push_to_user_bg
 
@@ -284,9 +283,10 @@ async def _auto_create_employee_if_needed(
             # "all" أو "" أو "كل الفروع" → كل الفروع
             final_branch_code = ""
 
+        branch_display = final_branch_code or "(all)"
         print(
             f"🔍 [Auto-Link] final company='{company_clean}' "
-            f"branch='{final_branch_code or "(all)"}'"
+            f"branch='{branch_display}'"
         )
 
         # ============================================================
@@ -1165,7 +1165,7 @@ async def register(
 
             emp.user_email = email_clean
             emp.user_uid = user.uid
-            emp.updated_at = datetime.datetime.utcnow()
+            emp.updated_at = datetime.utcnow()
             await session.commit()
 
             linked_employee = {
@@ -1580,7 +1580,7 @@ async def complete_registration(
                     if emp:
                         emp.user_email = email_clean
                         emp.user_uid = uid
-                        emp.updated_at = datetime.datetime.utcnow()
+                        emp.updated_at = datetime.utcnow()
                         await session.commit()
                         user_data["employee_code"] = emp_code
                         linked_employee = {
