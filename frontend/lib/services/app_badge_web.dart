@@ -1,10 +1,7 @@
 // lib/services/app_badge_web.dart
-//
-// نسخة الويب — تستدعي window.appBadge.set(count)
-// (الـ JS helper في index.html)
-// يكتب العدد في IndexedDB (يقرأه SW) ويحدّث أيقونة التطبيق.
 
 import 'dart:js_interop';
+import 'package:flutter/foundation.dart' show debugPrint;
 
 @JS('appBadge.set')
 external JSPromise<JSAny?> _jsAppBadgeSet(JSNumber count);
@@ -12,7 +9,8 @@ external JSPromise<JSAny?> _jsAppBadgeSet(JSNumber count);
 Future<void> jsSyncAppBadge(int count) async {
   try {
     await _jsAppBadgeSet(count.toJS).toDart;
-  } catch (_) {
-    // Ignore: badge API not available or PWA not installed
+    debugPrint('✅ [Badge] jsSyncAppBadge($count) OK');
+  } catch (e) {
+    debugPrint('❌ [Badge] jsSyncAppBadge($count) FAILED: $e');
   }
 }
