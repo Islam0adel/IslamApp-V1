@@ -6,7 +6,7 @@ import 'package:firebase_database/firebase_database.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'permissions_service.dart';
-
+import 'package:cloud_firestore/cloud_firestore.dart';
 class PresenceService {
   static final PresenceService instance = PresenceService._();
   PresenceService._();
@@ -211,15 +211,54 @@ class PresenceService {
   // ✅ حذف مستخدم من RTDB عن طريق الإيميل
   // ============================================================
   Future<bool> removeUserByEmail(String email) async {
-    if (email.isEmpty) return false;
+    if (email.isEmpty) {
+      print('⚠️ removeUserByEmail: email فاضي');
+      return false;
+    }
 
+    final targetEmail = email.toLowerCase().trim();
+    print('🔍 removeUserByEmail: البحث عن "$targetEmail"');
+
+    // ══════════════════════════════════════════════════════════
+    // Strategy 1: UID من Firestore → حذف presence/{uid}
+    // (الأكثر موثوقية — email في presence ممكن يكون فاضي/مختلف)
+    // ══════════════════════════════════════════════════════════
     try {
-      final snapshot =
-          await _database.ref('presence').once().timeout(_rtdbTimeout);
-      final data = snapshot.snapshot.value;
-      if (data is! Map) return false;
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(targetEmail)
+          .get()
+          .timeout(_rtdbTimeout);
 
-      final targetEmail = email.toLowerCase().trim();
+      if (userDoc.exists) {
+        final uid = (userDoc.data()?['uid'] ?? '').toString().trim();
+        if (uid.isNotEmpty) {
+          try {
+            await _database.ref('presence/$uid').remove().timeout(_rtdbTimeout);
+            print('🗑️ [Strategy 1] حذف presence/$uid (email=$targetEmail)');
+            return true;
+          } catch (e) {
+            print('⚠️ [Strategy 1] فشل حذف presence/$uid: $e');
+          }
+        }
+      }
+    } catch (e) {
+      print('⚠️ [Strategy 1] Firestore lookup فشل: $e');
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // Strategy 2: البحث في presence node بالإيميل
+    // ══════════════════════════════════════════════════════════
+    try {
+      final snapshot = await _database.ref('presence').once().timeout(_rtdbTimeout);
+      final data = snapshot.snapshot.value;
+
+      if (data is! Map) {
+        print('ℹ️ [Strategy 2] presence node فاضي');
+        return false;
+      }
+
+      print('🔍 [Strategy 2] presence فيه ${data.length} entry');
 
       for (final entry in data.entries) {
         final v = entry.value;
@@ -229,21 +268,21 @@ class PresenceService {
           v.map((k, val) => MapEntry(k.toString(), val)),
         );
 
-        final userEmail = (u['email'] ?? '').toString().toLowerCase().trim();
+        final rawEmail = u['email'];
+        final userEmail = (rawEmail ?? '').toString().toLowerCase().trim();
+        print('  uid=${entry.key}: email="$rawEmail"');
+
         if (userEmail == targetEmail) {
-          await _database
-              .ref('presence/${entry.key}')
-              .remove()
-              .timeout(_rtdbTimeout);
-          print('🗑️ Presence: تم حذف $email من RTDB (uid: ${entry.key})');
+          await _database.ref('presence/${entry.key}').remove().timeout(_rtdbTimeout);
+          print('🗑️ [Strategy 2] حذف presence/${entry.key} (email=$targetEmail)');
           return true;
         }
       }
 
-      print('ℹ️ Presence: $email مش موجود في RTDB');
+      print('ℹ️ [Strategy 2] $targetEmail مش موجود في presence');
       return false;
     } catch (e) {
-      print('⚠️ Presence removeUserByEmail: $e');
+      print('⚠️ [Strategy 2] فشل: $e');
       return false;
     }
   }

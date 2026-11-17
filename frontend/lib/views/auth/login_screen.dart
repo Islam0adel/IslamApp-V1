@@ -156,7 +156,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
       final overlayStartTime = DateTime.now();
 
       await waitForSyncToComplete(
-        timeout: const Duration(seconds: 15),
+        timeout: const Duration(seconds: 10),
       );
 
       // ⭐ ضمان عرض الأنيميشن لمدة كافية (1500ms) حتى لو sync خلصت بسرعة

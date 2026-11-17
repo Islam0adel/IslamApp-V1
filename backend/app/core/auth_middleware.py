@@ -73,8 +73,9 @@ _PUBLIC_PATHS = {
     # ⭐ Endpoints عامة (قبل الدخول)
     "/auth/resolve-identifier",
     "/auth/check-phone",
+    "/auth/check-email",              # ⭐ جديد
     "/auth/complete-registration",
-    "/auth/request-registration",   # ⭐ جديد
+    "/auth/request-registration",
 }
 
 _COMPANY_PATH_PREFIXES = (

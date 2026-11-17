@@ -1455,6 +1455,42 @@ async def _setup_super_admin(
         "message": "تم إعداد حساب السوبر أدمن",
         "email": email_clean,
     }
+
+class CheckEmailModel(BaseModel):
+    email: str
+
+
+@router.post("/check-email")
+async def check_email(data: CheckEmailModel):
+    """
+    فحص وجود الإيميل (بدون عرض بيانات المستخدم).
+    يُستخدم في "نسيت كلمة المرور" قبل إرسال إيميل Firebase.
+    
+    Returns:
+      - {"exists": true, "needs_completion": false}  → الإيميل موجود ومكتمل
+      - {"exists": true, "needs_completion": true}   → موجود لكن لم يكمل التسجيل
+      - {"exists": false}                             → غير مسجل
+    """
+    email = (data.email or "").strip().lower()
+    if not email:
+        return {"exists": False, "needs_completion": False}
+    
+    # 1) ابحث في users/{email}
+    doc = db.collection("users").document(email).get()
+    
+    # 2) لو مش موجود، ابحث في users/email_XXX
+    if not doc.exists:
+        doc = db.collection("users").document(_email_doc_id(email)).get()
+    
+    if not doc.exists:
+        return {"exists": False, "needs_completion": False}
+    
+    user_data = doc.to_dict() or {}
+    uid = (user_data.get("uid") or "").strip()
+    return {
+        "exists": True,
+        "needs_completion": uid == "",
+    }
 # ==========================================
 # ⭐ 2.6. إكمال التسجيل (بعد التحقق من الرقم)
 # ==========================================
@@ -2217,30 +2253,6 @@ async def cancel_registration(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-
-# ==========================================
-# 3. التحقق من كود الاستعادة (نسيت كلمة المرور)
-# ==========================================
-@router.post("/verify-reset")
-async def verify_reset(
-    email: str = Body(..., embed=True),
-    company_code: str = Body(..., embed=True),
-    job_code: str = Body(..., embed=True)
-):
-    try:
-        user_doc = db.collection("users").document(email.strip().lower()).get()
-        if not user_doc.exists:
-            raise HTTPException(status_code=404, detail="البريد غير مسجل")
-
-        user_data = user_doc.to_dict()
-        if (user_data.get("company_code") == company_code.strip() and
-            user_data.get("job_code") == job_code.strip()):
-            link = admin_auth.generate_password_reset_link(email)
-            return {"status": "success", "reset_link": link}
-        else:
-            raise HTTPException(status_code=401, detail="أكواد التحقق غير مطابقة")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ==========================================

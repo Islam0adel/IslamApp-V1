@@ -1,10 +1,10 @@
 import '../../core/theme.dart';
-// frontend\lib\views\auth\forgot_password_screen.dart
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart'; // هتحتاج تضيفها في pubspec.yaml لفتح الرابط
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../views/widgets/glass_card.dart';
-import '../../services/api_service.dart';
-
+import 'dart:convert';
+import '../../core/constants.dart';
+import '../../services/auth_http.dart';
 
 class ForgotPasswordScreen extends StatefulWidget {
   const ForgotPasswordScreen({super.key});
@@ -15,47 +15,123 @@ class ForgotPasswordScreen extends StatefulWidget {
 
 class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   final _emailController = TextEditingController();
-  final _compCodeController = TextEditingController();
-  final _jobCodeController = TextEditingController();
-  
   final _emailNode = FocusNode();
-  final _compNode = FocusNode();
-  final _jobNode = FocusNode();
 
-  final _apiService = ApiService();
   bool _isLoading = false;
-  String? _resetLink;
+  bool _emailSent = false;
 
-  void _handleVerify() async {
-    if (_emailController.text.isEmpty || _compCodeController.text.isEmpty || _jobCodeController.text.isEmpty) {
-      _showSnackBar('برجاء إدخال كافة البيانات المطلوبة', AppTheme.warningOrangeFor(context));
+  Future<void> _handleSend() async {
+    final email = _emailController.text.trim().toLowerCase();
+
+    if (email.isEmpty) {
+      _showSnackBar(
+        'برجاء إدخال البريد الإلكتروني',
+        AppTheme.warningOrangeFor(context),
+      );
       return;
     }
 
-    setState(() => _isLoading = true);
-    try {
-      final result = await _apiService.verifyAndGetResetLink(
-        email: _emailController.text.trim(),
-        companyCode: _compCodeController.text.trim(),
-        jobCode: _jobCodeController.text.trim(),
+    if (!RegExp(r'^[\w\.-]+@[\w\.-]+\.[a-zA-Z]{2,}$').hasMatch(email)) {
+      _showSnackBar(
+        'صيغة البريد الإلكتروني غير صحيحة',
+        AppTheme.warningOrangeFor(context),
       );
+      return;
+    }
 
-      setState(() {
-        _resetLink = result['reset_link'];
-      });
-      _showSnackBar('تم التحقق بنجاح، اضغط على الرابط بالأسفل', AppTheme.successStrongFor(context));
+    setState(() {
+      _isLoading = true;
+      _emailSent = false;
+    });
+
+    try {
+      // ⭐ 1) تحقق من وجود الإيميل عبر الباك (Admin SDK)
+      final response = await AuthHttp.post(
+        Uri.parse('${ApiConstants.baseUrl}/auth/check-email'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'email': email}),
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode != 200) {
+        throw 'تعذر التحقق من البريد. حاول مرة أخرى.';
+      }
+
+      final result = jsonDecode(response.body) as Map<String, dynamic>;
+      final exists = result['exists'] == true;
+      final needsCompletion = result['needs_completion'] == true;
+
+      if (!exists) {
+        _showSnackBar(
+          'لا يوجد حساب مسجل بهذا البريد الإلكتروني',
+          AppTheme.warningOrangeFor(context),
+        );
+        if (mounted) setState(() => _isLoading = false);
+        return;
+      }
+
+      if (needsCompletion) {
+        _showSnackBar(
+          'حسابك لم يكمل التسجيل بعد. يرجى التواصل مع الإدارة.',
+          AppTheme.warningOrangeFor(context),
+        );
+        if (mounted) setState(() => _isLoading = false);
+        return;
+      }
+
+      // ⭐ 2) البيانات صح → Firebase يبعت إيميل إعادة التعيين
+      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+
+      setState(() => _emailSent = true);
+
+      _showSnackBar(
+        '✅ تم إرسال إيميل إعادة تعيين كلمة المرور',
+        AppTheme.successStrongFor(context),
+      );
+    } on FirebaseAuthException catch (e) {
+      String msg;
+      switch (e.code) {
+        case 'user-not-found':
+          msg = 'لا يوجد حساب مسجل بهذا البريد. تأكد من إكمال التسجيل أولاً.';
+          break;
+        case 'invalid-email':
+          msg = 'صيغة البريد الإلكتروني غير صحيحة';
+          break;
+        case 'too-many-requests':
+          msg = 'محاولات كثيرة، حاول بعد قليل';
+          break;
+        case 'network-request-failed':
+          msg = 'خطأ في الاتصال بالشبكة. تحقق من اتصالك بالإنترنت.';
+          break;
+        default:
+          msg = 'تعذر إرسال الإيميل: ${e.message ?? e.code}';
+      }
+      _showSnackBar(msg, AppTheme.dangerFor(context));
     } catch (e) {
-      _showSnackBar(e.toString(), AppTheme.dangerFor(context));
+      _showSnackBar(
+        'تعذر إرسال الإيميل: $e',
+        AppTheme.dangerFor(context),
+      );
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   void _showSnackBar(String msg, Color color) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg, textAlign: TextAlign.center), backgroundColor: color),
+      SnackBar(
+        content: Text(msg, textAlign: TextAlign.center),
+        backgroundColor: color,
+      ),
     );
   }
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _emailNode.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -74,16 +150,27 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 25),
             child: Column(
               children: [
-                Icon(Icons.security_rounded, size: 80, color: AppTheme.textMainFor(context)),
+                Icon(
+                  Icons.security_rounded,
+                  size: 80,
+                  color: AppTheme.textMainFor(context),
+                ),
                 const SizedBox(height: 20),
                 Text(
-                  'استعادة الحساب',
-                  style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 28, fontWeight: FontWeight.bold),
+                  'استعادة كلمة المرور',
+                  style: TextStyle(
+                    color: AppTheme.textMainFor(context),
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  'أدخل البيانات بدقة',
-                  style: TextStyle(color: AppTheme.textSoftFor(context), fontSize: 14),
+                  'أدخل بريدك الإلكتروني وسنرسل لك رابط إعادة التعيين',
+                  style: TextStyle(
+                    color: AppTheme.textSoftFor(context),
+                    fontSize: 14,
+                  ),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 30),
@@ -91,66 +178,119 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                 GlassCard(
                   child: Column(
                     children: [
-                      _buildField(
-                        icon: Icons.email_outlined,
-                        label: 'البريد الإلكتروني',
-                        controller: _emailController,
-                        node: _emailNode,
-                        nextNode: _compNode,
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 15),
+                        child: TextField(
+                          controller: _emailController,
+                          focusNode: _emailNode,
+                          keyboardType: TextInputType.emailAddress,
+                          textInputAction: TextInputAction.done,
+                          onSubmitted: (_) => _handleSend(),
+                          style:
+                              TextStyle(color: AppTheme.textMainFor(context)),
+                          decoration: InputDecoration(
+                            prefixIcon: Icon(
+                              Icons.email_outlined,
+                              color: AppTheme.textSoftFor(context),
+                            ),
+                            labelText: 'البريد الإلكتروني',
+                            labelStyle: TextStyle(
+                              color: AppTheme.textSoftFor(context),
+                              fontSize: 14,
+                            ),
+                            filled: true,
+                            fillColor: AppTheme.inputFill(context),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(15),
+                              borderSide: BorderSide(
+                                color: AppTheme.inputBorder(context),
+                              ),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(15),
+                              borderSide: BorderSide(
+                                color: AppTheme.inputFocus(context),
+                              ),
+                            ),
+                          ),
+                        ),
                       ),
-                      _buildField(
-                        icon: Icons.business,
-                        label: 'كود الشركة',
-                        controller: _compCodeController,
-                        node: _compNode,
-                        nextNode: _jobNode,
-                      ),
-                      _buildField(
-                        icon: Icons.badge_outlined,
-                        label: 'كود الموظف (المستخدم)',
-                        controller: _jobCodeController,
-                        node: _jobNode,
-                        isLast: true,
-                      ),
-                      
-                      const SizedBox(height: 25),
+
+                      const SizedBox(height: 10),
 
                       _isLoading
-                          ? CircularProgressIndicator(color: Theme.of(context).colorScheme.onPrimary)
+                          ? CircularProgressIndicator(
+                              color: Theme.of(context).colorScheme.onPrimary,
+                            )
                           : SizedBox(
                               width: double.infinity,
                               child: ElevatedButton(
                                 style: ElevatedButton.styleFrom(
-                                  backgroundColor: AppTheme.authActionBackground(context),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                                  padding: const EdgeInsets.symmetric(vertical: 15),
+                                  backgroundColor:
+                                      AppTheme.authActionBackground(context),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(15),
+                                  ),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 15),
                                 ),
-                                onPressed: _handleVerify,
-                                child: Text('تحقق من البيانات', style: TextStyle(color: Theme.of(context).colorScheme.onPrimary, fontSize: 18)),
+                                onPressed: _handleSend,
+                                child: Text(
+                                  'إرسال إيميل إعادة التعيين',
+                                  style: TextStyle(
+                                    color:
+                                        Theme.of(context).colorScheme.onPrimary,
+                                    fontSize: 18,
+                                  ),
+                                ),
                               ),
                             ),
-                      
-                      // ظهور الرابط فقط بعد التحقق الناجح
-                      if (_resetLink != null) ...[
+
+                      if (_emailSent) ...[
                         const SizedBox(height: 20),
                         Divider(color: AppTheme.border(context)),
                         const SizedBox(height: 10),
-                        Text(
-                          'تم التحقق! اضغط على الزر بالأسفل لتغيير كلمة المرور:',
-                          style: TextStyle(color: AppTheme.successStrongFor(context), fontSize: 13),
-                          textAlign: TextAlign.center,
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: AppTheme.successStrongFor(context)
+                                .withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: AppTheme.successStrongFor(context)
+                                  .withValues(alpha: 0.3),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.mark_email_read_rounded,
+                                color: AppTheme.successStrongFor(context),
+                                size: 24,
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  'تم إرسال إيميل إعادة تعيين كلمة المرور.\n'
+                                  'افتح بريدك واضغط على الرابط في الإيميل.',
+                                  style: TextStyle(
+                                    color: AppTheme.successStrongFor(context),
+                                    fontSize: 13,
+                                    height: 1.5,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                        const SizedBox(height: 15),
-                        ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.successStrongFor(context).withValues(alpha: 0.85)),
-                          onPressed: () async {
-                              final Uri url = Uri.parse(_resetLink!); // تحويل النص لـ Uri
-                              if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
-                                _showSnackBar('تعذر فتح الرابط', AppTheme.dangerFor(context));
-                              }
-                            },
-                          icon: Icon(Icons.link, color: Theme.of(context).colorScheme.onPrimary),
-                          label: Text('فتح رابط التغيير', style: TextStyle(color: Theme.of(context).colorScheme.onPrimary)),
+                        const SizedBox(height: 10),
+                        Text(
+                          'لو مش لاقي الإيميل، تحقق من Spam أو Junk',
+                          style: TextStyle(
+                            color: AppTheme.textMutedFor(context),
+                            fontSize: 11,
+                          ),
+                          textAlign: TextAlign.center,
                         ),
                       ],
                     ],
@@ -159,40 +299,14 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                 const SizedBox(height: 20),
                 TextButton(
                   onPressed: () => Navigator.pop(context),
-                  child: Text('رجوع لتسجيل الدخول', style: TextStyle(color: AppTheme.textSoftFor(context))),
+                  child: Text(
+                    'رجوع لتسجيل الدخول',
+                    style: TextStyle(color: AppTheme.textSoftFor(context)),
+                  ),
                 ),
               ],
             ),
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildField({
-    required IconData icon,
-    required String label,
-    required TextEditingController controller,
-    required FocusNode node,
-    FocusNode? nextNode,
-    bool isLast = false,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 15),
-      child: TextField(
-        controller: controller,
-        focusNode: node,
-        style: TextStyle(color: AppTheme.textMainFor(context)),
-        textInputAction: isLast ? TextInputAction.done : TextInputAction.next,
-        onSubmitted: (_) => isLast ? _handleVerify() : FocusScope.of(context).requestFocus(nextNode),
-        decoration: InputDecoration(
-          prefixIcon: Icon(icon, color: AppTheme.textSoftFor(context)),
-          labelText: label,
-          labelStyle: TextStyle(color: AppTheme.textSoftFor(context), fontSize: 14),
-          filled: true,
-          fillColor: AppTheme.inputFill(context),
-          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide(color: AppTheme.inputBorder(context))),
-          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide(color: AppTheme.inputFocus(context))),
         ),
       ),
     );

@@ -59,7 +59,7 @@ final Completer<void> _wsConnectionFailedCompleter = Completer<void>();
 Completer<void>? _waitSyncCompleter;
 
 Future<void> waitForSyncToComplete({
-  Duration timeout = const Duration(seconds: 15),
+  Duration timeout = const Duration(seconds: 10),
 }) async {
   final startTime = DateTime.now();
   final endTime = startTime.add(timeout);
@@ -520,12 +520,12 @@ if (rememberMe && userName != null && companyCode != null) {
       //  • Offline → افتح فوراً
       // --------------------------------------------------------
       if (isOnline) {
-        print("⏳ ننتظر المزامنة (max 15s)...");
+        print("⏳ ننتظر المزامنة (max 10s)...");
         try {
           await Future.any([
             _initialSyncCompleter.future,
             _wsConnectionFailedCompleter.future,
-          ]).timeout(const Duration(seconds: 15));
+          ]).timeout(const Duration(seconds: 10));
           print("✅ المزامنة اكتملت أو الاتصال فشل — فتح التطبيق");
         } on TimeoutException {
           print("⏱️ 15s عدّت — فتح التطبيق بالبيانات الحالية");
