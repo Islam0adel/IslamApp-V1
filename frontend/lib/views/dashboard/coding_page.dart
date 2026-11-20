@@ -6,6 +6,10 @@ import '../../models/coding_model.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../../services/permissions_service.dart';
 
+extension _CodingFirstOrNull<T> on Iterable<T> {
+  T? get firstOrNull { final iterator = this.iterator; return iterator.moveNext() ? iterator.current : null; }
+}
+
 class CodingPage extends StatefulWidget {
   final String companyCode;
   const CodingPage({super.key, required this.companyCode});
@@ -31,10 +35,19 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
 
   String _selectedCategory = "items";
   String? _selectedType;
+  String? _selectedStoreBranch;
+  List<Map<String, String>> _storeBranches = [];
 
   @override
   void initState() {
     super.initState();
+    final rawBranches = Hive.box('coding_box').get('${widget.companyCode}_branches', defaultValue: []);
+    if (rawBranches is List) {
+      _storeBranches = rawBranches.whereType<Map>().map((e) => {
+        'code': e['code']?.toString() ?? '', 'name': e['name']?.toString() ?? '',
+      }).where((e) => e['code']!.isNotEmpty && PermissionsService().canAccessBranch(e['code']!)).toList();
+    }
+    _selectedStoreBranch = _storeBranches.firstOrNull?['code'];
     _wholesalePriceController.addListener(_calculateProfit);
     _sellingPriceController.addListener(_calculateProfit);
     _loadNextCode();
@@ -96,9 +109,14 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     bool canView = PermissionsService().canViewCoding;
-    bool canAdd = PermissionsService().canAddCodingItem;
+    bool canAdd = _canAddSelectedCategory();
+    bool canOpenAny = canView || PermissionsService().canAddCodingItem ||
+        PermissionsService().canAddStore || PermissionsService().canAddBranch ||
+        PermissionsService().canAddSafe || PermissionsService().canAddSupplier ||
+        PermissionsService().canAddCustomer || PermissionsService().canAddPaymentMethod ||
+        PermissionsService().canAddBank;
 
-    if (!canView && !canAdd) {
+    if (!canOpenAny) {
       return Scaffold(
         appBar: AppBar(
           title: Text("شاشة التكويد", style: TextStyle(fontFamily: 'Cairo', color: AppTheme.textMainFor(context))),
@@ -191,6 +209,15 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
                                 _buildField("الاسم / البيان", _nameController, Icons.edit),
                                 const SizedBox(height: 10),
                                 _buildField("الكود", _codeController, Icons.qr_code, enabled: true),
+                                if (_selectedCategory == "stores") ...[
+                                  const SizedBox(height: 10),
+                                  DropdownButtonFormField<String>(
+                                    initialValue: _storeBranches.any((e) => e['code'] == _selectedStoreBranch) ? _selectedStoreBranch : null,
+                                    decoration: const InputDecoration(labelText: 'الفرع التابع له المخزن'),
+                                    items: [const DropdownMenuItem(value: '', child: Text('كل الفروع (مخزن عام)')), ..._storeBranches.map((e) => DropdownMenuItem(value: e['code'], child: Text(e['name'] ?? '')))],
+                                    onChanged: (value) => setState(() => _selectedStoreBranch = value),
+                                  ),
+                                ],
                                 if (_selectedCategory == "types") ...[
                                   const SizedBox(height: 10),
                                   DropdownButtonFormField<String>(
@@ -264,6 +291,7 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
         if (_selectedCategory == cat && _isEditMode) return;
         setState(() {
           _selectedCategory = cat;
+          if (cat == 'stores' && _selectedStoreBranch == null) _selectedStoreBranch = _storeBranches.firstOrNull?['code'];
           _isEditMode = false;
           _clearControllers();
         });
@@ -341,7 +369,7 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
   }
 
   void _handleSave() async {
-    if (!PermissionsService().canAddCodingItem) {
+    if (!_canAddSelectedCategory()) {
       _showSnackBar("ليس لديك صلاحية للحفظ", AppTheme.warningOrangeFor(context));
       return;
     }
@@ -358,6 +386,10 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
       _showSnackBar("يرجى اختيار نوع التصنيف (وارد/صادر)", AppTheme.warningOrangeFor(context));
       return;
     }
+    if (_selectedCategory == "stores" && _selectedStoreBranch == null) {
+      _showSnackBar("يرجى اختيار الفرع التابع له المخزن", AppTheme.warningOrangeFor(context));
+      return;
+    }
 
     setState(() => _isLoading = true);
     try {
@@ -370,6 +402,7 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
       final newCodingItem = CodingModel(
         code: _codeController.text,
         name: _nameController.text,
+        branchCode: _selectedCategory == 'stores' && (_selectedStoreBranch ?? '').isNotEmpty ? _selectedStoreBranch : null,
         type: _selectedType ?? "وارد",
         barcode: _barcodeController.text,
         wholesalePrice: double.tryParse(_wholesalePriceController.text) ?? 0.0,
@@ -535,6 +568,9 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
                           if (_selectedCategory == "types") {
                             _selectedType = initialItems[i].type;
                           }
+                          if (_selectedCategory == "stores") {
+                            _selectedStoreBranch = initialItems[i].branchCode ?? '';
+                          }
                           if (_selectedCategory == "items") {
                             _barcodeController.text = initialItems[i].barcode;
                             _wholesalePriceController.text =
@@ -567,9 +603,22 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
     _profitMarginController.text = "0.00";
     _profitPercentController.text = "0.00 %";
     _selectedType = null;
+    if (_selectedCategory == 'stores') _selectedStoreBranch = _storeBranches.firstOrNull?['code'];
     _isEditMode = false;
 
 
+  }
+
+  bool _canAddSelectedCategory() {
+    final permissions = PermissionsService();
+    if (_selectedCategory == 'stores') return permissions.canAddStore;
+    if (_selectedCategory == 'branches') return permissions.canAddBranch;
+    if (_selectedCategory == 'safes') return permissions.canAddSafe;
+    if (_selectedCategory == 'suppliers') return permissions.canAddSupplier;
+    if (_selectedCategory == 'customers') return permissions.canAddCustomer;
+    if (_selectedCategory == 'payment_methods') return permissions.canAddPaymentMethod;
+    if (_selectedCategory == 'banks') return permissions.canAddBank;
+    return permissions.canAddCodingItem;
   }
 
   void _showSnackBar(String m, Color c) => ScaffoldMessenger.of(context).showSnackBar(

@@ -77,6 +77,7 @@ def serialize_coding(
         "id": doc.id,
         "company_code": doc.company_code,
         "category": doc.category,
+        "branch_code": doc.branch_code,
         "code": doc.code,
         "name": doc.name,
         "type": doc.type,
@@ -160,6 +161,7 @@ async def save_code(
 
             # تحديث البيانات
             existing.name = data.name
+            existing.branch_code = data.branch_code
             existing.type = data.type
             existing.barcode = data.barcode
 
@@ -209,6 +211,7 @@ async def save_code(
                 category=category,
                 code=code,
                 name=data.name,
+                branch_code=data.branch_code,
                 type=data.type or "وارد",
                 barcode=data.barcode or "",
                 wholesale_price=(

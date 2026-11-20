@@ -2,10 +2,10 @@
 
 class ApiConstants {
   // لما تحب تشتغل محلي (Local) فك التعليق عن السطر اللي تحت واقفل بتاع Hugging Face
-  // static const String baseUrl = "http://127.0.0.1:8000";
+  static const String baseUrl = "http://127.0.0.1:8000";
 
   // رابط Hugging Face (الرابط ده هو اللي هيكون شغال لما ترفع على Vercel)
-  static const String baseUrl = "https://islamadel-islam-app-api.hf.space";
+  // static const String baseUrl = "https://islamadel-islam-app-api.hf.space";
 
     /// ⭐ VAPID Key من Firebase Console → Project Settings
   /// → Cloud Messaging → Web Push certificates
@@ -19,4 +19,9 @@ class ApiConstants {
   static const String LAST_SYNC_CODING = 'last_sync_coding_';
   static const String LAST_SYNC_COMPANIES = 'last_sync_companies_';
   static const String LAST_SYNC_USERS = 'last_sync_users_';
+    // ⭐ Commercial Module
+  static const String LAST_SYNC_SALES = 'last_sync_sales_';
+  static const String LAST_SYNC_RETURNS = 'last_sync_returns_';
+  static const String LAST_SYNC_CUSTOMER_PAYMENTS = 'last_sync_customer_payments_';
+  static const String LAST_SYNC_TRANSFERS = 'last_sync_transfers_';
 }

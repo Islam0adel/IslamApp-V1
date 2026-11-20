@@ -33,6 +33,10 @@ class NotificationsService {
     'employee': 'hr_employees',
     // ⭐ طلبات الانضمام
     'registration_request': 'registration_requests',
+    'sale': 'sales',
+    'sale_return': 'sales_returns',
+    'customer_payment': 'customer_payments',
+    'stock_transfer': 'stock_transfers',
   };
 
   static const Map<String, String> _sectionNames = {
@@ -48,6 +52,10 @@ class NotificationsService {
     'hr_employees': 'بيانات الموظفين',
     // ⭐ جديد
     'registration_requests': 'طلبات الانضمام',
+    'sales': 'المبيعات والمرتجعات والتحصيلات والتحويلات',
+    'sales_returns': 'المبيعات والمرتجعات والتحصيلات والتحويلات',
+    'customer_payments': 'المبيعات والمرتجعات والتحصيلات والتحويلات',
+    'stock_transfers': 'المبيعات والمرتجعات والتحصيلات والتحويلات',
   };
 
   static const Map<String, String> _actionNames = {
@@ -60,9 +68,14 @@ class NotificationsService {
   Future<void>? _refreshInFlight;
   String? _refreshCompany;
 
-  bool _enabled(String section, String action) =>
-      _settings.get('enabled_$section', defaultValue: true) == true &&
-      _settings.get('event_$action', defaultValue: true) == true;
+  bool _enabled(String section, String action) {
+    const commercialSections = {
+      'sales', 'sales_returns', 'customer_payments', 'stock_transfers'
+    };
+    final defaultEnabled = !commercialSections.contains(section);
+    return _settings.get('enabled_$section', defaultValue: defaultEnabled) == true &&
+        _settings.get('event_$action', defaultValue: true) == true;
+  }
 
   Future<void> handleSyncEvent(Map<String, dynamic> event) async {
   try {
@@ -169,6 +182,14 @@ class NotificationsService {
         return ps.canShowCoding;
       case 'inventory':
         return ps.canShowInventory;
+      case 'sales':
+        return ps.hasPermission('المبيعات', 'معاينة') || ps.hasPermission('المبيعات', 'إضافة');
+      case 'sales_returns':
+        return ps.hasPermission('المرتجعات', 'معاينة') || ps.hasPermission('المرتجعات', 'إضافة');
+      case 'customer_payments':
+        return ps.hasPermission('حسابات العملاء', 'معاينة') || ps.hasPermission('حسابات العملاء', 'إضافة تحصيل');
+      case 'stock_transfers':
+        return ps.hasPermission('التحويلات المخزنية', 'معاينة') || ps.hasPermission('التحويلات المخزنية', 'إضافة');
       // ✅ HR
       case 'hr_attendance':
         return ps.canOpenAttendancePage || ps.canAddAttendance;
@@ -481,7 +502,12 @@ class NotificationsService {
   }
 
   Future<void> setSectionEnabled(String section, bool value) async {
-    await _settings.put('enabled_$section', value);
+    final keys = section == 'commercial'
+        ? const ['sales', 'sales_returns', 'customer_payments', 'stock_transfers']
+        : [section];
+    for (final key in keys) {
+      await _settings.put('enabled_$key', value);
+    }
     await _saveRemoteSettings();
   }
 
@@ -490,7 +516,13 @@ class NotificationsService {
     await _saveRemoteSettings();
   }
 
-  bool sectionEnabled(String section) => _settings.get('enabled_$section', defaultValue: true) == true;
+  bool sectionEnabled(String section) {
+    if (section == 'commercial') {
+      return const ['sales', 'sales_returns', 'customer_payments', 'stock_transfers']
+          .every((key) => _settings.get('enabled_$key', defaultValue: false) == true);
+    }
+    return _settings.get('enabled_$section', defaultValue: true) == true;
+  }
   bool eventEnabled(String event) => _settings.get('event_$event', defaultValue: true) == true;
 
   Future<void> _resetAndLoadSettings() async {

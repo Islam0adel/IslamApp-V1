@@ -82,8 +82,8 @@ class SupplierService {
           continue;
         }
 
-        if (map['supplier_name']?.toString() !=
-            supplierName) {
+if (map['supplier_name']?.toString().trim() !=
+            supplierName.trim()) {
           continue;
         }
 
@@ -122,14 +122,18 @@ class SupplierService {
           continue;
         }
 
-        if (map['supplier_name']?.toString() !=
-            supplierName) {
+        if (map['supplier_name']?.toString().trim() !=
+            supplierName.trim()) {
           continue;
         }
 
         balance -=
             _toDouble(map['amount']);
       }
+    }
+
+    if (balance.abs() < 0.0001) {
+      balance = 0.0;
     }
 
     return balance;

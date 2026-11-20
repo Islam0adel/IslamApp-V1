@@ -17,6 +17,7 @@ import '../../services/permissions_service.dart';
 import '../../views/dashboard/inventory_page.dart';
 import 'stock_balance_page.dart';
 import 'suppliers_dashboard_page.dart';
+import 'commercial_pages.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'notifications_page.dart';
 import 'product_lookup_page.dart';
@@ -1210,6 +1211,18 @@ class _HomePageState extends State<HomePage>
   Widget _buildMenuGrid() {
     List<Widget> menuItems = [];
 
+    if (_permissionsLoaded && PermissionsService().canShowSales) {
+      menuItems.add(_menuItem(
+        'المبيعات والعملاء', Icons.point_of_sale_rounded,
+        AppTheme.successFor(context),
+        () => Navigator.push(context, MaterialPageRoute(builder: (_) => SalesDashboardPage(
+          companyCode: widget.companyCode,
+          branchCode: _selectedBranchCode,
+          userName: widget.userName,
+        ))),
+      ));
+    }
+
     if (_permissionsLoaded && PermissionsService().canShowTreasury) {
       menuItems.add(
         _menuItem(
@@ -1525,8 +1538,8 @@ class _HomePageState extends State<HomePage>
     }
 
     // ✅ 2) انتظر 500ms عشان الـ RTDB write يتأكد من السيرفر
-    // (important: signOut قد يقطع الاتصال قبل ما الـ write يوصل)
     await Future.delayed(const Duration(milliseconds: 500));
+    // ... باقي الكود زي ما هو
 
     // 3) امسح prefs
     final prefs = await SharedPreferences.getInstance();
@@ -1553,6 +1566,7 @@ class _HomePageState extends State<HomePage>
       (route) => false,
     );
   }
+  
 
   @override
   void dispose() {

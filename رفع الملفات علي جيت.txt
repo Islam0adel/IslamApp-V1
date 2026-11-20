@@ -85,3 +85,17 @@ flutter build web --release
 cd build/web
 python -m http.server 8080
 وبعدين افتح http://localhost:8080 في المتصفح.
+ـــــــــــــــــــــــــــــــــــــــــــــــــــــــــــــ
+عشان اعرف انا علي اي فرع ف المشروع
+git status --short --branch
+
+عشان تنقل لـ main:
+
+git switch main
+
+وعشان ترجع لـ development:
+
+git switch development
+
+عشان تعمل فرع جديد
+git switch -c  حط هنا اسم الفرع الجديد

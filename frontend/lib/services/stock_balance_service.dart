@@ -2,6 +2,7 @@
 
 import 'package:hive_flutter/hive_flutter.dart';
 import '../models/inventory_model.dart';
+import 'commercial_service.dart';
 
 class StockBalanceService {
   static Future<List<Map<String, dynamic>>> calculateBalances({
@@ -10,9 +11,16 @@ class StockBalanceService {
     required String storeCode,
     required DateTime toDate,
   }) async {
+    await CommercialService().refreshStockEvents(companyCode);
     final inventoryBox = Hive.box('inventory_box');
     final supplierBox = Hive.box('supplier_box');
     final codingBox = Hive.box('coding_box');
+    final salesBox = Hive.box('sales_box');
+    final returnsBox = Hive.box('sales_returns_box');
+    final transfersBox = Hive.box('stock_transfers_box');
+    final commercialEventBox = Hive.box('commercial_stock_events_box');
+    final rawCommercialEvents = commercialEventBox.get(companyCode);
+    final hasCommercialSnapshot = rawCommercialEvents is List;
 
     final selectedDay = DateTime(toDate.year, toDate.month, toDate.day);
 
@@ -166,6 +174,98 @@ class StockBalanceService {
       ));
     }
 
+    if (hasCommercialSnapshot) {
+      for (final value in rawCommercialEvents) {
+        if (value is! Map) continue;
+        final record = Map<String, dynamic>.from(value);
+        if (record['company_code']?.toString() != companyCode ||
+            record['branch_code']?.toString() != branchCode ||
+            record['store_code']?.toString() != storeCode) continue;
+        final date = DateTime.tryParse(record['date']?.toString() ?? '');
+        if (date == null || DateTime(date.year, date.month, date.day).isAfter(selectedDay)) continue;
+        events.add(_StockEvent(date: date, priority: 3, type: 'commercial', data: {
+          'items': record['items'],
+          'positive': record['positive'] == true,
+        }));
+      }
+    }
+
+    void addCommercialEvents(Box box, String eventType, bool positive) {
+      for (final key in box.keys) {
+        final raw = box.get(key);
+        if (raw is! List) continue;
+        for (final value in raw) {
+          if (value is! Map) continue;
+          final record = Map<String, dynamic>.from(value);
+          if (_toBool(record['is_deleted']) || record['company_code']?.toString() != companyCode) continue;
+          if (record['branch_code']?.toString() != branchCode || record['store_code']?.toString() != storeCode) continue;
+          final date = DateTime.tryParse(record['date']?.toString() ?? '');
+          if (date == null || DateTime(date.year, date.month, date.day).isAfter(selectedDay)) continue;
+          events.add(_StockEvent(date: date, priority: 3, type: eventType, data: {'items': record['items'], 'positive': positive}));
+        }
+      }
+    }
+
+    // Sales reduce stock; customer returns restore it in the selected store.
+    if (!hasCommercialSnapshot) {
+      addCommercialEvents(salesBox, 'commercial', false);
+      addCommercialEvents(returnsBox, 'commercial', true);
+    } else {
+      // Apply this device's unsynchronized operations on top of the last server snapshot.
+      void addPendingEvents(Box box, bool positive) {
+        for (final raw in box.values.whereType<List>().expand((items) => items)) {
+          if (raw is! Map) continue;
+          final record = Map<String, dynamic>.from(raw);
+          if (record['sync_status'] != 'pending' && record['sync_status'] != 'error') continue;
+          if (record['is_deleted'] == true || record['company_code']?.toString() != companyCode ||
+              record['branch_code']?.toString() != branchCode || record['store_code']?.toString() != storeCode) continue;
+          final date = DateTime.tryParse(record['date']?.toString() ?? '');
+          if (date == null || DateTime(date.year, date.month, date.day).isAfter(selectedDay)) continue;
+          events.add(_StockEvent(date: date, priority: 3, type: 'commercial', data: {
+            'items': record['items'], 'positive': positive,
+          }));
+        }
+      }
+      addPendingEvents(salesBox, false);
+      addPendingEvents(returnsBox, true);
+      for (final raw in transfersBox.values.whereType<List>().expand((items) => items)) {
+        if (raw is! Map) continue;
+        final transfer = Map<String, dynamic>.from(raw);
+        if (transfer['sync_status'] != 'pending' && transfer['sync_status'] != 'error') continue;
+        if (transfer['is_deleted'] == true || transfer['company_code']?.toString() != companyCode) continue;
+        final date = DateTime.tryParse(transfer['date']?.toString() ?? '');
+        if (date == null || DateTime(date.year, date.month, date.day).isAfter(selectedDay)) continue;
+        final outgoing = transfer['from_branch_code']?.toString() == branchCode && transfer['from_store_code']?.toString() == storeCode;
+        final incoming = transfer['to_branch_code']?.toString() == branchCode && transfer['to_store_code']?.toString() == storeCode;
+        if (outgoing || incoming) {
+          events.add(_StockEvent(date: date, priority: 3, type: 'commercial', data: {
+            'items': transfer['items'], 'positive': incoming,
+          }));
+        }
+      }
+    }
+
+    if (!hasCommercialSnapshot) {
+
+    // Each transfer appears as an outgoing or incoming event for the selected
+    // branch/store. It is never treated as a purchase or sale.
+    for (final key in transfersBox.keys) {
+      final raw = transfersBox.get(key);
+      if (raw is! List) continue;
+      for (final value in raw) {
+        if (value is! Map) continue;
+        final transfer = Map<String, dynamic>.from(value);
+        if (_toBool(transfer['is_deleted']) || transfer['company_code']?.toString() != companyCode) continue;
+        final date = DateTime.tryParse(transfer['date']?.toString() ?? '');
+        if (date == null || DateTime(date.year, date.month, date.day).isAfter(selectedDay)) continue;
+        final isOutgoing = transfer['from_branch_code']?.toString() == branchCode && transfer['from_store_code']?.toString() == storeCode;
+        final isIncoming = transfer['to_branch_code']?.toString() == branchCode && transfer['to_store_code']?.toString() == storeCode;
+        if (!isOutgoing && !isIncoming) continue;
+        events.add(_StockEvent(date: date, priority: 3, type: 'commercial', data: {'items': transfer['items'], 'positive': isIncoming}));
+      }
+    }
+    }
+
     events.sort((a, b) {
       final dateCompare = a.date.compareTo(b.date);
       if (dateCompare != 0) return dateCompare;
@@ -207,6 +307,22 @@ class StockBalanceService {
           if (item.retailPrice > 0) {
             retailPrices[code] = item.retailPrice;
           }
+        }
+        continue;
+      }
+
+      if (event.type == 'commercial') {
+        final commercial = event.data as Map<String, dynamic>;
+        final rawItems = commercial['items'];
+        if (rawItems is! List) continue;
+        final sign = commercial['positive'] == true ? 1.0 : -1.0;
+        for (final rawProduct in rawItems) {
+          if (rawProduct is! Map) continue;
+          final product = Map<String, dynamic>.from(rawProduct);
+          final code = product['code']?.toString() ?? '';
+          if (code.isEmpty) continue;
+          final qty = _toDouble(product['quantity']);
+          balances[code] = (balances[code] ?? 0.0) + sign * qty.abs();
         }
         continue;
       }

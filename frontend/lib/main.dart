@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'core/constants.dart';
 import 'services/permissions_service.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -6,24 +7,25 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'services/employee_service.dart';   // ← NEW
-import 'services/fcm_service.dart';   // ⭐ FCM
+import 'services/employee_service.dart';
+import 'services/fcm_service.dart';
 import 'core/theme.dart';
-import 'services/hr_service.dart';   // ← NEW (موحد)
+import 'services/hr_service.dart';
 import 'views/auth/login_screen.dart';
 import 'views/auth/phone_entry_screen.dart';
 import 'views/dashboard/home_page.dart';
 import 'views/auth/forgot_password_screen.dart';
 import 'views/auth/verify_email_screen.dart';
 import 'firebase_options.dart';
-import 'services/deep_link_service.dart';   // ⭐ Deep Link
-import 'core/navigator_key.dart';           // ⭐ Global NavigatorKey
+import 'services/deep_link_service.dart';
+import 'core/navigator_key.dart';
 import 'services/global_sync_service.dart';
 import 'services/daily_service.dart';
 import 'services/supplier_service.dart';
 import 'services/inventory_service.dart';
 import 'services/coding_service.dart';
 import 'services/supplier_settlement_service.dart';
+import 'services/commercial_service.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:universal_html/html.dart' as html;
 import 'services/company_service.dart';
@@ -55,8 +57,6 @@ final Completer<void> _initialSyncCompleter = Completer<void>();
 
 // ⭐ يخلص لما WebSocket يفشل في الاتصال (سيرفر واقع)
 final Completer<void> _wsConnectionFailedCompleter = Completer<void>();
-// ⭐ آلية انتظار المزامنة للاستخدام من شاشات تانية (زي LoginScreen)
-Completer<void>? _waitSyncCompleter;
 
 Future<void> waitForSyncToComplete({
   Duration timeout = const Duration(seconds: 10),
@@ -66,21 +66,15 @@ Future<void> waitForSyncToComplete({
 
   print('⏳ waitForSyncToComplete: بداية الانتظار (max ${timeout.inSeconds}s)');
 
-  // ══════════════════════════════════════════════════════════
   // المرحلة 1: انتظر لحد ما sync تبدأ
-  // (لأن initializeGlobalListener بيبدأ WebSocket async،
-  //  والـ sync مش هتبدأ غير بعد ما auth_success يرجع)
-  // ══════════════════════════════════════════════════════════
   bool syncStarted = false;
   while (DateTime.now().isBefore(endTime)) {
-    // لو sync بدأت → ننتقل للمرحلة 2
     if (_isSyncing) {
       syncStarted = true;
       print('✅ sync بدأت — ننتقل لانتظار الانتهاء');
       break;
     }
 
-    // لو WebSocket فشل → مفيش sync هتيجي
     if (_wsConnectionFailedCompleter.isCompleted) {
       print('⚠️ WebSocket failed — مفيش sync هتيجي، فتح فوراً');
       return;
@@ -94,9 +88,7 @@ Future<void> waitForSyncToComplete({
     return;
   }
 
-  // ══════════════════════════════════════════════════════════
   // المرحلة 2: انتظر لحد ما sync تخلص (أو timeout)
-  // ══════════════════════════════════════════════════════════
   while (_isSyncing && DateTime.now().isBefore(endTime)) {
     await Future.delayed(const Duration(milliseconds: 200));
   }
@@ -113,10 +105,11 @@ Future<void> waitForSyncToComplete({
 // ============================================================
 // Sync Manager — Batching
 //
-// الترتيب:
-//   Batch 1: [اليوميات, التسويات, التكويد]   — 3 parallel
-//   Batch 2: [الموظفين, HR, الموردين]         — 3 parallel
-//   Batch 3: [الجرد]                          — 1
+//   Batch 1: [اليوميات, التسويات, التكويد]
+//   Batch 2: [الموظفين, HR, الموردين]
+//   Batch 2.5: [الشركات (Super Admin), المستخدمين (Admin)]
+//   Batch 3: [الجرد]
+//   Batch 3.5: [المبيعات + المرتجعات + العملاء + التحويلات]
 //   retryPending → الأرصدة
 // ============================================================
 
@@ -154,7 +147,7 @@ Future<void> syncAllDataIfNeeded(String companyCode) async {
       }
     }
 
-    // ⭐ helper: sync قسم مخصص (زي HR اللي بيدير lastSync بنفسه)
+    // ⭐ helper: sync قسم مخصص
     Future<void> syncOneCustom({
       required String name,
       required Future<void> Function() runner,
@@ -226,9 +219,6 @@ Future<void> syncAllDataIfNeeded(String companyCode) async {
 
     // ──────────────────────────────────────────────────────
     // ⭐ مزامنة الشركات — للسوبر أدمن فقط
-    //
-    // الشركات "بيانات خاصة بالسوبر أدمن" — مش بتنزل عند أي حد تاني.
-    // الأدمن والموظفين مش بيعملوا sync للشركات (بياناتهم بتوصل من user.company_code)
     // ──────────────────────────────────────────────────────
     if (PermissionsService().isSuperAdmin) {
       print("📦 [Super Admin] مزامنة الشركات...");
@@ -242,11 +232,6 @@ Future<void> syncAllDataIfNeeded(String companyCode) async {
 
     // ──────────────────────────────────────────────────────
     // ⭐ مزامنة المستخدمين — للأدمن فقط (شركته فقط)
-    //
-    // الأدمن: عنده صلاحية إدارة مستخدمين شركته → نجيبهم مع الـ sync
-    // السوبر أدمن: بيجيب مستخدمي أي شركة عند فتح "إدارة المستخدمين"
-    //              (مش بنجيب "كل المستخدمين من كل الشركات" في الـ sync عشان قائمة ضخمة)
-    // الموظف العادي: مش بيعمل sync للمستخدمين خالص
     // ──────────────────────────────────────────────────────
     if (PermissionsService().currentRole == 'admin') {
       print("📦 [Admin] مزامنة مستخدمي شركته...");
@@ -257,7 +242,6 @@ Future<void> syncAllDataIfNeeded(String companyCode) async {
         print("  ❌ المستخدمين: $e");
       }
     }
-
 
     // ──────────────────────────────────────────────────────
     // Batch 3: [الجرد]
@@ -274,7 +258,62 @@ Future<void> syncAllDataIfNeeded(String companyCode) async {
     ]);
 
     // ──────────────────────────────────────────────────────
-    // retryPending
+    // ⭐ Batch 3.5a: push pending FIRST (قبل pull)
+    //
+    // ترتيب مهم:
+    //   1) push pending → السيرفر محدّث
+    //   2) pull changes → بيمنع تكرار نفس السجلات
+    // ──────────────────────────────────────────────────────
+    try {
+      await CommercialService().syncPending(companyCode);
+      print("  ✅ Commercial pending pushed");
+    } catch (e) {
+      print("  ❌ Commercial pending: $e");
+    }
+
+    // ──────────────────────────────────────────────────────
+    // Batch 3.5: [المبيعات + المرتجعات + تحصيلات العملاء + التحويلات]
+    // ──────────────────────────────────────────────────────
+    print("📦 Batch 3.5: [المبيعات + المرتجعات + العملاء + التحويلات]");
+    await Future.wait([
+      syncOneWithLastSync(
+        name: 'المبيعات',
+        lastSyncKey: '${ApiConstants.LAST_SYNC_SALES}$companyCode',
+        full: () => CommercialService().fetchAll('sales', companyCode),
+        incremental: (since) =>
+            CommercialService().syncChangesFromServer(
+                'sales', companyCode, since),
+      ),
+      syncOneWithLastSync(
+        name: 'المرتجعات',
+        lastSyncKey: '${ApiConstants.LAST_SYNC_RETURNS}$companyCode',
+        full: () => CommercialService().fetchAll('returns', companyCode),
+        incremental: (since) =>
+            CommercialService().syncChangesFromServer(
+                'returns', companyCode, since),
+      ),
+      syncOneWithLastSync(
+        name: 'تحصيلات العملاء',
+        lastSyncKey:
+            '${ApiConstants.LAST_SYNC_CUSTOMER_PAYMENTS}$companyCode',
+        full: () =>
+            CommercialService().fetchAll('customer-payments', companyCode),
+        incremental: (since) =>
+            CommercialService().syncChangesFromServer(
+                'customer-payments', companyCode, since),
+      ),
+      syncOneWithLastSync(
+        name: 'التحويلات المخزنية',
+        lastSyncKey: '${ApiConstants.LAST_SYNC_TRANSFERS}$companyCode',
+        full: () => CommercialService().fetchAll('transfers', companyCode),
+        incremental: (since) =>
+            CommercialService().syncChangesFromServer(
+                'transfers', companyCode, since),
+      ),
+    ]);
+
+    // ──────────────────────────────────────────────────────
+    // retryPending (HR)
     // ──────────────────────────────────────────────────────
     try {
       await HRService().retryAllPending(companyCode);
@@ -305,23 +344,16 @@ Future<void> syncAllDataIfNeeded(String companyCode) async {
     if (!_initialSyncCompleter.isCompleted) {
       _initialSyncCompleter.complete();
     }
-
-    // ⭐ إشارة لأي شاشة منتظرة (زي LoginScreen)
-    if (_waitSyncCompleter != null && !_waitSyncCompleter!.isCompleted) {
-      _waitSyncCompleter!.complete();
-    }
   }
 }
 
 // ============================================================
 // تشغيل Global Sync
-//
-// WebSocket عند الاتصال أو إعادة الاتصال
-// يطلب مزامنة مركزية واحدة.
 // ============================================================
 
 void initializeGlobalListener(String companyCode) {
   print("🌐 طلب تشغيل المزامنة للشركة: $companyCode");
+  CommercialService.startBackgroundSync(companyCode);
 
   // ربط الـ callback مرة واحدة فقط
   _syncService.onWebSocketConnected ??= () {
@@ -332,7 +364,7 @@ void initializeGlobalListener(String companyCode) {
     );
   };
 
-  // ⭐ جديد: WebSocket فشل → إشارة فورية
+  // ⭐ WebSocket فشل → إشارة فورية
   _syncService.onWebSocketConnectionFailed ??= () {
     print("⚠️ WebSocket connection failed — signaling main()");
 
@@ -383,7 +415,6 @@ Future<void> main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  // ⭐ تهيئة FCM (Service Worker مسجل في index.html)
   await FcmService.instance.initialize();
 
   // ==========================================================
@@ -398,12 +429,20 @@ Future<void> main() async {
   await Hive.openBox('supplier_box');
   await Hive.openBox('supplier_settlement_box');
 
+  // ⭐ Commercial boxes
+  await Hive.openBox('sales_box');
+  await Hive.openBox('sales_returns_box');
+  await Hive.openBox('customer_payments_box');
+  await Hive.openBox('stock_transfers_box');
+  await Hive.openBox('commercial_stock_events_box');
+  await Hive.openBox('commercial_pending_box');
+
   await Hive.openBox('notifications_box');
   await Hive.openBox('notification_settings_box');
   await Hive.openBox('product_lookup_box');
-   // ✅ HR: طابور العمليات المعلقة (بدل الذاكرة)
   await Hive.openBox('hr_pending_box');
-    // ⭐ Boxes جديدة — Companies + Users
+
+  // ⭐ Companies + Users boxes
   await Hive.openBox('companies_box');
   await Hive.openBox('users_box');
 
@@ -425,33 +464,22 @@ Future<void> main() async {
 
   Widget initialScreen;
 
-if (rememberMe && userName != null && companyCode != null) {
+  if (rememberMe && userName != null && companyCode != null) {
     // --------------------------------------------------------
-    // ✅ تحميل الصلاحيات أولاً (سريع — من Hive)
-    //
-    // لماذا؟
-    // - يضمن إن الصلاحيات جاهزة قبل ما WebSocket يستقبل أي event
-    // - يمنع إشعارات تظهر لمستخدمين مش مصرح لهم في أول ثانية
-    // - يمنع إشعارات مصرح لهم تضيع (لأن الصلاحيات = null)
-    //
-    // الأثر: يضيف ~50-70ms لزمن بدء التطبيق (مقبول جدًا)
+    // تحميل الصلاحيات أولاً (سريع — من Hive)
     // --------------------------------------------------------
     await PermissionsService().loadPermissions();
 
-    // ⭐ بعد loadPermissions، الدور محمّل تلقائياً من prefs
     final savedRole = prefs.getString('role');
     if (savedRole != null && savedRole.isNotEmpty) {
       PermissionsService().setRole(savedRole);
     }
 
-    // ⭐ استعادة تسجيل جهاز FCM
     unawaited(FcmService.instance.restoreRegistrationIfEnabled());
-
-    // ⭐ Deep Link Service (يستمع لرسائل SW + URL param)
     DeepLinkService.instance.initialize();
 
     // --------------------------------------------------------
-    // ⭐ فحص التحقق من الإيميل قبل فتح HomePage
+    // فحص التحقق من الإيميل
     // --------------------------------------------------------
     bool needsEmailVerification = false;
     String currentEmail = '';
@@ -461,7 +489,6 @@ if (rememberMe && userName != null && companyCode != null) {
         await currentUser.reload();
         currentEmail = currentUser.email ?? '';
         if (!currentUser.emailVerified && currentEmail.isNotEmpty) {
-          // فحص هل الحساب يحتاج تحقق (مستخدم جديد) أم لا (مستخدم قديم)
           try {
             final userDoc = await FirebaseFirestore.instance
                 .collection('users')
@@ -472,9 +499,7 @@ if (rememberMe && userName != null && companyCode != null) {
               needsEmailVerification =
                   userDoc.data()?['requires_email_verification'] == true;
             }
-          } catch (_) {
-            // offline → نفترض الحساب قديم (لا نحجب)
-          }
+          } catch (_) {}
         }
       }
     } catch (e) {
@@ -482,25 +507,14 @@ if (rememberMe && userName != null && companyCode != null) {
     }
 
     if (needsEmailVerification) {
-      // ⭐ يحتاج تحقق → شاشة التحقق (بدون WebSocket)
       initialScreen = VerifyEmailScreen(email: currentEmail);
     } else {
       // --------------------------------------------------------
-      // تشغيل WebSocket
-      //
-      // عند نجاح الاتصال:
-      // onWebSocketConnected
-      // ↓
-      // syncAllDataIfNeeded
-      // --------------------------------------------------------
-      // --------------------------------------------------------
-      // ⭐ فحص الإنترنت فوراً (بدون انتظار)
+      // فحص الإنترنت فوراً
       // --------------------------------------------------------
       bool isOnline = true;
       if (kIsWeb) {
         try {
-          // ⭐ navigator.onLine بيرجع bool? (nullable)
-          // بناخد القيمة بـ ?? true يعني لو null نعتبره online
           final onlineValue = html.window.navigator.onLine;
           isOnline = onlineValue ?? true;
           print("🌐 navigator.onLine = $onlineValue → isOnline = $isOnline");
@@ -510,13 +524,13 @@ if (rememberMe && userName != null && companyCode != null) {
       }
 
       // --------------------------------------------------------
-      // تشغيل WebSocket (في الخلفية — بدون انتظار)
+      // تشغيل WebSocket
       // --------------------------------------------------------
       initializeGlobalListener(companyCode);
 
       // --------------------------------------------------------
-      // ⭐ منطق الانتظار:
-      //  • Online → استنى: (المزامنة تخلص) أو (WebSocket يفشل) أو (15s)
+      // منطق الانتظار:
+      //  • Online → استنى: (المزامنة تخلص) أو (WebSocket يفشل) أو (10s)
       //  • Offline → افتح فوراً
       // --------------------------------------------------------
       if (isOnline) {
@@ -528,7 +542,7 @@ if (rememberMe && userName != null && companyCode != null) {
           ]).timeout(const Duration(seconds: 10));
           print("✅ المزامنة اكتملت أو الاتصال فشل — فتح التطبيق");
         } on TimeoutException {
-          print("⏱️ 15s عدّت — فتح التطبيق بالبيانات الحالية");
+          print("⏱️ 10s عدّت — فتح التطبيق بالبيانات الحالية");
         } catch (e) {
           print("⚠️ خطأ أثناء الانتظار: $e — فتح التطبيق");
         }
@@ -542,9 +556,9 @@ if (rememberMe && userName != null && companyCode != null) {
         companyCode: companyCode,
       );
     }
-} else {
+  } else {
     initialScreen = const LoginScreen();
-}
+  }
 
   // ==========================================================
   // تشغيل التطبيق
@@ -586,31 +600,15 @@ class IslamApp extends StatefulWidget {
 // ============================================================
 
 class _IslamAppState extends State<IslamApp> with WidgetsBindingObserver {
-  late ThemeMode _themeMode; // ✅ بدون قيمة ابتدائية
-
-  // منع تكرار فحص الاستئناف إذا كان فحص سابق لا يزال يعمل.
+  late ThemeMode _themeMode;
   bool _resumeSyncInProgress = false;
-
-  // // منع أحداث الاستئناف المتكررة خلال فترة قصيرة.
-  // DateTime? _lastResumeSyncAt;
-
-  // ==========================================================
-  // Init
-  // ==========================================================
 
   @override
   void initState() {
     super.initState();
-
-    // ✅ استخدام الثيم المحفوظ من SharedPreferences
     _themeMode = widget.initialThemeMode;
-
     WidgetsBinding.instance.addObserver(this);
   }
-
-  // ==========================================================
-  // App Lifecycle
-  // ==========================================================
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -622,57 +620,54 @@ class _IslamAppState extends State<IslamApp> with WidgetsBindingObserver {
   // ==========================================================
   // Sync عند رجوع التطبيق
   // ==========================================================
+  Future<void> _syncWhenAppResumes() async {
+    if (_resumeSyncInProgress || _isSyncing) return;
 
-  
-Future<void> _syncWhenAppResumes() async {
-  // لو فيه مزامنة أو فحص سابق شغال، لا تبدأ طلبًا جديدًا.
-  if (_resumeSyncInProgress || _isSyncing) return;
+    _resumeSyncInProgress = true;
 
-  _resumeSyncInProgress = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
 
-  try {
-    final prefs = await SharedPreferences.getInstance();
+      final bool rememberMe = prefs.getBool('remember_me') ?? false;
+      final String? companyCode = prefs.getString('company_code');
 
-    final bool rememberMe = prefs.getBool('remember_me') ?? false;
-    final String? companyCode = prefs.getString('company_code');
+      if (!rememberMe || companyCode == null || companyCode.isEmpty) {
+        return;
+      }
 
-    if (!rememberMe || companyCode == null || companyCode.isEmpty) {
-      return;
+      // ⭐ لو WebSocket متصل → syncPending بس (توفير bandwidth)
+      if (_syncService.isConnected &&
+          _syncService.currentCompanyCode == companyCode) {
+        print("✅ WebSocket متصل؛ جاري syncPending فقط...");
+        try {
+          await CommercialService().syncPending(companyCode);
+          print("  ✅ Commercial pending synced (resume)");
+        } catch (e) {
+          print("  ⚠️ Commercial pending (resume): $e");
+        }
+        return;
+      }
+
+      // WebSocket غير متصل → أعد الاتصال (بيبدأ sync كامل عند النجاح)
+      print("🔌 WebSocket غير متصل؛ جاري إعادة الاتصال");
+      initializeGlobalListener(companyCode);
+    } catch (e) {
+      print("❌ تعذر التحقق من اتصال المزامنة بعد العودة: $e");
+    } finally {
+      _resumeSyncInProgress = false;
     }
-
-    // لو WebSocket متصل بالفعل، لا تشغّل مزامنة إضافية
-    // لمجرد الرجوع للمتصفح؛ المزامنة اللحظية مستمرة.
-    if (_syncService.isConnected &&
-        _syncService.currentCompanyCode == companyCode) {
-      print("✅ WebSocket متصل؛ لا حاجة لمزامنة عند الرجوع للمتصفح");
-      return;
-    }
-
-    // لو الاتصال غير متاح، أعد تشغيله فقط.
-    // المزامنة ستبدأ من callback عند نجاح الاتصال.
-    print("🔌 WebSocket غير متصل؛ جاري إعادة الاتصال");
-    initializeGlobalListener(companyCode);
-  } catch (e) {
-    print("❌ تعذر التحقق من اتصال المزامنة بعد العودة: $e");
-  } finally {
-    _resumeSyncInProgress = false;
   }
-}
-
 
   // ==========================================================
   // Theme
   // ==========================================================
-
   void changeTheme(ThemeMode themeMode) async {
     setState(() {
       _themeMode = themeMode;
     });
 
-    // ✅ حفظ الاختيار على الجهاز
     try {
       final prefs = await SharedPreferences.getInstance();
-
       await prefs.setString(
         'theme_mode',
         themeMode == ThemeMode.light ? 'light' : 'dark',
@@ -685,26 +680,22 @@ Future<void> _syncWhenAppResumes() async {
   // ==========================================================
   // Dispose
   // ==========================================================
-
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-
     disposeGlobalListener();
-
     super.dispose();
   }
 
   // ==========================================================
   // Build
   // ==========================================================
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'IslamApp V1.0',
       debugShowCheckedModeBanner: false,
-      navigatorKey: appNavigatorKey,   // ⭐ Deep Linking
+      navigatorKey: appNavigatorKey,
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: _themeMode,

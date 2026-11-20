@@ -988,6 +988,43 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
         'تصدير': false,
       },
 
+      'المبيعات': {
+        'إضافة': false,
+        'تعديل': false,
+        'حذف': false,
+        'معاينة': false,
+        'تغيير سعر البيع': false,
+        'عرض سعر الجملة': false,
+        'طباعة': false,
+        'مشاركة': false,
+        'تصدير': false,
+      },
+      'المرتجعات': {
+        'إضافة': false,
+        'تعديل': false,
+        'حذف': false,
+        'معاينة': false,
+        'طباعة': false,
+      },
+      'حسابات العملاء': {
+        'معاينة': false,
+        'إضافة تحصيل': false,
+        'تعديل تحصيل': false,
+        'حذف تحصيل': false,
+        'عرض الأرصدة': false,
+      },
+      'التحويلات المخزنية': {
+        'إضافة': false,
+        'تعديل': false,
+        'حذف': false,
+        'معاينة': false,
+        'تصدير': false,
+      },
+      'أرصدة خزائن المبيعات': {
+        'معاينة': false,
+        'تصدير': false,
+      },
+
       // ========================================================
       // التقارير
       // ========================================================
@@ -1423,6 +1460,26 @@ bool get canViewExtendedReport => hasPermission('التقارير', 'التقر�
         'رصيد المخزون',
         'معاينة',
       );
+
+  bool get canAddSale => hasPermission('المبيعات', 'إضافة');
+  bool get canEditSale => hasPermission('المبيعات', 'تعديل');
+  bool get canDeleteSale => hasPermission('المبيعات', 'حذف');
+  bool get canViewSales => hasPermission('المبيعات', 'معاينة');
+  bool get canChangeSellingPrice => hasPermission('المبيعات', 'تغيير سعر البيع');
+  bool get canViewWholesaleInSale => hasPermission('المبيعات', 'عرض سعر الجملة');
+  bool get canAddSaleReturn => hasPermission('المرتجعات', 'إضافة');
+  bool get canViewSaleReturns => hasPermission('المرتجعات', 'معاينة');
+  bool get canEditSaleReturn => hasPermission('المرتجعات', 'تعديل');
+  bool get canDeleteSaleReturn => hasPermission('المرتجعات', 'حذف');
+  bool get canAddCustomerPayment => hasPermission('حسابات العملاء', 'إضافة تحصيل');
+  bool get canViewCustomerBalances => hasPermission('حسابات العملاء', 'عرض الأرصدة');
+  bool get canViewCustomerPayments => hasPermission('حسابات العملاء', 'معاينة');
+  bool get canAddStockTransfer => hasPermission('التحويلات المخزنية', 'إضافة');
+  bool get canViewStockTransfers => hasPermission('التحويلات المخزنية', 'معاينة');
+  bool get canEditStockTransfer => hasPermission('التحويلات المخزنية', 'تعديل');
+  bool get canDeleteStockTransfer => hasPermission('التحويلات المخزنية', 'حذف');
+  bool get canViewSalesTreasuries => hasPermission('أرصدة خزائن المبيعات', 'معاينة');
+  bool get canShowSales => canAddSale || canViewSales || canAddSaleReturn || canViewSaleReturns || canAddCustomerPayment || canViewCustomerBalances || canViewCustomerPayments || canViewSalesTreasuries;
 
   bool get canViewStockWholesalePrice =>
       hasPermission(

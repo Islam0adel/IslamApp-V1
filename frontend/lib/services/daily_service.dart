@@ -602,6 +602,10 @@ final String effectiveSince =
     required String type,
     String? employee,
     required String branchCode,
+    String? linkId,
+    String? supplierName,
+    bool addToSettlement = false,
+    bool unlinkSettlement = false,
   }) async {
     try {
       final response = await AuthHttp.post(
@@ -643,6 +647,10 @@ final String effectiveSince =
 
           'branch_code':
               branchCode,
+          'link_id': linkId,
+          'supplier_name': supplierName,
+          'add_to_settlement': addToSettlement,
+          'unlink_settlement': unlinkSettlement,
         }),
       );
 
@@ -672,6 +680,9 @@ final String effectiveSince =
       final int assignedSerial =
           (result['serial'] as num?)?.toInt() ??
               serial;
+      final String? assignedLinkId = unlinkSettlement
+          ? null
+          : (result['link_id']?.toString() ?? linkId);
 
 
       // --------------------------------------------------------
@@ -710,6 +721,10 @@ final String effectiveSince =
 
         'branch_code':
             branchCode,
+        'link_id': assignedLinkId,
+        'add_to_settlement': addToSettlement,
+        'supplier_name': unlinkSettlement ? null : supplierName,
+        'unlink_settlement': unlinkSettlement,
 
         'is_deleted':
             false,
@@ -736,10 +751,37 @@ final String effectiveSince =
         transactionData,
       );
 
+      final linkedRaw = result['linked_settlement'];
+      if (linkedRaw is Map) {
+        final linked = Map<String, dynamic>.from(linkedRaw);
+        final settlementBox = Hive.box('supplier_settlement_box');
+        final settlementKey = '${linked['company_code']}_${linked['branch_code']}_${linked['date']}';
+        for (final oldKey in settlementBox.keys.toList()) {
+          final rawList = settlementBox.get(oldKey);
+          if (rawList is! List) continue;
+          final list = rawList.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+          list.removeWhere((e) => e['doc_id']?.toString() == linked['doc_id']?.toString());
+          if (list.isEmpty) {
+            await settlementBox.delete(oldKey);
+          } else if (list.length != rawList.length) {
+            await settlementBox.put(oldKey, list);
+          }
+        }
+        if (linked['is_deleted'] != true) {
+          final rawList = settlementBox.get(settlementKey);
+          final list = rawList is List
+              ? rawList.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
+              : <Map<String, dynamic>>[];
+          list.add(linked);
+          await settlementBox.put(settlementKey, list);
+        }
+      }
+
 
       return {
         "success": true,
         "serial": assignedSerial,
+        "link_id": assignedLinkId,
       };
     } catch (e) {
       throw Exception(
@@ -1100,6 +1142,15 @@ final String effectiveSince =
     String branchCode,
   ) async {
     try {
+      String? linkedSettlementId;
+      for (final raw in _transactionBox.values) {
+        if (raw is Map && raw['company_code']?.toString() == companyCode &&
+            raw['branch_code']?.toString() == branchCode &&
+            raw['serial']?.toString() == serial.toString()) {
+          linkedSettlementId = raw['link_id']?.toString();
+          break;
+        }
+      }
       final response =
           await AuthHttp.delete(
         Uri.parse(
@@ -1132,6 +1183,18 @@ final String effectiveSince =
       await _transactionBox.delete(
         docId,
       );
+      if (linkedSettlementId != null && linkedSettlementId.isNotEmpty) {
+        final settlementBox = Hive.box('supplier_settlement_box');
+        for (final key in settlementBox.keys.toList()) {
+          final raw = settlementBox.get(key);
+          if (raw is! List) continue;
+          final list = raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+          for (final item in list.where((e) => e['link_id']?.toString() == linkedSettlementId)) {
+            item['is_deleted'] = true;
+          }
+          await settlementBox.put(key, list);
+        }
+      }
 
 
       // --------------------------------------------------------

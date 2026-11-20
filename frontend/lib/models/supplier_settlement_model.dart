@@ -13,6 +13,9 @@ class SupplierSettlementModel {
   String employee;
 
   String? docId;
+  String? linkId;
+  bool addToDaily;
+  bool unlinkDaily;
   DateTime updatedAt;
   bool isDeleted;
 
@@ -28,6 +31,9 @@ class SupplierSettlementModel {
     required this.statement,
     required this.employee,
     this.docId,
+    this.linkId,
+    this.addToDaily = false,
+    this.unlinkDaily = false,
     DateTime? updatedAt,
     this.isDeleted = false,
   }) : updatedAt = updatedAt ?? DateTime.now();
@@ -46,6 +52,9 @@ class SupplierSettlementModel {
         'updated_at': updatedAt.toUtc().toIso8601String(),
         'is_deleted': isDeleted,
         if (docId != null) 'doc_id': docId,
+        'add_to_daily': addToDaily,
+        'unlink_daily': unlinkDaily,
+        if (linkId != null) 'link_id': linkId,
       };
 
   factory SupplierSettlementModel.fromMap(
@@ -73,6 +82,8 @@ class SupplierSettlementModel {
       statement: map['statement']?.toString() ?? '',
       employee: map['employee']?.toString() ?? 'غير محدد',
       docId: map['doc_id']?.toString(),
+      linkId: map['link_id']?.toString(),
+      addToDaily: map['link_id'] != null && map['link_id'].toString().isNotEmpty,
       updatedAt: updated,
       isDeleted: _toBool(map['is_deleted']),
     );

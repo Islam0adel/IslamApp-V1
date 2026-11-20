@@ -6,6 +6,8 @@ import 'supplier_page.dart';
 import 'supplier_history_page.dart';
 import 'supplier_settlement_page.dart';
 import 'supplier_settlement_history_page.dart';
+import 'commercial_pages.dart';
+import '../../services/permissions_service.dart';
 
 class SuppliersDashboardPage extends StatelessWidget {
   final String companyCode;
@@ -54,7 +56,7 @@ class SuppliersDashboardPage extends StatelessWidget {
             padding: const EdgeInsets.all(16.0),
             child: ListView(
               children: [
-                const SizedBox(height: 16),
+
                 // ✅ زر المشتريات (صفحة الموردين الحالية)
                 _buildDashboardCard(
                   context,
@@ -137,6 +139,33 @@ _buildDashboardCard(
   },
 ),
                 const SizedBox(height: 20),
+                                const SizedBox(height: 16),
+
+                if (PermissionsService().canAddStockTransfer)
+                  _buildDashboardCard(
+                    context,
+                    icon: Icons.swap_horiz_rounded,
+                    title: 'التحويلات المخزنية',
+                    subtitle: 'نقل أصناف بين فروع ومخازن الشركة',
+                    color: AppTheme.extraTealFor(context),
+                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => StockTransfersPage(
+                      companyCode: companyCode, branchCode: selectedBranchCode, userName: userName,
+                    ))),
+                  ),
+                if (PermissionsService().canViewStockTransfers) ...[
+                  const SizedBox(height: 16),
+                  _buildDashboardCard(
+                    context,
+                    icon: Icons.history_rounded,
+                    title: 'معاينة التحويلات المخزنية',
+                    subtitle: 'عرض حركات النقل بين الفروع والمخازن',
+                    color: AppTheme.accentFor(context),
+                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CommercialHistoryPage(
+                      companyCode: companyCode, kind: 'transfers', title: 'معاينة التحويلات المخزنية', branchCode: selectedBranchCode,
+                    ))),
+                  ),
+                  const SizedBox(height: 16),
+                ],
               ],
             ),
           ),

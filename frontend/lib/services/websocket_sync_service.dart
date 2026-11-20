@@ -491,6 +491,18 @@ void _handleMessage(dynamic message) {
           ),
         );
         break;
+      case 'sale':
+        unawaited(_updateCommercialBox('sales_box', payload, isDelete));
+        break;
+      case 'sale_return':
+        unawaited(_updateCommercialBox('sales_returns_box', payload, isDelete));
+        break;
+      case 'customer_payment':
+        unawaited(_updateCommercialBox('customer_payments_box', payload, isDelete));
+        break;
+      case 'stock_transfer':
+        unawaited(_updateCommercialBox('stock_transfers_box', payload, isDelete));
+        break;
             // ======================================================
       // حضور HR
       // ======================================================
@@ -557,8 +569,52 @@ void _handleMessage(dynamic message) {
 
 
   Future<void> _processNotificationEvent(Map<String, dynamic> event) async {
+    if (event['suppress_notification'] == true) return;
     // الحدث الحالي يُحفظ محليًا فورًا؛ سجل Neon يُحدّث عند فتح الصفحة أو إعادة الاتصال فقط.
     await NotificationsService.instance.handleSyncEvent(event);
+  }
+
+  Future<void> _updateCommercialBox(String name, Map<String, dynamic> payload, bool isDelete) async {
+    await Hive.box('commercial_stock_events_box').delete('${payload['company_code']}_synced_at');
+    final box = Hive.box(name);
+    final id = payload['id']?.toString() ?? '';
+    if (id.isEmpty) return;
+    const kindsByBox = {
+      'sales_box': 'sales',
+      'sales_returns_box': 'returns',
+      'customer_payments_box': 'customer-payments',
+      'stock_transfers_box': 'transfers',
+    };
+    final kind = kindsByBox[name];
+    if (kind != null && Hive.isBoxOpen('commercial_pending_box')) {
+      final pending = Hive.box('commercial_pending_box').get('$kind:$id');
+      if (pending is Map) return;
+    }
+    for (final key in box.keys.toList()) {
+      final raw = box.get(key);
+      if (raw is! List) continue;
+      final list = raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+      list.removeWhere((e) => e['id']?.toString() == id);
+      if (list.isEmpty) {
+        await box.delete(key);
+      } else {
+        await box.put(key, list);
+      }
+    }
+    if (isDelete) return;
+    final company = payload['company_code']?.toString() ?? '';
+    final date = payload['date']?.toString() ?? '';
+    final branch = name == 'stock_transfers_box'
+        ? payload['from_branch_code']?.toString() ?? ''
+        : payload['branch_code']?.toString() ?? '';
+    final key = '${company}_${branch}_$date';
+    final raw = box.get(key);
+    final list = raw is List
+        ? raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
+        : <Map<String, dynamic>>[];
+    payload['is_deleted'] = false;
+    list.add(payload);
+    await box.put(key, list);
   }
 
   // ============================================================

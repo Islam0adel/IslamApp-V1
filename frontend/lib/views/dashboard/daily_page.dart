@@ -11,6 +11,7 @@ import 'daily_history_page.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'treasury_transfer_page.dart';
 import '../../services/permissions_service.dart'; // ✅ استيراد خدمة الصلاحيات
+import '../../services/supplier_settlement_service.dart';
 
 
 class DailyPage extends StatefulWidget {
@@ -36,6 +37,7 @@ class DailyPage extends StatefulWidget {
 class _DailyPageState extends State<DailyPage> with WidgetsBindingObserver { // ✅ إضافة WidgetsBindingObserver للاستماع لعودة التطبيق
   final DailyService _dailyService = DailyService();
   final CodingService _codingService = CodingService();
+  final SupplierSettlementService _settlementService = SupplierSettlementService();
 
   final _amountController = TextEditingController();
 
@@ -55,6 +57,9 @@ void _onAmountChanged() {
   int _currentSerial = 1;
   String? _selectedTreasury;
   String? _selectedCategory;
+  String? _selectedSupplierForGoods;
+  bool _linkGoodsToSettlement = false;
+  List<String> _supplierNames = [];
 
   List<Map<String, dynamic>> _treasuries = [];
   List<Map<String, dynamic>> _categories = [];
@@ -81,6 +86,8 @@ void _onAmountChanged() {
       _currentSerial = widget.editItem!['serial'] ?? 1;
       _selectedTreasury = widget.editItem!['treasury'];
       _selectedCategory = widget.editItem!['category'];
+      _linkGoodsToSettlement = widget.editItem!['link_id']?.toString().isNotEmpty == true;
+      _selectedSupplierForGoods = widget.editItem!['supplier_name']?.toString();
     } else {
       _amountController.clear();
       _statementController.clear();
@@ -199,6 +206,22 @@ void _onAmountChanged() {
 
 
       final Box codingBox = Hive.box('coding_box');
+      final rawSuppliers = codingBox.get('${widget.companyCode}_suppliers');
+      if (rawSuppliers is List) {
+        _supplierNames = rawSuppliers.whereType<Map>()
+            .map((e) => e['name']?.toString() ?? '')
+            .where((e) => e.isNotEmpty).toList();
+      }
+      if (_supplierNames.isEmpty) {
+        try {
+          final suppliers = await _codingService.getCodingList(
+            companyCode: widget.companyCode,
+            category: 'suppliers',
+          );
+          _supplierNames = suppliers.map((e) => e.name)
+              .where((name) => name.trim().isNotEmpty).toList();
+        } catch (_) {}
+      }
       List<Map<String, dynamic>> safesList = [];
       List<Map<String, dynamic>> typesList = [];
 
@@ -554,6 +577,31 @@ _buildSecondaryActions(),
             ],
           ),
           const SizedBox(height: 15),
+if (_selectedCategory?.trim() == 'بضاعة') ...[
+            Material(
+              color: Colors.transparent,
+              child: SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(
+                  'إضافة إذن تلقائي في تسويات الموردين',
+                  style: TextStyle(
+                    color: AppTheme.textMainFor(context),
+                    fontFamily: 'Cairo',
+                  ),
+                ),
+                value: _linkGoodsToSettlement,
+                onChanged: enabled ? (v) => setState(() => _linkGoodsToSettlement = v) : null,
+              ),
+            ),
+            if (_linkGoodsToSettlement)
+              DropdownButtonFormField<String>(
+                initialValue: _supplierNames.contains(_selectedSupplierForGoods) ? _selectedSupplierForGoods : null,
+                decoration: const InputDecoration(labelText: 'المورد'),
+                items: _supplierNames.map((name) => DropdownMenuItem(value: name, child: Text(name))).toList(),
+                onChanged: enabled ? (v) => setState(() => _selectedSupplierForGoods = v) : null,
+              ),
+            const SizedBox(height: 15),
+          ],
           _buildTextField(_statementController, "البيان", Icons.description, enabled: enabled),
           const SizedBox(height: 15),
           _buildDatePicker(enabled: enabled),
@@ -607,6 +655,11 @@ _buildSecondaryActions(),
       _showSnackBar("برجاء إدخال مبلغ صحيح أكبر من الصفر", AppTheme.warningOrangeFor(context));
       return;
     }
+    if (_selectedCategory?.trim() == 'بضاعة' && _linkGoodsToSettlement &&
+        (_selectedSupplierForGoods == null || !_supplierNames.contains(_selectedSupplierForGoods))) {
+      _showSnackBar('اختر المورد لربط الإذن بالتسويات', AppTheme.warningOrangeFor(context));
+      return;
+    }
 
     setState(() => _isLoading = true);
     try {
@@ -625,6 +678,13 @@ _buildSecondaryActions(),
         type: currentType,
         branchCode: widget.selectedBranchCode ?? 'all',    // تمرير كود الفرع (وليس الاسم)
         employee: widget.userName ?? "غير معروف",
+        linkId: widget.editItem?['link_id']?.toString() ??
+            (_linkGoodsToSettlement ? _settlementService.newLinkId() : null),
+        supplierName: _selectedCategory?.trim() == 'بضاعة' && _linkGoodsToSettlement
+            ? _selectedSupplierForGoods : null,
+        addToSettlement: _selectedCategory?.trim() == 'بضاعة' && _linkGoodsToSettlement,
+        unlinkSettlement: widget.editItem?['link_id']?.toString().isNotEmpty == true &&
+            !(_selectedCategory?.trim() == 'بضاعة' && _linkGoodsToSettlement),
       );
 
       if (mounted) {

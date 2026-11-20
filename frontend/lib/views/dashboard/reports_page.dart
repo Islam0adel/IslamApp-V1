@@ -15,6 +15,7 @@ import '../../views/widgets/glass_card.dart';
 import '../../services/permissions_service.dart';
 import '../../services/export_service.dart';
 import '../../services/stock_balance_service.dart';
+import '../../services/commercial_service.dart';
 
 class ReportsPage extends StatefulWidget {
   final String companyCode;
@@ -1526,12 +1527,53 @@ class _ReportsPageState extends State<ReportsPage> {
     final previousSupplierBalances = await _getExtendedSupplierBalances(from.subtract(const Duration(days: 1)));
     final supplierTotal = _extendedSupplierBalances.fold<double>(0, (s, e) => s + (e['الرصيد'] as double));
     final previousSupplierTotal = previousSupplierBalances.fold<double>(0, (s, e) => s + (e['الرصيد'] as double));
-    final customerTotal = 0.0;
-    final totalDebit = _extendedInventoryValue + currentCash + customerTotal;
+    double customerTotal = 0.0;
+    double previousCustomerTotal = 0.0;
+    double salesTreasuryTotal = 0.0;
+    double previousSalesTreasuryTotal = 0.0;
+    if (PermissionsService().canViewCustomerBalances) {
+      try {
+        final service = CommercialService();
+        final branch = widget.selectedBranchCode;
+        final currentCustomers = await service.customerBalances(
+          widget.companyCode,
+          branchCode: branch,
+          toDate: DateFormat('yyyy-MM-dd').format(to),
+        );
+        final previousCustomers = await service.customerBalances(
+          widget.companyCode,
+          branchCode: branch,
+          toDate: DateFormat('yyyy-MM-dd').format(from.subtract(const Duration(days: 1))),
+        );
+        customerTotal = currentCustomers.fold<double>(0, (sum, e) => sum + (e['balance'] as num).toDouble());
+        previousCustomerTotal = previousCustomers.fold<double>(0, (sum, e) => sum + (e['balance'] as num).toDouble());
+      } catch (e) {
+        debugPrint('تعذر تحميل رصيد العملاء للتقرير: $e');
+      }
+    }
+    if (PermissionsService().canViewSalesTreasuries) {
+      try {
+        final service = CommercialService();
+        final branch = widget.selectedBranchCode;
+        final currentBalances = await service.treasuryBalances(
+          widget.companyCode, branchCode: branch,
+          toDate: DateFormat('yyyy-MM-dd').format(to),
+        );
+        final previousBalances = await service.treasuryBalances(
+          widget.companyCode, branchCode: branch,
+          toDate: DateFormat('yyyy-MM-dd').format(from.subtract(const Duration(days: 1))),
+        );
+        salesTreasuryTotal = currentBalances.values.fold<double>(0, (a, b) => a + b);
+        previousSalesTreasuryTotal = previousBalances.values.fold<double>(0, (a, b) => a + b);
+      } catch (e) {
+        debugPrint('تعذر تحميل أرصدة خزائن المبيعات للتقرير: $e');
+      }
+    }
+    final totalDebit = _extendedInventoryValue + currentCash + customerTotal + salesTreasuryTotal;
     final totalCredit = supplierTotal;
     final currentNet = totalDebit - totalCredit;
     final previousInventoryValue = await _getTotalInventoryWholesale(from.subtract(const Duration(days: 1)));
-    final previousNet = previousInventoryValue + previousCash - previousSupplierTotal;
+    final previousNet = previousInventoryValue + previousCash + previousCustomerTotal + previousSalesTreasuryTotal - previousSupplierTotal;
     final netProfit = currentNet - previousNet;
     final profitDistributed = expenseByCategory['ارباح'] ?? expenseByCategory['أرباح'] ?? 0.0;
     final remainingAfterProfit = netProfit - profitDistributed;
@@ -1558,6 +1600,7 @@ class _ReportsPageState extends State<ReportsPage> {
         'الرصيد المتبقي': currentCash,
         'الجرد الفعلي بسعر الجملة': _extendedInventoryValue,
         'أرصدة العملاء غير المحصلة': customerTotal,
+        'أرصدة خزائن المبيعات': salesTreasuryTotal,
         'إجمالي ملك الشركة': totalDebit,
         'إجمالي ما على الشركة': totalCredit,
         'صافي الجرد الحالي': currentNet,

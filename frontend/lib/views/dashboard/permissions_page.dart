@@ -305,6 +305,17 @@ class _PermissionsPageState extends State<PermissionsPage> {
         'استيراد': false,
         'تصدير': false,
       },
+      'المبيعات': {
+        'إضافة': false, 'تعديل': false, 'حذف': false, 'معاينة': false,
+        'تغيير سعر البيع': false, 'عرض سعر الجملة': false, 'طباعة': false, 'مشاركة': false, 'تصدير': false,
+      },
+      'المرتجعات': {'إضافة': false, 'تعديل': false, 'حذف': false, 'معاينة': false, 'طباعة': false},
+      'حسابات العملاء': {
+        'معاينة': false, 'إضافة تحصيل': false, 'تعديل تحصيل': false,
+        'حذف تحصيل': false, 'عرض الأرصدة': false,
+      },
+      'التحويلات المخزنية': {'إضافة': false, 'تعديل': false, 'حذف': false, 'معاينة': false, 'تصدير': false},
+      'أرصدة خزائن المبيعات': {'معاينة': false, 'تصدير': false},
       'التقارير': {
         'تقرير المبيعات': false,
         'تقرير فترة': false,
@@ -878,8 +889,8 @@ class _PermissionsPageState extends State<PermissionsPage> {
     return Directionality(
       textDirection: TextDirection.rtl,
       child: DefaultTabController(
-        // ✅ عدد التبويبات الفعلي = 9
-        length: 9,
+        // عدد التبويبات يجب أن يطابق TabBar و TabBarView.
+        length: 14,
         child: Scaffold(
           extendBodyBehindAppBar: true,
           body: Stack(
@@ -1245,6 +1256,11 @@ class _PermissionsPageState extends State<PermissionsPage> {
                                 text:
                                     'حركة الجرد',
                               ),
+                              const Tab(text: 'المبيعات'),
+                              const Tab(text: 'المرتجعات'),
+                              const Tab(text: 'حسابات العملاء'),
+                              const Tab(text: 'التحويلات المخزنية'),
+                              const Tab(text: 'أرصدة خزائن المبيعات'),
                               Tab(
                                 text:
                                     'التقارير',
@@ -1281,6 +1297,11 @@ class _PermissionsPageState extends State<PermissionsPage> {
                                 buildPermissionsTab(
                                   'حركة الجرد',
                                 ),
+                                buildPermissionsTab('المبيعات'),
+                                buildPermissionsTab('المرتجعات'),
+                                buildPermissionsTab('حسابات العملاء'),
+                                buildPermissionsTab('التحويلات المخزنية'),
+                                buildPermissionsTab('أرصدة خزائن المبيعات'),
                                 buildPermissionsTab(
                                   'التقارير',
                                 ),

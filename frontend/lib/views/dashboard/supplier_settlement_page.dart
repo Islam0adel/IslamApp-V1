@@ -51,6 +51,7 @@ class _SupplierSettlementPageState
   // ============================================================
 
   String? _selectedSupplier;
+  bool _addSettlementToDaily = false;
   String? _selectedTreasury;
   String _selectedPaymentMethod = 'نقدي';
   String _currentUserName = 'غير محدد';
@@ -177,6 +178,7 @@ class _SupplierSettlementPageState
   ) async {
     _currentSerial = item.serial;
     _selectedSupplier = item.supplierName;
+    _addSettlementToDaily = item.linkId?.isNotEmpty == true;
     _selectedTreasury = item.treasury;
     _selectedPaymentMethod = item.paymentMethod;
     _amountController.text = item.amount.toString();
@@ -355,6 +357,10 @@ class _SupplierSettlementPageState
       statement: _statementController.text,
       employee: employeeName,
       docId: widget.editItem?.docId,
+      linkId: widget.editItem?.linkId ??
+          (_addSettlementToDaily ? _service.newLinkId() : null),
+      addToDaily: _addSettlementToDaily,
+      unlinkDaily: widget.editItem?.linkId?.isNotEmpty == true && !_addSettlementToDaily,
     );
 
     final result = await _service.saveSettlement(model);
@@ -681,6 +687,30 @@ class _SupplierSettlementPageState
                       await _loadBalance();
                     }
                   : null,
+            ),
+
+            Material(
+              color: Colors.transparent,
+              child: SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(
+                  'إضافة إذن في حركة الخزينة',
+                  style: TextStyle(
+                    color: AppTheme.textMainFor(context),
+                    fontFamily: 'Cairo',
+                  ),
+                ),
+                subtitle: Text(
+                  'التصنيف: بضاعة، ويُخصم المبلغ من رصيد الخزينة',
+                  style: TextStyle(
+                    color: AppTheme.textSoftFor(context),
+                    fontFamily: 'Cairo',
+                    fontSize: 12,
+                  ),
+                ),
+                value: _addSettlementToDaily,
+                onChanged: enabled ? (value) => setState(() => _addSettlementToDaily = value) : null,
+              ),
             ),
 
             const SizedBox(height: 10),

@@ -145,6 +145,11 @@ class _InventoryPageState extends State<InventoryPage> {
 
       _stores = rawStores
           .whereType<Map>()
+          .where((e) {
+            final assigned = e['branch_code']?.toString() ?? '';
+            return assigned.isEmpty || _selectedBranchCode == null ||
+                _selectedBranchCode == 'all' || assigned == _selectedBranchCode;
+          })
           .map(
             (e) => {
               'code': e['code']?.toString() ?? '',

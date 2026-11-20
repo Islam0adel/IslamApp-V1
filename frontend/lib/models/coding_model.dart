@@ -3,6 +3,7 @@
 class CodingModel {
   final String code;
   final String name;
+  final String? branchCode;
 
   // لـ types: وارد / صادر
   final String type;
@@ -25,6 +26,7 @@ class CodingModel {
   CodingModel({
     required this.code,
     required this.name,
+    this.branchCode,
 
     this.type = "وارد",
 
@@ -53,6 +55,8 @@ class CodingModel {
 
       name:
           map['name']?.toString() ?? '',
+
+      branchCode: map['branch_code']?.toString(),
 
       type:
           map['type']?.toString() ??
@@ -102,6 +106,7 @@ class CodingModel {
     return {
       'code': code,
       'name': name,
+      if (branchCode != null) 'branch_code': branchCode,
 
       'type': type,
       'barcode': barcode,

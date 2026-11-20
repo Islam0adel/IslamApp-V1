@@ -3,7 +3,7 @@
 import 'dart:convert';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
+import 'daily_service.dart';
 import '../core/constants.dart';
 import '../models/supplier_settlement_model.dart';
 import 'auth_http.dart';
@@ -11,6 +11,8 @@ import 'auth_http.dart';
 class SupplierSettlementService {
   final String baseUrl = ApiConstants.baseUrl;
   final Box _box = Hive.box('supplier_settlement_box');
+
+  String newLinkId() => 'supplier-${DateTime.now().microsecondsSinceEpoch}';
 
   // ============================================================
   // هل الفرع = كل الفروع؟
@@ -159,12 +161,42 @@ int _getNextSerial(String companyCode, String branchCode) {
       if (result['serial'] is num) {
         model.serial = (result['serial'] as num).toInt();
       }
+      if (model.unlinkDaily) model.linkId = null;
 
       // --------------------------------------------------------
       // حفظ محلي
       // --------------------------------------------------------
 
       await _saveLocal(model);
+
+final linkedRaw = result['linked_transaction'];
+      if (linkedRaw is Map) {
+        final linked = Map<String, dynamic>.from(linkedRaw);
+        final dailyBox = Hive.box('daily_transactions_box');
+        final key = 'branch_${linked['branch_code']}_${linked['serial']}';
+        for (final oldKey in dailyBox.keys.toList()) {
+          final old = dailyBox.get(oldKey);
+          if (old is Map && old['link_id']?.toString() == linked['link_id']?.toString()) {
+            await dailyBox.delete(oldKey);
+          }
+        }
+        if (linked['is_deleted'] != true) {
+          await dailyBox.put(key, linked);
+        }
+
+        final String targetBranch =
+            linked['branch_code']?.toString() ?? model.branchCode;
+        await DailyService().getDailySummaryLocal(
+          model.companyCode,
+          branchCode: targetBranch,
+        );
+        if (!_isAllBranches(targetBranch)) {
+          await DailyService().getDailySummaryLocal(
+            model.companyCode,
+            branchCode: 'all',
+          );
+        }
+      }
 
       return {
         'success': true,
@@ -301,6 +333,13 @@ int _getNextSerial(String companyCode, String branchCode) {
   String docId,
 ) async {
   try {
+    String? linkedDailyId;
+    for (final raw in _box.values.whereType<List>().expand((items) => items)) {
+      if (raw is Map && raw['doc_id']?.toString() == docId) {
+        linkedDailyId = raw['link_id']?.toString();
+        break;
+      }
+    }
     final response = await AuthHttp.delete(
       Uri.parse(
         '$baseUrl/supplier-settlement/delete/'
@@ -360,6 +399,16 @@ int _getNextSerial(String companyCode, String branchCode) {
       }
 
       break;
+    }
+
+    if (linkedDailyId != null && linkedDailyId.isNotEmpty) {
+      final dailyBox = Hive.box('daily_transactions_box');
+      for (final key in dailyBox.keys.toList()) {
+        final raw = dailyBox.get(key);
+        if (raw is Map && raw['link_id']?.toString() == linkedDailyId) {
+          await dailyBox.delete(key);
+        }
+      }
     }
 
     return true;

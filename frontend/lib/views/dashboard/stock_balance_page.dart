@@ -70,7 +70,9 @@ class _StockBalancePageState extends State<StockBalancePage> {
         for (final item in raw) {
           if (item is Map &&
               item['code'] != null &&
-              item['name'] != null) {
+              item['name'] != null &&
+              ((item['branch_code']?.toString() ?? '').isEmpty ||
+                  item['branch_code']?.toString() == _selectedBranchCode)) {
             _stores.add({
               'code': item['code'].toString(),
               'name': item['name'].toString(),

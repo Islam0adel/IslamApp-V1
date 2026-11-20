@@ -12,6 +12,7 @@ class CodingModel(BaseModel):
     category: str
     code: str
     name: str
+    branch_code: Optional[str] = None
 
     type: Optional[str] = "وارد"
     barcode: Optional[str] = ""
@@ -42,6 +43,10 @@ class TransactionModel(BaseModel):
 
     employee: Optional[str] = "غير محدد"
     branch_code: Optional[str] = "1"
+    supplier_name: Optional[str] = None
+    add_to_settlement: bool = False
+    link_id: Optional[str] = None
+    unlink_settlement: bool = False
 
 
 # ============================================================
@@ -69,6 +74,8 @@ class TransactionSyncModel(BaseModel):
     type: str
 
     employee: Optional[str] = "غير محدد"
+    link_id: Optional[str] = None
+    supplier_name: Optional[str] = None
 
     updated_at: Optional[datetime] = None
 
@@ -218,6 +225,9 @@ class SupplierSettlementModel(BaseModel):
 
     updated_at: Optional[str] = None
     doc_id: Optional[str] = None
+    add_to_daily: bool = False
+    link_id: Optional[str] = None
+    unlink_daily: bool = False
 
 
 class SupplierSettlementSyncModel(BaseModel):
@@ -242,6 +252,7 @@ class SupplierSettlementSyncModel(BaseModel):
     updated_at: Optional[datetime] = None
 
     doc_id: Optional[str] = None
+    link_id: Optional[str] = None
 
     is_deleted: bool = False
 
@@ -296,6 +307,7 @@ class CodingSyncModel(BaseModel):
 
     code: str
     name: str
+    branch_code: Optional[str] = None
 
     type: Optional[str] = "وارد"
     barcode: Optional[str] = ""
@@ -330,6 +342,79 @@ class PermissionsUpdateModel(BaseModel):
     allowed_branches: Optional[
         List[str]
     ] = None
+
+
+class SaleModel(BaseModel):
+    id: str
+    company_code: str
+    branch_code: str
+    store_code: str
+    serial: int = 0
+    date: str
+    customer_code: str = ""
+    customer_name: str = "عميل نقدي"
+    cashier: str = ""
+    seller: str = ""
+    items: List[Dict[str, Any]] = Field(default_factory=list)
+    subtotal: float = 0.0
+    discount: float = 0.0
+    total: float = 0.0
+    paid: float = 0.0
+    due: float = 0.0
+    payments: List[Dict[str, Any]] = Field(default_factory=list)
+    employee: str = ""
+    base_updated_at: Optional[str] = None
+
+
+class SaleReturnModel(BaseModel):
+    id: str
+    company_code: str
+    branch_code: str
+    store_code: str
+    serial: int = 0
+    date: str
+    sale_id: str = ""
+    invoice_serial: int = 0
+    customer_code: str = ""
+    customer_name: str = "عميل نقدي"
+    items: List[Dict[str, Any]] = Field(default_factory=list)
+    total: float = 0.0
+    settlement_mode: str = "credit_first"
+    credit_amount: float = 0.0
+    refund_amount: float = 0.0
+    payments: List[Dict[str, Any]] = Field(default_factory=list)
+    employee: str = ""
+    base_updated_at: Optional[str] = None
+
+
+class CustomerPaymentModel(BaseModel):
+    id: str
+    company_code: str
+    branch_code: str
+    serial: int = 0
+    date: str
+    customer_code: str = ""
+    customer_name: str
+    amount: float
+    payments: List[Dict[str, Any]] = Field(default_factory=list)
+    statement: str = ""
+    employee: str = ""
+    base_updated_at: Optional[str] = None
+
+
+class StockTransferModel(BaseModel):
+    id: str
+    company_code: str
+    from_branch_code: str
+    from_store_code: str
+    to_branch_code: str
+    to_store_code: str
+    serial: int = 0
+    date: str
+    items: List[Dict[str, Any]] = Field(default_factory=list)
+    statement: str = ""
+    employee: str = ""
+    base_updated_at: Optional[str] = None
 
 
 # ============================================================

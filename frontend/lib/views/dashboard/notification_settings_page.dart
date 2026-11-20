@@ -33,6 +33,7 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
     'hr_employees': 'بيانات الموظفين',
     // ⭐ جديد — يظهر فقط للسوبر أدمن
     'registration_requests': 'طلبات الانضمام',
+    'commercial': 'المبيعات والمرتجعات والتحصيلات والتحويلات',
   };
 
   static const events = <String, String>{
