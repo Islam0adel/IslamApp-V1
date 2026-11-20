@@ -160,8 +160,8 @@ _buildDashboardCard(
                     title: 'معاينة التحويلات المخزنية',
                     subtitle: 'عرض حركات النقل بين الفروع والمخازن',
                     color: AppTheme.accentFor(context),
-                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CommercialHistoryPage(
-                      companyCode: companyCode, kind: 'transfers', title: 'معاينة التحويلات المخزنية', branchCode: selectedBranchCode,
+                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => TransfersHistoryPage(
+                      companyCode: companyCode, branchCode: selectedBranchCode, userName: userName,
                     ))),
                   ),
                   const SizedBox(height: 16),

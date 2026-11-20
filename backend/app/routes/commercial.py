@@ -24,6 +24,10 @@ CONFIG = {
     "transfers": (StockTransferRecord, StockTransferModel, "التحويلات المخزنية", "stock_transfer", "from_branch_code"),
 }
 
+# الأنواع التي يخدمها هذا الراوتر بعد فصل التحويلات في routes/transfers.py.
+# CONFIG يحتفظ بالتحويلات لأن الصلاحيات والتجميعات تشاركه.
+_ROUTE_KINDS = ("sales", "returns", "customer-payments")
+
 
 def _role(profile: dict[str, Any]) -> str:
     return str(profile.get("role") or "employee")
@@ -79,6 +83,12 @@ def _timestamp(value: datetime | str | None) -> datetime | None:
 
 @router.post("/{kind}/save")
 async def save_record(kind: str, request: Request, db: AsyncSession = Depends(get_db)):
+    if kind not in _ROUTE_KINDS:
+        raise HTTPException(status_code=404, detail="نوع حركة غير معروف")
+    return await save_kind(kind, request, db)
+
+
+async def save_kind(kind: str, request: Request, db: AsyncSession):
     if kind not in CONFIG:
         raise HTTPException(status_code=404, detail="نوع حركة غير معروف")
     raw = await request.json()
@@ -262,6 +272,16 @@ async def list_records(
     from_date: str | None = Query(default=None), to_date: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
+    if kind not in _ROUTE_KINDS:
+        raise HTTPException(status_code=404, detail="نوع حركة غير معروف")
+    return await list_kind(kind, company_code, request, branch_code, from_date, to_date, db)
+
+
+async def list_kind(
+    kind: str, company_code: str, request: Request,
+    branch_code: str | None, from_date: str | None, to_date: str | None,
+    db: AsyncSession,
+):
     if kind not in CONFIG:
         raise HTTPException(status_code=404, detail="نوع حركة غير معروف")
     profile = _check_permission(request, kind, "view")
@@ -292,6 +312,12 @@ async def list_records(
 
 @router.get("/{kind}/changes/{company_code}")
 async def changed_records(kind: str, company_code: str, request: Request, since: str, db: AsyncSession = Depends(get_db)):
+    if kind not in _ROUTE_KINDS:
+        raise HTTPException(status_code=404, detail="نوع حركة غير معروف")
+    return await changes_kind(kind, company_code, request, since, db)
+
+
+async def changes_kind(kind: str, company_code: str, request: Request, since: str, db: AsyncSession):
     if kind not in CONFIG:
         raise HTTPException(status_code=404, detail="نوع حركة غير معروف")
     profile = _check_permission(request, kind, "view")
@@ -313,6 +339,12 @@ async def changed_records(kind: str, company_code: str, request: Request, since:
 
 @router.post("/{kind}/delete/{company_code}/{record_id}")
 async def delete_record(kind: str, company_code: str, record_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    if kind not in _ROUTE_KINDS:
+        raise HTTPException(status_code=404, detail="نوع حركة غير معروف")
+    return await delete_kind(kind, company_code, record_id, request, db)
+
+
+async def delete_kind(kind: str, company_code: str, record_id: str, request: Request, db: AsyncSession):
     if kind not in CONFIG:
         raise HTTPException(status_code=404, detail="نوع حركة غير معروف")
     model, _, _, event_type, branch_field = CONFIG[kind]
