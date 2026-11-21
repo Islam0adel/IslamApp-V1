@@ -4,6 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.routes import auth, transactions, coding, inventory, supplier, supplier_settlement
 from app.routes import sync, notifications, product_lookup
 from app.routes import employees
+from app.routes import commercial
+from app.routes import transfers  # ⭐ التحويلات المخزنية (وحدة مستقلة)
 from app.routes import hr  # ← NEW (ملف واحد لكل HR)
 from app.core.auth_middleware import authenticate_http_request
 from app.core.database import create_tables, AsyncSessionLocal
@@ -64,6 +66,9 @@ app.include_router(
 # ✅ HR Routes
 # ✅ HR Routes (موحدة)
 app.include_router(hr.router, prefix="/hr", tags=["HR"])
+# ⭐ ترتيب مهم: راوتر التحويلات قبل التجاري حتى تصل /commercial/transfers/* للوحدة الجديدة
+app.include_router(transfers.router, prefix="/commercial", tags=["Stock Transfers"])
+app.include_router(commercial.router, prefix="/commercial", tags=["Sales, Returns and Customer Payments"])
 @app.get("/")
 async def root():
     return {

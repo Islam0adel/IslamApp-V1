@@ -4,7 +4,7 @@ from sqlalchemy import select, desc
 
 from app.core.database import get_db
 from app.core.auth_middleware import allowed_branches_for_profile
-from app.core.models import SupplierSettlementRecord
+from app.core.models import SupplierSettlementRecord, Transaction
 from app.core.schemas import SupplierSettlementModel
 from app.core.sync import manager
 
@@ -37,6 +37,7 @@ def serialize_settlement(
         "amount": doc.amount,
         "statement": doc.statement,
         "employee": doc.employee,
+        "link_id": doc.link_id,
         "updated_at": (
             doc.updated_at.isoformat()
             if doc.updated_at
@@ -61,6 +62,8 @@ async def save_settlement(
     db: AsyncSession = Depends(get_db),
 ):
     try:
+        linked_transaction = None
+        transaction_created = False
         doc_id_int = None
 
         # ------------------------------------------------------
@@ -111,6 +114,13 @@ async def save_settlement(
                     detail="التسوية غير موجودة",
                 )
 
+        if data.link_id:
+            linked_result = await db.execute(select(SupplierSettlementRecord).where(
+                SupplierSettlementRecord.company_code == data.company_code,
+                SupplierSettlementRecord.link_id == data.link_id,
+            ))
+            existing = linked_result.scalar_one_or_none() or existing
+
         # ------------------------------------------------------
         # UPDATE
         # ------------------------------------------------------
@@ -145,10 +155,18 @@ async def save_settlement(
         # ------------------------------------------------------
 
         else:
+            serial = data.serial
+            if serial <= 0:
+                last = await db.execute(select(SupplierSettlementRecord).where(
+                    SupplierSettlementRecord.company_code == data.company_code,
+                    SupplierSettlementRecord.branch_code == data.branch_code,
+                ).order_by(desc(SupplierSettlementRecord.serial)).limit(1))
+                last_record = last.scalar_one_or_none()
+                serial = (last_record.serial + 1) if last_record else 1
             record = SupplierSettlementRecord(
                 company_code=data.company_code,
                 branch_code=data.branch_code,
-                serial=data.serial,
+                serial=serial,
                 date=data.date,
                 supplier_name=data.supplier_name,
                 payment_method=data.payment_method,
@@ -156,12 +174,61 @@ async def save_settlement(
                 amount=data.amount,
                 statement=data.statement,
                 employee=data.employee,
+                link_id=data.link_id if data.add_to_daily else None,
                 updated_at=datetime.datetime.utcnow(),
                 is_deleted=False,
             )
 
             db.add(record)
             action = "insert"
+
+        if data.add_to_daily:
+            if not data.link_id:
+                import uuid
+                data.link_id = uuid.uuid4().hex
+            record.link_id = data.link_id
+            q = await db.execute(select(Transaction).where(
+                Transaction.company_code == data.company_code,
+                Transaction.link_id == data.link_id,
+            ))
+            linked_transaction = q.scalar_one_or_none()
+            if linked_transaction is None:
+                last_tx = await db.execute(select(Transaction).where(
+                    Transaction.company_code == data.company_code,
+                    Transaction.branch_code == data.branch_code,
+                ).order_by(desc(Transaction.serial)).limit(1))
+                latest = last_tx.scalar_one_or_none()
+                linked_transaction = Transaction(
+                    company_code=data.company_code, branch_code=data.branch_code,
+                    serial=(latest.serial + 1) if latest else 1,
+                    treasury=data.treasury, amount=data.amount, statement=data.statement,
+                    category="بضاعة", date=data.date, type="صادر", employee=data.employee,
+                    link_id=data.link_id, supplier_name=data.supplier_name, is_deleted=False,
+                )
+                db.add(linked_transaction)
+                transaction_created = True
+            else:
+                linked_transaction.branch_code = data.branch_code
+                linked_transaction.treasury = data.treasury
+                linked_transaction.amount = data.amount
+                linked_transaction.statement = data.statement
+                linked_transaction.category = "بضاعة"
+                linked_transaction.date = data.date
+                linked_transaction.type = "صادر"
+                linked_transaction.employee = data.employee
+                linked_transaction.supplier_name = data.supplier_name
+                linked_transaction.is_deleted = False
+        elif data.unlink_daily and data.link_id:
+            q = await db.execute(select(Transaction).where(
+                Transaction.company_code == data.company_code,
+                Transaction.link_id == data.link_id,
+                Transaction.is_deleted.is_(False),
+            ))
+            linked_transaction = q.scalar_one_or_none()
+            if linked_transaction is not None:
+                linked_transaction.is_deleted = True
+                linked_transaction.updated_at = datetime.datetime.utcnow()
+            record.link_id = None
 
         # ------------------------------------------------------
         # Commit
@@ -170,6 +237,8 @@ async def save_settlement(
         try:
             await db.commit()
             await db.refresh(record)
+            if linked_transaction is not None:
+                await db.refresh(linked_transaction)
 
         except Exception as e:
             await db.rollback()
@@ -206,6 +275,14 @@ async def save_settlement(
                 f"فشل بث تسوية المورد: {e}"
             )
 
+        if linked_transaction is not None:
+            if linked_transaction.is_deleted:
+                from app.routes.transactions import serialize_transaction
+                await manager.broadcast(data.company_code, {"type": "transaction", "action": "delete", "data": serialize_transaction(linked_transaction, action="delete"), "suppress_notification": True})
+            else:
+                from app.routes.transactions import serialize_transaction
+                await manager.broadcast(data.company_code, {"type": "transaction", "action": "insert" if transaction_created else "update", "data": serialize_transaction(linked_transaction), "suppress_notification": True})
+
         # ------------------------------------------------------
         # Response
         # ------------------------------------------------------
@@ -214,6 +291,10 @@ async def save_settlement(
             "status": "success",
             "doc_id": str(record.id),
             "serial": record.serial,
+            "linked_transaction": (
+                __import__("app.routes.transactions", fromlist=["serialize_transaction"]).serialize_transaction(linked_transaction)
+                if linked_transaction is not None else None
+            ),
             "action": action,
         }
 
@@ -446,8 +527,22 @@ async def delete_settlement(
         existing.is_deleted = True
         existing.updated_at = datetime.datetime.utcnow()
 
+        linked_transaction = None
+        if existing.link_id:
+            linked_result = await db.execute(select(Transaction).where(
+                Transaction.company_code == company_code,
+                Transaction.link_id == existing.link_id,
+                Transaction.is_deleted.is_(False),
+            ))
+            linked_transaction = linked_result.scalar_one_or_none()
+            if linked_transaction is not None:
+                linked_transaction.is_deleted = True
+                linked_transaction.updated_at = datetime.datetime.utcnow()
+
         await db.commit()
         await db.refresh(existing)
+        if linked_transaction is not None:
+            await db.refresh(linked_transaction)
 
         # ------------------------------------------------------
         # WebSocket
@@ -464,6 +559,13 @@ async def delete_settlement(
                 ),
             },
         )
+        if linked_transaction is not None:
+            from app.routes.transactions import serialize_transaction
+            await manager.broadcast(company_code, {
+                "type": "transaction", "action": "delete",
+                "data": serialize_transaction(linked_transaction, action="delete"),
+                "suppress_notification": True,
+            })
 
         return {
             "status": "success",

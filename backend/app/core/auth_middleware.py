@@ -80,7 +80,7 @@ _PUBLIC_PATHS = {
 
 _COMPANY_PATH_PREFIXES = (
     "/transactions/", "/coding/", "/inventory/", "/supplier/",
-    "/supplier-settlement/", "/sync/", "/employees/", "/hr/",
+    "/supplier-settlement/", "/sync/", "/employees/", "/hr/", "/commercial/",
 )
 
 
@@ -264,8 +264,9 @@ async def authenticate_http_request(request: Request, call_next):
         if parts and parts[0] in {
             "transactions", "coding", "inventory", "supplier",
             "supplier-settlement", "sync", "employees", "hr",
+            "commercial",
         }:
-            for marker in ("list", "changes", "updates", "last_serial", "summary", "ws", "delete"):
+            for marker in ("list", "changes", "updates", "last_serial", "summary", "ws", "delete", "customer-balances", "cash-balances", "returnable", "stock-events"):
                 if marker in parts:
                     idx = parts.index(marker) + 1
                     if idx < len(parts) and parts[idx] != company_code:
