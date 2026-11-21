@@ -4,6 +4,7 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.pool import AsyncAdaptedQueuePool
+from sqlalchemy import text
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 ENV_PATH = Path(r"D:\IslamApp-V1\.env")
@@ -57,4 +58,13 @@ async def get_db():
 async def create_tables():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Additive compatibility for installations where the commercial tables
+        # were created by an earlier local build.
+        await conn.execute(text("ALTER TABLE sale_returns ADD COLUMN IF NOT EXISTS credit_amount FLOAT NOT NULL DEFAULT 0.0"))
+        await conn.execute(text("ALTER TABLE sale_returns ADD COLUMN IF NOT EXISTS refund_amount FLOAT NOT NULL DEFAULT 0.0"))
+        await conn.execute(text("ALTER TABLE sale_returns ADD COLUMN IF NOT EXISTS settlement_mode VARCHAR(30) NOT NULL DEFAULT 'credit_first'"))
+        await conn.execute(text("ALTER TABLE coding_records ADD COLUMN IF NOT EXISTS branch_code VARCHAR(50) NULL"))
+        await conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS link_id VARCHAR(100) NULL"))
+        await conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS supplier_name VARCHAR(255) NULL"))
+        await conn.execute(text("ALTER TABLE supplier_settlements ADD COLUMN IF NOT EXISTS link_id VARCHAR(100) NULL"))
         print("✅ تم إنشاء الجداول في قاعدة البيانات بنجاح (أو تأكيد وجودها)")

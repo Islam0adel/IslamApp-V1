@@ -54,6 +54,10 @@ _SECTION_MAP = {
     "settlement": ("settlements", "التسويات"),
     "coding": ("coding", "التكويد"),
     "inventory": ("inventory", "الجرد"),
+    "sale": ("sales", "المبيعات"),
+    "sale_return": ("sales_returns", "مرتجعات المبيعات"),
+    "customer_payment": ("customer_payments", "تحصيلات العملاء"),
+    "stock_transfer": ("stock_transfers", "التحويلات المخزنية"),
     # ✅ HR
     "hr_attendance": ("hr_attendance", "حضور الموارد البشرية"),
     "hr_vacation": ("hr_vacations", "إجازات الموارد البشرية"),
@@ -166,6 +170,10 @@ def _can_view_section(profile: Dict[str, Any], section: str) -> bool:
         "settlements": ("تسويات الموردين", "معاينة", ("المعاينة", "إظهار التسويات")),
         "coding": ("التكويد", "معاينة", ("المعاينة", "إظهار التكويد")),
         "inventory": ("حركة الجرد", "المعاينة", ("معاينة", "إظهار حركة الجرد")),
+        "sales": ("المبيعات", "معاينة", ("إضافة",)),
+        "sales_returns": ("المرتجعات", "معاينة", ("إضافة",)),
+        "customer_payments": ("حسابات العملاء", "معاينة", ("إضافة تحصيل",)),
+        "stock_transfers": ("التحويلات المخزنية", "معاينة", ("إضافة",)),
     }.get(section, ("", "", ()))
 
     global_key = {
@@ -194,12 +202,14 @@ def _can_view_section(profile: Dict[str, Any], section: str) -> bool:
 def _preference_enabled(
     pref: Optional[NotificationPreference], section: str, action: str
 ) -> bool:
+    commercial_sections = {"sales", "sales_returns", "customer_payments", "stock_transfers"}
+    default_enabled = section not in commercial_sections
     if pref is None:
-        return True
+        return default_enabled
     sections = pref.sections if isinstance(pref.sections, dict) else {}
     actions = pref.actions if isinstance(pref.actions, dict) else {}
     return (
-        sections.get(section, True) is not False
+        sections.get(section, default_enabled) is not False
         and actions.get(action, True) is not False
     )
 

@@ -99,7 +99,8 @@ class ConnectionManager:
         message: dict,
     ):
         # حفظ سجل التدقيق والإشعارات في Neon قبل بث الحدث للأجهزة المتصلة.
-        message = await prepare_and_persist_event(company_code, message)
+        if not message.get("suppress_notification"):
+            message = await prepare_and_persist_event(company_code, message)
         connections = self.active_connections.get(
             company_code
         )
@@ -125,7 +126,13 @@ class ConnectionManager:
                 section = _SECTION_MAP.get(event_type, (None, None))[0]
                 payload = message.get("data") if isinstance(message.get("data"), dict) else {}
                 branch_code = str(payload.get("branch_code", "") or "")
-                if section and (not _branch_allowed(profile, branch_code) or not _can_view_section(profile, section)):
+                branch_visible = _branch_allowed(profile, branch_code)
+                if event_type == "stock_transfer":
+                    branch_visible = (
+                        _branch_allowed(profile, str(payload.get("from_branch_code", "")))
+                        or _branch_allowed(profile, str(payload.get("to_branch_code", "")))
+                    )
+                if section and (not branch_visible or not _can_view_section(profile, section)):
                     continue
                 await connection.send_json(message)
 

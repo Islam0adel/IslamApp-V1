@@ -16,6 +16,7 @@ from app.core.fcm_service import is_fcm_enabled
 router = APIRouter()
 _SECTIONS = {
     "daily", "purchases", "settlements", "coding", "inventory",
+    "sales", "sales_returns", "customer_payments", "stock_transfers",
     # ✅ HR
     "hr_attendance", "hr_vacations", "hr_adjustments", "hr_employees",
     # ⭐ طلبات الانضمام (للسوبر أدمن فقط)
@@ -53,7 +54,7 @@ def _profile(request: Request) -> Dict[str, Any]:
 
 def _settings_json(pref: NotificationPreference | None) -> dict:
     return {
-        "sections": pref.sections if pref and isinstance(pref.sections, dict) else {key: True for key in _SECTIONS},
+        "sections": {key: (pref.sections.get(key, key not in {"sales", "sales_returns", "customer_payments", "stock_transfers"}) if pref and isinstance(pref.sections, dict) else key not in {"sales", "sales_returns", "customer_payments", "stock_transfers"}) for key in _SECTIONS},
         "actions": pref.actions if pref and isinstance(pref.actions, dict) else {key: True for key in _ACTIONS},
         "retention_days": int(pref.retention_days) if pref else 90,
     }
@@ -155,7 +156,7 @@ async def save_notification_settings(
         raise HTTPException(status_code=400, detail="صيغة إعدادات الإشعارات غير صحيحة")
     if not isinstance(retention_days, int) or retention_days not in _RETENTION:
         raise HTTPException(status_code=400, detail="مدة الاحتفاظ غير صحيحة")
-    sections = {key: bool(sections.get(key, True)) for key in _SECTIONS}
+    sections = {key: bool(sections.get(key, key not in {"sales", "sales_returns", "customer_payments", "stock_transfers"})) for key in _SECTIONS}
     actions = {key: bool(actions.get(key, True)) for key in _ACTIONS}
     result = await db.execute(select(NotificationPreference).where(
         NotificationPreference.user_uid == str(profile["uid"]),

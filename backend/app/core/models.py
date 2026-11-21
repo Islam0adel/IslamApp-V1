@@ -131,6 +131,10 @@ class CodingRecord(Base):
         index=True,
     )
 
+    # Stores can optionally belong to a branch. Null preserves legacy/global
+    # stores created before branch-specific stock movement support.
+    branch_code = Column(String(50), nullable=True, index=True)
+
     code = Column(
         String(50),
         nullable=False,
@@ -285,6 +289,9 @@ class Transaction(Base):
         String(255),
         default="غير محدد",
     )
+
+    link_id = Column(String(100), nullable=True)
+    supplier_name = Column(String(255), nullable=True)
 
     # وقت آخر تعديل
     updated_at = Column(
@@ -677,6 +684,8 @@ class SupplierSettlementRecord(Base):
         default="غير محدد",
     )
 
+    link_id = Column(String(100), nullable=True)
+
     updated_at = Column(
         DateTime,
         server_default=func.now(),
@@ -720,6 +729,94 @@ class SupplierSettlementRecord(Base):
         'is_deleted',
     ),
 )
+
+
+# Commercial operations are stored separately from the existing daily cash
+# journal. This keeps sales cash balances independent until the user enables
+# a future journal integration.
+class SaleRecord(Base):
+    __tablename__ = "sales"
+    id = Column(String(36), primary_key=True)
+    company_code = Column(String(50), nullable=False, index=True)
+    branch_code = Column(String(50), nullable=False, index=True)
+    store_code = Column(String(50), nullable=False, index=True)
+    serial = Column(Integer, nullable=False)
+    date = Column(String(20), nullable=False, index=True)
+    customer_code = Column(String(50), nullable=False, default="")
+    customer_name = Column(String(255), nullable=False, default="عميل نقدي", index=True)
+    cashier = Column(String(255), nullable=False, default="")
+    seller = Column(String(255), nullable=False, default="")
+    items = Column(JSON, nullable=False, default=list)
+    subtotal = Column(Float, nullable=False, default=0.0)
+    discount = Column(Float, nullable=False, default=0.0)
+    total = Column(Float, nullable=False, default=0.0)
+    paid = Column(Float, nullable=False, default=0.0)
+    due = Column(Float, nullable=False, default=0.0)
+    payments = Column(JSON, nullable=False, default=list)
+    employee = Column(String(255), nullable=False, default="")
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+    is_deleted = Column(Boolean, nullable=False, default=False, server_default="false")
+    __table_args__ = (Index("idx_sales_company_branch_serial", "company_code", "branch_code", "serial", unique=True), Index("idx_sales_company_changes", "company_code", "updated_at"))
+
+
+class SaleReturnRecord(Base):
+    __tablename__ = "sale_returns"
+    id = Column(String(36), primary_key=True)
+    company_code = Column(String(50), nullable=False, index=True)
+    branch_code = Column(String(50), nullable=False, index=True)
+    store_code = Column(String(50), nullable=False, index=True)
+    serial = Column(Integer, nullable=False)
+    date = Column(String(20), nullable=False, index=True)
+    sale_id = Column(String(36), nullable=False, default="", index=True)
+    invoice_serial = Column(Integer, nullable=False, default=0)
+    customer_code = Column(String(50), nullable=False, default="")
+    customer_name = Column(String(255), nullable=False, default="عميل نقدي", index=True)
+    items = Column(JSON, nullable=False, default=list)
+    total = Column(Float, nullable=False, default=0.0)
+    settlement_mode = Column(String(30), nullable=False, default="credit_first")
+    credit_amount = Column(Float, nullable=False, default=0.0)
+    refund_amount = Column(Float, nullable=False, default=0.0)
+    payments = Column(JSON, nullable=False, default=list)
+    employee = Column(String(255), nullable=False, default="")
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+    is_deleted = Column(Boolean, nullable=False, default=False, server_default="false")
+    __table_args__ = (Index("idx_returns_company_branch_serial", "company_code", "branch_code", "serial", unique=True), Index("idx_returns_company_changes", "company_code", "updated_at"))
+
+
+class CustomerPaymentRecord(Base):
+    __tablename__ = "customer_payments"
+    id = Column(String(36), primary_key=True)
+    company_code = Column(String(50), nullable=False, index=True)
+    branch_code = Column(String(50), nullable=False, index=True)
+    serial = Column(Integer, nullable=False)
+    date = Column(String(20), nullable=False, index=True)
+    customer_code = Column(String(50), nullable=False, default="")
+    customer_name = Column(String(255), nullable=False, default="", index=True)
+    amount = Column(Float, nullable=False, default=0.0)
+    payments = Column(JSON, nullable=False, default=list)
+    statement = Column(Text, nullable=False, default="")
+    employee = Column(String(255), nullable=False, default="")
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+    is_deleted = Column(Boolean, nullable=False, default=False, server_default="false")
+    __table_args__ = (Index("idx_customer_payments_company_branch_serial", "company_code", "branch_code", "serial", unique=True), Index("idx_customer_payments_company_changes", "company_code", "updated_at"))
+
+
+class StockTransferRecord(Base):
+    __tablename__ = "stock_transfers"
+    id = Column(String(36), primary_key=True)
+    company_code = Column(String(50), nullable=False, index=True)
+    from_branch_code = Column(String(50), nullable=False, index=True)
+    from_store_code = Column(String(50), nullable=False, index=True)
+    to_branch_code = Column(String(50), nullable=False, index=True)
+    to_store_code = Column(String(50), nullable=False, index=True)
+    serial = Column(Integer, nullable=False)
+    date = Column(String(20), nullable=False, index=True)
+    items = Column(JSON, nullable=False, default=list)
+    statement = Column(Text, nullable=False, default="")
+    employee = Column(String(255), nullable=False, default="")
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+    is_deleted = Column(Boolean, nullable=False, default=False, server_default="false")
+    __table_args__ = (Index("idx_transfers_company_serial", "company_code", "serial", unique=True), Index("idx_transfers_company_changes", "company_code", "updated_at"))
 
 # ==========================================
 # 8. إشعارات المستخدمين وسجل التدقيق
