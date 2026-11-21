@@ -1,3 +1,4 @@
+
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -16,8 +17,15 @@ class _CommercialHistoryPageState extends State<CommercialHistoryPage> {
   final _service = CommercialService(); List<JMap> _rows = []; bool _busy = true;
   StreamSubscription<BoxEvent>? _recordsSubscription;
   String get _boxName => widget.kind == 'returns' ? 'sales_returns_box' : 'customer_payments_box';
-  @override void initState() { super.initState(); _recordsSubscription = Hive.box(_boxName).watch().listen((_) => _load()); _load(); }
-  @override void dispose() { _recordsSubscription?.cancel(); super.dispose(); }
+  /// تجميع أحداث المزامنة المتتابعة في تحميل واحد.
+  Timer? _watchDebounce;
+  @override void initState() { super.initState(); _recordsSubscription = Hive.box(_boxName).watch().listen((_) {
+        _watchDebounce?.cancel();
+        _watchDebounce = Timer(const Duration(milliseconds: 300), () {
+          if (mounted) _load();
+        });
+      }); _load(); }
+  @override void dispose() { _watchDebounce?.cancel(); _recordsSubscription?.cancel(); super.dispose(); }
   Future<void> _load() async { try { _rows = await _service.fetch(widget.kind, widget.companyCode, branchCode: widget.branchCode); } catch (_) {} if (mounted) setState(() => _busy = false); }
   Future<void> _refreshFromServer() async { await _service.fetch(widget.kind, widget.companyCode, branchCode: widget.branchCode, forceRefresh: true); await _load(); }
   String get _category => widget.kind == 'returns' ? 'المرتجعات' : 'حسابات العملاء';

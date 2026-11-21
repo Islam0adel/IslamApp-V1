@@ -14,8 +14,15 @@ class SalesHistoryPage extends StatefulWidget {
 class _SalesHistoryPageState extends State<SalesHistoryPage> {
   final _service = CommercialService(); List<JMap> _records = []; bool _busy = true;
   StreamSubscription<BoxEvent>? _salesSubscription;
-  @override void initState() { super.initState(); _salesSubscription = Hive.box('sales_box').watch().listen((_) => _load()); _load(); }
-  @override void dispose() { _salesSubscription?.cancel(); super.dispose(); }
+  /// تجميع أحداث المزامنة المتتابعة في تحميل واحد.
+  Timer? _watchDebounce;
+  @override void initState() { super.initState(); _salesSubscription = Hive.box('sales_box').watch().listen((_) {
+        _watchDebounce?.cancel();
+        _watchDebounce = Timer(const Duration(milliseconds: 300), () {
+          if (mounted) _load();
+        });
+      }); _load(); }
+  @override void dispose() { _watchDebounce?.cancel(); _salesSubscription?.cancel(); super.dispose(); }
   Future<void> _load() async { try { _records = await _service.fetch('sales', widget.companyCode, branchCode: widget.branchCode); } catch (_) {} if (mounted) setState(() => _busy = false); }
   Future<void> _refreshFromServer() async { await _service.fetch('sales', widget.companyCode, branchCode: widget.branchCode, forceRefresh: true); await _load(); }
   Future<void> _delete(JMap r) async { try { await _service.delete('sales', widget.companyCode, '${r['id']}'); await _load(); } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'))); } }

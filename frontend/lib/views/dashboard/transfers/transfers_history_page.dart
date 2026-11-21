@@ -22,16 +22,24 @@ class _TransfersHistoryPageState extends State<TransfersHistoryPage> {
   List<JMap> _rows = [];
   bool _busy = true;
   StreamSubscription<BoxEvent>? _recordsSubscription;
+  /// تجميع أحداث المزامنة المتتابعة في تحميل واحد.
+  Timer? _watchDebounce;
 
   @override
   void initState() {
     super.initState();
-    _recordsSubscription = Hive.box('stock_transfers_box').watch().listen((_) => _load());
+    _recordsSubscription = Hive.box('stock_transfers_box').watch().listen((_) {
+      _watchDebounce?.cancel();
+      _watchDebounce = Timer(const Duration(milliseconds: 300), () {
+        if (mounted) _load();
+      });
+    });
     _load();
   }
 
   @override
   void dispose() {
+    _watchDebounce?.cancel();
     _recordsSubscription?.cancel();
     super.dispose();
   }

@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
 import '../../../services/permissions_service.dart';
 import '../../../services/stock_balance_service.dart';
@@ -13,6 +15,12 @@ class StockTransfersPage extends StatefulWidget {
 class _StockTransfersPageState extends State<StockTransfersPage> {
   final _service = TransfersService();
   List<JMap> _branches = [], _products = [];
+
+  /// فهرس بحث/كود مجهز مرة ويُعاد بناؤه عند تغيّر كتالوج الأصناف فقط.
+  ProductIndex _productIndex = ProductIndex(const [], searchBarcode: false);
+
+  StreamSubscription<BoxEvent>? _catalogSubscription;
+  Timer? _catalogDebounce;
   final _items = <SaleLine>[];
 
   String? _fromBranch, _toBranch, _fromStore, _toStore;
@@ -20,6 +28,8 @@ class _StockTransfersPageState extends State<StockTransfersPage> {
 
   @override
   void dispose() {
+    _catalogSubscription?.cancel();
+    _catalogDebounce?.cancel();
     for (final item in _items) {
       item.dispose();
     }
@@ -40,6 +50,9 @@ class _StockTransfersPageState extends State<StockTransfersPage> {
         .where((b) => PermissionsService().canAccessBranch('${b['code']}'))
         .toList();
     _products = catalog(widget.companyCode, 'items');
+    _productIndex = ProductIndex(_products, searchBarcode: false);
+    _catalogSubscription =
+        Hive.box('coding_box').watch().listen((_) => _onCatalogChanged());
 
     _fromBranch = widget.editItem?['from_branch_code']?.toString() ??
         widget.branchCode ??
@@ -60,10 +73,8 @@ class _StockTransfersPageState extends State<StockTransfersPage> {
     if (widget.editItem?['items'] is List) {
       for (final item in widget.editItem!['items']) {
         if (item is Map) {
-          final product = _products.firstWhere(
-            (e) => '${e['code']}' == '${item['code']}',
-            orElse: () => Map<String, dynamic>.from(item),
-          );
+          final product = _productIndex.byCode('${item['code']}') ??
+              Map<String, dynamic>.from(item);
           _items.add(
             SaleLine(
               product,
@@ -74,6 +85,22 @@ class _StockTransfersPageState extends State<StockTransfersPage> {
         }
       }
     }
+  }
+
+  /// تحديث قوائم الفروع والأصناف عند مزامنة الكتالوج دون لمس الأصناف المضافة
+  /// أو الاختيارات الحالية. الفروع تُرشَّح بنفس صلاحيات الوصول.
+  void _onCatalogChanged() {
+    _catalogDebounce?.cancel();
+    _catalogDebounce = Timer(const Duration(milliseconds: 300), () {
+      if (!mounted) return;
+      setState(() {
+        _branches = catalog(widget.companyCode, 'branches')
+            .where((b) => PermissionsService().canAccessBranch('${b['code']}'))
+            .toList();
+        _products = catalog(widget.companyCode, 'items');
+        _productIndex = ProductIndex(_products, searchBarcode: false);
+      });
+    });
   }
 
   Future<void> _save() async {
@@ -250,10 +277,11 @@ class _StockTransfersPageState extends State<StockTransfersPage> {
           const SizedBox(height: 14),
           Autocomplete<JMap>(
             displayStringForOption: (e) => '${e['code']} — ${e['name']}',
-            optionsBuilder: (value) => _products.where(
-              (e) => '${e['code']} ${e['name']}'
-                  .toLowerCase()
-                  .contains(value.text.toLowerCase()),
+            optionsBuilder: (value) => _productIndex.search(
+              value.text,
+              limit: null,
+              trimQuery: false,
+              emptyReturnsAll: true,
             ),
             onSelected: (product) {
               if (!_items.any(

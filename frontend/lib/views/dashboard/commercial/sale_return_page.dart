@@ -19,6 +19,11 @@ class _SaleReturnPageState extends State<SaleReturnPage> {
   String? _store, _method, _safe;
   bool _busy = false;
   final List<StreamSubscription<BoxEvent>> _localSubscriptions = [];
+  Timer? _catalogDebounce;
+  Timer? _watchDebounce;
+
+  /// نبضة تحديث مقصورة على ملخص المرتجع بدل إعادة بناء الصفحة كلها.
+  final _totals = ValueNotifier<int>(0);
   double _customerBalance = 0;
   String _settlementMode = 'credit_first';
   final Map<String, double> _alreadyReturned = {};
@@ -58,13 +63,37 @@ class _SaleReturnPageState extends State<SaleReturnPage> {
   void initState() {
     super.initState();
     for (final name in ['sales_box', 'sales_returns_box', 'customer_payments_box']) {
-      _localSubscriptions.add(Hive.box(name).watch().listen((_) => _refreshSelectedSaleContext()));
+      _localSubscriptions.add(Hive.box(name).watch().listen((_) {
+        _watchDebounce?.cancel();
+        _watchDebounce = Timer(const Duration(milliseconds: 300), () {
+          if (mounted) _refreshSelectedSaleContext();
+        });
+      }));
     }
+    _localSubscriptions.add(Hive.box('coding_box').watch().listen((_) => _onCatalogChanged()));
     _load();
+  }
+
+  /// تحديث قوائم المخازن وطرق الدفع والخزائن عند مزامنة الكتالوج دون لمس
+  /// سطور المرتجع أو الفاتورة المختارة.
+  void _onCatalogChanged() {
+    _catalogDebounce?.cancel();
+    _catalogDebounce = Timer(const Duration(milliseconds: 300), () {
+      if (!mounted) return;
+      setState(() {
+        final branch = widget.editItem?['branch_code']?.toString() ?? widget.selectedBranchCode;
+        _stores = storesForBranch(widget.companyCode, branch);
+        _methods = catalog(widget.companyCode, 'payment_methods');
+        _safes = catalog(widget.companyCode, 'safes');
+      });
+    });
   }
 
   @override
   void dispose() {
+    _catalogDebounce?.cancel();
+    _watchDebounce?.cancel();
+    _totals.dispose();
     for (final subscription in _localSubscriptions) {
       subscription.cancel();
     }
@@ -317,7 +346,7 @@ class _SaleReturnPageState extends State<SaleReturnPage> {
                   focusNode: line.qtyFocus,
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   textInputAction: index == _lines.length - 1 ? TextInputAction.done : TextInputAction.next,
-                  onChanged: (_) => setState(() {}),
+                  onChanged: (_) => _totals.value++,
                   onSubmitted: (_) => _submitReturnQuantity(index),
                   decoration: const InputDecoration(hintText: 'الكمية', isDense: true),
                 )),
@@ -327,8 +356,11 @@ class _SaleReturnPageState extends State<SaleReturnPage> {
                   textAlign: TextAlign.center,
                 )),
                 const SizedBox(width: 5),
-                SizedBox(width: 100, child: Text(money(line.amount), textAlign: TextAlign.center,
-                  style: const TextStyle(fontWeight: FontWeight.bold))),
+                SizedBox(width: 100, child: ListenableBuilder(
+                  listenable: line.qty,
+                  builder: (context, _) => Text(money(line.amount), textAlign: TextAlign.center,
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+                )),
                 SizedBox(width: 40, child: IconButton(
                   tooltip: 'حذف الصنف', icon: const Icon(Icons.delete_outline, size: 20),
                   onPressed: () {
@@ -428,8 +460,11 @@ class _SaleReturnPageState extends State<SaleReturnPage> {
         onChanged: (value) => setState(() => _settlementMode = value ?? 'credit_first'),
       ),
       const SizedBox(height: 8),
-      Text('رصيد العميل الآجل: ${money(_customerBalance)} · قيمة المرتجع: ${money(_returnTotal)} · تخصم من المديونية: ${money(_creditAmount)} · المردود من الخزينة: ${money(_refundAmount)}'),
-      if (_refundAmount > 0) ...[
+      ListenableBuilder(
+        listenable: _totals,
+        builder: (context, _) => Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Text('رصيد العميل الآجل: ${money(_customerBalance)} · قيمة المرتجع: ${money(_returnTotal)} · تخصم من المديونية: ${money(_creditAmount)} · المردود من الخزينة: ${money(_refundAmount)}'),
+          if (_refundAmount > 0) ...[
         DropdownButtonFormField<String>(
           initialValue: _methods.any((method) => '${method['name']}' == _method) ? _method : null,
           decoration: const InputDecoration(labelText: 'طريقة رد المبلغ'),
@@ -446,7 +481,9 @@ class _SaleReturnPageState extends State<SaleReturnPage> {
           )).toList(),
           onChanged: (value) => setState(() => _safe = value),
         ),
-      ],
+          ],
+        ]),
+      ),
       FilledButton.icon(
         onPressed: _busy ? null : _save,
         icon: const Icon(Icons.save),

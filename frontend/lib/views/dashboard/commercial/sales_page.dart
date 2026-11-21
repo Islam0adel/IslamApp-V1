@@ -43,6 +43,15 @@ class _SalesPageState extends State<SalesPage> {
   /// آخر حقل عدّله المستخدم في الخصم: true = النسبة، false = المبلغ.
   bool _discountByPct = false;
 
+  /// نبضة تحديث مقصورة على قسم الإجماليات والمدفوعات، بدل إعادة بناء الصفحة كلها.
+  final _totals = ValueNotifier<int>(0);
+
+  /// فهرس بحث/كود مجهز مرة ويُعاد بناؤه عند تغيّر كتالوج الأصناف فقط.
+  ProductIndex _productIndex = ProductIndex(const []);
+
+  StreamSubscription<BoxEvent>? _catalogSubscription;
+  Timer? _catalogDebounce;
+
   // ───────────────────────── الحسابات ─────────────────────────
   List<SaleLine> get _validSaleLines => _lines.where((line) =>
       (line.product['code']?.toString().isNotEmpty ?? false) && n(line.qty.text) > 0).toList();
@@ -151,15 +160,41 @@ class _SalesPageState extends State<SalesPage> {
 
   // ───────────────────────── دورة الحياة ─────────────────────────
   @override
-  void initState() { super.initState(); _load(); }
+  void initState() {
+    super.initState();
+    _catalogSubscription = Hive.box('coding_box').watch().listen((_) => _onCatalogChanged());
+    _load();
+  }
+
+  /// تحديث قوائم الكتالوج عند مزامنتها من Hive دون لمس سطور الفاتورة أو المدفوعات
+  /// أو الاختيارات الحالية. مُجمَّع لفترة قصيرة حتى لا تتكرر مع دفعة مزامنة واحدة.
+  void _onCatalogChanged() {
+    _catalogDebounce?.cancel();
+    _catalogDebounce = Timer(const Duration(milliseconds: 300), () {
+      if (!mounted) return;
+      setState(() {
+        _branches = catalog(widget.companyCode, 'branches')
+            .where((b) => PermissionsService().canAccessBranch('${b['code']}')).toList();
+        _customers = catalog(widget.companyCode, 'customers');
+        _products = catalog(widget.companyCode, 'items');
+        _productIndex = ProductIndex(_products);
+        _methods = catalog(widget.companyCode, 'payment_methods');
+        _safes = catalog(widget.companyCode, 'safes');
+        if (_methods.isEmpty) _methods = [{'name': 'نقدي'}];
+        if (_safes.isEmpty) _safes = [{'name': 'نقدي'}];
+        _stores = storesForBranch(widget.companyCode, _branch);
+      });
+    });
+  }
   @override
-  void dispose() { _discount.dispose(); _discountPct.dispose(); for (final x in _lines) { x.dispose(); } for (final p in _payments) { p.dispose(); } super.dispose(); }
-  void _refresh() { if (!mounted) return; _resyncDiscount(); setState(() {}); }
+  void dispose() { _catalogSubscription?.cancel(); _catalogDebounce?.cancel(); _totals.dispose(); _discount.dispose(); _discountPct.dispose(); for (final x in _lines) { x.dispose(); } for (final p in _payments) { p.dispose(); } super.dispose(); }
+  /// تحديث مقصور على السطر المتأثر وقسم الإجماليات بدل إعادة بناء الصفحة كلها.
+  void _bumpTotals() { if (!mounted) return; _resyncDiscount(); _totals.value++; }
 
   SaleLine _newSaleLine(JMap product, double quantity, double price) {
     final line = SaleLine(product, quantity, price);
-    line.qty.addListener(_refresh);
-    line.price.addListener(_refresh);
+    line.qty.addListener(_bumpTotals);
+    line.price.addListener(_bumpTotals);
     return line;
   }
 
@@ -167,6 +202,7 @@ class _SalesPageState extends State<SalesPage> {
     final company = widget.companyCode;
     _branches = catalog(company, 'branches');
     _customers = catalog(company, 'customers'); _products = catalog(company, 'items');
+    _productIndex = ProductIndex(_products);
     _methods = catalog(company, 'payment_methods'); _safes = catalog(company, 'safes');
     final users = Hive.box('users_box').get('company_$company', defaultValue: []);
     if (users is List) _people = users.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
@@ -197,7 +233,7 @@ class _SalesPageState extends State<SalesPage> {
       final d = widget.editItem!;
       _credit = n(d['due']) > 0.009;
       _discount.text = '${d['discount'] ?? 0}';
-      if (d['items'] is List) for (final item in d['items']) { if (item is Map) { final p = _products.firstWhere((x) => '${x['code']}' == '${item['code']}', orElse: () => Map<String, dynamic>.from(item)); _lines.add(_newSaleLine(p, n(item['quantity']), n(item['price']))); } }
+      if (d['items'] is List) for (final item in d['items']) { if (item is Map) { final p = _productIndex.byCode('${item['code']}') ?? Map<String, dynamic>.from(item); _lines.add(_newSaleLine(p, n(item['quantity']), n(item['price']))); } }
       if (d['payments'] is List && (d['payments'] as List).isNotEmpty) {
         for (final payment in _payments) {
           payment.dispose();
@@ -269,9 +305,7 @@ class _SalesPageState extends State<SalesPage> {
 
   void _submitSaleCode(SaleLine line) {
     final value = line.code.text.trim();
-    final product = value.isEmpty ? null : _products.where((item) =>
-      item['code']?.toString() == value || item['barcode']?.toString() == value,
-    ).firstOrNull;
+    final product = value.isEmpty ? null : _productIndex.byCodeOrBarcode(value);
     if (product == null) {
       line.nameFocus.requestFocus();
       return;
@@ -325,7 +359,7 @@ class _SalesPageState extends State<SalesPage> {
       ),
     );
     if (value == null || !mounted) return;
-    final p = _products.where((e) => e['barcode']?.toString() == value || e['code']?.toString() == value).firstOrNull;
+    final p = _productIndex.byCodeOrBarcode(value);
     if (p != null) { _addProduct(p); } else { _message('الكود غير موجود في التكويد'); }
   }
 
@@ -433,7 +467,7 @@ class _SalesPageState extends State<SalesPage> {
   Widget _codeField(SaleLine line, {required bool compact}) => _saleCell(
     label: 'الكود', compact: compact, controller: line.code, focusNode: line.codeFocus,
     onChanged: (value) {
-      if (line.product['code']?.toString() != value.trim()) {
+      if (line.product.isNotEmpty && line.product['code']?.toString() != value.trim()) {
         line.product = {};
         line.name.clear();
         line.price.text = '';
@@ -448,12 +482,7 @@ class _SalesPageState extends State<SalesPage> {
     return RawAutocomplete<JMap>(
       textEditingController: line.name, focusNode: line.nameFocus,
       displayStringForOption: (item) => '${item['name'] ?? ''}',
-      optionsBuilder: (value) {
-        final query = value.text.trim().toLowerCase();
-        if (query.isEmpty) return const Iterable<JMap>.empty();
-        return _products.where((item) =>
-          '${item['code']} ${item['name']} ${item['barcode']}'.toLowerCase().contains(query)).take(30);
-      },
+      optionsBuilder: (value) => _productIndex.search(value.text),
       optionsViewBuilder: (context, onSelected, options) => Align(
         alignment: Alignment.topLeft,
         child: Material(
@@ -482,12 +511,11 @@ class _SalesPageState extends State<SalesPage> {
       fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) =>
         _saleCell(label: 'الصنف', compact: compact, controller: controller,
           focusNode: focusNode, onChanged: (value) {
-            if (line.product['name']?.toString().toLowerCase() != value.trim().toLowerCase()) {
+            if (line.product.isNotEmpty && line.product['name']?.toString().toLowerCase() != value.trim().toLowerCase()) {
               line.product = {};
               line.code.clear();
               line.price.text = '';
             }
-            setState(() {});
           },
           onSubmitted: (value) {
             final item = _products.where((p) =>
@@ -507,7 +535,6 @@ class _SalesPageState extends State<SalesPage> {
     label: 'الكمية', compact: compact, controller: line.qty, focusNode: line.qtyFocus,
     keyboard: const TextInputType.numberWithOptions(decimal: true),
     action: PermissionsService().canChangeSellingPrice ? TextInputAction.next : TextInputAction.done,
-    onChanged: (_) => setState(() {}),
     onSubmitted: (_) => PermissionsService().canChangeSellingPrice
         ? line.priceFocus.requestFocus()
         : _finishLine(line));
@@ -517,7 +544,6 @@ class _SalesPageState extends State<SalesPage> {
     keyboard: const TextInputType.numberWithOptions(decimal: true),
     enabled: PermissionsService().canChangeSellingPrice,
     action: TextInputAction.done,
-    onChanged: (_) => setState(() {}),
     onSubmitted: (_) => _finishLine(line));
 
   Widget _totalBox(SaleLine line) => InputDecorator(
@@ -647,12 +673,28 @@ class _SalesPageState extends State<SalesPage> {
     );
   }
 
+  /// صف واحد: يُعيد بناء نفسه عند تغيّر كميته أو سعره فقط.
+  Widget _lineRow(int index, bool wide) {
+    final line = _lines[index];
+    return KeyedSubtree(
+      key: ObjectKey(line),
+      child: ListenableBuilder(
+        listenable: Listenable.merge([line.qty, line.price]),
+        builder: (context, _) {
+          final i = _lines.indexOf(line);
+          if (i < 0) return const SizedBox.shrink();
+          return wide ? _buildWideRow(i) : _buildCompactRow(i);
+        },
+      ),
+    );
+  }
+
   Widget _buildSalesItems() => LayoutBuilder(builder: (context, c) {
     final wide = c.maxWidth >= _wideBreakpoint;
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       if (wide) _tableHeader(),
       for (var i = 0; i < _lines.length; i++)
-        KeyedSubtree(key: ObjectKey(_lines[i]), child: wide ? _buildWideRow(i) : _buildCompactRow(i)),
+        _lineRow(i, wide),
       Align(
         alignment: AlignmentDirectional.centerStart,
         child: TextButton.icon(onPressed: _startNewEntry, icon: const Icon(Icons.add), label: const Text('إضافة صنف')),
@@ -667,13 +709,13 @@ class _SalesPageState extends State<SalesPage> {
       controller: _discount,
       keyboardType: const TextInputType.numberWithOptions(decimal: true),
       decoration: _fieldDecoration('الخصم (مبلغ)'),
-      onChanged: (_) { _discountByPct = false; _setDiscountPctFromAmount(); setState(() {}); },
+      onChanged: (_) { _discountByPct = false; _setDiscountPctFromAmount(); _totals.value++; },
     );
     final pctField = TextField(
       controller: _discountPct,
       keyboardType: const TextInputType.numberWithOptions(decimal: true),
       decoration: _fieldDecoration('نسبة الخصم', suffixText: '%', errorText: n(_discountPct.text) > 100 ? 'الحد الأقصى 100%' : null),
-      onChanged: (_) { _discountByPct = true; _setDiscountAmountFromPct(); setState(() {}); },
+      onChanged: (_) { _discountByPct = true; _setDiscountAmountFromPct(); _totals.value++; },
     );
     final fields = Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Expanded(child: amountField),
@@ -735,7 +777,7 @@ class _SalesPageState extends State<SalesPage> {
     }
     final remaining = _total - others;
     _payments[index].amount.text = remaining > 0 ? _fmt2(remaining) : '';
-    setState(() {});
+    _totals.value++;
   }
 
   Widget _payRow(int index) {
@@ -775,7 +817,7 @@ class _SalesPageState extends State<SalesPage> {
           icon: const Icon(Icons.done_all, size: 18),
           onPressed: () => _fillPayment(index),
         )),
-      onChanged: (_) => setState(() {}),
+      onChanged: (_) => _totals.value++,
     );
     final removeButton = IconButton(
       tooltip: 'حذف طريقة الدفع',
@@ -1022,12 +1064,20 @@ class _SalesPageState extends State<SalesPage> {
                     _scanButton(),
                   ]),
                   const SizedBox(height: 14),
-                  _sectionTitle('الأصناف (${_validSaleLines.length})', Icons.shopping_cart_outlined),
+                  ListenableBuilder(
+                    listenable: _totals,
+                    builder: (context, _) => _sectionTitle('الأصناف (${_validSaleLines.length})', Icons.shopping_cart_outlined),
+                  ),
                   _buildSalesItems(),
                   const SizedBox(height: 12),
-                  Card(child: Padding(padding: const EdgeInsets.all(12), child: _buildDiscountAndTotals())),
-                  const SizedBox(height: 8),
-                  Card(child: Padding(padding: const EdgeInsets.all(12), child: _buildPaymentSection())),
+                  ListenableBuilder(
+                    listenable: _totals,
+                    builder: (context, _) => Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                      Card(child: Padding(padding: const EdgeInsets.all(12), child: _buildDiscountAndTotals())),
+                      const SizedBox(height: 8),
+                      Card(child: Padding(padding: const EdgeInsets.all(12), child: _buildPaymentSection())),
+                    ]),
+                  ),
                   const SizedBox(height: 14),
                   _buildActions(),
                   if (_busy) const Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator())),

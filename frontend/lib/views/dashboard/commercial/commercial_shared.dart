@@ -107,3 +107,51 @@ class PayLine {
   PayLine({this.method = '', this.treasury = '', double value = 0}) : amount = TextEditingController(text: value == 0 ? '' : '$value');
   void dispose() => amount.dispose();
 }
+
+/// فهرس بحث محلي للأصناف: يُبنى مرة عند تحميل الكتالوج أو تغيّره بدل تجهيز
+/// نصوص البحث مع كل ضغطة زر. يحافظ على ترتيب القائمة الأصلي وتكراراتها،
+/// وأول تطابق في الفهارس هو أول عنصر مطابق في الترتيب الأصلي.
+class ProductIndex {
+  final List<JMap> products;
+  final bool searchBarcode;
+  late final List<String> _haystacks = [
+    for (final p in products)
+      searchBarcode
+          ? '${p['code']} ${p['name']} ${p['barcode']}'.toLowerCase()
+          : '${p['code']} ${p['name']}'.toLowerCase()
+  ];
+  late final Map<String, JMap> _byCode = {};
+  late final Map<String, JMap> _byCodeOrBarcode = {};
+
+  ProductIndex(this.products, {this.searchBarcode = true}) {
+    for (final p in products) {
+      final code = p['code']?.toString();
+      if (code != null) {
+        _byCode.putIfAbsent(code, () => p);
+        _byCodeOrBarcode.putIfAbsent(code, () => p);
+      }
+      final barcode = p['barcode']?.toString();
+      if (barcode != null && barcode.isNotEmpty) {
+        _byCodeOrBarcode.putIfAbsent(barcode, () => p);
+      }
+    }
+  }
+
+  /// نفس نتائج وترتيب optionsBuilder الأصلي، مع نصوص بحث مجهزة مسبقًا.
+  Iterable<JMap> search(String query,
+      {int? limit = 30, bool trimQuery = true, bool emptyReturnsAll = false}) sync* {
+    final q = trimQuery ? query.trim().toLowerCase() : query.toLowerCase();
+    if (q.isEmpty && !emptyReturnsAll) return;
+    var taken = 0;
+    for (var i = 0; i < products.length; i++) {
+      if (limit != null && taken >= limit) break;
+      if (_haystacks[i].contains(q)) {
+        yield products[i];
+        taken++;
+      }
+    }
+  }
+
+  JMap? byCode(String code) => _byCode[code];
+  JMap? byCodeOrBarcode(String value) => _byCodeOrBarcode[value];
+}
