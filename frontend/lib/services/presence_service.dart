@@ -1,10 +1,9 @@
+import 'cache_partitions.dart';
 // lib/services/presence_service.dart
 
 import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
-import 'package:hive_flutter/hive_flutter.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'permissions_service.dart';
 // import 'package:cloud_firestore/cloud_firestore.dart';
 // import 'package:http/http.dart' as http;
@@ -26,7 +25,9 @@ class PresenceService {
   static const Duration _rtdbTimeout = Duration(seconds: 4);
 
   Future<String> _resolveBranch() async {
-    final prefs = await SharedPreferences.getInstance();
+return CachePartitions.run(() async {
+
+    final prefs = await CachePartitions.preferences();
     final selected = prefs.getString('selected_branch_code') ?? 'all';
 
     if (selected != 'all' && selected != 'none' && selected.isNotEmpty) {
@@ -40,13 +41,16 @@ class PresenceService {
       }
     }
     return '1';
-  }
+});
+}
 
   Future<String> _resolveBranchName(String code) async {
-    final prefs = await SharedPreferences.getInstance();
+return CachePartitions.run(() async {
+
+    final prefs = await CachePartitions.preferences();
     final companyCode = prefs.getString('company_code') ?? '';
     try {
-      final box = Hive.box('coding_box');
+      final box = CachePartitions.box('coding_box');
       final list = box.get('${companyCode}_branches', defaultValue: []);
       if (list is List) {
         for (final item in list) {
@@ -57,13 +61,16 @@ class PresenceService {
       }
     } catch (_) {}
     return code == 'all' ? 'كل الفروع' : code;
-  }
+});
+}
 
   Future<Map<String, dynamic>> _buildPayload() async {
+return CachePartitions.run(() async {
+
     final user = _auth.currentUser;
     if (user == null) return {};
 
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await CachePartitions.preferences();
     final name = prefs.getString('user_name') ?? user.email ?? 'مستخدم';
     final email = prefs.getString('user_email') ?? user.email ?? '';
     final companyCode = prefs.getString('company_code') ?? '';
@@ -83,12 +90,15 @@ class PresenceService {
       'has_all_branches': hasAll,
       'uid': user.uid,
     };
-  }
+});
+}
 
   // ============================================================
   // ✅ start — آمن، مفيش تعليق
   // ============================================================
   Future<void> start() async {
+return CachePartitions.run(() async {
+
     if (_started) return;
 
     final user = _auth.currentUser;
@@ -118,7 +128,8 @@ class PresenceService {
       print('⚠️ Presence start failed: $e');
       _started = false;
     }
-  }
+});
+}
 
   // ⭐ تسجيل onDisconnect بدون await — fire-and-forget
   void _registerOnDisconnect() {
@@ -145,6 +156,8 @@ class PresenceService {
 
   // ⭐ نشر الحالة online — fire-and-forget
   Future<void> _publishOnline() async {
+return CachePartitions.run(() async {
+
     final ref = _userStatusRef;
     if (ref == null) return;
 
@@ -161,12 +174,15 @@ class PresenceService {
       // ⭐ لو فشل، ما نوقفش التطبيق
       print('⚠️ Presence publish skipped: $e');
     }
-  }
+});
+}
 
   // ============================================================
   // ✅ refresh — آمن
   // ============================================================
   Future<void> refresh() async {
+return CachePartitions.run(() async {
+
     if (!_started) {
       await start();
       return;
@@ -181,12 +197,15 @@ class PresenceService {
     } catch (e) {
       print('⚠️ Presence refresh: $e');
     }
-  }
+});
+}
 
   // ============================================================
   // ✅ stop — آمن
   // ============================================================
   Future<void> stop() async {
+return CachePartitions.run(() async {
+
     try {
       await _connectedSubscription?.cancel();
     } catch (_) {}
@@ -209,12 +228,15 @@ class PresenceService {
 
     _userStatusRef = null;
     _started = false;
-  }
+});
+}
 
   // ============================================================
   // ✅ حذف مستخدم من RTDB عن طريق الإيميل
   // ============================================================
   Future<bool> removeUserByEmail(String email) async {
+return CachePartitions.run(() async {
+
     final targetEmail = email.trim().toLowerCase();
     if (targetEmail.isEmpty) return false;
     try {
@@ -228,5 +250,6 @@ class PresenceService {
       print('⚠️ طلب حذف الحضور فشل: $e');
       return false;
     }
-  }
+});
+}
 }

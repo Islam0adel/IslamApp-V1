@@ -1,3 +1,4 @@
+import '../../services/cache_partitions.dart';
 // lib/pages/hr/vacations_page.dart
 
 import 'package:flutter/material.dart';
@@ -128,6 +129,8 @@ class _VacationsPageState extends State<VacationsPage>
   // ============================================================
 
   Future<void> _loadEmployees() async {
+return CachePartitions.run(() async {
+
     setState(() => _isLoading = true);
 
     try {
@@ -162,7 +165,8 @@ class _VacationsPageState extends State<VacationsPage>
       print("❌ خطأ في تحميل الموظفين: $e");
       if (mounted) setState(() => _isLoading = false);
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -175,6 +179,8 @@ class _VacationsPageState extends State<VacationsPage>
   // ============================================================
 
   Future<void> _loadEmployeeData({bool showLoader = true}) async {
+return CachePartitions.run(() async {
+
     if (_selectedEmployee == null) return;
     if (showLoader) setState(() => _isLoading = true);
 
@@ -228,7 +234,8 @@ class _VacationsPageState extends State<VacationsPage>
       print("❌ خطأ في تحميل بيانات الموظف: $e");
       if (mounted) setState(() => _isLoading = false);
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -236,16 +243,22 @@ class _VacationsPageState extends State<VacationsPage>
   // ============================================================
 
   Future<void> _invalidateCacheForEmployee() async {
+return CachePartitions.run(() async {
+
     if (_selectedEmployee == null) return;
     await _reportService.invalidateCache(
       companyCode: _companyCode,
       employeeCode: _selectedEmployee!.code,
     );
-  }
+});
+}
 
   Future<void> _invalidateCacheForCompany() async {
+return CachePartitions.run(() async {
+
     await _reportService.invalidateCache(companyCode: _companyCode);
-  }
+});
+}
 
 
   // ============================================================
@@ -253,6 +266,8 @@ class _VacationsPageState extends State<VacationsPage>
   // ============================================================
 
     Future<void> _addGeneralVacation() async {
+return CachePartitions.run(() async {
+
     // ⭐ فحص
     if (!PermissionsService().canAddVacation) {
       _showSnackBar(
@@ -297,7 +312,8 @@ class _VacationsPageState extends State<VacationsPage>
         AppTheme.dangerStrongFor(context),
       );
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -305,6 +321,8 @@ class _VacationsPageState extends State<VacationsPage>
   // ============================================================
 
     Future<void> _saveWeeklyDay(int? day) async {
+return CachePartitions.run(() async {
+
     if (_settings == null || _selectedEmployee == null) return;
 
     // ⭐ فحص
@@ -353,7 +371,8 @@ class _VacationsPageState extends State<VacationsPage>
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -361,6 +380,8 @@ class _VacationsPageState extends State<VacationsPage>
   // ============================================================
 
     Future<void> _addExceptionalVacation() async {
+return CachePartitions.run(() async {
+
     if (_selectedEmployee == null) return;
 
     // ⭐ فحص
@@ -475,7 +496,8 @@ class _VacationsPageState extends State<VacationsPage>
         AppTheme.dangerStrongFor(context),
       );
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -483,6 +505,8 @@ class _VacationsPageState extends State<VacationsPage>
   // ============================================================
 
     Future<void> _deleteExceptionalVacation(HRVacationModel v) async {
+return CachePartitions.run(() async {
+
     if (v.id == null) return;
 
     // ⭐ فحص
@@ -564,7 +588,8 @@ class _VacationsPageState extends State<VacationsPage>
         AppTheme.dangerStrongFor(context),
       );
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -577,6 +602,8 @@ class _VacationsPageState extends State<VacationsPage>
     required bool flexible,
     required bool useFixedMonthDays,
   }) async {
+return CachePartitions.run(() async {
+
     if (_settings == null || _selectedEmployee == null) return;
 
     // ⭐ فحص
@@ -595,7 +622,7 @@ class _VacationsPageState extends State<VacationsPage>
         defaultCheckIn: checkIn,
         defaultCheckOut: checkOut,
         flexibleHours: flexible,
-        useFixedMonthDays: useFixedMonthDays, 
+        useFixedMonthDays: useFixedMonthDays,
       );
 
       final result = await _hrService.saveEmployeeSettings(model: updated);
@@ -628,7 +655,8 @@ class _VacationsPageState extends State<VacationsPage>
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -636,6 +664,8 @@ class _VacationsPageState extends State<VacationsPage>
   // ============================================================
 
     Future<void> _saveDelayRules(Map<String, double> rules) async {
+return CachePartitions.run(() async {
+
     if (_settings == null || _selectedEmployee == null) return;
 
     // ⭐ فحص
@@ -681,7 +711,8 @@ class _VacationsPageState extends State<VacationsPage>
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -694,6 +725,8 @@ class _VacationsPageState extends State<VacationsPage>
   // ============================================================
 
     Future<void> _addAdjustment() async {
+return CachePartitions.run(() async {
+
     if (_selectedEmployee == null) return;
 
     // ⭐ فحص: لازم يكون عنده صلاحية إضافة مكافأة أو سلفة
@@ -817,7 +850,8 @@ class _VacationsPageState extends State<VacationsPage>
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -825,6 +859,8 @@ class _VacationsPageState extends State<VacationsPage>
   // ============================================================
 
     Future<void> _deleteAdjustment(HRAdjustmentModel adj) async {
+return CachePartitions.run(() async {
+
     if (adj.id == null) return;
 
     // ⭐ فحص
@@ -906,7 +942,8 @@ class _VacationsPageState extends State<VacationsPage>
         AppTheme.dangerStrongFor(context),
       );
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -1152,7 +1189,7 @@ class _VacationsPageState extends State<VacationsPage>
     );
   }
 
-  
+
 
   // ============================================================
   // Tab 1: الإجازة الأسبوعية
@@ -1488,7 +1525,7 @@ class _VacationsPageState extends State<VacationsPage>
     );
   }
 
-  
+
 
   // ============================================================
   // Tab 3: مواعيد العمل
@@ -1927,6 +1964,8 @@ class _AddGeneralVacationDialogState extends State<_AddGeneralVacationDialog> {
   }
 
   Future<void> _pickDate() async {
+return CachePartitions.run(() async {
+
     final picked = await showDatePicker(
       context: context,
       initialDate: _date,
@@ -1937,7 +1976,8 @@ class _AddGeneralVacationDialogState extends State<_AddGeneralVacationDialog> {
     if (picked != null) {
       setState(() => _date = picked);
     }
-  }
+});
+}
 
   @override
   Widget build(BuildContext context) {
@@ -2135,7 +2175,7 @@ class _WorkScheduleEditor extends StatefulWidget {
     required String checkIn,
     required String checkOut,
     required bool flexible,
-    required bool useFixedMonthDays, 
+    required bool useFixedMonthDays,
   }) onSave;
   final bool isSaving;
 
@@ -2162,7 +2202,7 @@ class _WorkScheduleEditorState extends State<_WorkScheduleEditor> {
     _checkIn = widget.settings.defaultCheckIn;
     _checkOut = widget.settings.defaultCheckOut;
     _flexible = widget.settings.flexibleHours;
-    _useFixedMonthDays = widget.settings.useFixedMonthDays; 
+    _useFixedMonthDays = widget.settings.useFixedMonthDays;
   }
     @override
   void didUpdateWidget(_WorkScheduleEditor oldWidget) {
@@ -2179,6 +2219,8 @@ class _WorkScheduleEditorState extends State<_WorkScheduleEditor> {
   }
 
   Future<void> _pickTime({required bool isCheckIn}) async {
+return CachePartitions.run(() async {
+
     final current = isCheckIn ? _checkIn : _checkOut;
     final parts = current.split(':');
     final initH = int.tryParse(parts.isNotEmpty ? parts[0] : '9') ?? 9;
@@ -2202,7 +2244,8 @@ class _WorkScheduleEditorState extends State<_WorkScheduleEditor> {
         }
       });
     }
-  }
+});
+}
 
   @override
   Widget build(BuildContext context) {
@@ -2420,7 +2463,7 @@ class _WorkScheduleEditorState extends State<_WorkScheduleEditor> {
                     activeThumbColor: AppTheme.successFor(context),
                     onChanged: (v) => setState(() => _flexible = v),
                   ),
-                  
+
                 ],
               ),
             ),

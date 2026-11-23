@@ -1,9 +1,9 @@
+import '../../services/cache_partitions.dart';
 // lib/views/dashboard/supplier_settlement_history_page.dart
 
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
 import 'package:intl/intl.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models/supplier_settlement_model.dart';
@@ -62,10 +62,12 @@ double _totalSupplierBalance = 0.0;
   // ============================================================
 
   Future<void> _loadData() async {
+return CachePartitions.run(() async {
+
     if (mounted) setState(() => _isLoading = true);
 
     try {
-      final box = Hive.box('supplier_settlement_box');
+      final box = CachePartitions.box('supplier_settlement_box');
       final List<Map<String, dynamic>> data = [];
 
       for (final key in box.keys) {
@@ -117,13 +119,16 @@ double _totalSupplierBalance = 0.0;
       debugPrint('❌ خطأ في تحميل معاينة التسويات: $e');
       if (mounted) setState(() => _isLoading = false);
     }
-  }
+});
+}
 
   // ============================================================
   // الفلترة + حساب إجماليات الفترة
   // ============================================================
 
   Future<void> _applyFilters() async {
+return CachePartitions.run(() async {
+
   final from = DateFormat('yyyy-MM-dd').format(_fromDate);
   final to = DateFormat('yyyy-MM-dd').format(_toDate);
 
@@ -137,6 +142,8 @@ double _totalSupplierBalance = 0.0;
   await _calculatePeriodTotals(); // إعادة حساب الإجماليات بعد الفلترة
 
   if (mounted) setState(() {});
+
+});
 }
 
   // ============================================================
@@ -147,6 +154,8 @@ double _totalSupplierBalance = 0.0;
   // ============================================================
 
   Future<void> _calculatePeriodTotals() async {
+return CachePartitions.run(() async {
+
   try {
     final fromDateStr = DateFormat('yyyy-MM-dd').format(_fromDate);
     final toDateStr = DateFormat('yyyy-MM-dd').format(_toDate);
@@ -184,7 +193,7 @@ double _totalSupplierBalance = 0.0;
     }
 
     double prevSettlementsTotal = 0.0;
-    final box = Hive.box('supplier_settlement_box');
+    final box = CachePartitions.box('supplier_settlement_box');
     final beforeDate = DateFormat('yyyy-MM-dd').format(_fromDate.subtract(const Duration(days: 1)));
 
     for (final key in box.keys) {
@@ -223,6 +232,8 @@ double _totalSupplierBalance = 0.0;
     _previousBalance = 0.0;
     _totalSupplierBalance = 0.0;
   }
+
+});
 }
 
   double _toDouble(dynamic value) {
@@ -248,7 +259,7 @@ double _totalSupplierBalance = 0.0;
       return 'غير محدد';
     }
 
-    final box = Hive.box('coding_box');
+    final box = CachePartitions.box('coding_box');
     final raw = box.get(
       '${widget.companyCode}_safes',
       defaultValue: [],
@@ -278,7 +289,7 @@ double _totalSupplierBalance = 0.0;
       return 'كل الفروع';
     }
 
-    final box = Hive.box('coding_box');
+    final box = CachePartitions.box('coding_box');
     final raw = box.get(
       '${widget.companyCode}_branches',
       defaultValue: [],
@@ -315,6 +326,8 @@ double _totalSupplierBalance = 0.0;
   // ============================================================
 
   Future<void> _pickDate(bool isFrom) async {
+return CachePartitions.run(() async {
+
     final picked = await showDatePicker(
       context: context,
       initialDate: isFrom ? _fromDate : _toDate,
@@ -333,13 +346,16 @@ double _totalSupplierBalance = 0.0;
     });
 
     await _applyFilters();
-  }
+});
+}
 
   // ============================================================
   // إعادة تعيين الفلاتر
   // ============================================================
 
   Future<void> _clearFilters() async {
+return CachePartitions.run(() async {
+
     setState(() {
       _selectedSupplier = null;
       _fromDate = DateTime(DateTime.now().year, DateTime.now().month, 1);
@@ -347,14 +363,15 @@ double _totalSupplierBalance = 0.0;
     });
 
     await _applyFilters();
-  }
+});
+}
 
   // ============================================================
   // إجمالي الدفعات
   // ============================================================
 
   double get _totalAmount => _totalSettlements;
-  
+
   // ============================================================
   // تعديل التسوية
   // ============================================================
@@ -362,6 +379,8 @@ double _totalSupplierBalance = 0.0;
   Future<void> _editSettlement(
     Map<String, dynamic> item,
   ) async {
+return CachePartitions.run(() async {
+
     final model = SupplierSettlementModel.fromMap(item);
 
     final result = await Navigator.push(
@@ -379,7 +398,8 @@ double _totalSupplierBalance = 0.0;
     if (result == true) {
       await _loadData();
     }
-  }
+});
+}
 
   // ============================================================
   // حذف التسوية
@@ -388,6 +408,8 @@ double _totalSupplierBalance = 0.0;
   Future<void> _deleteSettlement(
     Map<String, dynamic> item,
   ) async {
+return CachePartitions.run(() async {
+
     final docId = item['doc_id']?.toString();
 
     if (docId == null || docId.isEmpty) {
@@ -454,13 +476,16 @@ double _totalSupplierBalance = 0.0;
         AppTheme.dangerStrongFor(context),
       );
     }
-  }
+});
+}
 
   // ============================================================
   // تصدير Excel
   // ============================================================
 
   Future<void> _exportExcel() async {
+return CachePartitions.run(() async {
+
     if (_filteredSettlements.isEmpty) {
       _showSnackBar('لا توجد بيانات للتصدير', AppTheme.warningOrangeFor(context));
       return;
@@ -530,13 +555,16 @@ double _totalSupplierBalance = 0.0;
         AppTheme.dangerStrongFor(context),
       );
     }
-  }
+});
+}
 
   // ============================================================
   // تصدير PDF
   // ============================================================
 
   Future<void> _exportPDF() async {
+return CachePartitions.run(() async {
+
     if (_filteredSettlements.isEmpty) {
       _showSnackBar('لا توجد بيانات للتصدير', AppTheme.warningOrangeFor(context));
       return;
@@ -607,7 +635,8 @@ double _totalSupplierBalance = 0.0;
         AppTheme.dangerStrongFor(context),
       );
     }
-  }
+});
+}
 
   // ============================================================
   // SnackBar
@@ -1098,9 +1127,13 @@ Widget build(BuildContext context) {
                                         ),
                                       ],
                                       onChanged: (value) async {
+return CachePartitions.run(() async {
+
                                         setState(() => _selectedSupplier = value);
                                         await _applyFilters();
-                                      },
+
+});
+},
                                     ),
                                   ),
                                   IconButton(

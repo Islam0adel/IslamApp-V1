@@ -1,3 +1,9 @@
+import 'dart:convert';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../../services/sync_read_access.dart';
+import '../../services/read_authorization_snapshot.dart';
+import '../../views/widgets/visibility_page_shell.dart';
+import '../../services/cache_partitions.dart';
 // lib/pages/hr/hr_dashboard_page.dart
 
 import 'package:flutter/material.dart';
@@ -45,6 +51,8 @@ class _HRDashboardPageState extends State<HRDashboardPage> {
   bool _isLoading = true;
   String _companyCode = '';
 
+  bool _employeesLoaded = false;
+  bool _attendanceLoaded = false;
   int _totalEmployees = 0;
   int _presentToday = 0;
   int _absentToday = 0;
@@ -59,6 +67,10 @@ class _HRDashboardPageState extends State<HRDashboardPage> {
   @override
   void initState() {
     super.initState();
+    _statsOwner = FirebaseAuth.instance.currentUser?.uid;
+    _statsScope = _currentStatsScope;
+    PermissionsService().addListener(_permissionsChanged);
+    ReadAuthorizationEpoch.changes.addListener(_permissionsChanged);
     _loadStats();
   }
 
@@ -72,59 +84,153 @@ class _HRDashboardPageState extends State<HRDashboardPage> {
   // 3. عدّ الحالات (حاضر / غائب / متأخر / إجازة)
   // ============================================================
 
+  String? _statsOwner;
+  bool get _sameOwner => _statsOwner == FirebaseAuth.instance.currentUser?.uid;
+  int _loadGeneration = 0;
+  bool _statsRunning = false;
+  bool _statsPending = false;
+  SharedPreferences? _statsPreferences;
+  String? _statsScope;
+  String get _currentStatsScope {
+    final user = FirebaseAuth.instance.currentUser;
+    final permissions = PermissionsService();
+    return jsonEncode([
+      user?.uid, user?.email,
+      _statsPreferences?.getString('company_code'),
+      CachePartitions.generation, CachePartitions.isReady,
+      ReadAuthorizationEpoch.value, permissions.isLoaded,
+      permissions.hrCoverageScope, permissions.currentEmployeeCode,
+      permissions.canShowHR, _mayReadEmployees, _mayReadAttendance,
+    ]);
+  }
+  bool get _mayReadEmployees => _sameOwner && SyncReadAccess.allows('employees');
+  bool get _mayReadAttendance => _sameOwner && SyncReadAccess.allows('attendance');
+  void _permissionsChanged() {
+    if (!mounted) return;
+    final next = _currentStatsScope;
+    if (next == _statsScope) return;
+    _statsScope = next;
+    _loadGeneration++;
+    setState(() {
+      _employeesLoaded = false;
+      _attendanceLoaded = false;
+      _totalEmployees = 0;
+      _presentToday = 0;
+      _absentToday = 0;
+      _lateToday = 0;
+      _vacationToday = 0;
+      _isLoading = false;
+    });
+    if (CachePartitions.isReady) _loadStats();
+  }
+  @override
+  void dispose() {
+    _loadGeneration++;
+    PermissionsService().removeListener(_permissionsChanged);
+    ReadAuthorizationEpoch.changes.removeListener(_permissionsChanged);
+    super.dispose();
+  }
+
   Future<void> _loadStats() async {
-    setState(() => _isLoading = true);
+    if (!mounted) return;
+    _statsPending = true;
+    if (_statsRunning) return;
+    _statsRunning = true;
+    try {
+      // Epoch notifications precede synchronous permission-map replacement.
+      // Start after that mutation settles, while hiding stale values immediately.
+      await Future<void>.value();
+      do {
+        _statsPending = false;
+        await _readStats();
+      } while (mounted && _statsPending && CachePartitions.isReady);
+    } finally {
+      _statsRunning = false;
+    }
+  }
+
+  Future<void> _readStats() async {
+return CachePartitions.run(() async {
+
+    final generation = ++_loadGeneration;
+    final readEmployees = _mayReadEmployees;
+    final readAttendance = _mayReadAttendance;
+    if (!readEmployees && !readAttendance) {
+      if (mounted) setState(() => _isLoading = false);
+      return;
+    }
+    setState(() {
+      _isLoading = true;
+      _employeesLoaded = false;
+      _attendanceLoaded = false;
+    });
 
     try {
+      final scope = await ReadAuthorizationSnapshot.capture();
       final prefs = await SharedPreferences.getInstance();
+      scope.check();
+      if (!mounted || generation != _loadGeneration) return;
+      _statsPreferences = prefs;
       _companyCode = prefs.getString('company_code') ?? '';
-
+      _statsScope = _currentStatsScope;
       if (_companyCode.isEmpty) {
         setState(() => _isLoading = false);
         return;
       }
 
-      // 1) الموظفين
-      final employees = await _employeeService.getEmployeesList(
-        companyCode: _companyCode,
-      );
-
-      // 2) حضور اليوم
-      final today = _todayStr();
-      final todayAttendance = await _hrService.getAttendanceForDate(
-        companyCode: _companyCode,
-        date: today,
-      );
+      var employeeCount = 0;
+      var employeesLoaded = false;
+      var attendanceLoaded = false;
+      if (readEmployees) {
+        try {
+          final employees = await _employeeService.getEmployeesList(companyCode: _companyCode, throwOnError: true);
+          scope.check();
+          employeeCount = employees.length;
+          employeesLoaded = true;
+        } catch (e) {
+          scope.check();
+          debugPrint('Employee statistics unavailable: $e');
+        }
+      }
+      scope.check();
+      if (!mounted || generation != _loadGeneration) return;
+      var present = 0, absent = 0, late = 0, vacation = 0;
+      if (readAttendance) {
+        try {
+          final rows = await _hrService.getAttendanceForDate(companyCode: _companyCode, date: _todayStr());
+          scope.check();
+          present = rows.where((a) => a.status == 'present' || a.status == 'late').length;
+          absent = rows.where((a) => a.status == 'absent').length;
+          late = rows.where((a) => a.lateMinutes > 0).length;
+          vacation = rows.where((a) => a.status == 'vacation').length;
+          attendanceLoaded = true;
+        } catch (e) {
+          scope.check();
+          debugPrint('Attendance statistics unavailable: $e');
+        }
+      }
 
       // 3) الإحصائيات
-      if (!mounted) return;
+      scope.check();
+      if (!mounted || generation != _loadGeneration) return;
 
       setState(() {
-        _totalEmployees = employees.length;
-
-        _presentToday = todayAttendance
-            .where((a) => a.status == 'present' || a.status == 'late')
-            .length;
-
-        _absentToday = todayAttendance
-            .where((a) => a.status == 'absent')
-            .length;
-
-        _lateToday = todayAttendance
-            .where((a) => a.lateMinutes > 0)
-            .length;
-
-        _vacationToday = todayAttendance
-            .where((a) => a.status == 'vacation')
-            .length;
+        _employeesLoaded = employeesLoaded;
+        _attendanceLoaded = attendanceLoaded;
+        _totalEmployees = employeeCount;
+        _presentToday = present;
+        _absentToday = absent;
+        _lateToday = late;
+        _vacationToday = vacation;
 
         _isLoading = false;
       });
     } catch (e) {
       print("❌ خطأ في تحميل الإحصائيات: $e");
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted && generation == _loadGeneration) setState(() => _isLoading = false);
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -141,7 +247,7 @@ class _HRDashboardPageState extends State<HRDashboardPage> {
     @override
   Widget build(BuildContext context) {
     // ⭐ فحص صلاحية فتح HR Dashboard
-    if (!PermissionsService().canShowHR) {
+    if (!_sameOwner || !PermissionsService().canShowHR) {
       return _buildNoPermissionScreen();
     }
 
@@ -191,8 +297,9 @@ class _HRDashboardPageState extends State<HRDashboardPage> {
                   padding: const EdgeInsets.all(15),
                   child: Column(
                     children: [
-                      _buildStatsCard(),
-                      const SizedBox(height: 20),
+                      if (_mayReadEmployees || _mayReadAttendance) ...[
+                        _buildStatsCard(), const SizedBox(height: 20),
+                      ],
                       _buildMenuCards(),
                     ],
                   ),
@@ -235,33 +342,33 @@ class _HRDashboardPageState extends State<HRDashboardPage> {
             spacing: 10,
             runSpacing: 10,
             children: [
-              _buildStatCard(
+              if (_mayReadEmployees) _buildStatCard(
                 'إجمالي الموظفين',
-                '$_totalEmployees',
+                _employeesLoaded ? '$_totalEmployees' : 'غير متاح',
                 Icons.people_rounded,
                 AppTheme.infoSoftFor(context),
               ),
-              _buildStatCard(
+              if (_mayReadAttendance) _buildStatCard(
                 'حاضر',
-                '$_presentToday',
+                _attendanceLoaded ? '$_presentToday' : 'غير متاح',
                 Icons.check_circle_rounded,
                 AppTheme.successFor(context),
               ),
-              _buildStatCard(
+              if (_mayReadAttendance) _buildStatCard(
                 'غائب',
-                '$_absentToday',
+                _attendanceLoaded ? '$_absentToday' : 'غير متاح',
                 Icons.cancel_rounded,
                 AppTheme.dangerFor(context),
               ),
-              _buildStatCard(
+              if (_mayReadAttendance) _buildStatCard(
                 'متأخر',
-                '$_lateToday',
+                _attendanceLoaded ? '$_lateToday' : 'غير متاح',
                 Icons.timer_rounded,
                 AppTheme.warningOrangeSoftFor(context),
               ),
-              _buildStatCard(
+              if (_mayReadAttendance) _buildStatCard(
                 'إجازة',
-                '$_vacationToday',
+                _attendanceLoaded ? '$_vacationToday' : 'غير متاح',
                 Icons.beach_access_rounded,
                 AppTheme.extraTealFor(context),
               ),
@@ -340,7 +447,7 @@ class _HRDashboardPageState extends State<HRDashboardPage> {
     // ─────────────────────────────────────────
     // 1) بطاقة الموظفين
     // ─────────────────────────────────────────
-    if (ps.canViewEmployees || ps.canViewOwnHRData) {
+    if (ps.pageVisible('إدارة الموظفين', fallback: (ps.canViewEmployees || ps.canViewOwnHRData))) {
       addCard(
         _buildMenuCard(
           title: ps.canViewEmployees ? 'إدارة الموظفين' : 'ملفي الشخصي',
@@ -349,7 +456,7 @@ class _HRDashboardPageState extends State<HRDashboardPage> {
               : 'عرض بياناتي الشخصية',
           icon: Icons.badge_rounded,
           color: AppTheme.infoFor(context),
-          onTap: () => _openPage(const EmployeesListPage()),
+          onTap: () => _openPage((ps.canViewEmployees || ps.canViewOwnHRData) ? const EmployeesListPage() : const VisibilityPageShell(title: 'إدارة الموظفين')),
         ),
       );
     }
@@ -357,14 +464,14 @@ class _HRDashboardPageState extends State<HRDashboardPage> {
     // ─────────────────────────────────────────
     // 2) بطاقة الحضور
     // ─────────────────────────────────────────
-    if (ps.canOpenAttendancePage) {
+    if (ps.pageVisible('الحضور والانصراف', fallback: (ps.canOpenAttendancePage))) {
       addCard(
         _buildMenuCard(
           title: 'الحضور والانصراف',
           subtitle: 'تسجيل حضور الموظفين اليومي',
           icon: Icons.fingerprint_rounded,
           color: AppTheme.successFor(context),
-          onTap: () => _openPage(const AttendancePage()),
+          onTap: () => _openPage((ps.canOpenAttendancePage) ? const AttendancePage() : const VisibilityPageShell(title: 'الحضور والانصراف')),
         ),
       );
     }
@@ -372,14 +479,14 @@ class _HRDashboardPageState extends State<HRDashboardPage> {
     // ─────────────────────────────────────────
     // 3) بطاقة الإجازات
     // ─────────────────────────────────────────
-    if (ps.canOpenVacationsPage) {
+    if (ps.pageVisible('الإجازات والإعدادات', fallback: (ps.canOpenVacationsPage))) {
       addCard(
         _buildMenuCard(
           title: 'الإجازات والإعدادات',
           subtitle: 'إجازات + سلف + مواعيد + خصومات تأخير',
           icon: Icons.beach_access_rounded,
           color: AppTheme.extraTealFor(context),
-          onTap: () => _openPage(const VacationsPage()),
+          onTap: () => _openPage((ps.canOpenVacationsPage) ? const VacationsPage() : const VisibilityPageShell(title: 'الإجازات والإعدادات')),
         ),
       );
     }
@@ -387,14 +494,14 @@ class _HRDashboardPageState extends State<HRDashboardPage> {
     // ─────────────────────────────────────────
     // 4) بطاقة التقارير
     // ─────────────────────────────────────────
-    if (ps.canOpenReportPage) {
+    if (ps.pageVisible('تقرير الراتب الشهري', fallback: (ps.canOpenReportPage))) {
       addCard(
         _buildMenuCard(
           title: 'تقرير الراتب الشهري',
           subtitle: 'حساب الراتب + PDF',
           icon: Icons.receipt_long_rounded,
           color: AppTheme.extraPurpleFor(context),
-          onTap: () => _openPage(const HRReportPage()),
+          onTap: () => _openPage((ps.canOpenReportPage) ? const HRReportPage() : const VisibilityPageShell(title: 'تقرير الراتب الشهري')),
         ),
       );
     }
@@ -402,14 +509,14 @@ class _HRDashboardPageState extends State<HRDashboardPage> {
     // ─────────────────────────────────────────
     // 5) بطاقة إجمالي الرواتب ⭐ جديد
     // ─────────────────────────────────────────
-    if (ps.canViewBranchSalaryReport) {
+    if (ps.pageVisible('إجمالي الرواتب', fallback: (ps.canViewBranchSalaryReport))) {
       addCard(
         _buildMenuCard(
           title: 'إجمالي الرواتب',
           subtitle: 'تقرير مجمع لكل فرع / الشركة',
           icon: Icons.summarize_rounded,
           color: AppTheme.extraBlueGreyFor(context),
-          onTap: () => _openPage(const BranchSalariesPage()),
+          onTap: () => _openPage((ps.canViewBranchSalaryReport) ? const BranchSalariesPage() : const VisibilityPageShell(title: 'إجمالي الرواتب')),
         ),
       );
     }
@@ -523,6 +630,8 @@ class _HRDashboardPageState extends State<HRDashboardPage> {
   // ============================================================
 
   Future<void> _openPage(Widget page) async {
+return CachePartitions.run(() async {
+
     await Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => page),
@@ -531,7 +640,8 @@ class _HRDashboardPageState extends State<HRDashboardPage> {
     // لما يرجع من الصفحة → نعيد تحميل الإحصائيات
     // (عشان لو المستخدم سجل حضور/غاب، الأرقام تتحدث)
     _loadStats();
-  }
+});
+}
     // ⭐ شاشة "لا صلاحية"
   Widget _buildNoPermissionScreen() {
     return Scaffold(

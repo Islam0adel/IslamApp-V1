@@ -4,7 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 
+from app.core.auth_middleware import allowed_branches_for_profile
 from app.core.database import get_db
+from app.core.permissions import require_any_section_permission
 from app.core.auth_middleware import allowed_branches_for_profile
 from app.core.models import SupplierRecord
 from app.core.schemas import SupplierTransactionModel
@@ -16,6 +18,24 @@ import logging
 
 
 router = APIRouter()
+
+
+_CATEGORY = "حسابات الموردين"
+
+
+def _require_any(request: Request, keys):
+    return require_any_section_permission(
+        request, [(_CATEGORY, key) for key in keys]
+    )
+
+
+def _check_branch(profile: dict, branch_code) -> None:
+    allowed = allowed_branches_for_profile(profile)
+    if allowed and branch_code and str(branch_code) not in allowed:
+        raise HTTPException(
+            status_code=403,
+            detail="ليس لديك صلاحية على هذا الفرع",
+        )
 logger = logging.getLogger(__name__)
 
 
@@ -23,9 +43,31 @@ logger = logging.getLogger(__name__)
 # Helper
 # ============================================================
 
+def _viewer_may_costs(request) -> bool:
+    """نفس حقوق التكلفة الثلاثة: التكويد/سعر الشراء أو عرض سعر
+    الجملة في المبيعات أو رصيد المخزون."""
+    from app.core.permissions import has_section_permission as _hsp
+    return (
+        _hsp(request.state.auth_user, "التكويد", "سعر الشراء")
+        or _hsp(request.state.auth_user, "المبيعات", "عرض سعر الجملة")
+        or _hsp(request.state.auth_user, "رصيد المخزون", "عرض سعر الجملة")
+    )
+
+
+# سعر بند المشتريات وإجمالي السطر وإجمالي الفاتورة مشتقة من
+# سعر الجملة: حقوق محمية بصلاحية عرض التكلفة. لا يصل إجمالي
+# الفاتورة لجهاز من لا يملك الحق، ويُخفى في الواجهة بدل أي صفر
+# مضلل. القيمة الصحيحة محفوظة على الخادم وتُحسب منها التسويات
+# لأصحاب الحق فقط.
+_SUPPLIER_COST_ITEM_FIELDS = ("price", "total", "discountAmount",
+                              "discountRate")
+_SUPPLIER_COST_DOC_FIELDS = ("total_amount",)
+
+
 def serialize_supplier(
     doc: SupplierRecord,
     action: str | None = None,
+    include_costs: bool = True,
 ):
     data = {
         "doc_id": str(doc.id),
@@ -51,6 +93,19 @@ def serialize_supplier(
         "is_deleted": bool(doc.is_deleted),
     }
 
+    if not include_costs:
+        for field in _SUPPLIER_COST_DOC_FIELDS:
+            data.pop(field, None)
+        if isinstance(data.get("items"), list):
+            data["items"] = [
+                {
+                    k: v for k, v in item.items()
+                    if k not in _SUPPLIER_COST_ITEM_FIELDS
+                }
+                if isinstance(item, dict) else item
+                for item in data["items"]
+            ]
+
     if action is not None:
         data["action"] = action
 
@@ -64,9 +119,13 @@ def serialize_supplier(
 
 @router.post("/save")
 async def save_supplier_transaction(
+    request: Request,
     data: SupplierTransactionModel,
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_any(request, ["اضافة", "تعديل"])
+    _check_branch(_profile, data.branch_code)
+
     try:
         # ------------------------------------------------------
         # التحقق من doc_id
@@ -106,6 +165,147 @@ async def save_supplier_transaction(
                 detail="بيانات الأصناف غير صالحة",
             )
 
+        # سياسة الأسعار المتبعة في هذا المسار (مطبقة بطلب المالك عبر قناة المحادثة الموثقة بتاريخ ٢٠٢٦-١١-٢١؛ التعليق توثيق للسلوك وليس مستند تفويض بذاته):
+        # - من لا يملك أي حق تكلفة: سعر البند من كتالوج التكويد،
+        #   وقيم السطور والإجمالي تُحسب منه، وصنف غير معروف يُرفض
+        #   برسالة واضحة قبل أي كتابة (ذرّي).
+        # - حامل حق التكلفة: يبقى مساره الحالي بأسعاره المدخلة —
+        #   لا إعادة تسعير لفواتير تاريخية عند التعديل.
+        # - صنف غير معروف لحامل التكلفة: يُقبل فقط مع حق إضافة
+        #   التكويد الفعلي (مسار إنشاء الأصناف القائم).
+        from app.core.permissions import has_section_permission as _hsp
+        _may_costs = _viewer_may_costs(request)
+        _may_add_coding = _hsp(
+            request.state.auth_user, "التكويد", "اضافة صنف"
+        )
+        # عند تعديل فاتورة موجودة: أسعار سطورها المخزنة موثوقة
+        # وتُحفظ (لا إعادة تسعير للتاريخ)
+        # سطور مخزنة لكل كود (قائمة بترتيبها: الكود المكرر في
+        # نفس الفاتورة يُطابق سطراً بسطر). تُحفظ الخصومات مع
+        # السعر: إسقاطها كان يعيد حساب إجمالي تاريخي بخصم صفر.
+        _stored_lines_by_code: dict = {}
+        if doc_id_int:
+            _cur = await db.execute(
+                select(SupplierRecord.items).where(
+                    SupplierRecord.id == doc_id_int,
+                    SupplierRecord.company_code == data.company_code,
+                )
+            )
+            _stored = _cur.scalar_one_or_none()
+            if isinstance(_stored, list):
+                for _si in _stored:
+                    if isinstance(_si, dict) and _si.get("code"):
+                        _stored_lines_by_code.setdefault(
+                            str(_si["code"]), []
+                        ).append({
+                            "price": float(_si.get("price") or 0.0),
+                            "discountAmount": float(
+                                _si.get("discountAmount") or 0.0
+                            ),
+                            "discountRate": float(
+                                _si.get("discountRate") or 0.0
+                            ),
+                        })
+        _codes = [
+            str(item.get("code", ""))
+            for item in items_json
+            if item.get("code")
+        ]
+        if _codes and _may_costs and not _may_add_coding:
+            # حامل تكلفة بلا حق تكويد: الأصناف لازم تكون موجودة
+            from app.core.models import CodingRecord as _CR2
+            _known = await db.execute(
+                select(_CR2.code).where(
+                    _CR2.company_code == data.company_code,
+                    _CR2.category == "items",
+                    _CR2.code.in_(_codes),
+                    _CR2.is_deleted.is_(False),
+                )
+            )
+            _known_codes = {str(c) for (c,) in _known.all()}
+            for _c in _codes:
+                if _c not in _known_codes:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"الصنف غير موجود في التكويد: {_c}. "
+                            "سجّله أولاً من شاشة التكويد بواسطة "
+                            "مستخدم مخوّل، ثم أعد حفظ الفاتورة."
+                        ),
+                    )
+        if _codes and not _may_costs:
+            from app.core.models import CodingRecord as _CR
+            _cost_result = await db.execute(
+                select(
+                    _CR.code,
+                    _CR.wholesale_price,
+                    _CR.cost_pending,
+                ).where(
+                    _CR.company_code == data.company_code,
+                    _CR.category == "items",
+                    _CR.code.in_(_codes),
+                    _CR.is_deleted.is_(False),
+                )
+            )
+            _cost_by_code = {}
+            _unset_cost_codes = set()
+            for code, price, pending in _cost_result.all():
+                _cost_by_code[str(code)] = float(price or 0.0)
+                if pending:
+                    _unset_cost_codes.add(str(code))
+            for item in items_json:
+                _code = str(item.get("code", ""))
+                if _stored_lines_by_code.get(_code):
+                    continue  # سطر مخزن: محفوظ كما هو
+                # صنف جديد كلياً ومن لا يملك حق التكلفة لا يمكنه
+                # تزويد سعره (حقل السعر مخفي عنه أصلاً): يُسجَّل
+                # أولاً من شاشة التكويد، مهما كانت باقي حقوقه —
+                # لا سعر صفري مُختلَق يصبح سعر كتالوج.
+                if _code not in _cost_by_code:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"الصنف غير موجود في التكويد: {_code}. "
+                            "سجّله أولاً من شاشة التكويد، "
+                            "ثم أعد حفظ الفاتورة."
+                        ),
+                    )
+            _total = 0.0
+            for item in items_json:
+                _code = str(item.get("code", ""))
+                _queue = _stored_lines_by_code.get(_code)
+                if _queue:
+                    # سطر مخزن: السعر والخصم المخزنان محفوظان
+                    # (تطابق بالترتيب للكود المكرر)
+                    _s = _queue.pop(0)
+                    item["price"] = _s["price"]
+                    item["discountAmount"] = _s["discountAmount"]
+                    item["discountRate"] = _s["discountRate"]
+                else:
+                    # صنف سعره "غير محدد" (أنشأه من لا يملك الحق):
+                    # فاتورة عليه بلا سعر سجل مالي خاطئ، والمحرر
+                    # هنا لا يرى السعر أصلاً — رفض ذري قبل أي
+                    # كتابة (لا حفظ جزئي). الصفر المصرَّح به
+                    # (cost_pending=False) قيمة مشروعة تمر.
+                    # السطور المخزنة مستثناة (حفظ تاريخي).
+                    if _code in _unset_cost_codes:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                f"الصنف بلا سعر شراء محدد في "
+                                f"التكويد: {_code}. حدّد سعر الشراء "
+                                "من شاشة التكويد بواسطة مستخدم "
+                                "مخوّل، ثم أعد حفظ الفاتورة."
+                            ),
+                        )
+                    item["price"] = _cost_by_code[_code]
+                _qty = float(item.get("quantity") or 0.0)
+                _price = float(item.get("price") or 0.0)
+                _disc = float(item.get("discountAmount") or 0.0)
+                item["total"] = _qty * _price - _disc
+                _total += item["total"]
+            data.total_amount = _total
+
         # ------------------------------------------------------
         # البحث عن السجل
         # ------------------------------------------------------
@@ -143,8 +343,13 @@ async def save_supplier_transaction(
         # تحديث سجل موجود
         # ------------------------------------------------------
 
+        # Resolve the action from the server lookup, not a client action flag.
+        _require_any(request, ["تعديل" if existing is not None else "اضافة"])
+
         if existing:
 
+            # الفرع المخزَّن أيضاً: منع تعديل/نقل سجل فرع غير مسموح
+            _check_branch(_profile, existing.branch_code)
             existing.branch_code = data.branch_code
             existing.store_code = data.store_code
             existing.serial = data.serial
@@ -288,14 +493,16 @@ async def save_supplier_transaction(
 
 @router.get("/list/{company_code}")
 async def list_supplier_transactions(
-    company_code: str,
     request: Request,
+    company_code: str,
     branch_code: Optional[str] = Query(None),
     supplier_name: Optional[str] = Query(None),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_any(request, ["معاينة", "اضافة"])
+
     try:
         stmt = (
             select(SupplierRecord)
@@ -344,8 +551,9 @@ async def list_supplier_transactions(
 
         docs = result.scalars().all()
 
+        _may = _viewer_may_costs(request)
         results = [
-            serialize_supplier(doc)
+            serialize_supplier(doc, include_costs=_may)
             for doc in docs
         ]
 
@@ -372,8 +580,8 @@ async def list_supplier_transactions(
 
 @router.get("/changes/{company_code}")
 async def get_supplier_changes(
-    company_code: str,
     request: Request,
+    company_code: str,
     since: str = Query(
         ...,
         description=(
@@ -383,6 +591,8 @@ async def get_supplier_changes(
     ),
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_any(request, ["معاينة", "اضافة"])
+
     try:
         # ------------------------------------------------------
         # تحويل since
@@ -451,6 +661,7 @@ async def get_supplier_changes(
             results.append(
                 serialize_supplier(
                     doc,
+                    include_costs=_viewer_may_costs(request),
                     action=action,
                 )
             )
@@ -483,11 +694,13 @@ async def get_supplier_changes(
     "/delete/{company_code}/{doc_id}"
 )
 async def delete_supplier_transaction(
-    company_code: str,
     request: Request,
+    company_code: str,
     doc_id: str,
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_any(request, ["حذف"])
+
     try:
         # ------------------------------------------------------
         # تحويل doc_id

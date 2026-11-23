@@ -1,9 +1,9 @@
+import '../../services/cache_partitions.dart';
 // lib/pages/hr/branch_salaries_page.dart
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:hive_flutter/hive_flutter.dart';
-import '../../services/export_service.dart'; 
+import '../../services/export_service.dart';
 import '../../core/theme.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../services/hr_report_service.dart';
@@ -59,6 +59,8 @@ class _BranchSalariesPageState extends State<BranchSalariesPage> {
 
 
   Future<void> _loadInitialData() async {
+return CachePartitions.run(() async {
+
     final prefs = await SharedPreferences.getInstance();
     _companyCode = prefs.getString('company_code') ?? '';
     _companyName = prefs.getString('company_name') ?? 'الشركة';  // ⭐
@@ -66,7 +68,7 @@ class _BranchSalariesPageState extends State<BranchSalariesPage> {
     if (_companyCode.isEmpty) return;
 
     // تحميل الفروع
-    final box = Hive.box('coding_box');
+    final box = CachePartitions.box('coding_box');
     final raw = box.get('${_companyCode}_branches');
 
     final allBranches = <Map<String, String>>[];
@@ -105,7 +107,8 @@ class _BranchSalariesPageState extends State<BranchSalariesPage> {
 
     // تحميل الإجماليات (من الكاش أو السيرفر)
     _loadSalaries();
-  }
+});
+}
 
 
   // ============================================================
@@ -113,6 +116,8 @@ class _BranchSalariesPageState extends State<BranchSalariesPage> {
   // ============================================================
 
   Future<void> _loadSalaries({bool forceRefresh = false}) async {
+return CachePartitions.run(() async {
+
     if (_companyCode.isEmpty) return;
 
     setState(() => _isLoading = true);
@@ -140,7 +145,8 @@ class _BranchSalariesPageState extends State<BranchSalariesPage> {
         AppTheme.dangerStrongFor(context),
       );
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -148,6 +154,8 @@ class _BranchSalariesPageState extends State<BranchSalariesPage> {
   // ============================================================
 
   Future<void> _pickMonth() async {
+return CachePartitions.run(() async {
+
     final picked = await showDialog<DateTime>(
       context: context,
       builder: (ctx) => _MonthPickerDialog(
@@ -164,7 +172,8 @@ class _BranchSalariesPageState extends State<BranchSalariesPage> {
       });
       _loadSalaries();
     }
-  }
+});
+}
 
   // ============================================================
   // ⭐ تصدير PDF — مربوط بصلاحية canExportReport
@@ -180,6 +189,8 @@ class _BranchSalariesPageState extends State<BranchSalariesPage> {
 
 
   Future<void> _exportPDF() async {
+return CachePartitions.run(() async {
+
     // ⭐ حماية مزدوجة: الزر مخفي أصلًا لو مفيش صلاحية، بس للتأكيد
     if (!PermissionsService().canExportReport) {
       _showSnackBar(
@@ -325,7 +336,8 @@ class _BranchSalariesPageState extends State<BranchSalariesPage> {
     } finally {
       if (mounted) setState(() => _isExporting = false);
     }
-  }
+});
+}
 
 
   // ⭐ helper

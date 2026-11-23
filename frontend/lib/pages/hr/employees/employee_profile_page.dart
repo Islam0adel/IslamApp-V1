@@ -1,9 +1,9 @@
+import '../../../services/cache_partitions.dart';
 // lib/pages/hr/employees/employee_profile_page.dart
 
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 import '../../../models/employee_model.dart';
 import '../../../models/hr_models.dart';
 import '../../../core/theme.dart';
@@ -81,7 +81,7 @@ class _EmployeeProfilePageState extends State<EmployeeProfilePage>
     _tabController = TabController(length: 5, vsync: this);
 
     // ⭐ WebSocket auto-update: راقب تغييرات Hive
-    _hiveSubscription = Hive.box('coding_box')
+    _hiveSubscription = CachePartitions.box('coding_box')
         .watch()
         .listen((event) {
       // تحديث فقط لو التغيير متعلق بهذا الموظف أو HR
@@ -116,6 +116,8 @@ class _EmployeeProfilePageState extends State<EmployeeProfilePage>
   // ============================================================
 
     Future<void> _loadProfile({bool showLoader = true}) async {
+return CachePartitions.run(() async {
+
     if (showLoader) {
       setState(() {
         _isLoading = true;
@@ -190,10 +192,13 @@ class _EmployeeProfilePageState extends State<EmployeeProfilePage>
         _error = 'خطأ: $e';
       });
     }
-  }
+});
+}
 
 
     Future<void> _pickMonth() async {
+return CachePartitions.run(() async {
+
     final now = DateTime.now();
     final picked = await showDatePicker(
       context: context,
@@ -211,11 +216,14 @@ class _EmployeeProfilePageState extends State<EmployeeProfilePage>
       });
       _loadProfile();
     }
-  }
+});
+}
 
 
 
     Future<void> _openEditForm() async {
+return CachePartitions.run(() async {
+
     if (_employeeModel == null) return;
 
     final result = await Navigator.push<bool>(
@@ -229,8 +237,9 @@ class _EmployeeProfilePageState extends State<EmployeeProfilePage>
     );
 
     if (result == true) _loadProfile();
-  }
-  
+});
+}
+
 
 
   // ============================================================
@@ -1591,7 +1600,7 @@ class _EmployeeProfilePageState extends State<EmployeeProfilePage>
   String _branchName(String? code) {
     if (code == null || code.isEmpty) return '';
 
-    final box = Hive.box('coding_box');
+    final box = CachePartitions.box('coding_box');
     final raw = box.get('${widget.companyCode}_branches');
 
     if (raw is List) {

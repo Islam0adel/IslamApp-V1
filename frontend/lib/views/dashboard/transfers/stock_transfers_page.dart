@@ -1,3 +1,4 @@
+import '../../../services/cache_partitions.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -52,7 +53,7 @@ class _StockTransfersPageState extends State<StockTransfersPage> {
     _products = catalog(widget.companyCode, 'items');
     _productIndex = ProductIndex(_products, searchBarcode: false);
     _catalogSubscription =
-        Hive.box('coding_box').watch().listen((_) => _onCatalogChanged());
+        CachePartitions.box('coding_box').watch().listen((_) => _onCatalogChanged());
 
     _fromBranch = widget.editItem?['from_branch_code']?.toString() ??
         widget.branchCode ??
@@ -104,6 +105,8 @@ class _StockTransfersPageState extends State<StockTransfersPage> {
   }
 
   Future<void> _save() async {
+return CachePartitions.run(() async {
+
     if (_fromBranch == null ||
         _toBranch == null ||
         _fromStore == null ||
@@ -191,7 +194,8 @@ class _StockTransfersPageState extends State<StockTransfersPage> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
-  }
+});
+}
 
   Widget _dd(
     String title,

@@ -1,3 +1,10 @@
+import '../../services/cache_partitions.dart';
+import 'dart:async';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../../services/journal_save_intent.dart';
+import '../../services/journal_save_client.dart';
+import '../../services/journal_import_batch.dart';
+import '../../services/treasury_transfer_service.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
@@ -9,7 +16,6 @@ import '../../services/daily_service.dart';
 import '../../services/coding_service.dart';
 import 'daily_history_page.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'treasury_transfer_page.dart';
 import '../../services/permissions_service.dart'; // ✅ استيراد خدمة الصلاحيات
 import '../../services/supplier_settlement_service.dart';
 
@@ -49,8 +55,25 @@ void _onAmountChanged() {
   final _statementController = TextEditingController();
   final _dateController = TextEditingController();
 
+  StreamSubscription<BoxEvent>? _treasuryEffectsSubscription;
   bool _isLoading = false;
   bool _isUpdating = false; // ✅ متغير علم لمنع التحديث المتكرر
+
+  bool _saveBusy = false;
+  bool _restoringJournal = true;
+  bool _journalRestoreError = false;
+  final String? _formOwnerUid = FirebaseAuth.instance.currentUser?.uid;
+  late final JournalIntentStore _journalIntentStore =
+      JournalIntentStore(tabId: '${JournalTabScope.current}:manual');
+  JournalSaveIntent? _journalIntent;
+  late final String? _editBaseVersion = widget.editItem?['updated_at']?.toString();
+  StreamSubscription<User?>? _ownerSubscription;
+  bool get _sameFormOwner =>
+      _formOwnerUid != null &&
+      FirebaseAuth.instance.currentUser?.uid == _formOwnerUid;
+  int get _intentSerial =>
+      int.tryParse(widget.editItem?['serial']?.toString() ?? '') ?? 0;
+  String get _intentBranch => widget.selectedBranchCode ?? 'all';
 
   Map<String, double> _treasuryBalances = {};
 
@@ -68,11 +91,21 @@ void _onAmountChanged() {
   @override
   void initState() {
     super.initState();
+    try {
+      _ownerSubscription = FirebaseAuth.instance.authStateChanges().listen((_) {
+        if (mounted && !_sameFormOwner) setState(() {});
+      });
+    } catch (_) {}
     WidgetsBinding.instance.addObserver(this); // ✅ إضافة المراقب
     _amountController.addListener(() => setState(() {}));
-    
-    
+
+
     _loadInitialData();
+    if (CachePartitions.isBoxOpen(TreasuryTransferService.effectsBox)) {
+      _treasuryEffectsSubscription = CachePartitions.box(TreasuryTransferService.effectsBox).watch().listen((_) {
+        if (mounted) unawaited(_refreshBalancesOnly());
+      });
+    }
 
     if (widget.editItem != null) {
       _amountController.text = widget.editItem!['amount']?.toString() ?? '';
@@ -96,6 +129,8 @@ void _onAmountChanged() {
   }
 
   Future<void> _refreshBalancesOnly() async {
+return CachePartitions.run(() async {
+
   try {
     final summary = await _dailyService.getDailySummaryLocal(
       widget.companyCode,
@@ -111,10 +146,14 @@ void _onAmountChanged() {
   } catch (e) {
     print("❌ خطأ في تحديث الأرصدة: $e");
   }
+
+});
 }
 
   @override
   void dispose() {
+    _treasuryEffectsSubscription?.cancel();
+    _ownerSubscription?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _amountController.removeListener(_onAmountChanged);
     _amountController.dispose();
@@ -134,7 +173,7 @@ void _onAmountChanged() {
   // دالة مساعدة لعرض اسم الفرع من كوده (يمكن استدعاءها من أي مكان)
   String _getBranchName(String? code) {
     if (code == null || code == 'all' || code == '') return 'كل الفروع';
-    final Box codingBox = Hive.box('coding_box');
+    final Box codingBox = CachePartitions.box('coding_box');
     final rawData = codingBox.get("${widget.companyCode}_branches", defaultValue: []);
     for (var item in rawData) {
       if (item['code']?.toString() == code) return item['name']?.toString() ?? "فرع غير معروف";
@@ -172,16 +211,51 @@ void _onAmountChanged() {
     return currentBaseBalance;
   }
 
+  Future<void> _restoreJournal() async {
+return CachePartitions.run(() async {
+
+    if (!_restoringJournal) return;
+    try {
+      if (!_sameFormOwner) throw StateError('Account changed');
+      final pending = await _journalIntentStore.load(
+          ownerUid: _formOwnerUid!,
+          companyCode: widget.companyCode,
+          branchCode: _intentBranch,
+          serial: _intentSerial);
+      if (!mounted || !_sameFormOwner) return;
+      _journalIntent = pending;
+      final values = pending?.payload;
+      if (values != null) {
+        _amountController.text = values['amount'].toString();
+        _statementController.text = values['statement']?.toString() ?? '';
+        _dateController.text = values['date']?.toString() ?? '';
+        _selectedTreasury = values['treasury']?.toString();
+        _selectedCategory = values['category']?.toString();
+        _selectedSupplierForGoods = values['supplier_name']?.toString();
+        _linkGoodsToSettlement = values['add_to_settlement'] == true;
+      }
+    } catch (_) {
+      _journalRestoreError = true;
+    } finally {
+      _restoringJournal = false;
+    }
+});
+}
+
   void _loadInitialData() async {
+return CachePartitions.run(() async {
+
     // ✅ منع التنفيذ إذا كان الـ Widget غير موجود أو قيد التحديث
     if (!mounted || _isUpdating) return;
-    
+
     _isUpdating = true;
     setState(() => _isLoading = true);
     try {
-      final Box dailyBox = Hive.box('daily_transactions_box');
+      await _restoreJournal();
+      if (!mounted || !_sameFormOwner) return;
+      final Box dailyBox = CachePartitions.box('daily_transactions_box');
 
-      
+
 
       // الآن نستكمل حساب السيريال الأقصى (بعد التأكد من وجود البيانات)
       int maxSerial = 0;
@@ -198,14 +272,7 @@ void _onAmountChanged() {
       int nextSerial = maxSerial + 1;
 
       // جلب الأرصدة للفرع الحالي (تمرير كود الفرع)
-      final summary = await _dailyService.getDailySummaryLocal(
-        widget.companyCode,
-        branchCode: widget.selectedBranchCode ?? 'all'
-      );
-      // ✅ تخزين الأرصدة في Hive (سيؤدي إلى تحديث ValueListenableBuilder)
-
-
-      final Box codingBox = Hive.box('coding_box');
+      final Box codingBox = CachePartitions.box('coding_box');
       final rawSuppliers = codingBox.get('${widget.companyCode}_suppliers');
       if (rawSuppliers is List) {
         _supplierNames = rawSuppliers.whereType<Map>()
@@ -243,6 +310,19 @@ void _onAmountChanged() {
         return !name.contains('دخول بضاعة') && !name.contains('دفعة');
       }).toList();
 
+      if (_journalIntent != null) {
+        for (final pair in [
+          (safesList, _selectedTreasury),
+          (typesList, _selectedCategory)
+        ]) {
+          if (pair.$2 != null &&
+              !pair.$1.any((item) => item['name'] == pair.$2)) {
+            pair.$1.add({'name': pair.$2, 'code': 'pending'});
+          }
+        }
+      }
+      final summary = await _dailyService.getDailySummaryLocal(widget.companyCode,
+          branchCode: widget.selectedBranchCode ?? 'all');
       if (!mounted) {
         _isUpdating = false;
         return;
@@ -270,18 +350,25 @@ void _onAmountChanged() {
       });
       print("خطأ في جلب البيانات الافتتاحية: $e");
     }
-  }
+});
+}
 
   @override
   Widget build(BuildContext context) {
+    if (!_sameFormOwner) {
+      return const Scaffold(
+          body: Center(
+              child:
+                  Text('تغيّر الحساب. افتح حركة الخزينة من الحساب الحالي.')));
+    }
     bool isEditMode = widget.editItem != null;
     double screenWidth = MediaQuery.of(context).size.width;
     bool isWebOrDesktop = screenWidth > 600;
-    final Box dailyBox = Hive.box('daily_transactions_box');
+    final Box dailyBox = CachePartitions.box('daily_transactions_box');
 
     // ✅ التحقق من صلاحية المعاينة للإذن بالوصول للصفحة (اختياري)
-    bool canView = PermissionsService().canViewTransactions;
     bool canAdd = PermissionsService().canAddTransaction;
+    bool canView = PermissionsService().canViewTransactions;
     bool canEdit = PermissionsService().canEditTransaction;
     bool canImport = PermissionsService().canImportExcel;
 
@@ -314,9 +401,12 @@ void _onAmountChanged() {
     return PopScope(
       canPop: false,
       onPopInvoked: (didPop) async {
+return CachePartitions.run(() async {
+
         if (didPop) return;
         if (context.mounted) Navigator.pop(context);
-      },
+});
+},
       child: Scaffold(
         extendBodyBehindAppBar: true,
         appBar: AppBar(
@@ -536,7 +626,11 @@ _buildSecondaryActions(),
     // ✅ صلاحية الإضافة تتحكم في تمكين/تعطيل الحقول
     bool canAdd = PermissionsService().canAddTransaction;
     bool isEdit = widget.editItem != null;
-    bool enabled = isEdit ? PermissionsService().canEditTransaction : canAdd;
+    bool enabled = (isEdit ? PermissionsService().canEditTransaction : canAdd) &&
+            !_saveBusy &&
+            !_restoringJournal &&
+            !_journalRestoreError &&
+            _journalIntent?.submitted != true;
 
     return GlassCard(
       child: Column(
@@ -614,7 +708,10 @@ if (_selectedCategory?.trim() == 'بضاعة') ...[
     bool isEdit = widget.editItem != null;
     bool canAdd = PermissionsService().canAddTransaction;
     bool canEdit = PermissionsService().canEditTransaction;
-    bool isEnabled = isEdit ? canEdit : canAdd;
+    bool isEnabled = (isEdit ? canEdit : canAdd) &&
+        !_saveBusy &&
+        !_restoringJournal &&
+        !_journalRestoreError;
 
     return SizedBox(
       width: double.infinity,
@@ -627,32 +724,45 @@ if (_selectedCategory?.trim() == 'بضاعة') ...[
         ),
         onPressed: isEnabled ? _handleSave : null,
         child: Text(
-          isEdit ? "تعديل الإذن" : "حفظ",
-          style: TextStyle(color: Theme.of(context).colorScheme.onPrimary, fontSize: 18, fontWeight: FontWeight.bold, fontFamily: 'Cairo'),
+          _journalRestoreError
+              ? 'تعذر استعادة الحفظ السابق'
+              : _journalIntent?.submitted == true
+                  ? 'تأكيد الحفظ السابق'
+                  : isEdit ? "تعديل الإذن" : "حفظ",
+          style: TextStyle(color: _journalIntent?.submitted == true || _journalRestoreError
+              ? AppTheme.textMainFor(context)
+              : Theme.of(context).colorScheme.onPrimary,
+              fontSize: 18, fontWeight: FontWeight.bold, fontFamily: 'Cairo'),
         ),
       ),
     );
   }
 
   void _handleSave() async {
-    // التحقق من الصلاحية مرة أخرى
-    bool isEdit = widget.editItem != null;
-    if (isEdit && !PermissionsService().canEditTransaction) {
-      _showSnackBar("ليس لديك صلاحية للتعديل", AppTheme.warningOrangeFor(context));
-      return;
-    }
-    if (!isEdit && !PermissionsService().canAddTransaction) {
-      _showSnackBar("ليس لديك صلاحية للإضافة", AppTheme.warningOrangeFor(context));
+return CachePartitions.run(() async {
+
+    if (_saveBusy ||
+        _isLoading ||
+        _restoringJournal ||
+        _journalRestoreError ||
+        !_sameFormOwner) return;
+    final isEdit = widget.editItem != null;
+    if (isEdit && !PermissionsService().canEditTransaction||
+        !isEdit && !PermissionsService().canAddTransaction) {
+      _showSnackBar('ليس لديك صلاحية للحفظ', AppTheme.warningOrangeFor(context));
       return;
     }
 
-    if (_amountController.text.isEmpty || _selectedTreasury == null || _selectedCategory == null) {
-      _showSnackBar("برجاء إكمال البيانات", AppTheme.warningOrangeFor(context));
+    final retrying = _journalIntent?.submitted == true;
+    double? parsedAmount;
+    if (!retrying) {
+      if (_amountController.text.isEmpty || _selectedTreasury == null || _selectedCategory == null) {
+      _showSnackBar('برجاء إكمال البيانات', AppTheme.warningOrangeFor(context));
       return;
     }
-    final double? parsedAmount = double.tryParse(_amountController.text.trim());
-    if (parsedAmount == null || parsedAmount <= 0) {
-      _showSnackBar("برجاء إدخال مبلغ صحيح أكبر من الصفر", AppTheme.warningOrangeFor(context));
+    parsedAmount = double.tryParse(_amountController.text.trim());
+    if (parsedAmount == null || !parsedAmount.isFinite || parsedAmount <= 0) {
+      _showSnackBar('برجاء إدخال مبلغ صحيح أكبر من الصفر', AppTheme.warningOrangeFor(context));
       return;
     }
     if (_selectedCategory?.trim() == 'بضاعة' && _linkGoodsToSettlement &&
@@ -661,23 +771,35 @@ if (_selectedCategory?.trim() == 'بضاعة') ...[
       return;
     }
 
-    setState(() => _isLoading = true);
+    }
+    setState(() {
+      _saveBusy =true;
+      _isLoading = true;
+    });
     try {
-      var matchingCategory = _categories.firstWhere((c) => c['name'] == _selectedCategory, orElse: () => {});
-      String currentType = matchingCategory.isNotEmpty ? (matchingCategory['type'] ?? "وارد") : "وارد";
-      int serialToSend = widget.editItem != null ? widget.editItem!['serial'] : 0;
-
-      await _dailyService.saveTransaction(
+      final intent = _journalIntent ??= JournalSaveIntent(
+          ownerUid: _formOwnerUid!,
+          companyCode: widget.companyCode,
+          branchCode: _intentBranch,
+          serial: _intentSerial);
+      final Map<String, dynamic> result;
+      if (retrying) {
+        result = await _dailyService.saveCapturedTransaction(intent,
+            store: _journalIntentStore);
+      } else {
+        final matchingCategory = _categories.firstWhere((c) => c['name'] == _selectedCategory, orElse: () => {});
+      final currentType = matchingCategory.isNotEmpty ? (matchingCategory['type'] ?? 'وارد') : 'وارد';
+      result = await _dailyService.saveTransaction(
         companyCode: widget.companyCode,
-        serial: serialToSend,
+        serial: _intentSerial,
+        baseUpdatedAt: _editBaseVersion,
         treasury: _selectedTreasury!,
-        amount: parsedAmount,
+        amount: parsedAmount!,
         statement: _statementController.text,
         category: _selectedCategory!,
         date: _dateController.text,
         type: currentType,
-        branchCode: widget.selectedBranchCode ?? 'all',    // تمرير كود الفرع (وليس الاسم)
-        employee: widget.userName ?? "غير معروف",
+        branchCode: _intentBranch,    employee: widget.userName ?? 'غير معروف',
         linkId: widget.editItem?['link_id']?.toString() ??
             (_linkGoodsToSettlement ? _settlementService.newLinkId() : null),
         supplierName: _selectedCategory?.trim() == 'بضاعة' && _linkGoodsToSettlement
@@ -685,32 +807,55 @@ if (_selectedCategory?.trim() == 'بضاعة') ...[
         addToSettlement: _selectedCategory?.trim() == 'بضاعة' && _linkGoodsToSettlement,
         unlinkSettlement: widget.editItem?['link_id']?.toString().isNotEmpty == true &&
             !(_selectedCategory?.trim() == 'بضاعة' && _linkGoodsToSettlement),
-      );
+      intent: intent,
+          intentStore: _journalIntentStore,
+        );
+      }
+      if (!mounted || !_sameFormOwner || result['owner_changed'] == true)
+        return;
 
-      if (mounted) {
-        if (widget.editItem != null) {
+      if (result['intent_pending'] == true) {
+        _showSnackBar(
+            'الحفظ مؤكد في الخادم. اضغط تأكيد الحفظ لإكمال التحديث المحلي.',
+            AppTheme.warningOrangeFor(context));
+        return;
+      }
+      _journalIntent = null;
+      if (isEdit) {
           Navigator.pop(context, true);
         } else {
-          _showSnackBar("تم الحفظ بنجاح وتحديث الذاكرة المحلية والشبكية التراكمية", AppTheme.successStrongFor(context));
+          final unavailable = result['available'] == false;
+        _showSnackBar(unavailable
+                ? 'تأكد الحفظ السابق، لكن الإذن لم يعد متاحًا. راجع السجل.'
+                : result['refresh_pending'] == true
+                    ? 'تم حفظ الإذن في الخادم. تحديث النسخة المحلية لم يكتمل بعد.'
+                    : 'تم الحفظ بنجاح', unavailable || result['refresh_pending'] == true
+                ? AppTheme.warningOrangeFor(context)
+                : AppTheme.successStrongFor(context));
           _amountController.clear();
 _statementController.clear();
 
-// تحديث الأرصدة فقط بعد نجاح الحفظ
 await _refreshBalancesOnly();
         }
       }
-    } catch (e) {
-      if (mounted) _showSnackBar("خطأ: $e", AppTheme.dangerStrongFor(context));
+    catch (error) {
+      if (error is JournalSaveFailure && error.canReplace)
+        _journalIntent = null;
+      if (mounted&& _sameFormOwner) _showSnackBar('خطأ: $error', AppTheme.dangerStrongFor(context));
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) setState(() {
+          _saveBusy =false;
+          _isLoading = false;
+        });
     }
-  }
+});
+}
 
   Widget _buildDropdown(String label, String? value, List<Map<String, dynamic>> items, Function(String?) onChanged, {bool enabled = true}) {
     return DropdownButtonFormField<String>(
       initialValue: value,
       dropdownColor: AppTheme.dropdownBackground(context),
-      style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 13),
+      style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 13, fontFamily: 'Cairo'),
       decoration: InputDecoration(
         labelText: label,
         labelStyle: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo', fontSize: 12),
@@ -762,7 +907,6 @@ await _refreshBalancesOnly();
 
   Widget _buildSecondaryActions() {
     bool canView = PermissionsService().canViewTransactions;
-    bool canAdd = PermissionsService().canAddTransaction;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -789,50 +933,27 @@ await _refreshBalancesOnly();
             icon: Icon(Icons.history, color: AppTheme.accentFor(context)),
             label: Text("المعاينة", style: TextStyle(color: AppTheme.accentFor(context), fontFamily: 'Cairo')),
           ),
-        
+
         const SizedBox(height: 10),
 
-        // ✅ التحويل بين الخزائن (يتطلب صلاحية الإضافة)
-        if (canAdd)
-          OutlinedButton.icon(
-            style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              side: BorderSide(color: AppTheme.accentFor(context), width: 1.0),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              backgroundColor: GlassStyle.fill05For(context),
-            ),
-            icon: Icon(Icons.sync_alt, color: AppTheme.accentFor(context), size: 20),
-            label: Text(
-              "تحويل بين الخزائن",
-              style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 13, fontWeight: FontWeight.bold, fontFamily: 'Cairo'),
-            ),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => TreasuryTransferPage(
-                    companyCode: widget.companyCode,
-                    userName: widget.userName,
-                    selectedBranchCode: widget.selectedBranchCode,
-                  ),
-                ),
-              ).then((value) {
-                // ✅ عند العودة من صفحة التحويل، نعيد تحميل البيانات والأرصدة
-                _loadInitialData();
-              });
-            },
-          ),
+
       ],
     );
   }
 
   Future<void> _pickDate() async {
+return CachePartitions.run(() async {
+
     DateTime? p = await showDatePicker(context: context, initialDate: DateTime.now(), firstDate: DateTime(2020), lastDate: DateTime(2101));
     if (p != null) setState(() => _dateController.text = DateFormat('yyyy-MM-dd').format(p));
-  }
+});
+}
 
   void _importFromExcel() async {
+return CachePartitions.run(() async {
+
     // التحقق من صلاحية الاستيراد
+    if (_isLoading || _saveBusy || !_sameFormOwner) return;
     if (!PermissionsService().canImportExcel) {
       _showSnackBar("ليس لديك صلاحية للاستيراد", AppTheme.warningOrangeFor(context));
       return;
@@ -888,6 +1009,7 @@ await _refreshBalancesOnly();
         // قائمة بأسماء الخزائن المتاحة (للتأكد من صحة المدخلات)
         List<String> treasuryNames = _treasuries.map((t) => t['name']?.toString() ?? "").where((n) => n.isNotEmpty).toList();
 
+        final importRows = <Map<String, dynamic>>[];
         for (var table in excel.tables.keys) {
           var rows = excel.tables[table]!.rows;
           if (rows.isEmpty) continue;
@@ -945,31 +1067,43 @@ await _refreshBalancesOnly();
             var match = _categories.firstWhere((c) => c['name']?.toString().trim() == categoryStr, orElse: () => {});
             String calculatedType = match.isNotEmpty ? (match['type'] ?? "وارد") : "وارد";
 
-            // حفظ الحركة
-            await _dailyService.saveTransaction(
-              companyCode: widget.companyCode,
-              serial: 0,
-              treasury: targetTreasury,
-              amount: amount,
-              statement: statement,
-              category: categoryStr,
-              date: formattedDate,
-              type: calculatedType,
-              branchCode: widget.selectedBranchCode ?? 'all',
-              employee: widget.userName ?? "غير معروف",
-            );
+            importRows.add({
+              'company_code': widget.companyCode,
+              'serial': 0,
+              'treasury': targetTreasury,
+              'amount': amount,
+              'statement': statement,
+              'category': categoryStr,
+              'date': formattedDate,
+              'type': calculatedType,
+              'branch_code': _intentBranch,
+              'employee': widget.userName ?? 'غير معروف',
+              'link_id': null,
+              'supplier_name': null,
+              'add_to_settlement': false,
+              'unlink_settlement': false,
+            });
           }
         }
-        _showSnackBar("تم الاستيراد المباشر والمزامنة بنجاح محلياً وسحابياً", AppTheme.successStrongFor(context));
+        await JournalImportBatch(ownerUid: _formOwnerUid!, companyCode: widget.companyCode,
+            branchCode: _intentBranch, bytes: bytes).run(
+          rows: importRows,
+          stillAuthorized: () => _sameFormOwner && PermissionsService().canImportExcel &&
+              PermissionsService().canAccessBranch(_intentBranch),
+          submit: (intent, store) => _dailyService.saveCapturedTransaction(intent, store: store),
+        );
+        if (!mounted || !_sameFormOwner) return;
+        _showSnackBar("تم تأكيد استيراد كل الصفوف في الخادم", AppTheme.successStrongFor(context));
         // ✅ إعادة تحميل البيانات والأرصدة بعد الاستيراد
         _loadInitialData();
       } catch (e) {
-        _showSnackBar("خطأ في الاستيراد: $e", AppTheme.dangerStrongFor(context));
+        if (mounted && _sameFormOwner) _showSnackBar("لم يكتمل الاستيراد: $e. أعد اختيار نفس الملف لاستكمال المحاولة المحفوظة.", AppTheme.dangerStrongFor(context));
       } finally {
-        setState(() => _isLoading = false);
+        if (mounted) setState(() => _isLoading = false);
       }
     }
-  }
+});
+}
 
   void _showSnackBar(String m, Color c) => ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(content: Text(m, textAlign: TextAlign.center, style: const TextStyle(fontFamily: 'Cairo')), backgroundColor: c)

@@ -1,3 +1,10 @@
+import 'services/sync_read_access.dart';
+import 'services/work_pool.dart';
+import 'services/cache_partitions.dart';
+import 'services/scoped_sync_queue.dart';
+import 'services/read_authorization_snapshot.dart';
+import 'services/scope_sync_plan.dart';
+import 'services/treasury_transfer_service.dart';
 import 'dart:async';
 import 'core/constants.dart';
 import 'services/permissions_service.dart';
@@ -113,238 +120,329 @@ Future<void> waitForSyncToComplete({
 //   retryPending → الأرصدة
 // ============================================================
 
+/// مسح مفاتيح آخر مزامنة لإجبار الدفعة التالية على الجلب الكامل،
+/// ثم تشغيل المزامنة. يُستخدم عند اتساع نطاق الصلاحيات/الفروع.
+final _scopeSyncQueue = ScopedSyncQueue(
+  waitForData: () async {
+    final current = _dataSyncWork;
+    if (current != null) await current;
+  },
+  reconcile: _forceScopeResync,
+);
+Future<bool>? _dataSyncWork;
+String? _dataSyncOwner;
+String? _dataSyncCompany;
+String? _dataReadyOwner;
+String? _dataReadyCompany;
+int? _dataReadyEpoch;
+
+void _scheduleScopeResync(String code) {
+  final modules = PermissionsService().takeScopeSyncModules();
+  if (modules.isEmpty) return;
+  unawaited(_scopeSyncQueue.add(code, modules).catchError((Object error) {
+    print('⚠️ Scoped sync deferred: $error');
+  }));
+}
+
+Future<void> _forceScopeResync(String companyCode, Set<String> modules) async {
+  return CachePartitions.run(() async {
+    final scope = await ReadAuthorizationSnapshot.capture();
+    final prefs = await CachePartitions.preferences();
+    scope.check();
+    if (prefs.getString('company_code') != companyCode) return;
+    final keys = ScopeSyncPlan.cursorKeys(companyCode, modules);
+    for (final key in keys) {
+      if (!scope.sameContext) return;
+      await prefs.remove(key);
+    }
+    if (!scope.sameContext) return;
+    print('🔄 scoped resync: ${modules.join(', ')} (${keys.length} cursors)');
+    await syncAllDataIfNeeded(companyCode);
+  });
+}
+
 Future<void> syncAllDataIfNeeded(String companyCode) async {
-  if (_isSyncing) {
-    print("⚠️ مزامنة قيد التنفيذ، تم تجاهل الطلب الجديد");
-    return;
-  }
+  return CachePartitions.run(() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final existing = _dataSyncWork;
+    if (existing != null) {
+      final same = _dataSyncOwner == uid && _dataSyncCompany == companyCode;
+      await existing;
+      if (same) return;
+    }
+    if (uid.isEmpty || FirebaseAuth.instance.currentUser?.uid != uid) return;
+    _dataReadyOwner = null;
+    _dataReadyCompany = null;
+    _dataReadyEpoch = null;
+    _dataSyncOwner = uid;
+    _dataSyncCompany = companyCode;
+    final done = Completer<bool>();
+    _dataSyncWork = done.future;
+    try {
+      final readScope = await ReadAuthorizationSnapshot.capture();
+      final succeeded = await _runDataSync(companyCode);
+      if (succeeded &&
+          readScope.isCurrent &&
+          FirebaseAuth.instance.currentUser?.uid == uid &&
+          PermissionsService().isLoaded) {
+        _dataReadyOwner = uid;
+        _dataReadyCompany = companyCode;
+        _dataReadyEpoch = ReadAuthorizationEpoch.value;
+      }
+      done.complete(succeeded);
+    } catch (error) {
+      done.complete(false);
+      rethrow;
+    } finally {
+      if (identical(_dataSyncWork, done.future)) _dataSyncWork = null;
+    }
+  });
+}
 
-  _isSyncing = true;
-  print("🔄 بدء المزامنة للشركة: $companyCode");
+Future<bool> _runDataSync(String companyCode) async {
+  return CachePartitions.run(() async {
+    if (_isSyncing) {
+      print("⚠️ مزامنة قيد التنفيذ، تم تجاهل الطلب الجديد");
+      return false;
+    }
 
-  try {
-    final prefs = await SharedPreferences.getInstance();
-    final syncStartedAt = DateTime.now().toUtc().toIso8601String();
+    var succeeded = true;
+    final syncElapsed = Stopwatch()..start();
+    _isSyncing = true;
+    print("🔄 بدء المزامنة للشركة: $companyCode");
 
-    // ⭐ helper: sync قسم مع lastSync management
-    Future<void> syncOneWithLastSync({
-      required String name,
-      required String lastSyncKey,
-      required Future<void> Function() full,
-      required Future<void> Function(String since) incremental,
-    }) async {
-      try {
-        final lastSync = prefs.getString(lastSyncKey);
-        if (lastSync == null) {
-          await full();
-          await prefs.setString(lastSyncKey, syncStartedAt);
-        } else {
-          await incremental(lastSync);
+    try {
+      final prefs = await CachePartitions.preferences();
+      final runScope = await ReadAuthorizationSnapshot.capture();
+      final syncStartedAt = DateTime.now().toUtc().toIso8601String();
+
+      // ⭐ helper: sync قسم مع lastSync management
+      Future<void> syncOneWithLastSync({
+        required String name,
+        required String module,
+        required String lastSyncKey,
+        required Future<void> Function() full,
+        required Future<void> Function(String since) incremental,
+      }) async {
+        try {
+          runScope.check();
+          if (!SyncReadAccess.allows(module)) return;
+          final lastSync = prefs.getString(lastSyncKey);
+          if (lastSync == null) {
+            await full();
+            runScope.check();
+            await prefs.setString(lastSyncKey, syncStartedAt);
+          } else {
+            await incremental(lastSync);
+          }
+          print("  ✅ $name");
+        } catch (e) {
+          succeeded = false;
+          print("  ❌ $name: $e");
         }
-        print("  ✅ $name");
-      } catch (e) {
-        print("  ❌ $name: $e");
       }
-    }
 
-    // ⭐ helper: sync قسم مخصص
-    Future<void> syncOneCustom({
-      required String name,
-      required Future<void> Function() runner,
-    }) async {
-      try {
-        await runner();
-        print("  ✅ $name");
-      } catch (e) {
-        print("  ❌ $name: $e");
+      // ⭐ helper: sync قسم مخصص
+      Future<void> syncOneCustom({
+        required String name,
+        required Future<void> Function() runner,
+      }) async {
+        try {
+          runScope.check();
+          await runner();
+          runScope.check();
+          print("  ✅ $name");
+        } catch (e) {
+          succeeded = false;
+          print("  ❌ $name: $e");
+        }
       }
-    }
 
-    // ──────────────────────────────────────────────────────
-    // Batch 1: [اليوميات, التسويات, التكويد]
-    // ──────────────────────────────────────────────────────
-    print("📦 Batch 1: [اليوميات, التسويات, التكويد]");
-    await Future.wait([
-      syncOneWithLastSync(
-        name: 'اليوميات',
-        lastSyncKey: 'last_sync_daily_$companyCode',
-        full: () => DailyService().syncAllTransactions(companyCode),
-        incremental: (since) =>
-            DailyService().syncChangesFromServer(companyCode, since),
-      ),
-      syncOneWithLastSync(
-        name: 'التسويات',
-        lastSyncKey: 'last_sync_settlement_$companyCode',
-        full: () =>
-            SupplierSettlementService().fetchAllSettlements(companyCode),
-        incremental: (since) =>
-            SupplierSettlementService()
-                .syncChangesFromServer(companyCode, since),
-      ),
-      syncOneWithLastSync(
-        name: 'التكويد',
-        lastSyncKey: 'last_sync_coding_$companyCode',
-        full: () => CodingService().fetchAllCoding(companyCode),
-        incremental: (since) =>
-            CodingService().syncChangesFromServer(companyCode, since),
-      ),
-    ]);
+      final modules = WorkPool(3);
+      // Administrative lists are refreshed promptly, but do not block business pulls.
+      final administration = (() async {
+        if (PermissionsService().isSuperAdmin) {
+          print("📦 [Super Admin] مزامنة الشركات...");
+          try {
+            await CompanyService().fetchAllCompanies();
+            print("  ✅ الشركات");
+          } catch (e) {
+            succeeded = false;
+            print("  ❌ الشركات: $e");
+          }
+        }
 
-    // ──────────────────────────────────────────────────────
-    // Batch 2: [الموظفين, HR, الموردين]
-    // ──────────────────────────────────────────────────────
-    print("📦 Batch 2: [الموظفين, HR, الموردين]");
-    await Future.wait([
-      syncOneWithLastSync(
-        name: 'الموظفين',
-        lastSyncKey: 'last_sync_employees_$companyCode',
-        full: () => EmployeeService().fetchAllEmployees(companyCode),
-        incremental: (since) =>
-            EmployeeService().syncChangesFromServer(companyCode, since),
-      ),
-      syncOneCustom(
-        name: 'HR',
-        runner: () async {
-          await HRService().syncAll(companyCode);
-        },
-      ),
-      syncOneWithLastSync(
-        name: 'الموردين',
-        lastSyncKey: 'last_sync_supplier_$companyCode',
-        full: () => SupplierService().fetchAllSupplier(companyCode),
-        incremental: (since) =>
-            SupplierService().syncChangesFromServer(companyCode, since),
-      ),
-    ]);
+        // ──────────────────────────────────────────────────────
+        // ⭐ مزامنة المستخدمين — للأدمن فقط (شركته فقط)
+        // ──────────────────────────────────────────────────────
+        if (PermissionsService().currentRole == 'admin') {
+          print("📦 [Admin] مزامنة مستخدمي شركته...");
+          try {
+            await UserService().fetchAllUsers(companyCode: companyCode);
+            print("  ✅ المستخدمين");
+          } catch (e) {
+            succeeded = false;
+            print("  ❌ المستخدمين: $e");
+          }
+        }
+      })();
+      final tasks = <Future<void>>[
+        modules.run(() => (() => syncOneCustom(
+            name: 'تحويلات الخزائن',
+            runner: () => TreasuryTransferService().sync(companyCode)))()),
+        modules.run(() => (() => syncOneWithLastSync(
+              name: 'اليوميات',
+              module: 'daily',
+              lastSyncKey: 'last_sync_daily_$companyCode',
+              full: () => DailyService().syncAllTransactions(companyCode),
+              incremental: (since) =>
+                  DailyService().syncChangesFromServer(companyCode, since),
+            ))()),
+        modules.run(() => (() => syncOneWithLastSync(
+              name: 'التسويات',
+              module: 'settlement',
+              lastSyncKey: 'last_sync_settlement_$companyCode',
+              full: () =>
+                  SupplierSettlementService().fetchAllSettlements(companyCode),
+              incremental: (since) => SupplierSettlementService()
+                  .syncChangesFromServer(companyCode, since),
+            ))()),
+        modules.run(() => (() => syncOneWithLastSync(
+              name: 'التكويد',
+              module: 'coding',
+              lastSyncKey: 'last_sync_coding_$companyCode',
+              full: () => CodingService().fetchAllCoding(companyCode),
+              incremental: (since) =>
+                  CodingService().syncChangesFromServer(companyCode, since),
+            ))()),
+        modules.run(() => (() => syncOneWithLastSync(
+              name: 'الموردين',
+              module: 'supplier',
+              lastSyncKey: 'last_sync_supplier_$companyCode',
+              full: () => SupplierService().fetchAllSupplier(companyCode),
+              incremental: (since) =>
+                  SupplierService().syncChangesFromServer(companyCode, since),
+            ))()),
+        modules.run(() => (() => syncOneWithLastSync(
+              name: 'الجرد',
+              module: 'inventory',
+              lastSyncKey: 'last_sync_inventory_$companyCode',
+              full: () => InventoryService().fetchAllInventory(companyCode),
+              incremental: (since) =>
+                  InventoryService().syncChangesFromServer(companyCode, since),
+            ))()),
+        modules.run(() => (() async {
+              await syncOneWithLastSync(
+                name: 'الموظفين',
+                module: 'employees',
+                lastSyncKey: 'last_sync_employees_$companyCode',
+                full: () => EmployeeService().fetchAllEmployees(companyCode),
+                incremental: (since) =>
+                    EmployeeService().syncChangesFromServer(companyCode, since),
+              );
+              runScope.check();
+              await syncOneCustom(
+                name: 'HR',
+                runner: () async {
+                  final results = await HRService().syncAll(companyCode);
+                  if (results.values.any((v) => v != 'ok' && v != 'skipped'))
+                    throw StateError('HR sync incomplete');
+                },
+              );
+            })()),
+        modules.run(() => (() async {
+              try {
+                await CommercialService().syncPending(companyCode);
+              } catch (error) {
+                succeeded = false;
+                print('Commercial pending failed: $error');
+              }
+              runScope.check();
+              await Future.wait([
+                syncOneWithLastSync(
+                  name: 'المبيعات',
+                  module: 'sales',
+                  lastSyncKey: '${ApiConstants.LAST_SYNC_SALES}$companyCode',
+                  full: () =>
+                      CommercialService().fetchAll('sales', companyCode),
+                  incremental: (since) => CommercialService()
+                      .syncChangesFromServer('sales', companyCode, since),
+                ),
+                syncOneWithLastSync(
+                  name: 'المرتجعات',
+                  module: 'returns',
+                  lastSyncKey: '${ApiConstants.LAST_SYNC_RETURNS}$companyCode',
+                  full: () =>
+                      CommercialService().fetchAll('returns', companyCode),
+                  incremental: (since) => CommercialService()
+                      .syncChangesFromServer('returns', companyCode, since),
+                ),
+                syncOneWithLastSync(
+                  name: 'تحصيلات العملاء',
+                  module: 'customer-payments',
+                  lastSyncKey:
+                      '${ApiConstants.LAST_SYNC_CUSTOMER_PAYMENTS}$companyCode',
+                  full: () => CommercialService()
+                      .fetchAll('customer-payments', companyCode),
+                  incremental: (since) => CommercialService()
+                      .syncChangesFromServer(
+                          'customer-payments', companyCode, since),
+                ),
+                syncOneWithLastSync(
+                  name: 'التحويلات المخزنية',
+                  module: 'transfers',
+                  lastSyncKey:
+                      '${ApiConstants.LAST_SYNC_TRANSFERS}$companyCode',
+                  full: () =>
+                      CommercialService().fetchAll('transfers', companyCode),
+                  incremental: (since) => CommercialService()
+                      .syncChangesFromServer('transfers', companyCode, since),
+                ),
+              ]);
+            })()),
+      ];
+      await awaitWithCompanion(administration, () async {
+        await Future.wait(tasks);
+        // ──────────────────────────────────────────────────────
+        // retryPending (HR)
+        // ──────────────────────────────────────────────────────
+        try {
+          await HRService().retryAllPending(companyCode);
+          print("  ✅ retryPending");
+        } catch (e) {
+          succeeded = false;
+          print("  ❌ retryPending: $e");
+        }
 
-    // ──────────────────────────────────────────────────────
-    // ⭐ مزامنة الشركات — للسوبر أدمن فقط
-    // ──────────────────────────────────────────────────────
-    if (PermissionsService().isSuperAdmin) {
-      print("📦 [Super Admin] مزامنة الشركات...");
-      try {
-        await CompanyService().fetchAllCompanies();
-        print("  ✅ الشركات");
-      } catch (e) {
-        print("  ❌ الشركات: $e");
-      }
-    }
-
-    // ──────────────────────────────────────────────────────
-    // ⭐ مزامنة المستخدمين — للأدمن فقط (شركته فقط)
-    // ──────────────────────────────────────────────────────
-    if (PermissionsService().currentRole == 'admin') {
-      print("📦 [Admin] مزامنة مستخدمي شركته...");
-      try {
-        await UserService().fetchAllUsers(companyCode: companyCode);
-        print("  ✅ المستخدمين");
-      } catch (e) {
-        print("  ❌ المستخدمين: $e");
-      }
-    }
-
-    // ──────────────────────────────────────────────────────
-    // Batch 3: [الجرد]
-    // ──────────────────────────────────────────────────────
-    print("📦 Batch 3: [الجرد]");
-    await Future.wait([
-      syncOneWithLastSync(
-        name: 'الجرد',
-        lastSyncKey: 'last_sync_inventory_$companyCode',
-        full: () => InventoryService().fetchAllInventory(companyCode),
-        incremental: (since) =>
-            InventoryService().syncChangesFromServer(companyCode, since),
-      ),
-    ]);
-
-    // ──────────────────────────────────────────────────────
-    // ⭐ Batch 3.5a: push pending FIRST (قبل pull)
-    //
-    // ترتيب مهم:
-    //   1) push pending → السيرفر محدّث
-    //   2) pull changes → بيمنع تكرار نفس السجلات
-    // ──────────────────────────────────────────────────────
-    try {
-      await CommercialService().syncPending(companyCode);
-      print("  ✅ Commercial pending pushed");
+        // ──────────────────────────────────────────────────────
+        // الأرصدة المحلية
+        // ──────────────────────────────────────────────────────
+        try {
+          await DailyService().getDailySummaryLocal(companyCode);
+          print("  ✅ الأرصدة المحلية");
+        } catch (e) {
+          succeeded = false;
+          print("  ❌ الأرصدة المحلية: $e");
+        }
+      });
+      print("═══════════════════════════════════════");
+      print("✅ اكتملت المزامنة");
+      print("═══════════════════════════════════════");
     } catch (e) {
-      print("  ❌ Commercial pending: $e");
+      succeeded = false;
+      print("❌ فشلت المزامنة المركزية: $e");
+    } finally {
+      _isSyncing = false;
+      syncElapsed.stop();
+      print('[Sync] completed ms=${syncElapsed.elapsedMilliseconds} success=$succeeded');
+
+      // ⭐ إشارة إن أول مزامنة خلصت
+      if (!_initialSyncCompleter.isCompleted) {
+        _initialSyncCompleter.complete();
+      }
     }
-
-    // ──────────────────────────────────────────────────────
-    // Batch 3.5: [المبيعات + المرتجعات + تحصيلات العملاء + التحويلات]
-    // ──────────────────────────────────────────────────────
-    print("📦 Batch 3.5: [المبيعات + المرتجعات + العملاء + التحويلات]");
-    await Future.wait([
-      syncOneWithLastSync(
-        name: 'المبيعات',
-        lastSyncKey: '${ApiConstants.LAST_SYNC_SALES}$companyCode',
-        full: () => CommercialService().fetchAll('sales', companyCode),
-        incremental: (since) =>
-            CommercialService().syncChangesFromServer(
-                'sales', companyCode, since),
-      ),
-      syncOneWithLastSync(
-        name: 'المرتجعات',
-        lastSyncKey: '${ApiConstants.LAST_SYNC_RETURNS}$companyCode',
-        full: () => CommercialService().fetchAll('returns', companyCode),
-        incremental: (since) =>
-            CommercialService().syncChangesFromServer(
-                'returns', companyCode, since),
-      ),
-      syncOneWithLastSync(
-        name: 'تحصيلات العملاء',
-        lastSyncKey:
-            '${ApiConstants.LAST_SYNC_CUSTOMER_PAYMENTS}$companyCode',
-        full: () =>
-            CommercialService().fetchAll('customer-payments', companyCode),
-        incremental: (since) =>
-            CommercialService().syncChangesFromServer(
-                'customer-payments', companyCode, since),
-      ),
-      syncOneWithLastSync(
-        name: 'التحويلات المخزنية',
-        lastSyncKey: '${ApiConstants.LAST_SYNC_TRANSFERS}$companyCode',
-        full: () => CommercialService().fetchAll('transfers', companyCode),
-        incremental: (since) =>
-            CommercialService().syncChangesFromServer(
-                'transfers', companyCode, since),
-      ),
-    ]);
-
-    // ──────────────────────────────────────────────────────
-    // retryPending (HR)
-    // ──────────────────────────────────────────────────────
-    try {
-      await HRService().retryAllPending(companyCode);
-      print("  ✅ retryPending");
-    } catch (e) {
-      print("  ❌ retryPending: $e");
-    }
-
-    // ──────────────────────────────────────────────────────
-    // الأرصدة المحلية
-    // ──────────────────────────────────────────────────────
-    try {
-      await DailyService().getDailySummaryLocal(companyCode);
-      print("  ✅ الأرصدة المحلية");
-    } catch (e) {
-      print("  ❌ الأرصدة المحلية: $e");
-    }
-
-    print("═══════════════════════════════════════");
-    print("✅ اكتملت المزامنة");
-    print("═══════════════════════════════════════");
-  } catch (e) {
-    print("❌ فشلت المزامنة المركزية: $e");
-  } finally {
-    _isSyncing = false;
-
-    // ⭐ إشارة إن أول مزامنة خلصت
-    if (!_initialSyncCompleter.isCompleted) {
-      _initialSyncCompleter.complete();
-    }
-  }
+    return succeeded;
+  });
 }
 
 // ============================================================
@@ -356,12 +454,35 @@ void initializeGlobalListener(String companyCode) {
   CommercialService.startBackgroundSync(companyCode);
 
   // ربط الـ callback مرة واحدة فقط
-  _syncService.onWebSocketConnected ??= () {
-    print("🔄 WebSocket اتصل/عاد الاتصال");
-
-    syncAllDataIfNeeded(
+  _syncService.onWebSocketConnected ??= () async {
+    // auth_success now runs the current permission reconciliation FIRST.
+    // Starting a second refresh here would invalidate the data sync it joins.
+    if (!_syncService.authorizationReady || !PermissionsService().isLoaded)
+      return;
+    await syncAllDataIfNeeded(
       _syncService.currentCompanyCode ?? companyCode,
     );
+  };
+
+  // Verify current scope first. Only changed data modules invalidate their
+  // own company cursors; queued changes wait for the old data run to settle.
+  PermissionsService().onScopeNarrowed ??= () {
+    final code = _syncService.currentCompanyCode ?? companyCode;
+    print("🔐 نطاق الصلاحيات اتغير: تحديث الأقسام المتأثرة بعد التطهير");
+    _scheduleScopeResync(code);
+  };
+
+  _syncService.onPermissionsChanged ??= ({required bool resync}) async {
+    print("🔐 معالجة permissions_changed (resync=$resync)");
+    try {
+      await PermissionsService().verifyCurrentEffectiveProfile();
+    } catch (e) {
+      print("⚠️ فشل تحديث الصلاحيات: $e");
+      rethrow;
+    }
+    if (resync) {
+      _scheduleScopeResync(_syncService.currentCompanyCode ?? companyCode);
+    }
   };
 
   // ⭐ WebSocket فشل → إشارة فورية
@@ -396,6 +517,8 @@ void disposeGlobalListener() {
   supplierSyncSubscription?.cancel();
 
   _syncService.stopSync();
+  _dataReadyOwner = null;
+  _dataReadyCompany = null;
 
   print("🔌 تم إيقاف المزامنة");
 }
@@ -411,46 +534,38 @@ Future<void> main() async {
   // Firebase
   // ==========================================================
 
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  await (() => Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      ))();
 
-  await FcmService.instance.initialize();
+  await (() => FcmService.instance.initialize())();
+  PermissionsService().onOwnAccountDeleted = () {
+    disposeGlobalListener();
+    appNavigatorKey.currentState
+        ?.pushNamedAndRemoveUntil('/login', (_) => false);
+  };
 
   // ==========================================================
   // Hive
   // ==========================================================
 
-  await Hive.initFlutter();
+  await (() => Hive.initFlutter())();
 
-  await Hive.openBox('daily_transactions_box');
-  await Hive.openBox('coding_box');
-  await Hive.openBox('inventory_box');
-  await Hive.openBox('supplier_box');
-  await Hive.openBox('supplier_settlement_box');
-
-  // ⭐ Commercial boxes
-  await Hive.openBox('sales_box');
-  await Hive.openBox('sales_returns_box');
-  await Hive.openBox('customer_payments_box');
-  await Hive.openBox('stock_transfers_box');
-  await Hive.openBox('commercial_stock_events_box');
-  await Hive.openBox('commercial_pending_box');
-
-  await Hive.openBox('notifications_box');
-  await Hive.openBox('notification_settings_box');
-  await Hive.openBox('product_lookup_box');
-  await Hive.openBox('hr_pending_box');
-
-  // ⭐ Companies + Users boxes
-  await Hive.openBox('companies_box');
-  await Hive.openBox('users_box');
+  CachePartitions.enable();
+  final startupPrefs = await SharedPreferences.getInstance();
+  final startupUid = FirebaseAuth.instance.currentUser?.uid;
+  final startupCompany = startupPrefs.getString('company_code');
+  if (startupUid != null &&
+      startupCompany != null &&
+      startupCompany.isNotEmpty) {
+    await (() => CachePartitions.activate(startupUid, startupCompany))();
+  }
 
   // ==========================================================
   // SharedPreferences
   // ==========================================================
 
-  final prefs = await SharedPreferences.getInstance();
+  final prefs = await CachePartitions.preferences();
 
   final bool rememberMe = prefs.getBool('remember_me') ?? false;
   final String? userName = prefs.getString('user_name');
@@ -464,16 +579,20 @@ Future<void> main() async {
 
   Widget initialScreen;
 
-  if (rememberMe && userName != null && companyCode != null) {
+  if (rememberMe &&
+      userName != null &&
+      companyCode != null &&
+      CachePartitions.isReady) {
     // --------------------------------------------------------
     // تحميل الصلاحيات أولاً (سريع — من Hive)
     // --------------------------------------------------------
-    await PermissionsService().loadPermissions();
-
-    final savedRole = prefs.getString('role');
-    if (savedRole != null && savedRole.isNotEmpty) {
-      PermissionsService().setRole(savedRole);
-    }
+    // ثبّت خطاف resync قبل أي انتقال صلاحيات محتمل أثناء التحميل
+    // (سباق بدء التشغيل: لقطة Firestore الأولى قد تسبق ربط UI)
+    PermissionsService().onScopeNarrowed ??= () {
+      print("🔐 نطاق الصلاحيات اتغير أثناء بدء التشغيل: resync");
+      _scheduleScopeResync(companyCode);
+    };
+    await (() => PermissionsService().loadPermissions())();
 
     unawaited(FcmService.instance.restoreRegistrationIfEnabled());
     DeepLinkService.instance.initialize();
@@ -486,7 +605,7 @@ Future<void> main() async {
     try {
       final currentUser = FirebaseAuth.instance.currentUser;
       if (currentUser != null) {
-        await currentUser.reload();
+        await (() => currentUser.reload())();
         currentEmail = currentUser.email ?? '';
         if (!currentUser.emailVerified && currentEmail.isNotEmpty) {
           try {
@@ -564,6 +683,9 @@ Future<void> main() async {
   // تشغيل التطبيق
   // ==========================================================
 
+  if (FirebaseAuth.instance.currentUser == null || !CachePartitions.isReady) {
+    initialScreen = const LoginScreen();
+  }
   runApp(
     IslamApp(
       initialScreen: initialScreen,
@@ -626,7 +748,7 @@ class _IslamAppState extends State<IslamApp> with WidgetsBindingObserver {
     _resumeSyncInProgress = true;
 
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await CachePartitions.preferences();
 
       final bool rememberMe = prefs.getBool('remember_me') ?? false;
       final String? companyCode = prefs.getString('company_code');
@@ -638,6 +760,15 @@ class _IslamAppState extends State<IslamApp> with WidgetsBindingObserver {
       // ⭐ لو WebSocket متصل → syncPending بس (توفير bandwidth)
       if (_syncService.isConnected &&
           _syncService.currentCompanyCode == companyCode) {
+        final uid = FirebaseAuth.instance.currentUser?.uid;
+        if (!_syncService.authorizationReady ||
+            _dataReadyOwner != uid ||
+            _dataReadyCompany != companyCode ||
+            _dataReadyEpoch != ReadAuthorizationEpoch.value) {
+          await PermissionsService().verifyCurrentEffectiveProfile();
+          await syncAllDataIfNeeded(companyCode);
+          return;
+        }
         print("✅ WebSocket متصل؛ جاري syncPending فقط...");
         try {
           await CommercialService().syncPending(companyCode);
@@ -667,7 +798,7 @@ class _IslamAppState extends State<IslamApp> with WidgetsBindingObserver {
     });
 
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await CachePartitions.preferences();
       await prefs.setString(
         'theme_mode',
         themeMode == ThemeMode.light ? 'light' : 'dark',

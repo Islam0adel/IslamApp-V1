@@ -1,8 +1,8 @@
+import '../../../services/cache_partitions.dart';
 // lib/pages/hr/employees/employees_list_page.dart
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 
 import '../../../core/theme.dart';
 import '../../../views/widgets/glass_card.dart';
@@ -80,6 +80,8 @@ class _EmployeesListPageState extends State<EmployeesListPage> {
   // ============================================================
 
   Future<void> _loadData({bool forceRefresh = false}) async {
+return CachePartitions.run(() async {
+
     setState(() => _isLoading = true);
 
     try {
@@ -127,11 +129,12 @@ class _EmployeesListPageState extends State<EmployeesListPage> {
       print("❌ خطأ في تحميل الموظفين: $e");
       if (mounted) setState(() => _isLoading = false);
     }
-  }
+});
+}
 
 
   void _loadBranches() {
-    final box = Hive.box('coding_box');
+    final box = CachePartitions.box('coding_box');
     final key = '${_companyCode}_branches';
     final raw = box.get(key);
 
@@ -226,6 +229,8 @@ class _EmployeesListPageState extends State<EmployeesListPage> {
   // ============================================================
 
   Future<void> _openForm({EmployeeModel? employee}) async {
+return CachePartitions.run(() async {
+
     if (!PermissionsService().canManageEmployees) {
       _showSnackBar(
         "ليس لديك صلاحية إدارة الموظفين",
@@ -247,10 +252,13 @@ class _EmployeesListPageState extends State<EmployeesListPage> {
     if (result == true) {
       _loadData();
     }
-  }
+});
+}
 
 
   Future<void> _openProfile(EmployeeModel employee) async {
+return CachePartitions.run(() async {
+
     await Navigator.push(
       context,
       MaterialPageRoute(
@@ -263,10 +271,13 @@ class _EmployeesListPageState extends State<EmployeesListPage> {
 
     // reload بعد الرجوع (ممكن يكون فيه تعديلات)
     _loadData();
-  }
+});
+}
 
 
   Future<void> _confirmDelete(EmployeeModel employee) async {
+return CachePartitions.run(() async {
+
     if (!PermissionsService().canManageEmployees) {
       _showSnackBar(
         "ليس لديك صلاحية حذف الموظفين",
@@ -357,7 +368,8 @@ class _EmployeesListPageState extends State<EmployeesListPage> {
         AppTheme.dangerStrongFor(context),
       );
     }
-  }
+});
+}
 
 
   void _showSnackBar(String message, Color color) {

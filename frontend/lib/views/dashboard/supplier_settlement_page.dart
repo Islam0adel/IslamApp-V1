@@ -1,9 +1,9 @@
+import '../../services/cache_partitions.dart';
 // lib/views/dashboard/supplier_settlement_page.dart
 
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
 import 'package:intl/intl.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../models/supplier_settlement_model.dart';
 import '../../services/supplier_service.dart';
@@ -95,12 +95,14 @@ class _SupplierSettlementPageState
   // ============================================================
 
   Future<void> _loadData() async {
+return CachePartitions.run(() async {
+
   try {
     // جلب اسم المستخدم من SharedPreferences
     final prefs = await SharedPreferences.getInstance();
     _currentUserName = prefs.getString('user_name') ?? 'غير محدد';
 
-    final box = Hive.box('coding_box');
+    final box = CachePartitions.box('coding_box');
 
     // الموردين
     final suppliers = box.get('${widget.companyCode}_suppliers') as List? ?? [];
@@ -167,6 +169,8 @@ class _SupplierSettlementPageState
       setState(() => _isLoading = false);
     }
   }
+
+});
 }
 
   // ============================================================
@@ -176,6 +180,8 @@ class _SupplierSettlementPageState
   Future<void> _loadEditData(
     SupplierSettlementModel item,
   ) async {
+return CachePartitions.run(() async {
+
     _currentSerial = item.serial;
     _selectedSupplier = item.supplierName;
     _addSettlementToDaily = item.linkId?.isNotEmpty == true;
@@ -195,7 +201,8 @@ class _SupplierSettlementPageState
             _supplierBalance + item.amount - item.amount;
       });
     }
-  }
+});
+}
 
   // ============================================================
   // حساب رقم الإذن التالي
@@ -203,7 +210,7 @@ class _SupplierSettlementPageState
   // ============================================================
 
   int _getNextSerial() {
-    final box = Hive.box('supplier_settlement_box');
+    final box = CachePartitions.box('supplier_settlement_box');
     final branchCode = widget.selectedBranchCode ?? 'all';
     int maxSerial = 0;
 
@@ -235,6 +242,8 @@ class _SupplierSettlementPageState
   // ============================================================
 
   Future<void> _loadBalance() async {
+return CachePartitions.run(() async {
+
     if (_selectedSupplier == null || _selectedSupplier!.isEmpty) {
       if (mounted) {
         setState(() {
@@ -251,6 +260,10 @@ class _SupplierSettlementPageState
         widget.selectedBranchCode ?? 'all',
         _selectedSupplier!,
       );
+
+      // null = الرصيد مخفي (بلا حق تكلفة): بطاقة الرصيد مخفية
+      // أصلاً، ولا حساب متوقع ولا أي مسار رقمي على قيمة غير موجودة.
+      if (balance == null) return;
 
       if (!mounted) return;
 
@@ -270,7 +283,8 @@ class _SupplierSettlementPageState
     } catch (e) {
       print('❌ خطأ في تحميل رصيد المورد: $e');
     }
-  }
+});
+}
 
   // ============================================================
   // تحديث الرصيد المتوقع
@@ -298,6 +312,8 @@ class _SupplierSettlementPageState
   // ============================================================
 
   Future<void> _handleSave() async {
+return CachePartitions.run(() async {
+
   final isEdit = widget.editItem != null;
 
   // ✅ الإضافة لها صلاحية مستقلة عن التعديل
@@ -402,6 +418,8 @@ class _SupplierSettlementPageState
       setState(() => _isSaving = false);
     }
   }
+
+});
 }
 
   // ============================================================
@@ -432,7 +450,7 @@ class _SupplierSettlementPageState
       return 'كل الفروع';
     }
 
-    final box = Hive.box('coding_box');
+    final box = CachePartitions.box('coding_box');
     final raw = box.get(
       '${widget.companyCode}_branches',
       defaultValue: [],
@@ -619,6 +637,11 @@ class _SupplierSettlementPageState
   // ============================================================
 
   Widget _buildBalanceCard() {
+  // رصيد المورد مشتق من إجماليات الفواتير (أسعار جملة): مخفي
+  // لمن لا يملك حق التكلفة (سياسة الصلاحيات: الإجمالي لا يظهر)
+  if (!PermissionsService().canViewCostPrices) {
+    return const SizedBox.shrink();
+  }
   double balance = _supplierBalance.abs() < 0.0001 ? 0.0 : _supplierBalance;
   double expected = _expectedBalance.abs() < 0.0001 ? 0.0 : _expectedBalance;
 
@@ -683,9 +706,13 @@ class _SupplierSettlementPageState
               ).toList(),
               onChanged: enabled
                   ? (value) async {
+return CachePartitions.run(() async {
+
                       setState(() => _selectedSupplier = value);
                       await _loadBalance();
-                    }
+
+});
+}
                   : null,
             ),
 
@@ -819,6 +846,8 @@ class _SupplierSettlementPageState
   // ============================================================
 
   Future<void> _pickDate() async {
+return CachePartitions.run(() async {
+
     final picked = await showDatePicker(
       context: context,
       initialDate:
@@ -833,7 +862,8 @@ class _SupplierSettlementPageState
       _dateController.text =
           DateFormat('yyyy-MM-dd').format(picked);
     });
-  }
+});
+}
 
   // ============================================================
   // Dispose

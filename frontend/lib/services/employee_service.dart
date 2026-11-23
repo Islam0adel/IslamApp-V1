@@ -1,14 +1,14 @@
+import 'cache_partitions.dart';
+import 'read_authorization_snapshot.dart';
 // lib/services/employee_service.dart
 
 import 'dart:convert';
 
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/employee_model.dart';
 import '../core/constants.dart';
 import 'auth_http.dart';
-
 
 class EmployeeService {
   // ============================================================
@@ -17,21 +17,17 @@ class EmployeeService {
 
   final String baseUrl = ApiConstants.baseUrl;
 
-
   // ============================================================
   // Hive
   // ============================================================
 
-  final Box _codingBox = Hive.box('coding_box');
-
+  Box get _codingBox => CachePartitions.box('coding_box');
 
   // ============================================================
   // مفتاح Hive (بنفس نمط CodingService للتوافق)
   // ============================================================
 
-  String _localKey(String companyCode) =>
-      "${companyCode}_employees";
-
+  String _localKey(String companyCode) => "${companyCode}_employees";
 
   // ============================================================
   // 1. جلب قائمة الموظفين (من Hive أو السيرفر)
@@ -39,8 +35,12 @@ class EmployeeService {
 
   Future<List<EmployeeModel>> getEmployeesList({
     required String companyCode,
-    bool forceRefresh = false,   // ⭐ جديد
+    bool forceRefresh = false, // ⭐ جديد
+    bool throwOnError = false,
   }) async {
+return CachePartitions.run(() async {
+
+    final readScope = await ReadAuthorizationSnapshot.capture();
     final String localKey = _localKey(companyCode);
 
     // ----------------------------------------------------------
@@ -82,14 +82,17 @@ class EmployeeService {
     );
 
     try {
+      readScope.check();
       final response = await AuthHttp.get(
         Uri.parse("$baseUrl/employees/list/$companyCode"),
       );
+      readScope.check();
 
       if (response.statusCode != 200) {
         print(
           "❌ خطأ من السيرفر [employees]: ${response.statusCode}",
         );
+        if (throwOnError) throw StateError('Employee list HTTP ${response.statusCode}');
         return [];
       }
 
@@ -109,41 +112,45 @@ class EmployeeService {
       }
 
       cleanList.sort((a, b) {
-        final int aCode =
-            int.tryParse(a['code']?.toString() ?? '0') ?? 0;
-        final int bCode =
-            int.tryParse(b['code']?.toString() ?? '0') ?? 0;
+        final int aCode = int.tryParse(a['code']?.toString() ?? '0') ?? 0;
+        final int bCode = int.tryParse(b['code']?.toString() ?? '0') ?? 0;
         return aCode.compareTo(bCode);
       });
 
+      readScope.check();
       await _codingBox.put(localKey, cleanList);
+      readScope.check();
 
       print(
         "✅ تم جلب الموظفين من السيرفر "
         "وحفظهم في Hive (${cleanList.length})",
       );
 
-      return cleanList
-          .map((item) => EmployeeModel.fromMap(item))
-          .toList();
+      return cleanList.map((item) => EmployeeModel.fromMap(item)).toList();
     } catch (e) {
       print("❌ فشل الاتصال بالسيرفر [employees]: $e");
+      if (throwOnError) rethrow;
       return [];
     }
-  }
-
+});
+}
 
   // ============================================================
   // 2. Full Sync (جهاز جديد — lastSync == null)
   // ============================================================
 
   Future<void> fetchAllEmployees(String companyCode) async {
+return CachePartitions.run(() async {
+
+    final readScope = await ReadAuthorizationSnapshot.capture();
     print("📥 الموظفين: بدء FULL SYNC للشركة $companyCode");
 
     try {
+      readScope.check();
       final response = await AuthHttp.get(
         Uri.parse('$baseUrl/employees/list/$companyCode'),
       );
+      readScope.check();
 
       if (response.statusCode != 200) {
         throw Exception(
@@ -175,17 +182,18 @@ class EmployeeService {
       });
 
       final String localKey = _localKey(companyCode);
+      readScope.check();
       await _codingBox.put(localKey, list);
+      readScope.check();
 
       print("✅ FULL SYNC: [employees] (${list.length})");
       print("✅ اكتمل FULL SYNC للموظفين للشركة $companyCode");
-
     } catch (e) {
       print("❌ فشل FULL SYNC للموظفين: $e");
       rethrow;
     }
-  }
-
+});
+}
 
   // ============================================================
   // 3. المزامنة التزايدية (lastSync موجود)
@@ -195,13 +203,16 @@ class EmployeeService {
     String companyCode, [
     String? lastSync,
   ]) async {
-    final prefs = await SharedPreferences.getInstance();
+return CachePartitions.run(() async {
+
+    final readScope = await ReadAuthorizationSnapshot.capture();
+    final prefs = await CachePartitions.preferences();
+    readScope.check();
 
     final String lastSyncKey =
         '${ApiConstants.LAST_SYNC_CODING}_employees_$companyCode';
 
-    final String? lastSyncValue =
-        lastSync ?? prefs.getString(lastSyncKey);
+    final String? lastSyncValue = lastSync ?? prefs.getString(lastSyncKey);
 
     // ----------------------------------------------------------
     // جهاز جديد
@@ -211,11 +222,12 @@ class EmployeeService {
       print("📥 الموظفين: لا يوجد lastSync → FULL SYNC");
 
       await fetchAllEmployees(companyCode);
-
+      readScope.check();
       await prefs.setString(
         lastSyncKey,
         DateTime.now().toUtc().toIso8601String(),
       );
+      readScope.check();
 
       return;
     }
@@ -229,11 +241,11 @@ class EmployeeService {
     try {
       final DateTime syncStartedAt = DateTime.now().toUtc();
 
-      final DateTime sinceDt =
-          DateTime.parse(lastSyncValue).toUtc();
+      final DateTime sinceDt = DateTime.parse(lastSyncValue).toUtc();
 
       final String effectiveSince = sinceDt.toIso8601String();
 
+      readScope.check();
       final response = await AuthHttp.get(
         Uri.parse(
           '$baseUrl/employees/changes/'
@@ -241,6 +253,7 @@ class EmployeeService {
           '?since=$effectiveSince',
         ),
       );
+      readScope.check();
 
       if (response.statusCode != 200) {
         throw Exception(
@@ -259,10 +272,12 @@ class EmployeeService {
       if (changes.isEmpty) {
         print("⏭️ [employees] لا يوجد تغييرات");
 
+        readScope.check();
         await prefs.setString(
           lastSyncKey,
           syncStartedAt.toIso8601String(),
         );
+        readScope.check();
         return;
       }
 
@@ -293,12 +308,10 @@ class EmployeeService {
       for (final item in changes) {
         if (item is! Map) continue;
 
-        final Map<String, dynamic> map =
-            Map<String, dynamic>.from(item);
+        final Map<String, dynamic> map = Map<String, dynamic>.from(item);
 
-        final String action =
-            map['action']?.toString() ??
-                (map['is_deleted'] == true ? 'delete' : 'update');
+        final String action = map['action']?.toString() ??
+            (map['is_deleted'] == true ? 'delete' : 'update');
 
         final String? code = map['code']?.toString();
 
@@ -353,30 +366,34 @@ class EmployeeService {
 
       if (currentList.isEmpty) {
         await _codingBox.delete(localKey);
+        readScope.check();
       } else {
+        readScope.check();
         await _codingBox.put(localKey, currentList);
+        readScope.check();
       }
 
       // ------------------------------------------------------
       // حفظ lastSync (فقط بعد النجاح)
       // ------------------------------------------------------
 
+      readScope.check();
       await prefs.setString(
         lastSyncKey,
         syncStartedAt.toIso8601String(),
       );
+      readScope.check();
 
       print(
         "✅ تم تحديث الموظفين "
         "(${changes.length} تغيير)",
       );
-
     } catch (e) {
       print("❌ فشل INCREMENTAL SYNC للموظفين: $e");
       rethrow;
     }
-  }
-
+});
+}
 
   // ============================================================
   // 4. حفظ موظف (إضافة أو تحديث)
@@ -386,12 +403,16 @@ class EmployeeService {
     required String companyCode,
     required EmployeeModel model,
   }) async {
+return CachePartitions.run(() async {
+
+    final cacheScope = await ReadAuthorizationSnapshot.capture();
     try {
       final Map<String, dynamic> bodyData =
           Map<String, dynamic>.from(model.toMap());
 
       bodyData['company_code'] = companyCode;
 
+      cacheScope.check();
       final response = await AuthHttp.post(
         Uri.parse("$baseUrl/employees/save"),
         headers: {"Content-Type": "application/json"},
@@ -408,11 +429,17 @@ class EmployeeService {
 
       final Map<String, dynamic> result = json.decode(response.body);
 
-      final String newCode =
-          result['code']?.toString() ?? model.code;
+      final String newCode = result['code']?.toString() ?? model.code;
 
-      final String action =
-          result['action']?.toString() ?? 'update';
+      final String action = result['action']?.toString() ?? 'update';
+
+      if (!cacheScope.isCurrent)
+        return {
+          'success': true,
+          'code': newCode,
+          'action': action,
+          'scope_changed': true
+        };
 
       final String localKey = _localKey(companyCode);
 
@@ -485,15 +512,14 @@ class EmployeeService {
         'code': newCode,
         'action': action,
       };
-
     } catch (e) {
       return {
         'success': false,
         'error': e.toString(),
       };
     }
-  }
-
+});
+}
 
   // ============================================================
   // 5. حذف موظف
@@ -503,6 +529,8 @@ class EmployeeService {
     required String companyCode,
     required String code,
   }) async {
+return CachePartitions.run(() async {
+
     try {
       final response = await AuthHttp.delete(
         Uri.parse(
@@ -558,13 +586,12 @@ class EmployeeService {
       }
 
       return true;
-
     } catch (e) {
       print("❌ خطأ أثناء حذف الموظف: $e");
       return false;
     }
-  }
-
+});
+}
 
   // ============================================================
   // 6. جلب موظف واحد بالتفصيل
@@ -574,12 +601,17 @@ class EmployeeService {
     required String companyCode,
     required String code,
   }) async {
+return CachePartitions.run(() async {
+
+    final readScope = await ReadAuthorizationSnapshot.capture();
     try {
+      readScope.check();
       final response = await AuthHttp.get(
         Uri.parse(
           "$baseUrl/employees/get/$companyCode/$code",
         ),
       );
+      readScope.check();
 
       if (response.statusCode != 200) {
         print(
@@ -591,10 +623,10 @@ class EmployeeService {
 
       final Map<String, dynamic> data = jsonDecode(response.body);
       return EmployeeModel.fromMap(data);
-
     } catch (e) {
       print("❌ خطأ في جلب الموظف: $e");
       return null;
     }
-  }
+});
+}
 }

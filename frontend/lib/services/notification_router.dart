@@ -1,3 +1,4 @@
+import 'cache_partitions.dart';
 // lib/services/notification_router.dart
 //
 // يفتح الشاشة المناسبة بناءً على إشعار.
@@ -10,7 +11,6 @@
 //    الحدث في سياقه (بدل ما يفتحله نموذج إضافة جديد).
 
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'permissions_service.dart';
 
@@ -61,7 +61,7 @@ class NotificationRouter {
     }
 
     // ─── بيانات الشركة/المستخدم ───
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await CachePartitions.preferences();
     final companyCode = prefs.getString('company_code') ?? '';
     final userName = prefs.getString('user_name') ?? '';
 
@@ -141,7 +141,7 @@ class NotificationRouter {
     await navigator.push(MaterialPageRoute(builder: (_) => page!));
   }
   // (يتم إضافة _RegistrationRequestsRedirect بعد الفئة)
-  
+
   // ⭐ نفس منطق NotificationsService._canAccessSection
   static bool _canAccessSection(String section) {
     final ps = PermissionsService();
@@ -170,7 +170,7 @@ class NotificationRouter {
         return false;
     }
   }
-  
+
 }
 
 // ============================================================

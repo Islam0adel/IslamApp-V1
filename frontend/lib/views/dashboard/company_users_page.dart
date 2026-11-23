@@ -1,3 +1,5 @@
+import '../../services/cache_partitions.dart';
+import '../../services/admin_cache_events.dart';
 // lib/views/dashboard/company_users_page.dart
 
 import 'package:flutter/material.dart';
@@ -8,6 +10,8 @@ import '../../views/widgets/glass_card.dart';
 import '../../services/company_service.dart';
 import '../../services/permissions_service.dart';
 import '../../services/user_service.dart';
+import '../../services/account_editor_snapshot.dart';
+import '../../services/read_authorization_snapshot.dart';
 
 class CompanyUsersPage extends StatefulWidget {
   final String companyCode; // '' = super_admin
@@ -38,27 +42,64 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
   @override
   void initState() {
     super.initState();
+    PermissionsService().addListener(_scopeChanged);
     _selectedCompanyCode = widget.companyCode;
     _selectedCompanyName = widget.companyName;
+    AdminCacheEvents.users.addListener(_directoryChanged);
+    AdminCacheEvents.companies.addListener(_companiesChanged);
     _loadActorEmail();
-    _loadInitialData();
+    _loadInitialData(forceRefresh: true);
+  }
+
+  @override
+  void dispose() {
+    PermissionsService().removeListener(_scopeChanged);
+    AdminCacheEvents.users.removeListener(_directoryChanged);
+    AdminCacheEvents.companies.removeListener(_companiesChanged);
+    super.dispose();
+  }
+  void _directoryChanged() {
+    if (!mounted || !PermissionsService().canOpenUserManagement) return;
+    final company = AdminCacheEvents.users.value.company;
+    if (company == _selectedCompanyCode ||
+        (PermissionsService().isSuperAdmin && _selectedCompanyCode.isEmpty)) {
+      _loadInitialData();
+    } else if (PermissionsService().isSuperAdmin && PermissionsService().canReviewUserRequests) {
+      _service.ensureRequests().then((_) { if (mounted) setState(() {}); }).catchError((Object error) {
+        if (mounted) setState(() => _error = 'تعذر تحديث الطلبات. اضغط تحديث للمحاولة.');
+      });
+    }
+  }
+  void _companiesChanged() {
+    if (mounted && PermissionsService().isSuperAdmin) _loadInitialData();
+  }
+
+  void _scopeChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadActorEmail() async {
+return CachePartitions.run(() async {
+
     try {
       final prefs = await SharedPreferences.getInstance();
       _actorEmail =
           (prefs.getString('user_email') ?? '').toLowerCase().trim();
     } catch (_) {}
-  }
+});
+}
 
-  Future<void> _loadInitialData() async {
+  Future<void> _loadInitialData({bool forceRefresh = false}) async {
+return CachePartitions.run(() async {
+
     setState(() => _isLoading = true);
     try {
       // تحميل الشركات (لو super_admin)
       if (PermissionsService().isSuperAdmin) {
-        if (_companyService.getCompaniesFromHive().isEmpty) {
-          await _companyService.fetchAllCompanies();
+        if (forceRefresh) {
+        await _companyService.fetchAllCompanies();
+      } else if (!_companyService.hasSnapshot) {
+          await _companyService.ensureCached();
         }
         // اختار أول شركة لو مفيش شركة محددة
         if (_selectedCompanyCode.isEmpty) {
@@ -73,15 +114,17 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
       }
 
       // تحميل المستخدمين (من Hive أولاً)
-      final hiveUsers = _service.getUsersFromHive(
+      final hasUsers = _service.hasUsersSnapshot(
         companyCode: PermissionsService().isSuperAdmin
             ? (_selectedCompanyCode.isEmpty ? null : _selectedCompanyCode)
             : _selectedCompanyCode,
       );
 
       // لو Hive فاضي، جيب من السيرفر
-      if (hiveUsers.isEmpty) {
-        await _service.fetchAllUsers(
+      if (forceRefresh) {
+      await _service.fetchAllUsers(companyCode: _selectedCompanyCode.isEmpty ? null : _selectedCompanyCode);
+    } else if (!hasUsers) {
+        await _service.ensureUsers(
           companyCode: PermissionsService().isSuperAdmin
               ? (_selectedCompanyCode.isEmpty ? null : _selectedCompanyCode)
               : _selectedCompanyCode,
@@ -89,8 +132,12 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
       }
 
       // تحميل الطلبات المعلقة (للـ admin + super_admin فقط)
-      if (PermissionsService().canManageUsers) {
-        await _service.fetchPendingRequests();
+      if (PermissionsService().canReviewUserRequests) {
+        if (forceRefresh) {
+          await _service.fetchPendingRequests();
+        } else {
+          await _service.ensureRequests();
+        }
       }
 
       if (!mounted) return;
@@ -105,9 +152,12 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
         _error = e.toString();
       });
     }
-  }
+});
+}
 
   Future<void> _refresh() async {
+return CachePartitions.run(() async {
+
     setState(() => _isLoading = true);
     try {
       await _service.fetchAllUsers(
@@ -115,7 +165,7 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
             ? (_selectedCompanyCode.isEmpty ? null : _selectedCompanyCode)
             : _selectedCompanyCode,
       );
-      if (PermissionsService().canManageUsers) {
+      if (PermissionsService().canReviewUserRequests) {
         await _service.fetchPendingRequests();
       }
       if (mounted) setState(() => _isLoading = false);
@@ -125,9 +175,12 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
         _showSnackBar(e.toString(), AppTheme.dangerFor(context));
       }
     }
-  }
+});
+}
 
   Future<void> _onCompanyChanged(String? code) async {
+return CachePartitions.run(() async {
+
     if (code == null || code == _selectedCompanyCode) return;
     final companies = _companyService.getCompaniesFromHive();
     final company = companies.firstWhere(
@@ -143,7 +196,7 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
 
     try {
       // جلب مستخدمين الشركة الجديدة
-      await _service.fetchAllUsers(companyCode: code);
+      await _service.ensureUsers(companyCode: code);
       if (mounted) setState(() => _isLoading = false);
     } catch (e) {
       if (mounted) {
@@ -151,7 +204,8 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
         _showSnackBar(e.toString(), AppTheme.dangerFor(context));
       }
     }
-  }
+});
+}
 
   // ============================================================
   // Helpers
@@ -162,7 +216,7 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
     if (companyCode.isEmpty) return branches;
 
     try {
-      final box = Hive.box('coding_box');
+      final box = CachePartitions.box('coding_box');
       final raw = box.get('${companyCode}_branches', defaultValue: []) as List? ?? [];
       for (final item in raw) {
         if (item is! Map) continue;
@@ -189,7 +243,7 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
 
     if (_filterStatus != null && _filterStatus!.isNotEmpty) {
       result = result
-          .where((u) => (u['status'] ?? 'active') == _filterStatus)
+          .where((u) => _accountStatus(u) == _filterStatus)
           .toList();
     }
 
@@ -215,6 +269,8 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
   // ============================================================
 
   Future<void> _showAddUserDialog() async {
+return CachePartitions.run(() async {
+
     if (_selectedCompanyCode.isEmpty) {
       _showSnackBar('اختر شركة أولاً', AppTheme.warningOrangeFor(context));
       return;
@@ -277,13 +333,16 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
       setState(() => _isLoading = false);
       _showSnackBar(e.toString(), AppTheme.dangerFor(context));
     }
-  }
+});
+}
 
   // ============================================================
   // Edit User
   // ============================================================
 
   Future<void> _showEditUserDialog(Map<String, dynamic> user) async {
+return CachePartitions.run(() async {
+
     final email = (user['email'] ?? '').toString();
     if (email.isEmpty) {
       _showSnackBar('المستخدم بدون بريد إلكتروني — لا يمكن تعديله',
@@ -291,37 +350,39 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
       return;
     }
 
-    final branches = _branchesFor(_selectedCompanyCode);
-    final userRole = _userRole(user);
-    final isSuperAdmin = PermissionsService().isSuperAdmin;
-    final isSelf = _isCurrentUser(user);
-
-    final canChangeRole = isSuperAdmin && userRole != 'super_admin';
-    final canChangeStatus = isSuperAdmin && userRole != 'super_admin';
-
-    Map<String, String> allowedRoles = {};
-    if (canChangeRole) {
-      allowedRoles = {
-        'employee': 'موظف عادي',
-        if (userRole != 'admin') 'admin': 'مدير شركة',
-      };
-    }
-
-    if (!canChangeRole && !canChangeStatus && userRole == 'super_admin' && !isSuperAdmin) {
-      _showSnackBar('غير مسموح بتعديل هذا المستخدم',
-          AppTheme.dangerFor(context));
+    AccountEditorSnapshot editor;
+    setState(() => _isLoading = true);
+    try {
+      editor = await _service.loadAccountEditor(email);
+      if (!mounted) return;
+      if (_selectedCompanyCode.isNotEmpty && editor.companyCode != _selectedCompanyCode) {
+        throw StateError('تغيرت الشركة المحددة. أعد فتح المستخدم');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      _showSnackBar(e.toString(), AppTheme.dangerFor(context));
       return;
     }
+    setState(() => _isLoading = false);
+    final userRole = editor.data['role'];
+    final canChangeRole = editor.canChangeRole && userRole != 'super_admin';
+    final canChangeStatus = editor.canChangeStatus && userRole != 'super_admin';
+    final allowedRoles = canChangeRole
+        ? {'employee': 'موظف عادي', 'admin': 'مدير شركة'}
+        : <String, String>{};
 
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (_) => _EditUserDialog(
-        user: user,
-        branches: branches,
+      builder: (_) => CompanyUserEditDialog(
+        user: editor.data,
+        authorization: editor,
+        branches: editor.branches,
         allowedRoles: allowedRoles,
         canChangeRole: canChangeRole,
         canChangeStatus: canChangeStatus,
-        isSelf: isSelf,
+        isSelf: _isCurrentUser(editor.data),
+        canEditMetadata: editor.canEdit,
       ),
     );
 
@@ -331,29 +392,40 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
     try {
       await _service.editUser(
         email: email,
+        editor: editor,
         name: result['name'] as String?,
+        invitationEmail: result['invitation_email'] as String?,
         phoneNumber: result['phone_number'] as String?,
         branchCode: result['branch_code'] as String?,
         role: result['role'] as String?,
         username: result['username'] as String?,
         status: result['status'] as String?,
+        isActive: result['is_active'] as bool?,
         companyCode: _selectedCompanyCode,
       );
       if (!mounted) return;
+      if (!editor.isCurrent) {
+        setState(() => _isLoading = false);
+        return;
+      }
       _showSnackBar('تم التحديث بنجاح ✅', AppTheme.successStrongFor(context));
       setState(() => _isLoading = false);
     } catch (e) {
       if (!mounted) return;
       setState(() => _isLoading = false);
-      _showSnackBar(e.toString(), AppTheme.dangerFor(context));
+      _showSnackBar(e.toString(), e is UserSavedRefreshFailed
+          ? AppTheme.warningOrangeFor(context) : AppTheme.dangerFor(context));
     }
-  }
+});
+}
 
   // ============================================================
   // Delete User
   // ============================================================
 
   Future<void> _confirmDelete(Map<String, dynamic> user) async {
+return CachePartitions.run(() async {
+
     final email = (user['email'] ?? '').toString();
     final name = (user['name'] ?? '').toString();
     if (email.isEmpty) {
@@ -411,13 +483,16 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
       setState(() => _isLoading = false);
       _showSnackBar(e.toString(), AppTheme.dangerFor(context));
     }
-  }
+});
+}
 
   // ============================================================
   // Reset Pending User
   // ============================================================
 
   Future<void> _confirmResetPending(Map<String, dynamic> user) async {
+return CachePartitions.run(() async {
+
     final email = (user['email'] ?? '').toString();
     final name = (user['name'] ?? '').toString();
     if (email.isEmpty) {
@@ -482,13 +557,16 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
       setState(() => _isLoading = false);
       _showSnackBar(e.toString(), AppTheme.dangerFor(context));
     }
-  }
+});
+}
 
   // ============================================================
   // Approve/Reject Requests
   // ============================================================
 
   Future<void> _approveRequest(String requestId, String name) async {
+return CachePartitions.run(() async {
+
     final requests = _service.getRequestsFromHive();
     Map<String, dynamic>? request;
     try {
@@ -653,9 +731,12 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
       setState(() => _isLoading = false);
       _showSnackBar(e.toString(), AppTheme.dangerFor(context));
     }
-  }
+});
+}
 
   Future<void> _rejectRequest(String requestId, String name) async {
+return CachePartitions.run(() async {
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -701,7 +782,8 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
       setState(() => _isLoading = false);
       _showSnackBar(e.toString(), AppTheme.dangerFor(context));
     }
-  }
+});
+}
 
   // ============================================================
   // Helpers (بدون تغيير)
@@ -760,6 +842,9 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
     return userEmail.isNotEmpty && userEmail == _actorEmail;
   }
 
+  String _accountStatus(Map<String, dynamic> user) =>
+      user['is_active'] == false ? 'suspended' : (user['status'] ?? 'active').toString();
+
   String _statusLabel(String status) {
     switch (status) {
       case 'pending':
@@ -811,7 +896,7 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (!PermissionsService().canManageUsers) {
+    if (!PermissionsService().canOpenUserManagement) {
       return _buildNoPermissionScreen();
     }
 
@@ -842,11 +927,11 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
           ),
         ],
       ),
-      floatingActionButton: _isLoading
+      floatingActionButton: _isLoading || !PermissionsService().canUserManagementAction('إضافة')
           ? null
           : FloatingActionButton.extended(
               backgroundColor: AppTheme.accentFor(context),
-              foregroundColor: Colors.white,
+              foregroundColor: AppTheme.onAccentFor(context),
               onPressed: _showAddUserDialog,
               icon: const Icon(Icons.person_add_rounded),
               label: const Text('إضافة مستخدم',
@@ -880,11 +965,11 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
                               : _selectedCompanyCode,
                         );
                         final pending =
-                            allUsers.where((u) => u['status'] == 'pending').length;
+                            allUsers.where((u) => _accountStatus(u) == 'pending').length;
                         final active =
-                            allUsers.where((u) => u['status'] == 'active').length;
+                            allUsers.where((u) => _accountStatus(u) == 'active').length;
                         final suspended = allUsers
-                            .where((u) => u['status'] == 'suspended')
+                            .where((u) => _accountStatus(u) == 'suspended')
                             .length;
 
                         return _buildContent(
@@ -1042,7 +1127,8 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
                       fontFamily: 'Cairo',
                       color: AppTheme.textMainFor(context)),
                   decoration: InputDecoration(
-                    hintText: 'بحث بالاسم / إيميل / موبايل',
+                    hintText: PermissionsService().canUserManagementAction('معاينة')
+                        ? 'بحث بالاسم / إيميل / موبايل' : 'بحث بالاسم / إيميل',
                     hintStyle: TextStyle(
                         fontFamily: 'Cairo',
                         color: AppTheme.textMutedFor(context),
@@ -1164,7 +1250,10 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
             Text(
               _searchQuery.isNotEmpty || _filterStatus != null
                   ? 'لا توجد نتائج مطابقة'
-                  : 'لا يوجد مستخدمون بعد',
+                  : (PermissionsService().companyPolicyActive &&
+                      !PermissionsService().canUserManagementAction('معاينة'))
+                      ? 'لا توجد حسابات للعرض ضمن صلاحياتك الحالية'
+                      : 'لا يوجد مستخدمون بعد',
               textAlign: TextAlign.center,
               style: TextStyle(
                   fontFamily: 'Cairo',
@@ -1177,7 +1266,7 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
   }
 
   Widget _buildRequestsSection() {
-    if (!PermissionsService().canManageUsers) {
+    if (!PermissionsService().canReviewUserRequests) {
       return const SizedBox.shrink();
     }
 
@@ -1269,7 +1358,7 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              TextButton(
+              if (PermissionsService().canUserManagementAction('رفض طلب')) TextButton(
                 onPressed: () => _rejectRequest(id, name),
                 child: Text('رفض',
                     style: TextStyle(
@@ -1277,7 +1366,7 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
                         fontSize: 11,
                         color: AppTheme.dangerFor(context))),
               ),
-              TextButton(
+              if (PermissionsService().canUserManagementAction('الموافقة على طلب')) TextButton(
                 onPressed: () => _approveRequest(id, name),
                 child: Text('موافقة',
                     style: TextStyle(
@@ -1302,7 +1391,7 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
         : (email.isNotEmpty ? email : (phone.isNotEmpty ? phone : '—'));
     final isAnonymous = name.isEmpty;
     final branchCode = (user['branch_code'] ?? '').toString();
-    final status = (user['status'] ?? 'active').toString();
+    final status = _accountStatus(user);
     final emailVerified = user['email_verified'] == true;
     final requiresVerification = user['requires_email_verification'] == true;
     final hasAccount = user['has_account'] == true;
@@ -1400,9 +1489,9 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
               if (email.isNotEmpty) _infoChip(Icons.email_rounded, email),
               if (username.isNotEmpty)
                 _infoChip(Icons.alternate_email_rounded, '@$username'),
-              if (branchCode.isNotEmpty)
+              if (user['directory_summary_only'] != true && branchCode.isNotEmpty)
                 _infoChip(Icons.storefront_rounded, 'فرع $branchCode')
-              else
+              else if (user['directory_summary_only'] != true)
                 _infoChip(Icons.public_rounded, 'كل الفروع (موظف عام)',
                     color: AppTheme.infoFor(context)),
               if (status == 'active' &&
@@ -1473,36 +1562,23 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
   }
 
   bool _canEditUser(Map<String, dynamic> user) {
-    final role = _userRole(user);
-    if (PermissionsService().isSuperAdmin) return true;
-    if (PermissionsService().currentRole == 'admin') {
-      return role == 'employee';
-    }
-    return false;
+    final permissions = PermissionsService();
+    if (!permissions.canUserManagementAction('تعديل') &&
+        !permissions.canUserManagementAction('تغيير حالة الحساب')) return false;
+    return permissions.isSuperAdmin || _userRole(user) != 'super_admin';
   }
 
   bool _canDeleteUser(Map<String, dynamic> user) {
-    final role = _userRole(user);
-    if (role == 'super_admin') return false;
-    if (PermissionsService().isSuperAdmin) return true;
-    if (PermissionsService().currentRole == 'admin') {
-      return role == 'employee';
-    }
-    return false;
+    if (!PermissionsService().canUserManagementAction('حذف') ||
+        _userRole(user) == 'super_admin') return false;
+    return PermissionsService().isSuperAdmin || _userRole(user) == 'employee';
   }
 
   bool _canResetUser(Map<String, dynamic> user) {
-    final role = _userRole(user);
-    if (role == 'super_admin') return false;
-    final status = (user['status'] ?? '').toString();
-    final hasAccount = user['has_account'] == true;
-    final isStuck = status == 'pending' || !hasAccount;
-    if (!isStuck) return false;
-    if (PermissionsService().isSuperAdmin) return true;
-    if (PermissionsService().currentRole == 'admin') {
-      return role == 'employee';
-    }
-    return false;
+    if (!PermissionsService().canUserManagementAction('إعادة تهيئة حساب') ||
+        _userRole(user) == 'super_admin') return false;
+    final stuck = user['status'] == 'pending' || user['has_account'] != true;
+    return stuck && (PermissionsService().isSuperAdmin || _userRole(user) == 'employee');
   }
 
   Widget _infoChip(IconData icon, String text, {Color? color}) {
@@ -1566,8 +1642,8 @@ class _AddUserDialogState extends State<_AddUserDialog> {
     final phone = _phoneCtrl.text.trim();
     final email = _emailCtrl.text.trim().toLowerCase();
 
-    if (phone.isEmpty && email.isEmpty) {
-      return _error('رقم الموبايل أو الإيميل مطلوب');
+    if (email.isEmpty) {
+      return _error('بريد الدعوة مطلوب');
     }
     if (phone.isNotEmpty && !RegExp(r'^[0-9]{8,15}$').hasMatch(phone)) {
       return _error('رقم الموبايل غير صحيح');
@@ -1638,7 +1714,7 @@ class _AddUserDialogState extends State<_AddUserDialog> {
                       .toList(),
                   (v) => setState(() => _role = v ?? 'employee')),
               const SizedBox(height: 10),
-              _field(_emailCtrl, 'البريد الإلكتروني', Icons.email_rounded,
+              _field(_emailCtrl, 'بريد الدعوة (مطلوب)', Icons.email_rounded,
                   keyboardType: TextInputType.emailAddress),
               const SizedBox(height: 10),
               _field(_usernameCtrl, 'اسم المستخدم (اختياري)',
@@ -1721,62 +1797,124 @@ class _AddUserDialogState extends State<_AddUserDialog> {
   }
 }
 
-class _EditUserDialog extends StatefulWidget {
+class CompanyUserEditDialog extends StatefulWidget {
   final Map<String, dynamic> user;
   final List<Map<String, String>> branches;
   final Map<String, String> allowedRoles;
   final bool canChangeRole;
   final bool canChangeStatus;
   final bool isSelf;
+  final bool canEditMetadata;
+  final AccountEditorSnapshot? authorization;
 
-  const _EditUserDialog({
+  const CompanyUserEditDialog({
+    super.key,
     required this.user,
     required this.branches,
     required this.allowedRoles,
     required this.canChangeRole,
     required this.canChangeStatus,
     this.isSelf = false,
+    this.canEditMetadata = true,
+    this.authorization,
   });
 
   @override
-  State<_EditUserDialog> createState() => _EditUserDialogState();
+  State<CompanyUserEditDialog> createState() => _EditUserDialogState();
 }
 
-class _EditUserDialogState extends State<_EditUserDialog> {
+class _EditUserDialogState extends State<CompanyUserEditDialog> {
+  late String _initialBranchCode;
+  bool _authorityLost = false;
+
+  void _authorizationChanged() {
+    if (_authorityLost || widget.authorization == null ||
+        widget.authorization!.isCurrent) return;
+    _authorityLost = true;
+    // Remove the exact dialog route, never a newer route above it.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _nameCtrl.clear();
+      _phoneCtrl.clear();
+      _usernameCtrl.clear();
+      _invitationEmailCtrl.clear();
+      final route = ModalRoute.of(context);
+      if (route != null && route.isActive) {
+        Navigator.of(context).removeRoute(route);
+      }
+    });
+    WidgetsBinding.instance.scheduleFrame();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _authorizationChanged();
+  }
+
+
+  List<Map<String, String>> get _startupBranches {
+    final scope = widget.user['allowed_branches'];
+    final all = scope == null ||
+        (scope is List && (scope.isEmpty || scope.any((v) => v.toString().toLowerCase() == 'all'))) ||
+        (scope is String && scope.toLowerCase() == 'all');
+    final result = <Map<String, String>>[
+      {'code': 'all', 'name': 'كل الفروع المسموحة'},
+    ];
+    final seen = <String>{'all'};
+    for (final branch in widget.branches) {
+      final code = branch['code'] ?? '';
+      if (code.isNotEmpty && seen.add(code) &&
+          (all || (scope is List && scope.contains(code)) || scope == code)) {
+        result.add(branch);
+      }
+    }
+    if (!result.any((branch) => branch['code'] == _initialBranchCode)) {
+      result.add({'code': _initialBranchCode,
+        'name': '$_initialBranchCode (غير متاح حالياً)', 'unavailable': 'true'});
+    }
+    return result;
+  }
+
   late final _nameCtrl;
+  late final TextEditingController _invitationEmailCtrl;
   late final _phoneCtrl;
   late final _usernameCtrl;
   late String _branchCode;
   late String _role;
   late String _status;
+  late String _initialStatus;
 
   @override
   void initState() {
     super.initState();
+    _invitationEmailCtrl = TextEditingController(text: (widget.user['invitation_email'] ?? '').toString());
     _nameCtrl =
         TextEditingController(text: (widget.user['name'] ?? '').toString());
     _phoneCtrl = TextEditingController(
         text: (widget.user['phone_number'] ?? '').toString());
     _usernameCtrl = TextEditingController(
         text: (widget.user['username'] ?? '').toString());
-    _branchCode = (widget.user['branch_code'] ?? '').toString();
+    _branchCode = (widget.user['startup_branch_code'] ?? widget.user['branch_code'] ?? '').toString();
+    if (_branchCode.isEmpty) _branchCode = 'all';
     _role = widget.allowedRoles.containsKey(
             (widget.user['role'] ?? '').toString())
         ? (widget.user['role'] ?? '').toString()
         : (widget.allowedRoles.isNotEmpty
             ? widget.allowedRoles.keys.first
             : 'employee');
-    _status = (widget.user['status'] ?? 'active').toString();
+    _initialStatus = (widget.user['status'] ?? 'active').toString();
+    _status = widget.user['is_active'] == false ? 'blocked' : _initialStatus;
 
-    if (!widget.branches.any((b) => b['code'] == _branchCode)) {
-      _branchCode = widget.branches.isNotEmpty
-          ? (widget.branches.first['code'] ?? '')
-          : '';
-    }
+    _initialBranchCode = _branchCode;
+    ReadAuthorizationEpoch.changes.addListener(_authorizationChanged);
+    _authorizationChanged();
   }
 
   @override
   void dispose() {
+    ReadAuthorizationEpoch.changes.removeListener(_authorizationChanged);
+    _invitationEmailCtrl.dispose();
     _nameCtrl.dispose();
     _phoneCtrl.dispose();
     _usernameCtrl.dispose();
@@ -1784,15 +1922,21 @@ class _EditUserDialogState extends State<_EditUserDialog> {
   }
 
   void _submit() {
+    _authorizationChanged();
+    if (_authorityLost) return;
     final name = _nameCtrl.text.trim();
-    if (name.isEmpty) return _error('الاسم مطلوب');
+    if (widget.canEditMetadata && name.isEmpty) return _error('الاسم مطلوب');
     Navigator.pop(context, {
-      'name': name,
-      'phone_number': _phoneCtrl.text.trim(),
-      'branch_code': _branchCode,
+      if (widget.canEditMetadata) 'name': name,
+      if (widget.canEditMetadata && widget.user['can_set_invitation_email'] == true)
+        'invitation_email': _invitationEmailCtrl.text.trim(),
+      if (widget.canEditMetadata) 'phone_number': _phoneCtrl.text.trim(),
+      if (widget.canEditMetadata && _branchCode != _initialBranchCode)
+        'branch_code': _branchCode == 'all' ? '' : _branchCode,
       if (widget.canChangeRole) 'role': _role,
-      'username': _usernameCtrl.text.trim(),
-      if (widget.canChangeStatus) 'status': _status,
+      if (widget.canEditMetadata) 'username': _usernameCtrl.text.trim(),
+      if (widget.canChangeStatus && _status != 'blocked') 'status': _status,
+      if (widget.canChangeStatus) 'is_active': _status != 'blocked',
     });
   }
 
@@ -1809,6 +1953,7 @@ class _EditUserDialogState extends State<_EditUserDialog> {
 
   @override
   Widget build(BuildContext context) {
+    if (_authorityLost) return const SizedBox.shrink();
     final email = (widget.user['email'] ?? '').toString();
     return AlertDialog(
       backgroundColor: AppTheme.dialogBackground(context),
@@ -1825,21 +1970,31 @@ class _EditUserDialogState extends State<_EditUserDialog> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (widget.canEditMetadata) ...[
+              if (widget.user['can_set_invitation_email'] == true) ...[
+                _field(_invitationEmailCtrl, 'بريد الدعوة (مطلوب)', Icons.email_rounded, keyboardType: TextInputType.emailAddress),
+                const SizedBox(height: 10),
+              ],
               _field(_nameCtrl, 'الاسم الكامل', Icons.person_rounded),
               const SizedBox(height: 10),
               _field(_phoneCtrl, 'رقم الموبايل', Icons.phone_rounded,
                   keyboardType: TextInputType.phone),
               const SizedBox(height: 10),
-              if (widget.branches.isNotEmpty)
-                _dropdown('الفرع', Icons.storefront_rounded, _branchCode,
-                    widget.branches
+              _dropdown('فرع بداية الاستخدام', Icons.storefront_rounded, _branchCode,
+                    _startupBranches
                         .map((b) => DropdownMenuItem<String>(
+                            enabled: b['unavailable'] != 'true',
                             value: b['code'] ?? '',
                             child: Text(b['name'] ?? b['code']!,
                                 style:
                                     const TextStyle(fontFamily: 'Cairo'))))
                         .toList(),
-                    (v) => setState(() => _branchCode = v ?? '')),
+                    (v) => setState(() => _branchCode = v ?? 'all')),
+              const SizedBox(height: 6),
+              Text('لا يغيّر الفروع المسموحة أو فرع العمل.',
+                  style: TextStyle(fontFamily: 'Cairo', fontSize: 11,
+                      color: AppTheme.textMutedFor(context))),
+              ],
               if (widget.canChangeRole && widget.allowedRoles.isNotEmpty) ...[
                 const SizedBox(height: 10),
                 _dropdown('نوع المستخدم', Icons.badge_rounded, _role,
@@ -1855,21 +2010,25 @@ class _EditUserDialogState extends State<_EditUserDialog> {
               if (widget.canChangeStatus) ...[
                 const SizedBox(height: 10),
                 _dropdown('الحالة', Icons.verified_user_rounded, _status,
-                    const [
-                      DropdownMenuItem(
+                    [
+                      if (_initialStatus == 'pending' || _status == 'pending')
+                        const DropdownMenuItem(value: 'pending', child: Text('معلق', style: TextStyle(fontFamily: 'Cairo'))),
+                      const DropdownMenuItem(
                           value: 'active',
                           child: Text('نشط',
                               style: TextStyle(fontFamily: 'Cairo'))),
-                      DropdownMenuItem(
+                      const DropdownMenuItem(value: 'blocked', child: Text('محظور', style: TextStyle(fontFamily: 'Cairo'))),
+                      const DropdownMenuItem(
                           value: 'suspended',
                           child: Text('موقوف',
                               style: TextStyle(fontFamily: 'Cairo'))),
                     ],
                     (v) => setState(() => _status = v ?? 'active')),
               ],
-              const SizedBox(height: 10),
-              _field(_usernameCtrl, 'اسم المستخدم',
-                  Icons.alternate_email_rounded),
+              if (widget.canEditMetadata) ...[
+                const SizedBox(height: 10),
+                _field(_usernameCtrl, 'اسم المستخدم', Icons.alternate_email_rounded),
+              ],
             ],
           ),
         ),
@@ -1885,7 +2044,7 @@ class _EditUserDialogState extends State<_EditUserDialog> {
           onPressed: _submit,
           style: ElevatedButton.styleFrom(
             backgroundColor: AppTheme.accentFor(context),
-            foregroundColor: Colors.white,
+            foregroundColor: AppTheme.onAccentFor(context),
           ),
           child: const Text('حفظ',
               style: TextStyle(

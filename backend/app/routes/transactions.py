@@ -4,16 +4,49 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 
-from app.core.database import get_db
 from app.core.auth_middleware import allowed_branches_for_profile
-from app.core.models import Transaction, SupplierSettlementRecord
+from app.core.database import get_db
+from app.core.permissions import require_any_section_permission
+from app.core.auth_middleware import allowed_branches_for_profile
+from app.core.models import Transaction, SupplierSettlementRecord, JournalSaveReceipt
 from app.core.schemas import TransactionModel
 from app.core.sync import manager
+from app.core.save_locks import lock_save
 
 import datetime
+import hashlib
+import json
+import logging
+
+log = logging.getLogger(__name__)
+
+
+async def _safe_broadcast(company, message):
+    try:
+        await manager.broadcast(company, message)
+    except Exception:
+        log.exception("Journal notification failed after commit")
 
 
 router = APIRouter()
+
+
+_CATEGORY = "حركة الخزينة"
+
+
+def _require_any(request: Request, keys):
+    return require_any_section_permission(
+        request, [(_CATEGORY, key) for key in keys]
+    )
+
+
+def _check_branch(profile: dict, branch_code) -> None:
+    allowed = allowed_branches_for_profile(profile)
+    if allowed and branch_code and str(branch_code) not in allowed:
+        raise HTTPException(
+            status_code=403,
+            detail="ليس لديك صلاحية على هذا الفرع",
+        )
 
 
 # ============================================================
@@ -56,12 +89,126 @@ def serialize_transaction(
 # 1. حفظ أو تحديث إذن
 # ==========================================================
 
+def _check_edit_version(data, tx):
+    # Old non-intent clients retain their existing missing-version contract.
+    # New intent-based edits must name the exact displayed server version.
+    if not data.base_updated_at:
+        if data.operation_id:
+            raise HTTPException(409, "أعد تحميل الإذن قبل التعديل لتأكيد نسخته الحالية")
+        return
+    def stamp(value):
+        parsed = value if isinstance(value, datetime.datetime) else datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed.replace(tzinfo=datetime.timezone.utc) if parsed.tzinfo is None else parsed.astimezone(datetime.timezone.utc)
+    try:
+        matches = stamp(data.base_updated_at) == stamp(tx.updated_at)
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(400, "تاريخ نسخة الإذن غير صالح")
+    if not matches:
+        raise HTTPException(409, "تم تعديل هذا الإذن من مستخدم آخر. أعد تحميله وراجع التعديل")
+
+
+def _request_fingerprint(data):
+    values = data.model_dump(mode="json", exclude={"operation_id"})
+    if values.get("base_updated_at") is None:values.pop("base_updated_at", None)
+    try:
+        return hashlib.sha256(json.dumps(values, sort_keys=True, ensure_ascii=False,
+                                         separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+    except ValueError:
+        raise HTTPException(400, "بيانات الحفظ غير صالحة")
+
+
+async def _receipt_snapshot(db, receipt, profile):
+    result = {"status": "success", "committed": True, "available": False,
+              "serial": receipt.original_serial, "action": "unchanged",
+              "record": None, "linked_settlement": None, "link_id": None}
+    row = await db.get(Transaction, receipt.transaction_id)
+    if row is None or row.is_deleted or row.company_code != receipt.company_code:
+        return result
+    try:
+        _check_branch(profile, row.branch_code)
+    except HTTPException:
+        return result
+    linked = None
+    if row.link_id:
+        linked = await db.scalar(select(SupplierSettlementRecord).where(
+            SupplierSettlementRecord.company_code == row.company_code,
+            SupplierSettlementRecord.link_id == row.link_id))
+        if linked is not None:
+            try:
+                _check_branch(profile, linked.branch_code)
+            except HTTPException:
+                linked = None
+    from app.routes.supplier_settlement import serialize_settlement
+    result.update(available=True, serial=row.serial, link_id=row.link_id,
+                  record=serialize_transaction(row),
+                  linked_settlement=serialize_settlement(linked) if linked is not None else None,
+                  message="تم تأكيد الحفظ السابق بدون إنشاء إذن جديد")
+    return result
+
+
+async def _replay_receipt(db, receipt, data, profile, fingerprint):
+    if (receipt.owner_uid != str(profile.get("uid") or "")
+            or receipt.company_code != data.company_code
+            or receipt.branch_code != data.branch_code):
+        raise HTTPException(403, "عملية الحفظ لا تخص هذا الحساب والنطاق")
+    if receipt.request_hash != fingerprint:
+        raise HTTPException(409, "تغيّرت بيانات محاولة الحفظ غير المؤكدة")
+    result = await _receipt_snapshot(db, receipt, profile)
+    if not result["available"]:
+        raise HTTPException(409, "الإذن المحفوظ سابقاً لم يعد متاحاً، راجع السجل")
+    return result
+
+
+@router.get("/save-status/{company_code}/{operation_id}")
+async def journal_save_status(request: Request, company_code: str, operation_id: str,
+                              branch_code: str = Query(...), db: AsyncSession = Depends(get_db)):
+    profile = _require_any(request, ["ادخال اذون", "التعديل"])
+    _check_branch(profile, branch_code)
+    uid = str(profile.get("uid") or "")
+    if not uid or (str(profile.get("role")) != "super_admin"
+                   and str(profile.get("company_code")) != company_code):
+        raise HTTPException(403, "تعذر إثبات صاحب عملية الحفظ ونطاقها")
+    # Wait for an in-flight save to commit or roll back before reporting absence.
+    await lock_save(db, ("operation", "journal", operation_id))
+    receipt = await db.get(JournalSaveReceipt, operation_id)
+    if receipt is None:
+        raise HTTPException(404, "لا توجد نتيجة حفظ مؤكدة لهذه العملية")
+    if receipt.owner_uid != uid or receipt.company_code != company_code or receipt.branch_code != branch_code:
+        raise HTTPException(403, "عملية الحفظ لا تخص هذا الحساب والنطاق")
+    return await _receipt_snapshot(db, receipt, profile)
+
+
 @router.post("/save")
 async def save_transaction(
+    request: Request,
     data: TransactionModel,
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_any(request, ["ادخال اذون", "التعديل"])
+    _check_branch(_profile, data.branch_code)
+
+    if data.category.strip() == "تحويل خزائن":
+        raise HTTPException(409, "استخدم قسم تحويلات الخزائن المستقل")
+
     try:
+        resources = [("sequence", "journal", data.company_code, data.branch_code)]
+        if data.add_to_settlement or data.unlink_settlement:
+            resources.append(("sequence", "settlement", data.company_code, data.branch_code or "1"))
+        receipt = None
+        fingerprint = None
+        if data.operation_id:
+            uid = str(_profile.get("uid") or "")
+            if not uid or len(uid) > 128:
+                raise HTTPException(403, "تعذر إثبات صاحب عملية الحفظ")
+            if str(_profile.get("role")) != "super_admin" and str(_profile.get("company_code")) != data.company_code:
+                raise HTTPException(403, "غير مصرح لهذه الشركة")
+            fingerprint = _request_fingerprint(data)
+            resources.append(("operation", "journal", data.operation_id))
+        await lock_save(db, *resources)
+        if data.operation_id:
+            receipt = await db.get(JournalSaveReceipt, data.operation_id)
+            if receipt is not None:
+                return await _replay_receipt(db, receipt, data, _profile, fingerprint)
         linked_settlement = None
         settlement_created = False
         link_id = data.link_id
@@ -78,7 +225,7 @@ async def save_transaction(
             linked_result = await db.execute(select(Transaction).where(
                 Transaction.company_code == data.company_code,
                 Transaction.link_id == link_id,
-            ))
+            ).with_for_update())
             linked_transaction = linked_result.scalar_one_or_none()
         else:
             linked_transaction = None
@@ -119,7 +266,12 @@ async def save_transaction(
         # ------------------------------------------------------
 
         if linked_transaction is not None:
+            _require_any(request, ["التعديل"])
             tx = linked_transaction
+            if tx.is_deleted:raise HTTPException(404, "Transaction has been deleted")
+            # الفرع المخزَّن أيضاً: منع تعديل/نقل إذن فرع غير مسموح
+            _check_branch(_profile, tx.branch_code)
+            _check_edit_version(data, tx)
             tx.branch_code = data.branch_code or tx.branch_code
             tx.serial = new_serial if data.serial <= 0 else data.serial
             tx.treasury = data.treasury
@@ -144,7 +296,7 @@ async def save_transaction(
                     == data.branch_code,
                     Transaction.serial
                     == data.serial,
-                )
+                ).with_for_update()
             )
 
             result = await db.execute(stmt)
@@ -156,12 +308,16 @@ async def save_transaction(
                     detail="Transaction not found",
                 )
 
+            _require_any(request, ["التعديل"])
+
             # لا تسمح بتعديل سجل محذوف
             if tx.is_deleted:
                 raise HTTPException(
                     status_code=404,
                     detail="Transaction has been deleted",
                 )
+
+            _check_edit_version(data, tx)
 
             # --------------------------------------------------
             # تحديث البيانات
@@ -187,6 +343,8 @@ async def save_transaction(
             # --------------------------------------------------
             # إضافة جديدة
             # --------------------------------------------------
+
+            _require_any(request, ["ادخال اذون"])
 
             tx = Transaction(
                 company_code=data.company_code,
@@ -236,6 +394,7 @@ async def save_transaction(
                 db.add(linked_settlement)
                 settlement_created = True
             else:
+                _check_branch(_profile, linked_settlement.branch_code)
                 if linked_settlement.serial <= 0:
                     sr = await db.execute(select(SupplierSettlementRecord).where(
                         SupplierSettlementRecord.company_code == data.company_code,
@@ -261,8 +420,15 @@ async def save_transaction(
             ))
             linked_settlement = q.scalar_one_or_none()
             if linked_settlement is not None:
+                _check_branch(_profile, linked_settlement.branch_code)
                 linked_settlement.is_deleted = True
                 linked_settlement.updated_at = datetime.datetime.utcnow()
+        if data.operation_id:
+            await db.flush()
+            db.add(JournalSaveReceipt(operation_id=data.operation_id,
+                owner_uid=str(_profile["uid"]), company_code=data.company_code,
+                branch_code=data.branch_code, request_hash=fingerprint,
+                transaction_id=tx.id, original_serial=tx.serial))
         await db.commit()
         await db.refresh(tx)
         if linked_settlement is not None:
@@ -272,7 +438,7 @@ async def save_transaction(
         # WebSocket Broadcast
         # ------------------------------------------------------
 
-        await manager.broadcast(
+        await _safe_broadcast(
             data.company_code,
             {
                 "type": "transaction",
@@ -285,13 +451,13 @@ async def save_transaction(
         )
         if linked_settlement is not None and not linked_settlement.is_deleted:
             from app.routes.supplier_settlement import serialize_settlement
-            await manager.broadcast(data.company_code, {
+            await _safe_broadcast(data.company_code, {
                 "type": "settlement", "action": "insert" if settlement_created else "update",
                 "data": serialize_settlement(linked_settlement), "suppress_notification": True,
             })
         elif linked_settlement is not None:
             from app.routes.supplier_settlement import serialize_settlement
-            await manager.broadcast(data.company_code, {
+            await _safe_broadcast(data.company_code, {
                 "type": "settlement", "action": "delete", "data": serialize_settlement(linked_settlement), "suppress_notification": True,
             })
 
@@ -302,6 +468,7 @@ async def save_transaction(
         return {
             "status": "success",
             "serial": tx.serial,
+            "record": serialize_transaction(tx, action=action),
             "link_id": tx.link_id,
             "linked_settlement": (
                 __import__("app.routes.supplier_settlement", fromlist=["serialize_settlement"]).serialize_settlement(linked_settlement)
@@ -335,13 +502,15 @@ async def save_transaction(
 
 @router.get("/list/{company_code}")
 async def get_transactions(
-    company_code: str,
     request: Request,
+    company_code: str,
     start_date: str = Query(...),
     end_date: str = Query(...),
     branch_code: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_any(request, ["المعاينة", "ادخال اذون"])
+
     try:
         stmt = (
             select(Transaction)
@@ -418,8 +587,8 @@ async def get_transactions(
 
 @router.get("/changes/{company_code}")
 async def get_transactions_changes(
-    company_code: str,
     request: Request,
+    company_code: str,
     since: str = Query(
         ...,
         description=(
@@ -429,6 +598,8 @@ async def get_transactions_changes(
     ),
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_any(request, ["المعاينة", "ادخال اذون"])
+
     try:
         # ------------------------------------------------------
         # تحويل since
@@ -537,11 +708,13 @@ async def get_transactions_changes(
 
 @router.get("/updates/{company_code}/{from_serial}")
 async def get_transactions_from_serial(
-    company_code: str,
     request: Request,
+    company_code: str,
     from_serial: int,
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_any(request, ["المعاينة", "ادخال اذون"])
+
     try:
         stmt = (
             select(Transaction)
@@ -597,11 +770,14 @@ async def get_transactions_from_serial(
     "/delete/{company_code}/{branch_code}/{serial}"
 )
 async def delete_transaction(
+    request: Request,
     company_code: str,
     branch_code: str,
     serial: int,
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_any(request, ["الحذف"])
+
     try:
         # ------------------------------------------------------
         # البحث عن الإذن
@@ -634,6 +810,9 @@ async def delete_transaction(
         # ------------------------------------------------------
         # لو محذوف أصلًا
         # ------------------------------------------------------
+
+        if (tx.category or "").strip() == "تحويل خزائن":
+            raise HTTPException(409, "تحويلات الخزائن لا تُحذف كأذون يومية")
 
         if tx.is_deleted:
             return {
@@ -736,11 +915,13 @@ async def delete_transaction(
 
 @router.get("/last_serial/{company_code}")
 async def get_last_serial(
-    company_code: str,
     request: Request,
+    company_code: str,
     branch_code: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_any(request, ["ادخال اذون"])
+
     try:
         stmt = (
             select(Transaction)
@@ -800,8 +981,11 @@ async def get_last_serial(
 
 @router.get("/summary/{company_code}")
 async def get_summary(
+    request: Request,
     company_code: str,
 ):
+    _profile = _require_any(request, ["المعاينة", "شاشات الارصدة"])
+
     return {
         "status": "success",
         "active_treasuries": [],

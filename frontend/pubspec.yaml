@@ -34,6 +34,7 @@ dependencies:
   firebase_messaging: ^15.1.5
 
   # التعامل مع الإكسيل والملفات
+  crypto: ^3.0.6
   excel: ^4.0.3
   path_provider: ^2.1.2
   open_file: ^3.3.0

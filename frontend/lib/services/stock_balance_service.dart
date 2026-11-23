@@ -1,3 +1,4 @@
+import 'cache_partitions.dart';
 // lib/services/stock_balance_service.dart
 
 import 'package:hive_flutter/hive_flutter.dart';
@@ -11,14 +12,16 @@ class StockBalanceService {
     required String storeCode,
     required DateTime toDate,
   }) async {
+return CachePartitions.run(() async {
+
     await CommercialService().refreshStockEvents(companyCode);
-    final inventoryBox = Hive.box('inventory_box');
-    final supplierBox = Hive.box('supplier_box');
-    final codingBox = Hive.box('coding_box');
-    final salesBox = Hive.box('sales_box');
-    final returnsBox = Hive.box('sales_returns_box');
-    final transfersBox = Hive.box('stock_transfers_box');
-    final commercialEventBox = Hive.box('commercial_stock_events_box');
+    final inventoryBox = CachePartitions.box('inventory_box');
+    final supplierBox = CachePartitions.box('supplier_box');
+    final codingBox = CachePartitions.box('coding_box');
+    final salesBox = CachePartitions.box('sales_box');
+    final returnsBox = CachePartitions.box('sales_returns_box');
+    final transfersBox = CachePartitions.box('stock_transfers_box');
+    final commercialEventBox = CachePartitions.box('commercial_stock_events_box');
     final rawCommercialEvents = commercialEventBox.get(companyCode);
     final hasCommercialSnapshot = rawCommercialEvents is List;
 
@@ -174,10 +177,42 @@ class StockBalanceService {
       ));
     }
 
+    // Match local pending versions before branch/store/date filtering: an edit
+    // can move a record out of this view, so its old snapshot must leave too.
+    // Eligibility is unchanged: pending/error, not deleted, same company.
+    List<Map<String, dynamic>> pendingRecords(Box box) => box.values
+        .whereType<List>()
+        .expand((items) => items)
+        .whereType<Map>()
+        .map((raw) => Map<String, dynamic>.from(raw))
+        .where((row) =>
+            {'pending', 'error'}.contains(row['sync_status']) &&
+            row['is_deleted'] != true &&
+            row['company_code']?.toString() == companyCode)
+        .toList();
+    final pendingSales = pendingRecords(salesBox);
+    final pendingReturns = pendingRecords(returnsBox);
+    final pendingTransfers = pendingRecords(transfersBox);
+    final replacedSnapshotEvents = <String>{};
+    void replaceEvents(List<Map<String, dynamic>> rows, String eventType,
+        {String suffix = ''}) {
+      for (final row in rows) {
+        final id = row['id']?.toString() ?? '';
+        if (id.isNotEmpty) replacedSnapshotEvents.add('$eventType|$id$suffix');
+      }
+    }
+
+    replaceEvents(pendingSales, 'sale');
+    replaceEvents(pendingReturns, 'return');
+    replaceEvents(pendingTransfers, 'transfer_out', suffix: ':transfer_out');
+    replaceEvents(pendingTransfers, 'transfer_in', suffix: ':transfer_in');
+
     if (hasCommercialSnapshot) {
       for (final value in rawCommercialEvents) {
         if (value is! Map) continue;
         final record = Map<String, dynamic>.from(value);
+        if (replacedSnapshotEvents.contains(
+            "${record['event_type']}|${record['id']}")) continue;
         if (record['company_code']?.toString() != companyCode ||
             record['branch_code']?.toString() != branchCode ||
             record['store_code']?.toString() != storeCode) continue;
@@ -414,7 +449,8 @@ class StockBalanceService {
     );
 
     return itemsData;
-  }
+});
+}
 
   static Future<double> calculateTotalWholesale({
     required String companyCode,
@@ -422,6 +458,8 @@ class StockBalanceService {
     required String storeCode,
     required DateTime toDate,
   }) async {
+return CachePartitions.run(() async {
+
     final items = await calculateBalances(
       companyCode: companyCode,
       branchCode: branchCode,
@@ -434,7 +472,8 @@ class StockBalanceService {
       total += (item['totalWholesale'] as double);
     }
     return total;
-  }
+});
+}
 
   // ============================================================
   // Helpers

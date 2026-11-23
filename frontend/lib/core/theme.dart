@@ -369,11 +369,12 @@ class AppTheme {
     // اللون الأساسي
     primaryColor: primaryLight,
     // مخطط الألوان: primary للأزرار/التفاعل، surface للأسطح، secondary للثانوي، onXXX للنصوص فوقها
-    colorScheme: ColorScheme.light(primary: primaryLight, onPrimary:lightText, surface: lightSurface, onSurface: lightText, secondary: lightSecondary, onSecondary: Colors.white),
+    colorScheme: ColorScheme.light(primary: primaryLight, onPrimary: Colors.white, surface: lightSurface, onSurface: lightText, secondary: lightSecondary, onSecondary: Colors.white, secondaryContainer: lightChipSelected, onSecondaryContainer: lightText),
     // خلفية الشاشة
     scaffoldBackgroundColor: lightBackground,
     // خلفية القوائم والنوافذ
     canvasColor: lightSurface,
+    cardTheme: const CardThemeData(color: lightSurface, surfaceTintColor: Colors.transparent),
     fontFamily: 'Cairo',
     // شريط العنوان: خلفية + لون النص + لون الأيقونات
     appBarTheme: const AppBarTheme(backgroundColor: lightSurface, foregroundColor: lightText, elevation: 0, iconTheme: IconThemeData(color: lightText)),
@@ -409,7 +410,12 @@ class AppTheme {
     onSurface: darkText,
     secondary: lightSecondary,
     onSecondary: Colors.white,
+    secondaryContainer: darkSurfaceAlt,
+    onSecondaryContainer: darkText,
   ),
+  cardTheme: const CardThemeData(color: darkSurface, surfaceTintColor: Colors.transparent),
+  textButtonTheme: TextButtonThemeData(style: TextButton.styleFrom(foregroundColor: accent)),
+  outlinedButtonTheme: OutlinedButtonThemeData(style: OutlinedButton.styleFrom(foregroundColor: accent, side: const BorderSide(color: darkBorder))),
   scaffoldBackgroundColor: darkBackground,
   fontFamily: 'Cairo',
   inputDecorationTheme: _inputTheme(Colors.white, Colors.white.withValues(alpha: 0.05), Colors.transparent),

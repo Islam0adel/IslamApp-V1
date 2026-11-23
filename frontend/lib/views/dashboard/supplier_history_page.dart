@@ -1,9 +1,9 @@
+import '../../services/cache_partitions.dart';
 // lib/views/dashboard/supplier_history_page.dart
 
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
 import 'package:intl/intl.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../services/supplier_service.dart';
@@ -62,6 +62,11 @@ class _SupplierHistoryPageState extends State<SupplierHistoryPage> {
   double _previousBalance = 0.0;
 double _totalSupplierBalance = 0.0;
 
+  // إجماليات المشتريات والأرصدة مشتقة من أسعار الجملة: مخفية
+  // لمن لا يملك حق التكلفة، وتُعرض '—' بدل أي صفر مضلل،
+  // وتُحذف من التصدير والطباعة.
+  bool get _canViewCosts => PermissionsService().canViewCostPrices;
+
   @override
   void initState() {
     super.initState();
@@ -86,6 +91,8 @@ double _totalSupplierBalance = 0.0;
   // ==========================================================
 
   Future<void> _initialize() async {
+return CachePartitions.run(() async {
+
     if (_isInitializing) return;
     _isInitializing = true;
 
@@ -98,14 +105,17 @@ double _totalSupplierBalance = 0.0;
       _isLoading = false;
       _isInitializing = false;
     });
-  }
+});
+}
 
   // ==========================================================
   // تحميل القوائم
   // ==========================================================
 
   Future<void> _loadDropdowns() async {
-    final box = Hive.box('coding_box');
+return CachePartitions.run(() async {
+
+    final box = CachePartitions.box('coding_box');
 
     _suppliers = [{'code': 'all', 'name': 'كل الموردين'}];
     final suppliers = box.get('${widget.companyCode}_suppliers') as List? ?? [];
@@ -134,13 +144,16 @@ double _totalSupplierBalance = 0.0;
     }
 
     if (mounted) setState(() {});
-  }
+});
+}
 
   // ==========================================================
   // تحميل بيانات المشتريات
   // ==========================================================
 
   Future<void> _loadData() async {
+return CachePartitions.run(() async {
+
   if (mounted) setState(() => _isLoading = true);
 
   try {
@@ -247,6 +260,8 @@ double _totalSupplierBalance = 0.0;
       _isLoading = false;
     });
   }
+
+});
 }
 
   // ==========================================================
@@ -258,8 +273,10 @@ double _totalSupplierBalance = 0.0;
   DateTime? startDate,
   DateTime? endDate,
 }) async {
+return CachePartitions.run(() async {
+
   double total = 0.0;
-  final box = Hive.box('supplier_settlement_box');
+  final box = CachePartitions.box('supplier_settlement_box');
 
   final endDateStr = endDate != null
       ? DateFormat('yyyy-MM-dd').format(endDate)
@@ -302,6 +319,8 @@ double _totalSupplierBalance = 0.0;
   }
 
   return total;
+
+});
 }
 
   // ==========================================================
@@ -324,7 +343,7 @@ double _totalSupplierBalance = 0.0;
       return 'كل الفروع';
     }
 
-    final box = Hive.box('coding_box');
+    final box = CachePartitions.box('coding_box');
     final raw = box.get('${widget.companyCode}_branches', defaultValue: []);
 
     if (raw is List) {
@@ -341,9 +360,12 @@ double _totalSupplierBalance = 0.0;
   }
 
   Future<String> _getCompanyName() async {
+return CachePartitions.run(() async {
+
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString('company_name') ?? 'شركتي';
-  }
+});
+}
 
   double _toDouble(dynamic value) {
     if (value is num) return value.toDouble();
@@ -404,6 +426,8 @@ double _totalSupplierBalance = 0.0;
           ),
           TextButton(
             onPressed: () async {
+return CachePartitions.run(() async {
+
               Navigator.pop(ctx);
 
               if (model.docId == null) {
@@ -422,7 +446,9 @@ double _totalSupplierBalance = 0.0;
               } else {
                 _showSnackBar('فشل حذف الفاتورة', AppTheme.dangerStrongFor(context));
               }
-            },
+
+});
+},
             child: Text('حذف', style: TextStyle(color: AppTheme.dangerStrongFor(context), fontFamily: 'Cairo')),
           ),
         ],
@@ -435,6 +461,8 @@ double _totalSupplierBalance = 0.0;
   // ==========================================================
 
   Future<void> _exportExcel() async {
+return CachePartitions.run(() async {
+
     if (_transactions.isEmpty) {
       _showSnackBar('لا توجد بيانات للتصدير', AppTheme.warningOrangeFor(context));
       return;
@@ -451,19 +479,19 @@ double _totalSupplierBalance = 0.0;
         'الفرع': _getBranchName(t.branchCode),
         'المورد': t.supplierName,
         'المخزن': _getStoreName(t.storeCode),
-        'إجمالي الفاتورة': t.totalAmount,
+        if (_canViewCosts) 'إجمالي الفاتورة': t.totalAmount,
         'عدد الأصناف': t.items.length,
         'إضافة للمخزن': t.isAddToStore ? 'نعم' : 'لا',
         'الموظف': t.employee,
       }).toList();
 
-      const headers = [
+      final headers = [
         'رقم الإذن',
         'التاريخ',
         'الفرع',
         'المورد',
         'المخزن',
-        'إجمالي الفاتورة',
+        if (_canViewCosts) 'إجمالي الفاتورة',
         'عدد الأصناف',
         'إضافة للمخزن',
         'الموظف',
@@ -479,9 +507,9 @@ double _totalSupplierBalance = 0.0;
         period: period,
         supplierName: _selectedSupplierCode == 'all' ? null : _getSupplierName(_selectedSupplierCode),
         summary: {
-          'إجمالي المشتريات': _totalPurchases,
+          if (_canViewCosts) 'إجمالي المشتريات': _totalPurchases,
           'إجمالي الدفعات': _totalSettlements,
-          'المتبقي': _supplierRemaining,
+          if (_canViewCosts) 'المتبقي': _supplierRemaining,
         },
       );
 
@@ -489,9 +517,12 @@ double _totalSupplierBalance = 0.0;
     } catch (e) {
       _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
     }
-  }
+});
+}
 
   Future<void> _exportPDF() async {
+return CachePartitions.run(() async {
+
     if (_transactions.isEmpty) {
       _showSnackBar('لا توجد بيانات للتصدير', AppTheme.warningOrangeFor(context));
       return;
@@ -508,19 +539,19 @@ double _totalSupplierBalance = 0.0;
         'الفرع': _getBranchName(t.branchCode),
         'المورد': t.supplierName,
         'المخزن': _getStoreName(t.storeCode),
-        'إجمالي الفاتورة': t.totalAmount,
+        if (_canViewCosts) 'إجمالي الفاتورة': t.totalAmount,
         'عدد الأصناف': t.items.length,
         'إضافة للمخزن': t.isAddToStore ? 'نعم' : 'لا',
         'الموظف': t.employee,
       }).toList();
 
-      const headers = [
+      final headers = [
         'رقم الإذن',
         'التاريخ',
         'الفرع',
         'المورد',
         'المخزن',
-        'إجمالي الفاتورة',
+        if (_canViewCosts) 'إجمالي الفاتورة',
         'عدد الأصناف',
         'إضافة للمخزن',
         'الموظف',
@@ -536,18 +567,19 @@ double _totalSupplierBalance = 0.0;
         period: period,
         supplierName: _selectedSupplierCode == 'all' ? null : _getSupplierName(_selectedSupplierCode),
         summary: {
-          'totalAmount': _totalPurchases,
+          if (_canViewCosts) 'totalAmount': _totalPurchases,
           'إجمالي الدفعات': _totalSettlements,
-          'المتبقي': _supplierRemaining,
+          if (_canViewCosts) 'المتبقي': _supplierRemaining,
         },
-        totalAmount: _totalPurchases,
+        totalAmount: _canViewCosts ? _totalPurchases : null,
       );
 
       _showSnackBar('تم تصدير PDF بنجاح', AppTheme.successStrongFor(context));
     } catch (e) {
       _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
     }
-  }
+});
+}
 
   String? _getSupplierName(String? code) {
     if (code == null || code == 'all') return null;
@@ -565,6 +597,8 @@ double _totalSupplierBalance = 0.0;
   // ==========================================================
 
   Future<void> _exportSingleExcel(SupplierTransactionModel inv) async {
+return CachePartitions.run(() async {
+
     try {
       final companyName = await _getCompanyName();
       final branchName = _getBranchName(inv.branchCode);
@@ -613,9 +647,12 @@ double _totalSupplierBalance = 0.0;
     } catch (e) {
       _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
     }
-  }
+});
+}
 
   Future<void> _exportSinglePDF(SupplierTransactionModel inv) async {
+return CachePartitions.run(() async {
+
     try {
       final companyName = await _getCompanyName();
       final branchName = _getBranchName(inv.branchCode);
@@ -665,7 +702,8 @@ double _totalSupplierBalance = 0.0;
     } catch (e) {
       _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
     }
-  }
+});
+}
 
   // ==========================================================
   // تقرير تفصيلي للمشتريات حسب المورد والفترة
@@ -683,8 +721,8 @@ double _totalSupplierBalance = 0.0;
           'الكود': item.code,
           'الصنف': item.name,
           'الكمية': item.quantity,
-          'السعر': item.price,
-          'الإجمالي': item.total,
+          if (_canViewCosts) 'السعر': item.price,
+          if (_canViewCosts) 'الإجمالي': item.total,
         });
       }
     }
@@ -693,6 +731,8 @@ double _totalSupplierBalance = 0.0;
   }
 
   Future<void> _exportSupplierItemReport({required bool pdf}) async {
+return CachePartitions.run(() async {
+
     if (_transactions.isEmpty) {
       _showSnackBar('لا توجد بيانات للتقرير', AppTheme.warningOrangeFor(context));
       return;
@@ -703,7 +743,11 @@ double _totalSupplierBalance = 0.0;
       final branchName = _isAllBranches ? 'كل الفروع' : _getBranchName(widget.selectedBranchCode);
       final period = '${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}';
       final data = _getSupplierReportData();
-      const headers = ['التاريخ', 'رقم الإذن', 'المورد', 'الكود', 'الصنف', 'الكمية', 'السعر', 'الإجمالي'];
+      final headers = [
+        'التاريخ', 'رقم الإذن', 'المورد', 'الكود', 'الصنف', 'الكمية',
+        if (_canViewCosts) 'السعر',
+        if (_canViewCosts) 'الإجمالي',
+      ];
 
       if (pdf) {
         await ExportService.exportToPDF(
@@ -716,11 +760,11 @@ double _totalSupplierBalance = 0.0;
           period: period,
           supplierName: _selectedSupplierCode == 'all' ? null : _getSupplierName(_selectedSupplierCode),
           summary: {
-            'إجمالي المشتريات': _totalPurchases,
+            if (_canViewCosts) 'إجمالي المشتريات': _totalPurchases,
             'إجمالي الدفعات': _totalSettlements,
-            'المتبقي للمورد': _supplierRemaining,
+            if (_canViewCosts) 'المتبقي للمورد': _supplierRemaining,
           },
-          totalAmount: _totalPurchases,
+          totalAmount: _canViewCosts ? _totalPurchases : null,
         );
       } else {
         await ExportService.exportToExcel(
@@ -733,9 +777,9 @@ double _totalSupplierBalance = 0.0;
           period: period,
           supplierName: _selectedSupplierCode == 'all' ? null : _getSupplierName(_selectedSupplierCode),
           summary: {
-            'إجمالي المشتريات': _totalPurchases,
+            if (_canViewCosts) 'إجمالي المشتريات': _totalPurchases,
             'إجمالي الدفعات': _totalSettlements,
-            'المتبقي للمورد': _supplierRemaining,
+            if (_canViewCosts) 'المتبقي للمورد': _supplierRemaining,
           },
         );
       }
@@ -744,7 +788,8 @@ double _totalSupplierBalance = 0.0;
     } catch (e) {
       _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
     }
-  }
+});
+}
 
   void _showSupplierItemReport() {
     final data = _getSupplierReportData();
@@ -769,11 +814,11 @@ double _totalSupplierBalance = 0.0;
             children: [
               Row(
                 children: [
-                  Expanded(child: _buildSummaryBox('إجمالي المشتريات', _formatCurrency(_totalPurchases), AppTheme.successFor(context))),
+                  if (_canViewCosts) Expanded(child: _buildSummaryBox('إجمالي المشتريات', _formatCurrency(_totalPurchases), AppTheme.successFor(context))),
                   const SizedBox(width: 6),
                   Expanded(child: _buildSummaryBox('إجمالي الدفعات', _formatCurrency(_totalSettlements), AppTheme.dangerFor(context))),
                   const SizedBox(width: 6),
-                  Expanded(child: _buildSummaryBox('المتبقي للمورد', _formatCurrency(_supplierRemaining), _supplierRemaining >= 0 ? AppTheme.accentFor(context) : AppTheme.warningOrangeSoftFor(context))),
+                  if (_canViewCosts) Expanded(child: _buildSummaryBox('المتبقي للمورد', _formatCurrency(_supplierRemaining), _supplierRemaining >= 0 ? AppTheme.accentFor(context) : AppTheme.warningOrangeSoftFor(context))),
                 ],
               ),
               const SizedBox(height: 8),
@@ -790,8 +835,10 @@ double _totalSupplierBalance = 0.0;
                         DataColumn(label: Text('الكود', style: TextStyle(color: AppTheme.accentFor(context)))),
                         DataColumn(label: Text('الصنف', style: TextStyle(color: AppTheme.accentFor(context)))),
                         DataColumn(label: Text('الكمية', style: TextStyle(color: AppTheme.accentFor(context)))),
-                        DataColumn(label: Text('السعر', style: TextStyle(color: AppTheme.successFor(context)))),
-                        DataColumn(label: Text('الإجمالي', style: TextStyle(color: AppTheme.successFor(context)))),
+                        if (_canViewCosts)
+                          DataColumn(label: Text('السعر', style: TextStyle(color: AppTheme.successFor(context)))),
+                        if (_canViewCosts)
+                          DataColumn(label: Text('الإجمالي', style: TextStyle(color: AppTheme.successFor(context)))),
                       ],
                       rows: data.map((row) => DataRow(cells: [
                         DataCell(Text(row['التاريخ'].toString(), style: TextStyle(color: AppTheme.textSoftFor(context)))),
@@ -800,8 +847,10 @@ double _totalSupplierBalance = 0.0;
                         DataCell(Text(row['الكود'].toString(), style: TextStyle(color: AppTheme.textSoftFor(context)))),
                         DataCell(Text(row['الصنف'].toString(), style: TextStyle(color: AppTheme.textMainFor(context)))),
                         DataCell(Text(row['الكمية'].toString(), style: TextStyle(color: AppTheme.textSoftFor(context)))),
-                        DataCell(Text(_formatCurrency(_toDouble(row['السعر'])), style: TextStyle(color: AppTheme.successFor(context)))),
-                        DataCell(Text(_formatCurrency(_toDouble(row['الإجمالي'])), style: TextStyle(color: AppTheme.successFor(context)))),
+                        if (_canViewCosts)
+                          DataCell(Text(_formatCurrency(_toDouble(row['السعر'])), style: TextStyle(color: AppTheme.successFor(context)))),
+                        if (_canViewCosts)
+                          DataCell(Text(_formatCurrency(_toDouble(row['الإجمالي'])), style: TextStyle(color: AppTheme.successFor(context)))),
                       ])).toList(),
                     ),
                   ),
@@ -947,6 +996,8 @@ double _totalSupplierBalance = 0.0;
             IconButton(
               icon: Icon(Icons.refresh, color: AppTheme.textMainFor(context)),
               onPressed: () async {
+return CachePartitions.run(() async {
+
                 setState(() => _isLoading = true);
 
                 try {
@@ -957,7 +1008,9 @@ double _totalSupplierBalance = 0.0;
                 } finally {
                   if (mounted) setState(() => _isLoading = false);
                 }
-              },
+
+});
+},
               tooltip: 'تحديث من السيرفر',
             ),
         ],
@@ -1114,11 +1167,15 @@ double _totalSupplierBalance = 0.0;
   Widget _buildPeriodSummary() {
   // قائمة العناصر الخمسة
   final items = [
-    _buildSummaryBox('الرصيد السابق', _formatCurrency(_previousBalance), AppTheme.infoFor(context)),
-    _buildSummaryBox('مشتريات الفترة', _formatCurrency(_totalPurchases), AppTheme.successFor(context)),
+    if (_canViewCosts)
+      _buildSummaryBox('الرصيد السابق', _formatCurrency(_previousBalance), AppTheme.infoFor(context)),
+    if (_canViewCosts)
+      _buildSummaryBox('مشتريات الفترة', _formatCurrency(_totalPurchases), AppTheme.successFor(context)),
     _buildSummaryBox('دفعات الفترة', _formatCurrency(_totalSettlements), AppTheme.dangerFor(context)),
-    _buildSummaryBox('المتبقي', _formatCurrency(_supplierRemaining), _supplierRemaining >= 0 ? AppTheme.accentFor(context) : AppTheme.warningOrangeSoftFor(context)),
-    _buildSummaryBox('إجمالي رصيد المورد', _formatCurrency(_totalSupplierBalance), AppTheme.extraPurpleFor(context)),
+    if (_canViewCosts)
+      _buildSummaryBox('المتبقي', _formatCurrency(_supplierRemaining), _supplierRemaining >= 0 ? AppTheme.accentFor(context) : AppTheme.warningOrangeSoftFor(context)),
+    if (_canViewCosts)
+      _buildSummaryBox('إجمالي رصيد المورد', _formatCurrency(_totalSupplierBalance), AppTheme.extraPurpleFor(context)),
   ];
 
   // على الشاشات الصغيرة (موبايل): 3 في السطر الأول و 2 في الثاني
@@ -1416,6 +1473,8 @@ double _totalSupplierBalance = 0.0;
   }) {
     return GestureDetector(
       onTap: () async {
+return CachePartitions.run(() async {
+
         final picked = await showDatePicker(
           context: context,
           initialDate: date,
@@ -1424,7 +1483,8 @@ double _totalSupplierBalance = 0.0;
         );
 
         if (picked != null) onChanged(picked);
-      },
+});
+},
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
         decoration: BoxDecoration(

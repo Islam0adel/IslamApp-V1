@@ -1,6 +1,7 @@
+import 'cache_partitions.dart';
 import 'dart:async';
 import 'dart:convert';
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, ValueNotifier;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'app_badge.dart';
@@ -16,8 +17,8 @@ class NotificationsService {
   static const String _boxName = 'notifications_box';
   static const String _settingsBoxName = 'notification_settings_box';
 
-  Box get _box => Hive.box(_boxName);
-  Box get _settings => Hive.box(_settingsBoxName);
+  Box get _box => CachePartitions.box(_boxName);
+  Box get _settings => CachePartitions.box(_settingsBoxName);
 
   static const Map<String, String> _sections = {
     'transaction': 'daily',
@@ -59,137 +60,362 @@ class NotificationsService {
   };
 
   static const Map<String, String> _actionNames = {
-    'add': 'إضافة', 'insert': 'إضافة', 'create': 'إضافة',
-    'update': 'تعديل', 'edit': 'تعديل', 'delete': 'حذف', 'remove': 'حذف',
+    'add': 'إضافة',
+    'insert': 'إضافة',
+    'create': 'إضافة',
+    'update': 'تعديل',
+    'edit': 'تعديل',
+    'delete': 'حذف',
+    'remove': 'حذف',
   };
 
   String? _companyCode;
+  int _cacheGeneration = -1;
   Future<void>? _settingsLoad;
+  Future<void>? _settingsRequest;
+  int _bindingVersion = 0;
+  bool _settingsRefreshPending = false;
   Future<void>? _refreshInFlight;
   String? _refreshCompany;
+  String? _refreshUid;
+  int? _refreshScope;
+  int _scopeVersion = 0;
+  bool _hrAuthorizationPending = false;
+  int _hrAuthorizationGeneration = 0;
+  static const _hrSections = {
+    'hr_employees',
+    'hr_attendance',
+    'hr_vacations',
+    'hr_adjustments'
+  };
+
+  bool get _ownHROnly {
+    final ps = PermissionsService();
+    return ps.canViewOwnHRData &&
+        !(ps.canViewEmployees ||
+            ps.canManageEmployees ||
+            ps.canOpenAttendancePage ||
+            ps.canOpenVacationsPage ||
+            ps.canViewAdjustments ||
+            ps.canViewBranchSalaryReport);
+  }
+
+  bool _isOwnHRItem(Map item) {
+    final scope = item['notification_scope'];
+    final ps = PermissionsService();
+    return _hrSections.contains(item['section']) &&
+        ps.canViewOwnHRData &&
+        ps.hrNotificationsEnabled &&
+        scope is Map &&
+        scope['is_self'] == true &&
+        (scope['employee_code'] ?? '').toString().isNotEmpty;
+  }
+
+  bool _hrItemAllowed(Map item) {
+    if (!_hrSections.contains(item['section'])) return true;
+    if (_hrAuthorizationPending || !PermissionsService().hrNotificationsEnabled)
+      return false;
+    if (_isOwnHRItem(item)) return true;
+    final scope = item['notification_scope'];
+    if (_ownHROnly) return false;
+    final viewable = PermissionsService().hrViewableEmployees;
+    if (viewable != null && viewable.isNotEmpty) {
+      return scope is Map &&
+          viewable.contains((scope['employee_code'] ?? '').toString());
+    }
+    return true;
+  }
+
+  Future<int> invalidateHRAuthorization(
+      {required String companyCode, required String uid}) async {
+    return CachePartitions.run(() async {
+      final generation = ++_hrAuthorizationGeneration;
+      _scopeVersion++;
+      _hrAuthorizationPending = true;
+      if (!CachePartitions.isBoxOpen(_boxName)) return generation;
+      final keys = _box.keys.where((key) {
+        final item = _box.get(key);
+        return item is Map &&
+            item['recipient_uid'] == uid &&
+            item['company_code'] == companyCode &&
+            _hrSections.contains(item['section']);
+      }).toList();
+      if (keys.isNotEmpty) {
+        await _box.deleteAll(keys);
+        await _box.compact();
+      }
+      if (CachePartitions.isBoxOpen(_settingsBoxName)) {
+        await _settings.delete('notification_cursor_${uid}_$companyCode');
+      }
+      return generation;
+    });
+  }
+
+  bool finishHRAuthorization(int generation) {
+    if (generation != _hrAuthorizationGeneration) return false;
+    _hrAuthorizationPending = false;
+    return true;
+  }
+
+  bool _requestIsCurrent(String company, String uid, int scope) =>
+      uid.isNotEmpty &&
+      FirebaseAuth.instance.currentUser?.uid == uid &&
+      (_companyCode == null || _companyCode == company) &&
+      PermissionsService().isLoaded &&
+      PermissionsService().canShowNotifications &&
+      !_hrAuthorizationPending &&
+      scope == _scopeVersion;
+
+  bool _itemIsAllowed(Map item, String company, String uid) {
+    if (!PermissionsService().canShowNotifications) return false;
+    if ((item['company_code'] ?? '').toString() != company) return false;
+    final recipient = (item['recipient_uid'] ?? '').toString();
+    if (recipient.isNotEmpty && recipient != uid) return false;
+    if (_isOwnHRItem(item)) return _hrItemAllowed(item);
+    final branch = (item['branch_code'] ?? '').toString();
+    final allowed = PermissionsService().allowedBranches;
+    return (branch.isEmpty ||
+            allowed == null ||
+            allowed.contains('all') ||
+            allowed.contains(branch)) &&
+        _canAccessSection((item['section'] ?? '').toString()) &&
+        _hrItemAllowed(item);
+  }
+
+  // Uses today's existing section predicates, not a new entitlement policy.
+  // A revoked notification is disposable cache, never an unsent user edit.
+  Future<int> purgeInaccessibleCache({
+    required String companyCode,
+    required String? ownerUid,
+    required bool scopeChanged,
+  }) async {
+    return CachePartitions.run(() async {
+      if (!CachePartitions.isBoxOpen(_boxName) ||
+          ownerUid == null ||
+          ownerUid.isEmpty ||
+          FirebaseAuth.instance.currentUser?.uid != ownerUid ||
+          (_companyCode != null && _companyCode != companyCode) ||
+          !PermissionsService().isLoaded) return 0;
+      if (scopeChanged) _scopeVersion++;
+      final scope = _scopeVersion;
+      if (scopeChanged) {
+        if (CachePartitions.isBoxOpen(_settingsBoxName)) {
+          await _settings
+              .delete('notification_cursor_${ownerUid}_$companyCode');
+        }
+      }
+      var removed = 0;
+      for (final key in _box.keys.toList()) {
+        if (!_requestIsCurrent(companyCode, ownerUid, scope)) return removed;
+        final item = _box.get(key);
+        if (item is! Map ||
+            item['company_code'] != companyCode ||
+            item['recipient_uid'] != ownerUid) continue;
+        if (!_itemIsAllowed(item, companyCode, ownerUid)) {
+          await _box.delete(key);
+          removed++;
+        }
+      }
+      // Hive deletion alone leaves old frames in its append-only file.
+      if (removed > 0) await _box.compact();
+      if (scopeChanged &&
+          _companyCode == companyCode &&
+          _requestIsCurrent(companyCode, ownerUid, scope)) {
+        unawaited(refreshFromServer(companyCode: companyCode));
+      }
+      return removed;
+    });
+  }
+
+  bool _sameRecipient(dynamic item, String company, String uid) =>
+      item is Map &&
+      item['recipient_uid'] == uid &&
+      item['company_code'] == company;
 
   bool _enabled(String section, String action) {
     const commercialSections = {
-      'sales', 'sales_returns', 'customer_payments', 'stock_transfers'
+      'sales',
+      'sales_returns',
+      'customer_payments',
+      'stock_transfers'
     };
+    if (!PermissionsService().canShowNotifications) return false;
     final defaultEnabled = !commercialSections.contains(section);
-    return _settings.get('enabled_$section', defaultValue: defaultEnabled) == true &&
+    return _settings.get('enabled_$section', defaultValue: defaultEnabled) ==
+            true &&
         _settings.get('event_$action', defaultValue: true) == true;
   }
 
   Future<void> handleSyncEvent(Map<String, dynamic> event) async {
-  try {
-    if (_settingsLoad != null) {
-      await _settingsLoad!.timeout(
-        const Duration(milliseconds: 500),
-        onTimeout: () {},
-      );
-    }
-
-    // ✅ NEW: لا تحفظ حدث قبل تحميل الصلاحيات
-    // عشان نتجنب حفظ إشعارات بصلاحيات افتراضية غلط
-    if (!PermissionsService().isLoaded) {
-      print('⏳ الصلاحيات مش متحملة — تجاهل حدث ${event['type']}');
-      return;
-    }
-
-    final type = (event['type'] ?? '').toString();
-      final section = _sections[type];
-      if (section == null) return;
-      final raw = event['data'];
-      if (raw is! Map) return;
-      final data = Map<String, dynamic>.from(raw);
-      final companyCode = (data['company_code'] ?? event['company_code'] ?? '').toString();
-      final currentUser = FirebaseAuth.instance.currentUser;
-      final uid = currentUser?.uid ?? '';
-      final actorUid = (event['actor_uid'] ?? data['actor_uid'] ?? '').toString();
-      if (companyCode.isEmpty || (_companyCode != null && _companyCode != companyCode)) return;
-
-      final rawAction = (event['action'] ?? 'update').toString().toLowerCase();
-      final action = data['is_deleted'] == true || rawAction == 'delete' || rawAction == 'remove'
-          ? 'delete'
-          : (rawAction == 'insert' || rawAction == 'create' || rawAction == 'add' ? 'add' : 'edit');
-      if (!_enabled(section, action)) return;
-
-      final branchCode = (data['branch_code'] ?? '').toString();
-      final allowedBranches = PermissionsService().allowedBranches;
-      if (branchCode.isNotEmpty && allowedBranches != null && !allowedBranches.contains('all') && !allowedBranches.contains(branchCode)) return;
-      if (!_canAccessSection(section)) return;
-
-      final eventId = (event['event_id'] ?? '').toString();
-      final localKey = eventId.isNotEmpty ? eventId : '${companyCode}_${type}_${action}_${data['id'] ?? data['serial'] ?? data['code'] ?? ''}_${data['updated_at'] ?? data['date'] ?? ''}';
-      final existing = _box.get(localKey);
-      if (existing is Map && (existing['server_id'] ?? '').toString().isNotEmpty) return;
-      final alreadyRead = existing is Map && existing['read'] == true;
-      final actorEvent = uid.isNotEmpty && actorUid.isNotEmpty && actorUid == uid;
-
-      final actorName = (event['actor_name'] ?? data['actor_name'] ?? data['employee'] ?? data['created_by'] ?? data['updated_by'] ?? '').toString();
-      final detailParts = <String>[];
-      // ⭐ لو طلب انضمام — اعرض بيانات مختلفة
-      final detailKeys = section == 'registration_requests'
-          ? ['name', 'phone_number', 'email', 'note']
-          : ['name', 'supplier_name', 'statement', 'category', 'serial', 'code', 'branch_code'];
-      for (final key in detailKeys) {
-        final value = data[key];
-        if (value != null && value.toString().trim().isNotEmpty) {
-          detailParts.add('${_detailLabel(key)}: ${value.toString()}');
+    return CachePartitions.run(() async {
+      final receivedScope = _scopeVersion;
+      final receivedUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+      if (receivedUid.isEmpty) return;
+      try {
+        if (_settingsLoad != null) {
+          await _settingsLoad!.timeout(
+            const Duration(milliseconds: 500),
+            onTimeout: () {},
+          );
         }
-        if (detailParts.length == 2) break;
+
+        // ✅ NEW: لا تحفظ حدث قبل تحميل الصلاحيات
+        // عشان نتجنب حفظ إشعارات بصلاحيات افتراضية غلط
+        if (!PermissionsService().isLoaded ||
+            FirebaseAuth.instance.currentUser?.uid != receivedUid) {
+          print('⏳ الصلاحيات مش متحملة — تجاهل حدث ${event['type']}');
+          return;
+        }
+
+        final type = (event['type'] ?? '').toString();
+        final section = _sections[type];
+        if (section == null) return;
+        final raw = event['data'];
+        if (raw is! Map) return;
+        final data = Map<String, dynamic>.from(raw);
+        final companyCode =
+            (data['company_code'] ?? event['company_code'] ?? '').toString();
+        final currentUser = FirebaseAuth.instance.currentUser;
+        final uid = currentUser?.uid ?? '';
+        final actorUid =
+            (event['actor_uid'] ?? data['actor_uid'] ?? '').toString();
+        if (companyCode.isEmpty ||
+            (_companyCode != null && _companyCode != companyCode)) return;
+
+        final rawAction =
+            (event['action'] ?? 'update').toString().toLowerCase();
+        final action = data['is_deleted'] == true ||
+                rawAction == 'delete' ||
+                rawAction == 'remove'
+            ? 'delete'
+            : (rawAction == 'insert' ||
+                    rawAction == 'create' ||
+                    rawAction == 'add'
+                ? 'add'
+                : 'edit');
+        if (!_enabled(section, action)) return;
+
+        final personal = _isOwnHRItem({
+          'section': section,
+          'notification_scope': event['notification_scope']
+        });
+        final branchCode = (data['branch_code'] ?? '').toString();
+        final allowedBranches = PermissionsService().allowedBranches;
+        if (!personal &&
+            branchCode.isNotEmpty &&
+            allowedBranches != null &&
+            !allowedBranches.contains('all') &&
+            !allowedBranches.contains(branchCode)) return;
+        if (!personal && !_canAccessSection(section)) return;
+
+        final eventId = (event['event_id'] ?? '').toString();
+        final localKey = eventId.isNotEmpty
+            ? eventId
+            : '${companyCode}_${type}_${action}_${data['id'] ?? data['serial'] ?? data['code'] ?? ''}_${data['updated_at'] ?? data['date'] ?? ''}';
+        final existing = _box.get(localKey);
+        if (existing is Map &&
+            (existing['server_id'] ?? '').toString().isNotEmpty) return;
+        final alreadyRead = _sameRecipient(existing, companyCode, uid) &&
+            existing['read'] == true;
+        final actorEvent =
+            uid.isNotEmpty && actorUid.isNotEmpty && actorUid == uid;
+
+        final actorName = (event['actor_name'] ??
+                data['actor_name'] ??
+                data['employee'] ??
+                data['created_by'] ??
+                data['updated_by'] ??
+                '')
+            .toString();
+        final detailParts = <String>[];
+        // ⭐ لو طلب انضمام — اعرض بيانات مختلفة
+        final detailKeys = section == 'registration_requests'
+            ? ['name', 'phone_number', 'email', 'note']
+            : [
+                'name',
+                'supplier_name',
+                'statement',
+                'category',
+                'serial',
+                'code',
+                'branch_code'
+              ];
+        for (final key in detailKeys) {
+          final value = data[key];
+          if (value != null && value.toString().trim().isNotEmpty) {
+            detailParts.add('${_detailLabel(key)}: ${value.toString()}');
+          }
+          if (detailParts.length == 2) break;
+        }
+        if (receivedScope != _scopeVersion ||
+            !_hrItemAllowed({
+              'section': section,
+              'notification_scope': event['notification_scope'],
+            })) return;
+        await _box.put(localKey, <String, dynamic>{
+          'id': localKey,
+          'event_key': localKey,
+          'server_id': '',
+          'recipient_uid': uid,
+          'title':
+              '${_actionNames[action] ?? 'تغيير'} في ${_sectionNames[section]}',
+          'body': detailParts.join(' • '),
+          'section': section,
+          if (event['notification_scope'] is Map)
+            'notification_scope': event['notification_scope'],
+          'action': action,
+          'company_code': companyCode,
+          'branch_code': branchCode,
+          'actor_uid': actorUid,
+          'actor_name': actorName,
+          'created_at': DateTime.now().toIso8601String(),
+          'read': actorEvent || alreadyRead,
+        });
+        await _purgeExpired();
+      } catch (e) {
+        print('⚠️ تعذر حفظ الإشعار محليًا: $e');
       }
-      await _box.put(localKey, <String, dynamic>{
-        'id': localKey,
-        'event_key': localKey,
-        'server_id': '',
-        'recipient_uid': uid,
-        'title': '${_actionNames[action] ?? 'تغيير'} في ${_sectionNames[section]}',
-        'body': detailParts.join(' • '),
-        'section': section,
-        'action': action,
-        'company_code': companyCode,
-        'branch_code': branchCode,
-        'actor_uid': actorUid,
-        'actor_name': actorName,
-        'created_at': DateTime.now().toIso8601String(),
-        'read': actorEvent || alreadyRead,
-      });
-      await _purgeExpired();
-    } catch (e) {
-      print('⚠️ تعذر حفظ الإشعار محليًا: $e');
-    }
+    });
   }
 
-  String _detailLabel(String key) => const {
-    'name': 'الاسم', 'supplier_name': 'المورد', 'statement': 'البيان',
-    'category': 'التصنيف', 'serial': 'رقم الحركة', 'code': 'الكود',
-    'branch_code': 'الفرع',
-    // ⭐ جديد
-    'phone_number': 'الموبايل',
-    'email': 'الإيميل',
-    'note': 'ملاحظات',
-  }[key] ?? key;
+  String _detailLabel(String key) =>
+      const {
+        'name': 'الاسم', 'supplier_name': 'المورد', 'statement': 'البيان',
+        'category': 'التصنيف', 'serial': 'رقم الحركة', 'code': 'الكود',
+        'branch_code': 'الفرع',
+        // ⭐ جديد
+        'phone_number': 'الموبايل',
+        'email': 'الإيميل',
+        'note': 'ملاحظات',
+      }[key] ??
+      key;
 
   // ⭐ Helper موحد لفحص صلاحية الوصول للقسم
   bool _canAccessSection(String section) {
     final ps = PermissionsService();
     switch (section) {
       case 'daily':
-        return ps.canShowTreasury;
+        return ps.canViewTransactions || ps.canAddTransaction;
       case 'purchases':
-        return ps.canShowSuppliers;
+        return ps.canViewSupplierHistory || ps.canAddSupplierTransaction;
       case 'settlements':
         return ps.canShowSupplierSettlements;
       case 'coding':
-        return ps.canShowCoding;
+        return ps.canViewCoding;
       case 'inventory':
-        return ps.canShowInventory;
+        return ps.canViewInventory;
       case 'sales':
-        return ps.hasPermission('المبيعات', 'معاينة') || ps.hasPermission('المبيعات', 'إضافة');
+        return ps.hasPermission('المبيعات', 'معاينة') ||
+            ps.hasPermission('المبيعات', 'إضافة');
       case 'sales_returns':
-        return ps.hasPermission('المرتجعات', 'معاينة') || ps.hasPermission('المرتجعات', 'إضافة');
+        return ps.hasPermission('المرتجعات', 'معاينة') ||
+            ps.hasPermission('المرتجعات', 'إضافة');
       case 'customer_payments':
-        return ps.hasPermission('حسابات العملاء', 'معاينة') || ps.hasPermission('حسابات العملاء', 'إضافة تحصيل');
+        return ps.hasPermission('حسابات العملاء', 'معاينة') ||
+            ps.hasPermission('حسابات العملاء', 'إضافة تحصيل');
       case 'stock_transfers':
-        return ps.hasPermission('التحويلات المخزنية', 'معاينة') || ps.hasPermission('التحويلات المخزنية', 'إضافة');
+        return ps.hasPermission('التحويلات المخزنية', 'معاينة') ||
+            ps.hasPermission('التحويلات المخزنية', 'إضافة');
       // ✅ HR
       case 'hr_attendance':
         return ps.canOpenAttendancePage || ps.canAddAttendance;
@@ -207,97 +433,78 @@ class NotificationsService {
     }
   }
 
+  Completer<void>? _refreshEnqueued;
+
+  /// Reserve the first history HTTP slot before business pulls start. Waits
+  /// only for enqueue (and the existing bounded settings wait), not download.
+  Future<void> startPriorityRefresh({required String companyCode}) async {
+    unawaited(refreshFromServer(companyCode: companyCode));
+    final enqueued = _refreshEnqueued;
+    if (enqueued != null) await enqueued.future;
+  }
+
   Future<void> refreshFromServer({String? companyCode}) {
     final company = companyCode ?? _companyCode;
     if (company == null || company.isEmpty) return Future<void>.value();
-    if (_refreshInFlight != null && _refreshCompany == company) return _refreshInFlight!;
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final scope = _scopeVersion;
+    if (_refreshInFlight != null &&
+        _refreshCompany == company &&
+        _refreshUid == uid &&
+        _refreshScope == scope) return _refreshInFlight!;
 
-    final task = _refreshFromServer(company);
+    final enqueued = Completer<void>();
+    _refreshEnqueued = enqueued;
+    final task =
+        _refreshFromServer(company, uid, scope, enqueued).whenComplete(() {
+      if (!enqueued.isCompleted) enqueued.complete();
+    });
     _refreshCompany = company;
+    _refreshUid = uid;
+    _refreshScope = scope;
     _refreshInFlight = task;
     return task.whenComplete(() {
       if (identical(_refreshInFlight, task)) {
         _refreshInFlight = null;
         _refreshCompany = null;
+        _refreshUid = null;
+        _refreshScope = null;
       }
     });
   }
 
   // تحديث مخصص للإشعارات غير المقروءة فقط، دون تحريك مؤشر المزامنة التزايدية.
   Future<void> refreshUnreadFromServer({String? companyCode}) async {
-  final company = companyCode ?? _companyCode;
-  if (company == null || company.isEmpty) return;
+    return CachePartitions.run(() async {
+      final company = companyCode ?? _companyCode;
+      if (company == null || company.isEmpty) return;
+      final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+      final scope = _scopeVersion;
 
-  try {
-    if (_settingsLoad != null) {
-      await _settingsLoad!.timeout(
-        const Duration(milliseconds: 500),
-        onTimeout: () {},
-      );
-    }
-    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
-      if (uid.isEmpty) return;
-      final uri = Uri.parse('${ApiConstants.baseUrl}/notifications').replace(
-        queryParameters: const {'limit': '100', 'unread_only': 'true'},
-      );
-      final response = await AuthHttp.get(uri).timeout(const Duration(seconds: 8));
-      if (response.statusCode != 200) return;
-      final decoded = jsonDecode(response.body);
-      if (decoded is! Map || decoded['items'] is! List) return;
-
-      for (final raw in decoded['items'] as List) {
-        if (raw is! Map) continue;
-        final item = Map<String, dynamic>.from(raw);
-        if ((item['company_code'] ?? '').toString() != company || item['read'] == true) continue;
-        final eventKey = (item['event_id'] ?? item['id'] ?? '').toString();
-        if (eventKey.isEmpty) continue;
-        final previous = _box.get(eventKey);
-        item['id'] = eventKey;
-        item['event_key'] = eventKey;
-        item['server_id'] = (raw['id'] ?? '').toString();
-        item['recipient_uid'] = uid;
-        // لا نعيد إشعارًا سبق أن علّمه المستخدم كمقروء محليًا.
-        item['read'] = previous is Map && previous['read'] == true;
-        await _box.put(eventKey, item);
-      }
-      await _purgeExpired();
-    } catch (e) {
-      print('⚠️ تعذر تحديث الإشعارات غير المقروءة من Neon: $e');
-    }
-  }
-
-  Future<void> _refreshFromServer(String company) async {
-  try {
-    if (_settingsLoad != null) {
-      await _settingsLoad!.timeout(
-        const Duration(milliseconds: 500),
-        onTimeout: () {},
-      );
-    }
-    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
-      if (uid.isEmpty) return;
-      final cursorKey = 'notification_cursor_${uid}_$company';
-      final savedCursor = _settings.get(cursorKey);
-      int? cursor = savedCursor is num ? savedCursor.toInt() : int.tryParse(savedCursor?.toString() ?? '');
-      final initialLoad = cursor == null || cursor <= 0;
-      var firstPage = true;
-      var pageCount = 0;
-
-      while (pageCount < 10) {
-        final currentCursor = cursor ?? 0;
-        final int? requestCursor = currentCursor <= 0 ? null : (currentCursor - 50).clamp(0, currentCursor).toInt();
-        final query = <String, String>{'limit': initialLoad && firstPage ? '100' : '200'};
-        if (requestCursor != null) query['after_id'] = requestCursor.toString();
-        final uri = Uri.parse('${ApiConstants.baseUrl}/notifications').replace(queryParameters: query);
-        final response = await AuthHttp.get(uri).timeout(const Duration(seconds: 8));
-        if (response.statusCode != 200) return;
+      try {
+        if (_settingsLoad != null) {
+          await _settingsLoad!.timeout(
+            const Duration(milliseconds: 500),
+            onTimeout: () {},
+          );
+        }
+        if (!_requestIsCurrent(company, uid, scope)) return;
+        final uri = Uri.parse('${ApiConstants.baseUrl}/notifications').replace(
+          queryParameters: const {'limit': '100', 'unread_only': 'true'},
+        );
+        final response =
+            await AuthHttp.get(uri).timeout(const Duration(seconds: 8));
+        if (response.statusCode != 200 ||
+            !_requestIsCurrent(company, uid, scope)) return;
         final decoded = jsonDecode(response.body);
         if (decoded is! Map || decoded['items'] is! List) return;
 
         for (final raw in decoded['items'] as List) {
           if (raw is! Map) continue;
           final item = Map<String, dynamic>.from(raw);
-          if ((item['company_code'] ?? '').toString() != company) continue;
+          if (!_requestIsCurrent(company, uid, scope)) return;
+          if (!_itemIsAllowed(item, company, uid) || item['read'] == true)
+            continue;
           final eventKey = (item['event_id'] ?? item['id'] ?? '').toString();
           if (eventKey.isEmpty) continue;
           final previous = _box.get(eventKey);
@@ -305,56 +512,169 @@ class NotificationsService {
           item['event_key'] = eventKey;
           item['server_id'] = (raw['id'] ?? '').toString();
           item['recipient_uid'] = uid;
-          item['read'] = raw['read'] == true || (previous is Map && previous['read'] == true);
+          // لا نعيد إشعارًا سبق أن علّمه المستخدم كمقروء محليًا.
+          item['read'] = _sameRecipient(previous, company, uid) &&
+              previous['read'] == true;
           await _box.put(eventKey, item);
         }
-
-        final nextCursorRaw = decoded['next_cursor'];
-        final nextCursor = nextCursorRaw is num ? nextCursorRaw.toInt() : int.tryParse(nextCursorRaw?.toString() ?? '');
-        if (nextCursor != null && nextCursor > (cursor ?? 0)) {
-          cursor = nextCursor;
-          await _settings.put(cursorKey, cursor);
-        }
-
-        pageCount++;
-        final hasMore = decoded['has_more'] == true;
-        // أول تحميل يقتصر على آخر 100 إشعار؛ المرات التالية تسترجع الجديد فقط.
-        if (initialLoad || !hasMore || nextCursor == null || (cursor != null && nextCursor < cursor)) break;
-        firstPage = false;
+        await _purgeExpired();
+      } catch (e) {
+        print('⚠️ تعذر تحديث الإشعارات غير المقروءة من Neon: $e');
       }
-      await _purgeExpired();
-    } catch (e) {
-      print('⚠️ تعذر تحديث سجل الإشعارات من Neon: $e');
-    }
+    });
   }
 
+  Future<void> _refreshFromServer(
+      String company, String uid, int scope, Completer<void> enqueued) async {
+    return CachePartitions.run(() async {
+      try {
+        if (_settingsLoad != null) {
+          await _settingsLoad!.timeout(
+            const Duration(milliseconds: 500),
+            onTimeout: () {},
+          );
+        }
+        if (!_requestIsCurrent(company, uid, scope)) return;
+        final cursorKey = 'notification_cursor_${uid}_$company';
+        final savedCursor = _settings.get(cursorKey);
+        int? cursor = savedCursor is num
+            ? savedCursor.toInt()
+            : int.tryParse(savedCursor?.toString() ?? '');
+        final initialLoad = cursor == null || cursor <= 0;
+        var firstPage = true;
+        var pageCount = 0;
 
-  Future<void> loadSettingsFromServer() async {
-    try {
-      final response = await AuthHttp.get(Uri.parse('${ApiConstants.baseUrl}/notifications/settings')).timeout(const Duration(seconds: 8));
-      if (response.statusCode != 200) return;
-      final data = jsonDecode(response.body);
-      if (data is! Map) return;
-      final sections = data['sections'];
-      if (sections is Map) {
-        for (final entry in sections.entries) {
-          await _settings.put('enabled_${entry.key}', entry.value == true);
+        while (pageCount < 10) {
+          final currentCursor = cursor ?? 0;
+          final int? requestCursor = currentCursor <= 0
+              ? null
+              : (currentCursor - 50).clamp(0, currentCursor).toInt();
+          final query = <String, String>{
+            'limit': initialLoad && firstPage ? '100' : '200'
+          };
+          if (requestCursor != null)
+            query['after_id'] = requestCursor.toString();
+          final uri = Uri.parse('${ApiConstants.baseUrl}/notifications')
+              .replace(queryParameters: query);
+          final pendingResponse = AuthHttp.get(uri);
+          if (!enqueued.isCompleted) enqueued.complete();
+          final response =
+              await pendingResponse.timeout(const Duration(seconds: 8));
+          if (response.statusCode != 200 ||
+              !_requestIsCurrent(company, uid, scope)) return;
+          final decoded = jsonDecode(response.body);
+          if (decoded is! Map || decoded['items'] is! List) return;
+
+          for (final raw in decoded['items'] as List) {
+            if (raw is! Map) continue;
+            final item = Map<String, dynamic>.from(raw);
+            if (!_requestIsCurrent(company, uid, scope)) return;
+            if (!_itemIsAllowed(item, company, uid)) continue;
+            final eventKey = (item['event_id'] ?? item['id'] ?? '').toString();
+            if (eventKey.isEmpty) continue;
+            final previous = _box.get(eventKey);
+            item['id'] = eventKey;
+            item['event_key'] = eventKey;
+            item['server_id'] = (raw['id'] ?? '').toString();
+            item['recipient_uid'] = uid;
+            item['read'] = raw['read'] == true ||
+                (_sameRecipient(previous, company, uid) &&
+                    previous['read'] == true);
+            await _box.put(eventKey, item);
+          }
+
+          if (!_requestIsCurrent(company, uid, scope)) return;
+          final nextCursorRaw = decoded['next_cursor'];
+          final nextCursor = nextCursorRaw is num
+              ? nextCursorRaw.toInt()
+              : int.tryParse(nextCursorRaw?.toString() ?? '');
+          if (nextCursor != null && nextCursor > (cursor ?? 0)) {
+            cursor = nextCursor;
+            await _settings.put(cursorKey, cursor);
+          }
+
+          pageCount++;
+          final hasMore = decoded['has_more'] == true;
+          // أول تحميل يقتصر على آخر 100 إشعار؛ المرات التالية تسترجع الجديد فقط.
+          if (initialLoad ||
+              !hasMore ||
+              nextCursor == null ||
+              (cursor != null && nextCursor < cursor)) break;
+          firstPage = false;
         }
+        await _purgeExpired();
+      } catch (e) {
+        print('⚠️ تعذر تحديث سجل الإشعارات من Neon: $e');
       }
-      final actions = data['actions'];
-      if (actions is Map) {
-        for (final entry in actions.entries) {
-          await _settings.put('event_${entry.key}', entry.value == true);
-        }
-      }
-      if (data['retention_days'] is num) await _settings.put('retention_days', (data['retention_days'] as num).toInt());
-      await _purgeExpired();
-    } catch (e) {
-      print('⚠️ تعذر تحديث إعدادات الإشعارات من Neon: $e');
-    }
+    });
   }
 
-    // ============================================================
+  final settingsChanges = ValueNotifier<int>(0);
+  bool _settingsLoaded = false;
+  Future<void> ensureSettings() async {
+    if (_settingsLoad != null) await _settingsLoad;
+    if (!_settingsLoaded) await loadSettingsFromServer();
+  }
+
+  Future<void> loadSettingsFromServer({bool force = false}) {
+    if (_settingsRequest != null) {
+      if (force) _settingsRefreshPending = true;
+      return _settingsRequest!;
+    }
+    final binding = _bindingVersion;
+    final task = () async {
+      do {
+        if (binding != _bindingVersion) return;
+        _settingsRefreshPending = false;
+        await _loadSettingsFromServer();
+      } while (_settingsRefreshPending && binding == _bindingVersion);
+    }();
+    _settingsRequest = task;
+    return task.whenComplete(() {
+      if (identical(_settingsRequest, task)) _settingsRequest = null;
+    });
+  }
+
+  Future<void> _loadSettingsFromServer() async {
+    return CachePartitions.run(() async {
+      final company = _companyCode;
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      final generation = _cacheGeneration;
+      try {
+        final response = await AuthHttp.get(
+                Uri.parse('${ApiConstants.baseUrl}/notifications/settings'))
+            .timeout(const Duration(seconds: 8));
+        if (response.statusCode != 200) return;
+        final data = jsonDecode(response.body);
+        if (data is! Map) return;
+        if (company != _companyCode ||
+            uid != FirebaseAuth.instance.currentUser?.uid ||
+            generation != _cacheGeneration) return;
+        final sections = data['sections'];
+        if (sections is Map) {
+          for (final entry in sections.entries) {
+            await _settings.put('enabled_${entry.key}', entry.value == true);
+          }
+        }
+        final actions = data['actions'];
+        if (actions is Map) {
+          for (final entry in actions.entries) {
+            await _settings.put('event_${entry.key}', entry.value == true);
+          }
+        }
+        if (data['retention_days'] is num)
+          await _settings.put(
+              'retention_days', (data['retention_days'] as num).toInt());
+        _settingsLoaded = true;
+        settingsChanges.value++;
+        await _purgeExpired();
+      } catch (e) {
+        print('⚠️ تعذر تحديث إعدادات الإشعارات من Neon: $e');
+      }
+    });
+  }
+
+  // ============================================================
   // حفظ الإعدادات على السيرفر (Neon)
   //
   // ⭐ بتستخدم _sectionNames.keys تلقائيًا — فلو أضفت قسم جديد
@@ -362,178 +682,238 @@ class NotificationsService {
   // ============================================================
 
   Future<void> _saveRemoteSettings() async {
-    try {
-      final sections = {
-        for (final key in _sectionNames.keys) key: sectionEnabled(key)
-      };
-      final actions = {
-        for (final key in const ['add', 'edit', 'delete'])
-          key: eventEnabled(key)
-      };
-      await AuthHttp.put(
-        Uri.parse('${ApiConstants.baseUrl}/notifications/settings'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'sections': sections,
-          'actions': actions,
-          'retention_days': retentionDays,
-        }),
-      ).timeout(const Duration(seconds: 8));
-    } catch (e) {
-      print('⚠️ تعذر حفظ إعدادات الإشعارات في Neon: $e');
-    }
+    return CachePartitions.run(() async {
+      try {
+        final sections = {
+          for (final key in _sectionNames.keys) key: sectionEnabled(key)
+        };
+        final actions = {
+          for (final key in const ['add', 'edit', 'delete'])
+            key: eventEnabled(key)
+        };
+        await AuthHttp.put(
+          Uri.parse('${ApiConstants.baseUrl}/notifications/settings'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'sections': sections,
+            'actions': actions,
+            'retention_days': retentionDays,
+          }),
+        ).timeout(const Duration(seconds: 8));
+      } catch (e) {
+        print('⚠️ تعذر حفظ إعدادات الإشعارات في Neon: $e');
+      }
+    });
   }
 
-
   List<Map<String, dynamic>> getNotifications({String? companyCode}) {
+    if (!PermissionsService().isLoaded ||
+        !PermissionsService().canShowNotifications) return [];
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
     final allowedBranches = PermissionsService().allowedBranches;
-    final items = _box.values.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).where((item) {
+    final items = _box.values
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .where((item) {
       final sameUser = (item['recipient_uid'] ?? '') == currentUid;
-      final sameCompany = companyCode == null || item['company_code'] == companyCode;
+      final sameCompany =
+          companyCode == null || item['company_code'] == companyCode;
       final branch = (item['branch_code'] ?? '').toString();
-      final branchAllowed = branch.isEmpty || allowedBranches == null || allowedBranches.contains('all') || allowedBranches.contains(branch);
+      final branchAllowed = branch.isEmpty ||
+          allowedBranches == null ||
+          allowedBranches.contains('all') ||
+          allowedBranches.contains(branch);
       final section = (item['section'] ?? '').toString();
-      return sameUser && sameCompany && branchAllowed && _canAccessSection(section);
+      return sameUser &&
+          sameCompany &&
+          (_isOwnHRItem(item) ||
+              (branchAllowed && _canAccessSection(section))) &&
+          _hrItemAllowed(item);
     }).toList();
-    items.sort((a, b) => (b['created_at'] ?? '').toString().compareTo((a['created_at'] ?? '').toString()));
+    items.sort((a, b) => (b['created_at'] ?? '')
+        .toString()
+        .compareTo((a['created_at'] ?? '').toString()));
     return items;
   }
 
-  int unreadCount({String? companyCode}) => getNotifications(companyCode: companyCode).where((e) => e['read'] != true).length;
+  int unreadCount({String? companyCode}) =>
+      getNotifications(companyCode: companyCode)
+          .where((e) => e['read'] != true)
+          .length;
 
   Future<void> markRead(String id) async {
-    final entry = _findEntry(id);
-    if (entry == null) return;
-    final key = entry.key;
-    final item = Map<String, dynamic>.from(entry.value as Map);
-    item['read'] = true;
-    await _box.put(key, item);
-    final serverId = (item['server_id'] ?? '').toString();
-    try {
-      final endpoint = serverId.isNotEmpty
-          ? '${ApiConstants.baseUrl}/notifications/$serverId/read'
-          : '${ApiConstants.baseUrl}/notifications/event/${item['event_key'] ?? id}/read';
-      await AuthHttp.post(Uri.parse(endpoint));
-    } catch (_) {}
+    return CachePartitions.run(() async {
+      final entry = _findEntry(id);
+      if (entry == null) return;
+      final key = entry.key;
+      final item = Map<String, dynamic>.from(entry.value as Map);
+      item['read'] = true;
+      await _box.put(key, item);
+      final serverId = (item['server_id'] ?? '').toString();
+      try {
+        final endpoint = serverId.isNotEmpty
+            ? '${ApiConstants.baseUrl}/notifications/$serverId/read'
+            : '${ApiConstants.baseUrl}/notifications/event/${item['event_key'] ?? id}/read';
+        await AuthHttp.post(Uri.parse(endpoint));
+      } catch (_) {}
 
-    await _syncBadgeForCompany(_companyCode);
+      await _syncBadgeForCompany(_companyCode);
+    });
   }
 
   MapEntry<dynamic, dynamic>? _findEntry(String id) {
     for (final entry in _box.toMap().entries) {
       if (entry.value is Map) {
         final item = Map<String, dynamic>.from(entry.value as Map);
-        if (entry.key.toString() == id || item['id']?.toString() == id || item['event_key']?.toString() == id || item['server_id']?.toString() == id) return MapEntry(entry.key, entry.value);
+        if (entry.key.toString() == id ||
+            item['id']?.toString() == id ||
+            item['event_key']?.toString() == id ||
+            item['server_id']?.toString() == id)
+          return MapEntry(entry.key, entry.value);
       }
     }
     return null;
   }
 
   Future<void> markAllRead({String? companyCode}) async {
-    final targetCompany = companyCode ?? _companyCode;
-    for (final item in getNotifications(companyCode: targetCompany)) {
-      if (item['read'] == true) continue;
-      final entry = _findEntry(item['id'].toString());
-      if (entry == null) continue;
-      final updated = Map<String, dynamic>.from(entry.value as Map)..['read'] = true;
-      await _box.put(entry.key, updated);
-    }
-    try { await AuthHttp.post(Uri.parse('${ApiConstants.baseUrl}/notifications/read-all')); } catch (_) {}
+    return CachePartitions.run(() async {
+      final targetCompany = companyCode ?? _companyCode;
+      for (final item in getNotifications(companyCode: targetCompany)) {
+        if (item['read'] == true) continue;
+        final entry = _findEntry(item['id'].toString());
+        if (entry == null) continue;
+        final updated = Map<String, dynamic>.from(entry.value as Map)
+          ..['read'] = true;
+        await _box.put(entry.key, updated);
+      }
+      try {
+        await AuthHttp.post(
+            Uri.parse('${ApiConstants.baseUrl}/notifications/read-all'));
+      } catch (_) {}
 
-    await _syncBadgeForCompany(targetCompany);
+      await _syncBadgeForCompany(targetCompany);
+    });
   }
 
   // ⭐ حذف إشعار واحد (by event_key أو server_id)
   Future<void> deleteNotification({required String notificationId}) async {
-    final entry = _findEntry(notificationId);
-    if (entry == null) return;
+    return CachePartitions.run(() async {
+      final entry = _findEntry(notificationId);
+      if (entry == null) return;
 
-    final item = Map<String, dynamic>.from(entry.value as Map);
-    final serverId = (item['server_id'] ?? '').toString();
-    final eventKey = (item['event_key'] ?? item['id'] ?? notificationId).toString();
+      final item = Map<String, dynamic>.from(entry.value as Map);
+      final serverId = (item['server_id'] ?? '').toString();
+      final eventKey =
+          (item['event_key'] ?? item['id'] ?? notificationId).toString();
 
-    await _box.delete(entry.key);
+      await _box.delete(entry.key);
 
-    try {
-      if (serverId.isNotEmpty) {
-        await AuthHttp.delete(
-          Uri.parse('${ApiConstants.baseUrl}/notifications/$serverId'),
-        );
-      } else {
-        debugPrint('ℹ️ deleteNotification: local-only (event=$eventKey)');
+      try {
+        if (serverId.isNotEmpty) {
+          await AuthHttp.delete(
+            Uri.parse('${ApiConstants.baseUrl}/notifications/$serverId'),
+          );
+        } else {
+          debugPrint('ℹ️ deleteNotification: local-only (event=$eventKey)');
+        }
+      } catch (e) {
+        debugPrint('⚠️ deleteNotification remote failed: $e');
       }
-    } catch (e) {
-      debugPrint('⚠️ deleteNotification remote failed: $e');
-    }
-
+    });
   }
-
 
   Future<void> clear({String? companyCode}) async {
-    final targetCompany = companyCode ?? _companyCode;
-    for (final item in getNotifications(companyCode: targetCompany)) {
-      final entry = _findEntry(item['id'].toString());
-      if (entry != null) await _box.delete(entry.key);
-    }
-    try { await AuthHttp.delete(Uri.parse('${ApiConstants.baseUrl}/notifications')); } catch (_) {}
-
+    return CachePartitions.run(() async {
+      final targetCompany = companyCode ?? _companyCode;
+      for (final item in getNotifications(companyCode: targetCompany)) {
+        final entry = _findEntry(item['id'].toString());
+        if (entry != null) await _box.delete(entry.key);
+      }
+      try {
+        await AuthHttp.delete(
+            Uri.parse('${ApiConstants.baseUrl}/notifications'));
+      } catch (_) {}
+    });
   }
 
-  int get retentionDays => (_settings.get('retention_days', defaultValue: 90) as num).toInt();
+  int get retentionDays =>
+      (_settings.get('retention_days', defaultValue: 90) as num).toInt();
 
   Future<void> setRetentionDays(int days) async {
-    await _settings.put('retention_days', days);
-    await _purgeExpired();
-    await _saveRemoteSettings();
+    return CachePartitions.run(() async {
+      await _settings.put('retention_days', days);
+      await _purgeExpired();
+      await _saveRemoteSettings();
+    });
   }
 
   Future<void> _purgeExpired() async {
-    final days = retentionDays;
-    if (days <= 0) return;
-    final cutoff = DateTime.now().subtract(Duration(days: days));
-    for (final entry in _box.toMap().entries) {
-      if (entry.value is Map) {
-        final item = Map<String, dynamic>.from(entry.value as Map);
-        final date = DateTime.tryParse((item['created_at'] ?? '').toString());
-        if (date != null && date.isBefore(cutoff)) await _box.delete(entry.key);
+    return CachePartitions.run(() async {
+      final days = retentionDays;
+      if (days <= 0) return;
+      final cutoff = DateTime.now().subtract(Duration(days: days));
+      for (final entry in _box.toMap().entries) {
+        if (entry.value is Map) {
+          final item = Map<String, dynamic>.from(entry.value as Map);
+          final date = DateTime.tryParse((item['created_at'] ?? '').toString());
+          if (date != null && date.isBefore(cutoff))
+            await _box.delete(entry.key);
+        }
       }
-    }
+    });
   }
 
   Future<void> setSectionEnabled(String section, bool value) async {
-    final keys = section == 'commercial'
-        ? const ['sales', 'sales_returns', 'customer_payments', 'stock_transfers']
-        : [section];
-    for (final key in keys) {
-      await _settings.put('enabled_$key', value);
-    }
-    await _saveRemoteSettings();
+    return CachePartitions.run(() async {
+      final keys = section == 'commercial'
+          ? const [
+              'sales',
+              'sales_returns',
+              'customer_payments',
+              'stock_transfers'
+            ]
+          : [section];
+      for (final key in keys) {
+        await _settings.put('enabled_$key', value);
+      }
+      await _saveRemoteSettings();
+    });
   }
 
   Future<void> setEventEnabled(String event, bool value) async {
-    await _settings.put('event_$event', value);
-    await _saveRemoteSettings();
+    return CachePartitions.run(() async {
+      await _settings.put('event_$event', value);
+      await _saveRemoteSettings();
+    });
   }
 
   bool sectionEnabled(String section) {
     if (section == 'commercial') {
-      return const ['sales', 'sales_returns', 'customer_payments', 'stock_transfers']
-          .every((key) => _settings.get('enabled_$key', defaultValue: false) == true);
+      return const [
+        'sales',
+        'sales_returns',
+        'customer_payments',
+        'stock_transfers'
+      ].every(
+          (key) => _settings.get('enabled_$key', defaultValue: false) == true);
     }
     return _settings.get('enabled_$section', defaultValue: true) == true;
   }
-  bool eventEnabled(String event) => _settings.get('event_$event', defaultValue: true) == true;
+
+  bool eventEnabled(String event) =>
+      _settings.get('event_$event', defaultValue: true) == true;
 
   Future<void> _resetAndLoadSettings() async {
-    for (final key in _sectionNames.keys) {
-      await _settings.delete('enabled_$key');
-    }
-    for (final key in const ['add', 'edit', 'delete']) {
-      await _settings.delete('event_$key');
-    }
-    await _settings.put('retention_days', 90);
-    await loadSettingsFromServer();
+    return CachePartitions.run(() async {
+      for (final key in _sectionNames.keys) {
+        await _settings.delete('enabled_$key');
+      }
+      for (final key in const ['add', 'edit', 'delete']) {
+        await _settings.delete('event_$key');
+      }
+      await _settings.put('retention_days', 90);
+      await loadSettingsFromServer();
+    });
   }
 
   // ============================================================
@@ -543,40 +923,69 @@ class NotificationsService {
   /// تحديث شارة العدد على أيقونة التطبيق
   /// (تعمل فقط على PWA المثبتة — Chrome/Edge/Safari)
   Future<void> syncAppBadge(int count) async {
-    await jsSyncAppBadge(count < 0 ? 0 : count);
+    return CachePartitions.run(() async {
+      await jsSyncAppBadge(count < 0 ? 0 : count);
+    });
   }
 
-    // ⭐ دالة مساعدة: تحسب unread وتنادي syncAppBadge بعد تأخير بسيط
+  // ⭐ دالة مساعدة: تحسب unread وتنادي syncAppBadge بعد تأخير بسيط
   // (debounce عشان تتنادى مرة واحدة حتى لو حصلت عمليات كتير)
   Timer? _badgeDebounceTimer;
 
   Future<void> _syncBadgeForCompany(String? companyCode) async {
-    _badgeDebounceTimer?.cancel();
-    _badgeDebounceTimer = Timer(const Duration(milliseconds: 100), () async {
-      try {
-        final unread = unreadCount(companyCode: companyCode);
-        debugPrint('🔔 [Badge] syncAppBadge($unread) for company=$companyCode');
-        await jsSyncAppBadge(unread);
-      } catch (e) {
-        debugPrint('⚠️ [Badge] syncAppBadge failed: $e');
-      }
-    });
+    return CachePartitions.run(() async {
+      _badgeDebounceTimer?.cancel();
+      _badgeDebounceTimer = Timer(const Duration(milliseconds: 100), () async {
+        try {
+          final unread = unreadCount(companyCode: companyCode);
+          debugPrint(
+              '🔔 [Badge] syncAppBadge($unread) for company=$companyCode');
+          await jsSyncAppBadge(unread);
+        } catch (e) {
+          debugPrint('⚠️ [Badge] syncAppBadge failed: $e');
+        }
+      });
 
-    // انتظر شوية عشان الـ debounce ينفذ قبل ما نرجع
-    await Future.delayed(const Duration(milliseconds: 150));
+      // انتظر شوية عشان الـ debounce ينفذ قبل ما نرجع
+      await Future.delayed(const Duration(milliseconds: 150));
+    });
   }
 
-
-  void setCompany(String companyCode) {
+  /// Bind before socket work. A later Home mount must not reset that same work.
+  bool bindCompany(String companyCode) {
     final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    final changed = _companyCode != companyCode || _settings.get('active_uid') != uid;
+    final changed = _cacheGeneration != CachePartitions.generation ||
+        _companyCode != companyCode ||
+        _boundUid != uid ||
+        !identical(_boundSettingsIdentity,
+            CachePartitions.boxIdentity(_settingsBoxName));
+    if (!changed) return false;
+    _boundUid = uid;
+    _boundSettingsIdentity = CachePartitions.boxIdentity(_settingsBoxName);
+    _bindingVersion++;
+    _cacheGeneration = CachePartitions.generation;
     _companyCode = companyCode;
+    _settingsLoaded = false;
+    _settingsRequest = null;
+    _settingsRefreshPending = false;
+    _settingsLoad = null;
+    _refreshInFlight = null;
+    _refreshScope = null;
+    _scopeVersion++;
+    _hrAuthorizationGeneration++;
+    _hrAuthorizationPending = false;
     unawaited(_settings.put('user_company_code', companyCode));
     unawaited(_settings.put('active_uid', uid));
-    if (changed) {
-      _settingsLoad = _resetAndLoadSettings();
-      unawaited(_settingsLoad!);
-      unawaited(refreshFromServer(companyCode: companyCode));
-    }
+    return true;
+  }
+
+  String? _boundUid;
+  Object? _boundSettingsIdentity;
+
+  void setCompany(String companyCode) {
+    if (!bindCompany(companyCode)) return;
+    _settingsLoad = _resetAndLoadSettings();
+    unawaited(_settingsLoad!);
+    unawaited(refreshFromServer(companyCode: companyCode));
   }
 }

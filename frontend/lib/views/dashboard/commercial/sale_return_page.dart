@@ -1,3 +1,4 @@
+import '../../../services/cache_partitions.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -63,14 +64,14 @@ class _SaleReturnPageState extends State<SaleReturnPage> {
   void initState() {
     super.initState();
     for (final name in ['sales_box', 'sales_returns_box', 'customer_payments_box']) {
-      _localSubscriptions.add(Hive.box(name).watch().listen((_) {
+      _localSubscriptions.add(CachePartitions.box(name).watch().listen((_) {
         _watchDebounce?.cancel();
         _watchDebounce = Timer(const Duration(milliseconds: 300), () {
           if (mounted) _refreshSelectedSaleContext();
         });
       }));
     }
-    _localSubscriptions.add(Hive.box('coding_box').watch().listen((_) => _onCatalogChanged()));
+    _localSubscriptions.add(CachePartitions.box('coding_box').watch().listen((_) => _onCatalogChanged()));
     _load();
   }
 
@@ -104,6 +105,8 @@ class _SaleReturnPageState extends State<SaleReturnPage> {
   }
 
   Future<void> _refreshSelectedSaleContext() async {
+return CachePartitions.run(() async {
+
     final selectedId = _sale?['id']?.toString();
     try {
       _sales = await _service.fetch('sales', widget.companyCode,
@@ -130,9 +133,12 @@ class _SaleReturnPageState extends State<SaleReturnPage> {
       _customerBalance = n(state['customer_balance']);
       if (mounted) setState(() {});
     } catch (_) {}
-  }
+});
+}
 
   Future<void> _load() async {
+return CachePartitions.run(() async {
+
     final branch = widget.editItem?['branch_code']?.toString() ?? widget.selectedBranchCode;
     try {
       _sales = await _service.fetch('sales', widget.companyCode, branchCode: branch);
@@ -155,9 +161,12 @@ class _SaleReturnPageState extends State<SaleReturnPage> {
       if (sale != null) await _selectSale(sale);
     }
     if (mounted) setState(() {});
-  }
+});
+}
 
   Future<void> _selectSale(JMap? value) async {
+return CachePartitions.run(() async {
+
     for (final line in _lines) {
       line.dispose();
     }
@@ -192,7 +201,8 @@ class _SaleReturnPageState extends State<SaleReturnPage> {
       if (_hasAvailableReturnItem) _lines.add(ReturnLine());
     }
     if (mounted) setState(() {});
-  }
+});
+}
 
   void _addReturnLine() {
     if (_sale == null || !_hasAvailableReturnItem) return;
@@ -385,6 +395,8 @@ class _SaleReturnPageState extends State<SaleReturnPage> {
   }
 
   Future<void> _save() async {
+return CachePartitions.run(() async {
+
     final selectedLines = _lines.where((line) => line.product != null && n(line.qty.text) > 0).toList();
     if (_sale == null || _store == null || _returnTotal <= 0 || selectedLines.isEmpty) return;
     if (_lines.any((line) => line.product == null && line.name.text.trim().isNotEmpty)) {
@@ -423,7 +435,8 @@ class _SaleReturnPageState extends State<SaleReturnPage> {
       await _selectSale(null);
     } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'))); }
     finally { if (mounted) setState(() => _busy = false); }
-  }
+});
+}
 
   @override
   Widget build(BuildContext context) => CommercialPageFrame(

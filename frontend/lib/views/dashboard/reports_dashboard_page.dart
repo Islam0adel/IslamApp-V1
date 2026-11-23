@@ -1,3 +1,4 @@
+import '../widgets/visibility_page_shell.dart';
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
 import '../../services/permissions_service.dart';
@@ -30,7 +31,16 @@ class ReportsDashboardPage extends StatelessWidget {
     {'id': 13, 'name': 'تحليل تجميع المنتجات', 'permission': (PermissionsService p) => p.canViewAdvancedReport13},
   ];
 
-  void _open(BuildContext context, int id) {
+  // تقارير تعتمد أرقامها على بيانات التكلفة (الجملة/أرصدة
+  // الموردين/قيمة المخزون): بلا حق التكلفة لا تُعرض إطلاقاً —
+  // إظهارها بقيم صفرية كان سيوحي بأرقام حقيقية خاطئة.
+  static const Set<int> _costDerivedReportIds = {6, 8, 9, 10, 12, 15};
+
+  void _open(BuildContext context, int id, {bool allowed = true}) {
+    if (!allowed) {
+      Navigator.push(context, MaterialPageRoute(builder: (_) => const VisibilityPageShell(title: 'التقارير')));
+      return;
+    }
     if (id <= 3) {
       // التقارير الأساسية (المبيعات، الفترة، الموسع)
       Navigator.push(
@@ -103,32 +113,34 @@ class ReportsDashboardPage extends StatelessWidget {
     // بناء قائمة البطاقات للتقارير الأساسية
     final List<Widget> cards = [];
 
-    if (canSales) {
-      cards.add(_card(context, 'تقرير المبيعات', Icons.point_of_sale, AppTheme.successFor(context), () => _open(context, 1)));
+    if (perms.pageVisible('تقرير المبيعات', fallback: canSales)) {
+      cards.add(_card(context, 'تقرير المبيعات', Icons.point_of_sale, AppTheme.successFor(context), () => _open(context, 1, allowed: canSales)));
     }
-    if (canPeriod) {
-      cards.add(_card(context, 'تقرير الفترة', Icons.analytics, AppTheme.accentFor(context), () => _open(context, 2)));
+    if (perms.pageVisible('تقرير الفترة', fallback: canPeriod)) {
+      cards.add(_card(context, 'تقرير الفترة', Icons.analytics, AppTheme.accentFor(context), () => _open(context, 2, allowed: canPeriod)));
     }
-    if (canPeriod && canExtended) {
+    if (perms.pageVisible('التقرير المالي الموسع / صافي الجرد الحالي', fallback: canPeriod && canExtended)) {
       cards.add(_card(
         context,
         'التقرير المالي الموسع / صافي الجرد الحالي',
         Icons.account_balance_wallet,
         AppTheme.warningFor(context),
-        () => _open(context, 3),
+        () => _open(context, 3, allowed: canPeriod && canExtended),
       ));
     }
 
     // إضافة التقارير التحليلية حسب الصلاحيات
     for (final report in _advancedReports) {
-      final bool hasPermission = report['permission'](perms);
-      if (hasPermission) {
+      final bool hasPermission = report['permission'](perms) &&
+          (!_costDerivedReportIds.contains(report['id']) ||
+              perms.canViewCostPrices);
+      if (perms.pageVisible(report['name'] as String, fallback: hasPermission)) {
         cards.add(_card(
           context,
           report['name'],
           Icons.insights,
           AppTheme.infoFor(context),
-          () => _open(context, report['id'] + 3),
+          () => _open(context, report['id'] + 3, allowed: hasPermission),
         ));
       }
     }

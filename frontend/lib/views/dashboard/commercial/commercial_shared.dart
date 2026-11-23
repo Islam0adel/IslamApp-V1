@@ -1,5 +1,5 @@
+import '../../../services/cache_partitions.dart';
 import 'package:flutter/material.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme.dart';
 
@@ -14,7 +14,7 @@ String money(num x) => NumberFormat('#,##0.##', 'en').format(x);
 String plain(num x) => x.isFinite && x == x.roundToDouble() ? x.toInt().toString() : x.toString();
 
 List<JMap> catalog(String company, String category) {
-  final raw = Hive.box('coding_box').get('${company}_$category', defaultValue: []);
+  final raw = CachePartitions.box('coding_box').get('${company}_$category', defaultValue: []);
   if (raw is! List) return [];
   return raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).where((e) => e['is_deleted'] != true).toList();
 }
@@ -30,12 +30,13 @@ String nameOf(List<JMap> data, String code) => data.firstWhere((e) => '${e['code
 class CommercialPageFrame extends StatelessWidget {
   final String title;
   final Widget child;
-  const CommercialPageFrame({super.key, required this.title, required this.child});
+  final bool dashboard;
+  const CommercialPageFrame({super.key, required this.title, required this.child, this.dashboard = false});
   @override
   Widget build(BuildContext context) => Scaffold(
     extendBodyBehindAppBar: true,
     appBar: AppBar(title: Text(title, style: TextStyle(color: AppTheme.textMainFor(context), fontFamily: 'Cairo', fontWeight: FontWeight.bold)), centerTitle: true, backgroundColor: AppTheme.appBarBg, elevation: 0),
-    body: Container(decoration: BoxDecoration(gradient: LinearGradient(colors: AppTheme.dashGradientDeep(context), begin: Alignment.topLeft, end: Alignment.bottomRight)), child: SafeArea(child: child)),
+    body: Container(decoration: BoxDecoration(gradient: LinearGradient(colors: dashboard ? AppTheme.dashGradientDeep(context) : AppTheme.dashGradientMain(context), begin: Alignment.topLeft, end: Alignment.bottomRight)), child: SafeArea(child: child)),
   );
 }
 

@@ -1,15 +1,16 @@
+import 'cache_partitions.dart';
 // lib/services/inventory_service.dart
 
 import 'dart:convert';
 
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/inventory_model.dart';
 import '../core/constants.dart';
 import '../services/coding_service.dart';
 import '../models/coding_model.dart';
 import 'auth_http.dart';
+import 'permissions_service.dart';
 
 
 class InventoryService {
@@ -24,8 +25,7 @@ class InventoryService {
   // Hive
   // ============================================================
 
-  final Box _inventoryBox =
-      Hive.box('inventory_box');
+  Box get _inventoryBox => CachePartitions.box('inventory_box');
 
 
   // ============================================================
@@ -41,6 +41,8 @@ class InventoryService {
     required String storeCode,
     required String date,
   }) async {
+return CachePartitions.run(() async {
+
     final String localKey =
         '${companyCode}_${branchCode}_${storeCode}_$date';
 
@@ -157,7 +159,8 @@ class InventoryService {
 
       return [];
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -167,6 +170,8 @@ class InventoryService {
   Future<Map<String, dynamic>> saveInventory(
     InventoryModel model,
   ) async {
+return CachePartitions.run(() async {
+
     try {
       // --------------------------------------------------------
       // حساب الإجماليات
@@ -257,6 +262,37 @@ class InventoryService {
             maxSerial + 1;
       }
 
+
+      // --------------------------------------------------------
+      // تحقق ذرّي قبل أي كتابة: كل الأصناف لازم تكون موجودة
+      // في كتالوج التكويد (سياسة الصلاحيات: الأسعار من التكويد،
+      // ولا تسجيل أصناف من شاشة الجرد بدون حق تكويد).
+      // --------------------------------------------------------
+      final List<CodingModel> catalogItems =
+          await CodingService().getCodingList(
+        companyCode: model.companyCode,
+        category: 'items',
+      );
+      final Set<String> catalogCodes =
+          catalogItems.map((e) => e.code.toString()).toSet();
+      final List<String> missingCodes = model.items
+          .map((e) => e.code.toString())
+          .where((c) => !catalogCodes.contains(c))
+          .toSet()
+          .toList();
+      // صنف جديد كلياً يُقبل بسعر مدخل فقط ممن يملك حق التكلفة
+      // مع حق التكويد معاً (مطابقة لقاعدة الخادم): من لا يرى سعر
+      // الجملة حقله مخفي، فيسجّل الصنف أولاً من شاشة التكويد.
+      if (missingCodes.isNotEmpty &&
+          !(PermissionsService().canAddCodingItem &&
+              PermissionsService().canViewCostPrices)) {
+        return {
+          'success': false,
+          'error': 'الأصناف التالية غير موجودة في التكويد: '
+              '${missingCodes.join("، ")}. سجّلها أولاً من شاشة '
+              'التكويد، ثم أعد إدخال الإذن.',
+        };
+      }
 
       // --------------------------------------------------------
       // إرسال للسيرفر
@@ -413,19 +449,20 @@ class InventoryService {
       final CodingService codingService =
           CodingService();
 
-
-      // نحتاج قراءة coding list عبر CodingService
-      final List<CodingModel> existingItems =
-          await codingService.getCodingList(
-        companyCode:
-            model.companyCode,
-        category:
-            'items',
-      );
+      // لا تسجيل أصناف جديدة من شاشة الجرد إلا بحق التكويد
+      // الفعلي. بدون الحق لا نداء جانبي أصلاً، والتحقق المسبق
+      // أعلاه يضمن عدم الحاجة.
+      if (!PermissionsService().canAddCodingItem) {
+        return {
+          'success': true,
+          'doc_id': docId,
+          'serial': model.serial,
+        };
+      }
 
 
       final Set<String> existingCodes =
-          existingItems
+          catalogItems
               .map(
                 (e) => e.code.toString(),
               )
@@ -480,7 +517,8 @@ class InventoryService {
         'error': e.toString(),
       };
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -491,6 +529,8 @@ class InventoryService {
     String companyCode,
     String docId,
   ) async {
+return CachePartitions.run(() async {
+
     try {
       final response = await AuthHttp.delete(
         Uri.parse(
@@ -594,7 +634,8 @@ class InventoryService {
 
       return false;
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -606,6 +647,8 @@ class InventoryService {
   Future<void> fetchAllInventory(
     String companyCode,
   ) async {
+return CachePartitions.run(() async {
+
     print(
       "📥 الجرد: بدء FULL SYNC "
       "للشركة $companyCode",
@@ -725,7 +768,8 @@ class InventoryService {
 
       rethrow;
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -739,8 +783,10 @@ class InventoryService {
     String companyCode, [
     String? lastSync,
   ]) async {
+return CachePartitions.run(() async {
+
     final prefs =
-        await SharedPreferences.getInstance();
+        await CachePartitions.preferences();
 
 
     final String lastSyncKey =
@@ -1039,5 +1085,6 @@ class InventoryService {
       // لا نغير lastSync عند الفشل
       rethrow;
     }
-  }
+});
+}
 }

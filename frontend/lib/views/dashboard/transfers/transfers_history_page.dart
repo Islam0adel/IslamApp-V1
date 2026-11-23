@@ -1,3 +1,4 @@
+import '../../../services/cache_partitions.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -28,7 +29,7 @@ class _TransfersHistoryPageState extends State<TransfersHistoryPage> {
   @override
   void initState() {
     super.initState();
-    _recordsSubscription = Hive.box('stock_transfers_box').watch().listen((_) {
+    _recordsSubscription = CachePartitions.box('stock_transfers_box').watch().listen((_) {
       _watchDebounce?.cancel();
       _watchDebounce = Timer(const Duration(milliseconds: 300), () {
         if (mounted) _load();
@@ -45,25 +46,34 @@ class _TransfersHistoryPageState extends State<TransfersHistoryPage> {
   }
 
   Future<void> _load() async {
+return CachePartitions.run(() async {
+
     try {
       _rows = await _service.fetch(widget.companyCode, branchCode: widget.branchCode);
     } catch (_) {}
     if (mounted) setState(() => _busy = false);
-  }
+});
+}
 
   Future<void> _refreshFromServer() async {
+return CachePartitions.run(() async {
+
     await _service.fetch(widget.companyCode, branchCode: widget.branchCode, forceRefresh: true);
     await _load();
-  }
+});
+}
 
   Future<void> _delete(JMap r) async {
+return CachePartitions.run(() async {
+
     try {
       await _service.delete(widget.companyCode, '${r['id']}');
       await _load();
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
     }
-  }
+});
+}
 
   @override
   Widget build(BuildContext context) => CommercialPageFrame(

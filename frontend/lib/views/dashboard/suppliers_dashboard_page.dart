@@ -1,3 +1,4 @@
+import '../widgets/visibility_page_shell.dart';
 // lib/views/dashboard/suppliers_dashboard_page.dart
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
@@ -58,7 +59,8 @@ class SuppliersDashboardPage extends StatelessWidget {
               children: [
 
                 // ✅ زر المشتريات (صفحة الموردين الحالية)
-                _buildDashboardCard(
+                if (PermissionsService().pageVisible('المشتريات'))
+_buildDashboardCard(
                   context,
                   icon: Icons.local_shipping_rounded,
                   title: 'المشتريات',
@@ -68,7 +70,7 @@ class SuppliersDashboardPage extends StatelessWidget {
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (c) => SupplierPage(
+                        builder: (c) => !(PermissionsService().canAddSupplierTransaction) ? const VisibilityPageShell(title: 'المشتريات') : SupplierPage(
                           companyCode: companyCode,
                           selectedBranchCode: selectedBranchCode,
                           userName: userName,
@@ -79,7 +81,8 @@ class SuppliersDashboardPage extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
                 // ✅ زر معاينة المشتريات (صفحة الهيستوري)
-                _buildDashboardCard(
+                if (PermissionsService().pageVisible('معاينة المشتريات'))
+_buildDashboardCard(
                   context,
                   icon: Icons.history_rounded,
                   title: 'معاينة المشتريات',
@@ -89,7 +92,7 @@ class SuppliersDashboardPage extends StatelessWidget {
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (c) => SupplierHistoryPage(
+                        builder: (c) => !(PermissionsService().canViewSupplierHistory) ? const VisibilityPageShell(title: 'معاينة المشتريات') : SupplierHistoryPage(
   companyCode: companyCode,
   selectedBranchCode: selectedBranchCode,
   userName: userName,
@@ -100,7 +103,8 @@ class SuppliersDashboardPage extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
                 // ✅ زر تسويات الموردين (قيد التطوير)
-                _buildDashboardCard(
+                if (PermissionsService().pageVisible('تسويات الموردين'))
+_buildDashboardCard(
                   context,
                   icon: Icons.account_balance_rounded,
                   title: 'تسويات الموردين',
@@ -110,7 +114,7 @@ class SuppliersDashboardPage extends StatelessWidget {
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (c) => SupplierSettlementPage(
+                        builder: (c) => !(PermissionsService().canAddSupplierSettlement) ? const VisibilityPageShell(title: 'تسويات الموردين') : SupplierSettlementPage(
                           companyCode: companyCode,
                           selectedBranchCode: selectedBranchCode,
                         ),
@@ -120,6 +124,7 @@ class SuppliersDashboardPage extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
 
+if (PermissionsService().pageVisible('معاينة التسويات'))
 _buildDashboardCard(
   context,
   icon: Icons.history_rounded,
@@ -130,7 +135,7 @@ _buildDashboardCard(
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (c) => SupplierSettlementHistoryPage(
+        builder: (c) => !(PermissionsService().canViewSupplierSettlements) ? const VisibilityPageShell(title: 'معاينة التسويات') : SupplierSettlementHistoryPage(
           companyCode: companyCode,
           selectedBranchCode: selectedBranchCode,
         ),
@@ -141,18 +146,18 @@ _buildDashboardCard(
                 const SizedBox(height: 20),
                                 const SizedBox(height: 16),
 
-                if (PermissionsService().canAddStockTransfer)
+                if (PermissionsService().pageVisible('التحويلات المخزنية', fallback: PermissionsService().canAddStockTransfer))
                   _buildDashboardCard(
                     context,
                     icon: Icons.swap_horiz_rounded,
                     title: 'التحويلات المخزنية',
                     subtitle: 'نقل أصناف بين فروع ومخازن الشركة',
                     color: AppTheme.extraTealFor(context),
-                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => StockTransfersPage(
+                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => !(PermissionsService().canAddStockTransfer) ? const VisibilityPageShell(title: 'التحويلات المخزنية') : StockTransfersPage(
                       companyCode: companyCode, branchCode: selectedBranchCode, userName: userName,
                     ))),
                   ),
-                if (PermissionsService().canViewStockTransfers) ...[
+                if (PermissionsService().pageVisible('معاينة التحويلات المخزنية', fallback: PermissionsService().canViewStockTransfers)) ...[
                   const SizedBox(height: 16),
                   _buildDashboardCard(
                     context,
@@ -160,7 +165,7 @@ _buildDashboardCard(
                     title: 'معاينة التحويلات المخزنية',
                     subtitle: 'عرض حركات النقل بين الفروع والمخازن',
                     color: AppTheme.accentFor(context),
-                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => TransfersHistoryPage(
+                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => !(PermissionsService().canViewStockTransfers) ? const VisibilityPageShell(title: 'معاينة التحويلات المخزنية') : TransfersHistoryPage(
                       companyCode: companyCode, branchCode: selectedBranchCode, userName: userName,
                     ))),
                   ),

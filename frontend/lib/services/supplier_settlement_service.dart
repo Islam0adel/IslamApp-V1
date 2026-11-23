@@ -1,8 +1,9 @@
+import 'cache_partitions.dart';
+import 'journal_cache.dart';
 // lib/services/supplier_settlement_service.dart
 
 import 'dart:convert';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'daily_service.dart';
 import '../core/constants.dart';
 import '../models/supplier_settlement_model.dart';
@@ -10,7 +11,7 @@ import 'auth_http.dart';
 
 class SupplierSettlementService {
   final String baseUrl = ApiConstants.baseUrl;
-  final Box _box = Hive.box('supplier_settlement_box');
+  Box get _box => CachePartitions.box('supplier_settlement_box');
 
   String newLinkId() => 'supplier-${DateTime.now().microsecondsSinceEpoch}';
 
@@ -36,6 +37,8 @@ class SupplierSettlementService {
     String branchCode,
     String supplierName,
   ) async {
+return CachePartitions.run(() async {
+
     double total = 0.0;
 
     for (final key in _box.keys) {
@@ -62,7 +65,8 @@ class SupplierSettlementService {
     }
 
     return total;
-  }
+});
+}
 
   // ============================================================
   // السيريال التالي
@@ -103,6 +107,8 @@ int _getNextSerial(String companyCode, String branchCode) {
   Future<Map<String, dynamic>> saveSettlement(
     SupplierSettlementModel model,
   ) async {
+return CachePartitions.run(() async {
+
     try {
       // --------------------------------------------------------
       // التأكد من رقم الإذن
@@ -172,16 +178,15 @@ int _getNextSerial(String companyCode, String branchCode) {
 final linkedRaw = result['linked_transaction'];
       if (linkedRaw is Map) {
         final linked = Map<String, dynamic>.from(linkedRaw);
-        final dailyBox = Hive.box('daily_transactions_box');
-        final key = 'branch_${linked['branch_code']}_${linked['serial']}';
+        final dailyBox = CachePartitions.box('daily_transactions_box');
         for (final oldKey in dailyBox.keys.toList()) {
           final old = dailyBox.get(oldKey);
-          if (old is Map && old['link_id']?.toString() == linked['link_id']?.toString()) {
+          if (old is Map && old['company_code']?.toString() == model.companyCode && old['link_id']?.toString() == linked['link_id']?.toString()) {
             await dailyBox.delete(oldKey);
           }
         }
         if (linked['is_deleted'] != true) {
-          await dailyBox.put(key, linked);
+          await JournalCache.put(dailyBox, linked, expectedCompany: model.companyCode);
         }
 
         final String targetBranch =
@@ -211,7 +216,8 @@ final linkedRaw = result['linked_transaction'];
         'error': e.toString(),
       };
     }
-  }
+});
+}
 
   // ============================================================
   // حفظ محلي
@@ -220,6 +226,8 @@ final linkedRaw = result['linked_transaction'];
   Future<void> _saveLocal(
     SupplierSettlementModel model,
   ) async {
+return CachePartitions.run(() async {
+
     final key =
         '${model.companyCode}_${model.branchCode}_${model.date}';
 
@@ -251,7 +259,8 @@ final linkedRaw = result['linked_transaction'];
     list.add(item);
 
     await _box.put(key, list);
-  }
+});
+}
 
   // ============================================================
   // جلب التسويات
@@ -266,6 +275,8 @@ final linkedRaw = result['linked_transaction'];
     String? startDate,
     String? endDate,
   }) async {
+return CachePartitions.run(() async {
+
     final List<SupplierSettlementModel> result = [];
 
     for (final key in _box.keys) {
@@ -322,7 +333,8 @@ final linkedRaw = result['linked_transaction'];
     });
 
     return result;
-  }
+});
+}
 
   // ============================================================
   // حذف تسوية
@@ -332,6 +344,8 @@ final linkedRaw = result['linked_transaction'];
   String companyCode,
   String docId,
 ) async {
+return CachePartitions.run(() async {
+
   try {
     String? linkedDailyId;
     for (final raw in _box.values.whereType<List>().expand((items) => items)) {
@@ -402,10 +416,10 @@ final linkedRaw = result['linked_transaction'];
     }
 
     if (linkedDailyId != null && linkedDailyId.isNotEmpty) {
-      final dailyBox = Hive.box('daily_transactions_box');
+      final dailyBox = CachePartitions.box('daily_transactions_box');
       for (final key in dailyBox.keys.toList()) {
         final raw = dailyBox.get(key);
-        if (raw is Map && raw['link_id']?.toString() == linkedDailyId) {
+        if (raw is Map && raw['company_code']?.toString() == companyCode && raw['link_id']?.toString() == linkedDailyId) {
           await dailyBox.delete(key);
         }
       }
@@ -418,6 +432,8 @@ final linkedRaw = result['linked_transaction'];
     );
     return false;
   }
+
+});
 }
 
   // ============================================================
@@ -427,6 +443,8 @@ final linkedRaw = result['linked_transaction'];
   Future<void> fetchAllSettlements(
     String companyCode,
   ) async {
+return CachePartitions.run(() async {
+
     try {
       final response = await AuthHttp.get(
         Uri.parse(
@@ -474,7 +492,8 @@ final linkedRaw = result['linked_transaction'];
       );
       rethrow;
     }
-  }
+});
+}
 
   // ============================================================
   // Incremental Sync
@@ -486,7 +505,9 @@ Future<void> syncChangesFromServer(
   String companyCode, [
   String? lastSync,
 ]) async {
-  final prefs = await SharedPreferences.getInstance();
+return CachePartitions.run(() async {
+
+  final prefs = await CachePartitions.preferences();
   final String lastSyncKey =
       '${ApiConstants.LAST_SYNC_SETTLEMENT}$companyCode';
   final String? savedLastSync = lastSync ?? prefs.getString(lastSyncKey);
@@ -642,6 +663,8 @@ Future<void> syncChangesFromServer(
     print('❌ فشل مزامنة التسويات: $e');
     rethrow;
   }
+
+});
 }
 
   // ============================================================

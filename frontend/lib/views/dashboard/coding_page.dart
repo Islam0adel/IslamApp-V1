@@ -1,3 +1,4 @@
+import '../../services/cache_partitions.dart';
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
 import '../../views/widgets/glass_card.dart';
@@ -28,6 +29,8 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
   final TextEditingController _codeController = TextEditingController();
   final TextEditingController _barcodeController = TextEditingController();
   final TextEditingController _wholesalePriceController = TextEditingController();
+  // هل الصنف المفتوح للتعديل موسوم "سعر غير محدد"
+  bool _editingCostPending = false;
   final TextEditingController _sellingPriceController = TextEditingController();
   final TextEditingController _profitMarginController = TextEditingController(text: "0.00");
   final TextEditingController _profitPercentController = TextEditingController(text: "0.00 %");
@@ -41,7 +44,7 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
-    final rawBranches = Hive.box('coding_box').get('${widget.companyCode}_branches', defaultValue: []);
+    final rawBranches = CachePartitions.box('coding_box').get('${widget.companyCode}_branches', defaultValue: []);
     if (rawBranches is List) {
       _storeBranches = rawBranches.whereType<Map>().map((e) => {
         'code': e['code']?.toString() ?? '', 'name': e['name']?.toString() ?? '',
@@ -68,10 +71,12 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
   }
 
   Future<void> _loadNextCode() async {
+return CachePartitions.run(() async {
+
     if (_isEditMode) return;
 
     try {
-      final Box codingBox = Hive.box('coding_box');
+      final Box codingBox = CachePartitions.box('coding_box');
       final String localKey = "${widget.companyCode}_$_selectedCategory";
       int maxCode = 0;
 
@@ -104,7 +109,8 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
         });
       }
     }
-  }
+});
+}
 
   @override
   Widget build(BuildContext context) {
@@ -144,9 +150,12 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
     return PopScope(
       canPop: false,
       onPopInvoked: (didPop) async {
+return CachePartitions.run(() async {
+
         if (didPop) return;
         if (context.mounted) Navigator.pop(context);
-      },
+});
+},
       child: Scaffold(
         extendBodyBehindAppBar: true,
         appBar: AppBar(
@@ -247,17 +256,38 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
                                   const SizedBox(height: 10),
                                   _buildField("الباركود", _barcodeController, Icons.barcode_reader),
                                   const SizedBox(height: 10),
-                                  Row(children: [
-                                    Expanded(child: _buildField("سعر الجملة", _wholesalePriceController, Icons.money)),
-                                    const SizedBox(width: 10),
-                                    Expanded(child: _buildField("سعر البيع", _sellingPriceController, Icons.sell)),
-                                  ]),
-                                  const SizedBox(height: 10),
-                                  Row(children: [
-                                    Expanded(child: _buildField("هامش الربح", _profitMarginController, Icons.calculate, enabled: false)),
-                                    const SizedBox(width: 10),
-                                    Expanded(child: _buildField("نسبة الربح", _profitPercentController, Icons.percent, enabled: false)),
-                                  ]),
+                                  // حقول التكلفة (الجملة/الربح): تُخفى كلياً
+                                  // لمن لا يملك حقها — الخادم لا يقبلها منه
+                                  // أصلاً، وإظهار حقل يُتجاهَل إدخاله تضليل.
+                                  if (PermissionsService().canViewCostPrices) ...[
+                                    Row(children: [
+                                      Expanded(child: _buildField("سعر الجملة", _wholesalePriceController, Icons.money)),
+                                      const SizedBox(width: 10),
+                                      Expanded(child: _buildField("سعر البيع", _sellingPriceController, Icons.sell)),
+                                    ]),
+                                    if (_editingCostPending)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 6),
+                                        child: Text(
+                                          "سعر الشراء غير محدد — حدده هنا ليُستخدم الصنف في الجرد والمشتريات",
+                                          style: TextStyle(
+                                            fontFamily: 'Cairo',
+                                            fontSize: 12,
+                                            color: AppTheme.warningFor(context),
+                                          ),
+                                        ),
+                                      ),
+                                  ]
+                                  else
+                                    _buildField("سعر البيع", _sellingPriceController, Icons.sell),
+                                  if (PermissionsService().canViewCostPrices) ...[
+                                    const SizedBox(height: 10),
+                                    Row(children: [
+                                      Expanded(child: _buildField("هامش الربح", _profitMarginController, Icons.calculate, enabled: false)),
+                                      const SizedBox(width: 10),
+                                      Expanded(child: _buildField("نسبة الربح", _profitPercentController, Icons.percent, enabled: false)),
+                                    ]),
+                                  ],
                                 ],
 
 
@@ -369,6 +399,8 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
   }
 
   void _handleSave() async {
+return CachePartitions.run(() async {
+
     if (!_canAddSelectedCategory()) {
       _showSnackBar("ليس لديك صلاحية للحفظ", AppTheme.warningOrangeFor(context));
       return;
@@ -399,16 +431,56 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
           ) ??
           0.0;
 
+      // صنف "غير محدد": الصفر الصريح يتطلب تأكيداً واعياً،
+      // والحقل الفارغ حفظٌ عادي يُبقي الصنف بلا سعر.
+      bool confirmZero = false;
+      final wholesaleText = _wholesalePriceController.text.trim();
+      if (_selectedCategory == 'items' &&
+          _editingCostPending &&
+          PermissionsService().canViewCostPrices &&
+          wholesaleText.isNotEmpty &&
+          (double.tryParse(wholesaleText) ?? 0.0) == 0.0) {
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text("تأكيد سعر صفري",
+                style: TextStyle(fontFamily: 'Cairo')),
+            content: const Text(
+              "هل سعر شراء هذا الصنف صفر عن قصد؟",
+              style: TextStyle(fontFamily: 'Cairo'),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text("إلغاء",
+                    style: TextStyle(fontFamily: 'Cairo')),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text("تأكيد الصفر",
+                    style: TextStyle(fontFamily: 'Cairo')),
+              ),
+            ],
+          ),
+        );
+        if (confirmed != true) {
+          setState(() => _isLoading = false);
+          return;
+        }
+        confirmZero = true;
+      }
+
       final newCodingItem = CodingModel(
         code: _codeController.text,
         name: _nameController.text,
         branchCode: _selectedCategory == 'stores' && (_selectedStoreBranch ?? '').isNotEmpty ? _selectedStoreBranch : null,
         type: _selectedType ?? "وارد",
         barcode: _barcodeController.text,
-        wholesalePrice: double.tryParse(_wholesalePriceController.text) ?? 0.0,
+        wholesalePrice: double.tryParse(wholesaleText) ?? 0.0,
         sellingPrice: double.tryParse(_sellingPriceController.text) ?? 0.0,
         profitMargin: double.tryParse(_profitMarginController.text) ?? 0.0,
         profitPercent: cleanPercent,
+        confirmZeroCost: confirmZero,
       );
 
       final result = await _codingService.saveCode(
@@ -435,9 +507,12 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
     } finally {
       setState(() => _isLoading = false);
     }
-  }
+});
+}
 
   void _showItemsModal() async {
+return CachePartitions.run(() async {
+
     if (!PermissionsService().canViewCoding) {
       _showSnackBar("ليس لديك صلاحية للمعاينة", AppTheme.warningOrangeFor(context));
       return;
@@ -463,7 +538,8 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
       setState(() => _isLoading = false);
       _showSnackBar("حدث خطأ أثناء المعاينة", AppTheme.dangerStrongFor(context));
     }
-  }
+});
+}
 
   Widget _buildModal(List<CodingModel> initialItems) {
     return StatefulBuilder(
@@ -532,6 +608,8 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
                                 color: AppTheme.dangerStrongFor(context),
                               ),
                               onPressed: () async {
+return CachePartitions.run(() async {
+
                                 setState(() => _isLoading = true);
                                 bool isDeleted =
                                     await _codingService.deleteCode(
@@ -555,7 +633,9 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
                                     AppTheme.dangerStrongFor(context),
                                   );
                                 }
-                              },
+
+});
+},
                             )
                           : null,
                       onTap: () {
@@ -573,8 +653,13 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
                           }
                           if (_selectedCategory == "items") {
                             _barcodeController.text = initialItems[i].barcode;
+                            _editingCostPending = initialItems[i].costPending;
+                            // صنف "غير محدد": حقل التكلفة فارغ لا صفراً،
+                            // حتى لا تُقرأ إعادة الإرسال كتأكيد صفر
                             _wholesalePriceController.text =
-                                initialItems[i].wholesalePrice.toString();
+                                initialItems[i].costPending
+                                    ? ''
+                                    : initialItems[i].wholesalePrice.toString();
                             _sellingPriceController.text =
                                 initialItems[i].sellingPrice.toString();
                             _profitMarginController.text =
@@ -603,6 +688,7 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
     _profitMarginController.text = "0.00";
     _profitPercentController.text = "0.00 %";
     _selectedType = null;
+    _editingCostPending = false;
     if (_selectedCategory == 'stores') _selectedStoreBranch = _storeBranches.firstOrNull?['code'];
     _isEditMode = false;
 

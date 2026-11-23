@@ -1,9 +1,9 @@
+import 'cache_partitions.dart';
 // lib/services/coding_service.dart
 
 import 'dart:convert';
 
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/coding_model.dart';
 import '../core/constants.dart';
@@ -22,8 +22,7 @@ class CodingService {
   // Hive
   // ============================================================
 
-  final Box _codingBox =
-      Hive.box('coding_box');
+  Box get _codingBox => CachePartitions.box('coding_box');
 
 
   // ============================================================
@@ -63,6 +62,8 @@ class CodingService {
     required String companyCode,
     required String category,
   }) async {
+return CachePartitions.run(() async {
+
     final String localKey =
         "${companyCode}_$category";
 
@@ -214,7 +215,8 @@ class CodingService {
 
       return [];
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -230,6 +232,8 @@ class CodingService {
   Future<void> fetchAllCoding(
     String companyCode,
   ) async {
+return CachePartitions.run(() async {
+
     print(
       "📥 التكويد: بدء FULL SYNC "
       "للشركة $companyCode",
@@ -366,7 +370,8 @@ class CodingService {
 
       rethrow;
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -382,8 +387,10 @@ class CodingService {
     String companyCode, [
     String? lastSync,
   ]) async {
+return CachePartitions.run(() async {
+
     final prefs =
-        await SharedPreferences.getInstance();
+        await CachePartitions.preferences();
 
 
     final String lastSyncKey =
@@ -759,7 +766,8 @@ class CodingService {
 
       rethrow;
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -771,6 +779,8 @@ class CodingService {
     required String category,
     required CodingModel model,
   }) async {
+return CachePartitions.run(() async {
+
     try {
       final Map<String, dynamic>
           bodyData =
@@ -993,7 +1003,8 @@ class CodingService {
         'error': e.toString(),
       };
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -1005,6 +1016,8 @@ class CodingService {
     required String category,
     required String code,
   }) async {
+return CachePartitions.run(() async {
+
     try {
       final response = await AuthHttp.delete(
         Uri.parse(
@@ -1109,5 +1122,6 @@ class CodingService {
 
       return false;
     }
-  }
+});
+}
 }

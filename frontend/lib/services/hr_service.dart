@@ -1,14 +1,17 @@
+import 'sync_read_access.dart';
+import 'cache_partitions.dart';
+import 'permissions_service.dart';
+import 'read_authorization_snapshot.dart';
 // lib/services/hr_service.dart
 
 import 'dart:convert';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:async';  // عشان unawaited
+import 'dart:async'; // عشان unawaited
 import '../models/hr_models.dart';
 import '../core/constants.dart';
 import '../core/hr_constants.dart';
 import 'auth_http.dart';
-
+import 'package:firebase_auth/firebase_auth.dart';
 
 /// خدمة الموارد البشرية — موحدة
 ///
@@ -30,11 +33,11 @@ class HRService {
 
   /// بيانات HR (attendance, vacations, adjustments, settings)
   /// بتستخدم نفس نمط باقي النظام — `coding_box` + مفاتيح prefixed
-  final Box _codingBox = Hive.box('coding_box');
+  Box get _codingBox => CachePartitions.box('coding_box');
 
   /// طابور العمليات المعلقة (pending)
   /// بدل ما كانت في الذاكرة وبتضيع عند قفل التطبيق
-  final Box _pendingBox = Hive.box('hr_pending_box');
+  Box get _pendingBox => CachePartitions.box('hr_pending_box');
 
   /// ⭐ مفاتيح pending شغالة الرفع دلوقتي (in-memory فقط)
   /// الفايدة:
@@ -43,13 +46,11 @@ class HRService {
   ///   - لو الرفع فشل، تشيلها من الـ Set → ترجع pending تاني
   final Set<String> _uploadingKeys = {};
 
-
   // ============================================================
   // Hive keys
   // ============================================================
 
-  String _attendanceKey(String companyCode) =>
-      '${companyCode}_hr_attendance';
+  String _attendanceKey(String companyCode) => '${companyCode}_hr_attendance';
 
   String _pendingKey(
     String companyCode,
@@ -58,6 +59,13 @@ class HRService {
   ) =>
       '${companyCode}_${employeeCode}_$date';
 
+  String _coverageKey(String kind, String company, String employee, String month) =>
+      '${company}_hr_coverage_${kind}_${employee}_$month';
+  bool _covered(String kind, String company, String employee, String month) =>
+      _codingBox.get(_coverageKey(kind, company, employee, month)) == PermissionsService().hrCoverageScope ||
+      _codingBox.get(_coverageKey(kind, company, '*', month)) == PermissionsService().hrCoverageScope;
+  Future<void> _markCovered(String kind, String company, String employee, String month) =>
+      _codingBox.put(_coverageKey(kind, company, employee, month), PermissionsService().hrCoverageScope);
 
   // ============================================================
   // Helpers
@@ -72,6 +80,8 @@ class HRService {
     List<Map<String, dynamic>> newItems, {
     required String Function(Map<String, dynamic>) uniqueKeyBuilder,
   }) async {
+return CachePartitions.run(() async {
+
     List<Map<String, dynamic>> currentList = [];
 
     if (_codingBox.containsKey(localKey)) {
@@ -94,8 +104,8 @@ class HRService {
     }
 
     await _codingBox.put(localKey, currentList);
-  }
-
+});
+}
 
   // ============================================================
   // ================= 1. ATTENDANCE ============================
@@ -108,10 +118,16 @@ class HRService {
     String? branchCode,
     String? employeeCode,
   }) async {
+return CachePartitions.run(() async {
+
+    final readScope = await ReadAuthorizationSnapshot.capture();
     final localKey = _attendanceKey(companyCode);
 
     // ---------- 1) Hive ----------
-    if (_codingBox.containsKey(localKey)) {
+    final coverageKind = 'attendance_day_${branchCode ?? '*'}';
+    final covered = _covered(coverageKind, companyCode, employeeCode ?? '*', date) ||
+        _covered('attendance', companyCode, employeeCode ?? '*', date.substring(0, 7));
+    if (covered && _codingBox.containsKey(localKey)) {
       final raw = _codingBox.get(localKey);
       if (raw is List) {
         final models = raw
@@ -122,7 +138,8 @@ class HRService {
             .where((a) => !a.isDeleted)
             .where((a) => a.date == date)
             .where((a) => branchCode == null || a.branchCode == branchCode)
-            .where((a) => employeeCode == null || a.employeeCode == employeeCode)
+            .where(
+                (a) => employeeCode == null || a.employeeCode == employeeCode)
             .toList();
 
         // إزالة التكرار (employee_code + date)
@@ -136,8 +153,7 @@ class HRService {
 
     // ---------- 2) السيرفر ----------
     try {
-      final url = Uri.parse("$baseUrl/hr/attendance/list/$companyCode")
-          .replace(
+      final url = Uri.parse("$baseUrl/hr/attendance/list/$companyCode").replace(
         queryParameters: {
           'date': date,
           if (branchCode != null) 'branch_code': branchCode,
@@ -145,11 +161,13 @@ class HRService {
         },
       );
 
+      readScope.check();
       final response = await AuthHttp.get(url);
+      readScope.check();
 
       if (!_ok(response.statusCode)) {
         print("❌ [attendance day] HTTP ${response.statusCode}");
-        return [];
+        throw StateError('تعذر تحميل تاريخ الحضور');
       }
 
       final List<dynamic> data = jsonDecode(response.body);
@@ -162,21 +180,23 @@ class HRService {
         list.add(map);
       }
 
+      readScope.check();
       await _mergeIntoHive(
         localKey,
         list,
-        uniqueKeyBuilder: (m) =>
-            '${m['employee_code']}_${m['date']}',
+        uniqueKeyBuilder: (m) => '${m['employee_code']}_${m['date']}',
       );
+      readScope.check();
 
+      await _markCovered(coverageKind, companyCode, employeeCode ?? '*', date);
+      readScope.check();
       return list.map((e) => HRAttendanceModel.fromMap(e)).toList();
-
     } catch (e) {
       print("❌ [attendance day] $e");
-      return [];
+      rethrow;
     }
-  }
-
+});
+}
 
   Future<Map<String, HRAttendanceModel>> getEmployeeMonthAttendance({
     required String companyCode,
@@ -184,6 +204,9 @@ class HRService {
     required String month,
     String? branchCode,
   }) async {
+return CachePartitions.run(() async {
+
+    final readScope = await ReadAuthorizationSnapshot.capture();
     final result = <String, HRAttendanceModel>{};
     final localKey = _attendanceKey(companyCode);
 
@@ -207,7 +230,7 @@ class HRService {
     }
 
     // ⭐ لو Hive فيه بيانات → رجّعها فوراً (سريع)
-    if (result.isNotEmpty) return result;
+    if (_covered('attendance', companyCode, employeeCode, month)) return result;
 
     // ---------- 2) Server fallback (للشهور القديمة) ----------
     try {
@@ -215,9 +238,11 @@ class HRService {
         "$baseUrl/hr/attendance/employee/$companyCode/$employeeCode",
       ).replace(queryParameters: {'month': month});
 
+      readScope.check();
       final response = await AuthHttp.get(url);
+      readScope.check();
 
-      if (!_ok(response.statusCode)) return result;
+      if (!_ok(response.statusCode)) throw StateError('تعذر تحميل حضور الشهر');
 
       final List<dynamic> data = jsonDecode(response.body);
       final list = <Map<String, dynamic>>[];
@@ -233,19 +258,24 @@ class HRService {
       }
 
       if (list.isNotEmpty) {
+        readScope.check();
         await _mergeIntoHive(
           localKey,
           list,
           uniqueKeyBuilder: (m) => '${m['employee_code']}_${m['date']}',
         );
+        readScope.check();
       }
 
+      readScope.check();
+      await _markCovered('attendance', companyCode, employeeCode, month);
+      readScope.check();
       return result;
     } catch (e) {
-      return result;
+      rethrow;
     }
-  }
-
+});
+}
 
   /// حفظ / تحديث حضور
   ///
@@ -253,7 +283,11 @@ class HRService {
   Future<Map<String, dynamic>> saveAttendance({
     required HRAttendanceModel model,
   }) async {
+return CachePartitions.run(() async {
+
+    final cacheScope = await ReadAuthorizationSnapshot.capture();
     try {
+      cacheScope.check();
       final response = await AuthHttp.post(
         Uri.parse("$baseUrl/hr/attendance/save"),
         headers: {"Content-Type": "application/json"},
@@ -268,6 +302,13 @@ class HRService {
       }
 
       final Map<String, dynamic> result = jsonDecode(response.body);
+      if (!cacheScope.isCurrent)
+        return {
+          'success': true,
+          'id': result['id'],
+          'action': result['action'],
+          'scope_changed': true
+        };
       final localKey = _attendanceKey(model.companyCode);
 
       // تحديث Hive
@@ -312,21 +353,22 @@ class HRService {
         'id': result['id'],
         'action': result['action'],
       };
-
     } catch (e) {
       return {
         'success': false,
         'error': e.toString(),
       };
     }
-  }
-
+});
+}
 
   /// حذف حضور (Soft Delete)
   Future<bool> deleteAttendance({
     required String companyCode,
     required int attendanceId,
   }) async {
+return CachePartitions.run(() async {
+
     try {
       final response = await AuthHttp.delete(
         Uri.parse(
@@ -363,13 +405,12 @@ class HRService {
       }
 
       return true;
-
     } catch (e) {
       print("❌ [attendance delete] $e");
       return false;
     }
-  }
-
+});
+}
 
   /// Full sync للحضور — آخر 6 شهور
   ///
@@ -377,6 +418,9 @@ class HRService {
   /// النسخة القديمة كانت بتحمّل "اليوم فقط" → بيانات ناقصة للأبد.
   /// النسخة الجديدة بتحمّل آخر 6 شهور في طلب واحد.
   Future<void> fetchAllAttendance(String companyCode) async {
+return CachePartitions.run(() async {
+
+    final readScope = await ReadAuthorizationSnapshot.capture();
     print("📥 [attendance] FULL SYNC (آخر 6 شهور) — $companyCode");
 
     try {
@@ -387,15 +431,16 @@ class HRService {
       final fromStr = HRConstants.dateToStr(fromDate);
       final toStr = HRConstants.dateToStr(toDate);
 
-      final url = Uri.parse("$baseUrl/hr/attendance/list/$companyCode")
-          .replace(
+      final url = Uri.parse("$baseUrl/hr/attendance/list/$companyCode").replace(
         queryParameters: {
           'from_date': fromStr,
           'to_date': toStr,
         },
       );
 
+      readScope.check();
       final response = await AuthHttp.get(url);
+      readScope.check();
 
       if (!_ok(response.statusCode)) {
         throw Exception(
@@ -413,36 +458,51 @@ class HRService {
         list.add(map);
       }
 
-      await _codingBox.put(_attendanceKey(companyCode), list);
+      readScope.check();
+      final previous = _codingBox.get(_attendanceKey(companyCode));
+      final older = previous is List ? previous.whereType<Map>().where((row) =>
+          (row['date']?.toString() ?? '').compareTo(fromStr) < 0).toList() : <Map>[];
+      await _codingBox.put(_attendanceKey(companyCode), [...older, ...list]);
+      readScope.check();
+      for (var i = 0; i <= 6; i++) {
+        final m = DateTime(now.year, now.month - i, 1);
+        await _markCovered('attendance', companyCode, '*', HRConstants.monthToStr(m));
+        readScope.check();
+      }
 
       print(
         "✅ [attendance] FULL SYNC: ${list.length} سجل "
         "($fromStr → $toStr)",
       );
-
     } catch (e) {
       print("❌ [attendance] FULL SYNC فشل: $e");
       rethrow;
     }
-  }
-
+});
+}
 
   /// Delta sync للحضور
   Future<void> syncChangesFromServer(
     String companyCode, [
     String? lastSync,
   ]) async {
-    final prefs = await SharedPreferences.getInstance();
+return CachePartitions.run(() async {
+
+    final readScope = await ReadAuthorizationSnapshot.capture();
+    final prefs = await CachePartitions.preferences();
+    readScope.check();
     final lastSyncKey = 'last_sync_hr_attendance_$companyCode';
     final lastSyncValue = lastSync ?? prefs.getString(lastSyncKey);
 
     // جهاز جديد → full sync
     if (lastSyncValue == null || lastSyncValue.isEmpty) {
       await fetchAllAttendance(companyCode);
+      readScope.check();
       await prefs.setString(
         lastSyncKey,
         DateTime.now().toUtc().toIso8601String(),
       );
+      readScope.check();
       return;
     }
 
@@ -456,7 +516,9 @@ class HRService {
       final url = Uri.parse("$baseUrl/hr/attendance/changes/$companyCode")
           .replace(queryParameters: {'since': effectiveSince});
 
+      readScope.check();
       final response = await AuthHttp.get(url);
+      readScope.check();
 
       if (!_ok(response.statusCode)) {
         throw Exception(
@@ -468,7 +530,9 @@ class HRService {
 
       if (changes.isEmpty) {
         print("⏭️ [attendance] لا يوجد تغييرات");
+        readScope.check();
         await prefs.setString(lastSyncKey, syncStartedAt.toIso8601String());
+        readScope.check();
         return;
       }
 
@@ -512,21 +576,23 @@ class HRService {
 
       if (currentList.isEmpty) {
         await _codingBox.delete(localKey);
+        readScope.check();
       } else {
+        readScope.check();
         await _codingBox.put(localKey, currentList);
+        readScope.check();
       }
 
+      readScope.check();
       await prefs.setString(lastSyncKey, syncStartedAt.toIso8601String());
+      readScope.check();
       print("✅ [attendance] تم تحديث ${changes.length} تغيير");
-
     } catch (e) {
       print("❌ [attendance] INCREMENTAL فشل: $e");
       rethrow;
     }
-  }
-
-
-
+});
+}
 
   /// جلب الـ pending model (لو موجود وaction=save)
   HRAttendanceModel? getPendingModel(
@@ -565,28 +631,39 @@ class HRService {
     return raw['action'] == 'delete';
   }
 
-    Future<void> addPendingSave(HRAttendanceModel model) async {
+  Future<void> addPendingSave(HRAttendanceModel model) async {
+return CachePartitions.run(() async {
+
     final key = _pendingKey(model.companyCode, model.employeeCode, model.date);
     // ⭐ لو كان بيترفع دلوقتي، نلغي علامة الرفع عشان الـ UI يشوف الـ pending الجديد
     _uploadingKeys.remove(key);
     await _pendingBox.put(key, {
       'action': 'save',
       'data': model.toMap(),
+      // وسم الملكية: لا يرفعها ولا يرفع عنها التعليق إلا مالكها
+      'company_code': model.companyCode,
+      'user_uid': FirebaseAuth.instance.currentUser?.uid ?? '',
     });
-  }
+});
+}
 
   Future<void> addPendingDelete({
     required String companyCode,
     required String employeeCode,
     required String date,
   }) async {
+return CachePartitions.run(() async {
+
     final key = _pendingKey(companyCode, employeeCode, date);
     _uploadingKeys.remove(key);
     await _pendingBox.put(key, {
       'action': 'delete',
       'data': null,
+      'company_code': companyCode,
+      'user_uid': FirebaseAuth.instance.currentUser?.uid ?? '',
     });
-  }
+});
+}
 
   /// إزالة pending (بعد ما اترفع بنجاح)
   Future<void> removePending(
@@ -594,10 +671,13 @@ class HRService {
     String employeeCode,
     String date,
   ) async {
+return CachePartitions.run(() async {
+
     await _pendingBox.delete(
       _pendingKey(companyCode, employeeCode, date),
     );
-  }
+});
+}
 
   /// هل فيه pending لهذا الموظف/اليوم؟ (بيستثني اللي under upload)
   bool hasPending(
@@ -618,7 +698,7 @@ class HRService {
     for (final key in _pendingBox.keys) {
       final keyStr = key.toString();
       if (!keyStr.startsWith(prefix)) continue;
-      if (_uploadingKeys.contains(keyStr)) continue;  // ⭐
+      if (_uploadingKeys.contains(keyStr)) continue; // ⭐
 
       final raw = _pendingBox.get(key);
       if (raw is! Map) continue;
@@ -638,6 +718,8 @@ class HRService {
 
   /// حذف كل pending لشركة معينة (عند logout أو reset)
   Future<void> clearPending(String companyCode) async {
+return CachePartitions.run(() async {
+
     final prefix = '${companyCode}_';
     final toDelete = <dynamic>[];
 
@@ -650,287 +732,249 @@ class HRService {
     for (final key in toDelete) {
       await _pendingBox.delete(key);
     }
-  }
+});
+}
 
   /// رفع كل pending لموظف معين (يُستخدم في زر "حفظ")
   ///
-    /// رفع كل pending لموظف معين (يُستخدم في زر "حفظ")
+  /// رفع كل pending لموظف معين (يُستخدم في زر "حفظ")
   ///
   /// ⭐ تحسين: كل السجلات بترفع متوازية (batched 5 at a time)
   /// عشان 3 أيام ماتاخدش 3 ثواني — تاخد ~500ms
   ///
   /// ⭐ onProgress: عشان الـ UI يعرض "2 من 5"
+  // The fast-save button and reconnect retry share one per-record upload
+  // lane, across HRService instances. UI stays local-first; requests for the
+  // same employee/day cannot reach the server out of order.
+  static final Map<String, Future<void>> _attendanceUploadTails = {};
+
+  Future<T> _attendanceUpload<T>(String key, Future<T> Function() work) async {
+return CachePartitions.run(() async {
+
+    final previous = _attendanceUploadTails[key] ?? Future<void>.value();
+    final done = Completer<void>();
+    _attendanceUploadTails[key] = done.future;
+    await previous;
+    try {
+      return await work();
+    } finally {
+      done.complete();
+      if (identical(_attendanceUploadTails[key], done.future)) {
+        _attendanceUploadTails.remove(key);
+      }
+    }
+});
+}
+
+  bool _mayUploadPending(Map op) {
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    return uid.isNotEmpty &&
+        op['user_uid'] == uid &&
+        op['discarded'] != true &&
+        op['revoked_hold'] != true;
+  }
+
+  Future<Map<String, dynamic>?> _pendingSnapshot(dynamic key) async {
+return CachePartitions.run(() async {
+
+    final raw = _pendingBox.get(key);
+    if (raw is! Map) return null;
+    final op = Map<String, dynamic>.from(raw);
+    if ((op['user_uid']?.toString() ?? '').isEmpty) {
+      if (op['ownership_unverified'] != true) {
+        op['ownership_unverified'] = true;
+        await _pendingBox.put(key, op);
+      }
+      return null;
+    }
+    return _mayUploadPending(op) ? op : null;
+});
+}
+
+  Future<String?> _uploadPendingEntry(
+          String companyCode, dynamic key, Map<String, dynamic> expected) =>
+      _attendanceUpload(key.toString(), () async {
+        final raw = _pendingBox.get(key);
+        if (raw is! Map ||
+            !_mayUploadPending(raw) ||
+            jsonEncode(raw) != jsonEncode(expected)) return null;
+        final prefix = '${companyCode}_';
+        final suffix = key.toString().substring(prefix.length);
+        final divider = suffix.lastIndexOf('_');
+        if (divider <= 0) return 'invalid attendance queue key';
+        final employee = suffix.substring(0, divider);
+        final date = suffix.substring(divider + 1);
+        if (expected['action'] == 'delete') {
+          int? existingId;
+          final rows = _codingBox.get(_attendanceKey(companyCode));
+          if (rows is List) {
+            for (final item in rows.whereType<Map>()) {
+              if (item['employee_code']?.toString() == employee &&
+                  item['date']?.toString() == date &&
+                  item['is_deleted'] != true) {
+                existingId = int.tryParse(item['id']?.toString() ?? '');
+                break;
+              }
+            }
+          }
+          if (existingId == null) {
+            // A prior save may have committed with its reply lost. Resolve the
+            // exact employee/day from the server before acknowledging a delete.
+            final response = await AuthHttp.get(
+                Uri.parse('$baseUrl/hr/attendance/list/$companyCode').replace(
+                    queryParameters: {
+                  'date': date,
+                  'employee_code': employee
+                }));
+            if (!_ok(response.statusCode)) return 'delete lookup $date failed';
+            final items = jsonDecode(response.body);
+            if (items is! List) return 'invalid attendance delete lookup';
+            for (final item in items.whereType<Map>()) {
+              if (item['employee_code']?.toString() == employee &&
+                  item['date']?.toString() == date &&
+                  item['is_deleted'] != true) {
+                existingId = int.tryParse(item['id']?.toString() ?? '');
+                if (existingId == null) return 'invalid attendance id';
+                break;
+              }
+            }
+          }
+          if (existingId != null) {
+            // Recheck authority after the lookup and before any mutation.
+            final latest = _pendingBox.get(key);
+            if (latest is! Map ||
+                !_mayUploadPending(latest) ||
+                jsonEncode(latest) != jsonEncode(expected)) return null;
+            final ok = await deleteAttendance(
+                companyCode: companyCode, attendanceId: existingId);
+            if (!ok) return 'delete $date failed';
+          }
+        } else {
+          final data = expected['data'];
+          if (data is! Map) return 'invalid attendance save payload';
+          final model =
+              HRAttendanceModel.fromMap(Map<String, dynamic>.from(data));
+          if (model.companyCode != companyCode ||
+              model.employeeCode != employee ||
+              model.date != date) {
+            return 'attendance queue target mismatch';
+          }
+          final result = await saveAttendance(model: model);
+          if (result['success'] != true)
+            return 'save $date: ${result['error']}';
+        }
+        await _safeDeletePending(key, expected);
+        return null;
+      });
+
   Future<Map<String, dynamic>> commitPending({
     required String companyCode,
     required String employeeCode,
     void Function(int done, int total)? onProgress,
   }) async {
+return CachePartitions.run(() async {
+
     final prefix = '${companyCode}_${employeeCode}_';
-    final keys = <dynamic>[];
-
-    for (final key in _pendingBox.keys) {
-      if (key.toString().startsWith(prefix)) {
-        keys.add(key);
-      }
+    final snapshot = <dynamic, Map<String, dynamic>>{};
+    for (final key in _pendingBox.keys.toList()) {
+      if (!key.toString().startsWith(prefix)) continue;
+      final op = await _pendingSnapshot(key);
+      if (op != null) snapshot[key] = op;
     }
-
-    final total = keys.length;
-    int done = 0;
-    int saved = 0;
-    int deleted = 0;
-    final errors = <String>[];
-
-    onProgress?.call(0, total);
-
-    Future<void> processOne(dynamic key) async {
-      try {
-        final raw = _pendingBox.get(key);
-        if (raw is! Map) {
-          return;
-        }
-
-        final map = Map<String, dynamic>.from(raw);
-        final action = map['action']?.toString() ?? 'save';
-
-        if (action == 'delete') {
-          final keyStr = key.toString();
-          final date = keyStr.split('_').last;
-          final localKey = _attendanceKey(companyCode);
-
-          int? existingId;
-          if (_codingBox.containsKey(localKey)) {
-            final listRaw = _codingBox.get(localKey);
-            if (listRaw is List) {
-              for (final item in listRaw) {
-                if (item is! Map) continue;
-                final m = Map<String, dynamic>.from(item);
-                if (m['employee_code']?.toString() == employeeCode &&
-                    m['date']?.toString() == date) {
-                  existingId = int.tryParse(m['id']?.toString() ?? '');
-                  break;
-                }
-              }
-            }
-          }
-
-          if (existingId != null) {
-            final ok = await deleteAttendance(
-              companyCode: companyCode,
-              attendanceId: existingId,
-            );
-            if (ok) {
-              deleted++;
-              await _pendingBox.delete(key);
-            } else {
-              errors.add('delete $date failed');
-            }
-          } else {
-            await _pendingBox.delete(key);
-          }
-        } else {
-          final data = map['data'];
-          if (data is! Map) {
-            await _pendingBox.delete(key);
-            return;
-          }
-
-          final model = HRAttendanceModel.fromMap(
-            Map<String, dynamic>.from(data),
-          );
-
-          final result = await saveAttendance(model: model);
-          if (result['success'] == true) {
-            saved++;
-            await _pendingBox.delete(key);
-          } else {
-            errors.add('save ${model.date}: ${result['error']}');
-          }
-        }
-      } catch (e) {
-        errors.add('$key: $e');
-      } finally {
-        done++;
-        onProgress?.call(done, total);
-      }
-    }
-
-    // ⭐ تنفيذ متوازي — batches of 5 عشان ما نغرقش السيرفر
-    const batchSize = 5;
-    for (int i = 0; i < keys.length; i += batchSize) {
-      final end = (i + batchSize).clamp(0, keys.length);
-      final batch = keys.sublist(i, end);
-      await Future.wait(batch.map(processOne));
-    }
-
-    return {
-      'success': errors.isEmpty,
-      'saved_count': saved,
-      'deleted_count': deleted,
-      'errors': errors,
-    };
-  }
-
-    // ============================================================
-  // ⭐ commitPendingFast — حفظ فوري + رفع في الخلفية
-  //
-  // الفرق عن commitPending:
-  //   - commitPending: بترجع بعد ما كل الرفع يخلص (المستخدم يستنى)
-  //   - commitPendingFast: بترجع فوراً، الرفع في الخلفية
-  //
-  // الضمانات:
-  //   1. الـ pending تفضل في Hive لحد ما الرفع ينجح (مفيش فقدان)
-  //   2. _uploadingKeys بيخلي الـ UI يعتبرها "محفوظة" فوراً
-  //   3. لو الرفع فشل، _uploadingKeys بتشيل المفتاح → ترجع pending
-  // ============================================================
+    return _uploadAttendanceSnapshot(companyCode, snapshot,
+        onProgress: onProgress);
+});
+}
 
   Future<Map<String, dynamic>> commitPendingFast({
     required String companyCode,
     required String employeeCode,
-    void Function()? onCompleted,   // ⭐ جديد
+    void Function()? onCompleted,
   }) async {
+return CachePartitions.run(() async {
+
     final prefix = '${companyCode}_${employeeCode}_';
-    final keys = <dynamic>[];
-
-    for (final key in _pendingBox.keys) {
-      if (key.toString().startsWith(prefix)) keys.add(key);
-    }
-
-    if (keys.isEmpty) {
-      return {
-        'success': true, 'pending_count': 0,
-        'saved_count': 0, 'deleted_count': 0,
-      };
-    }
-
     final snapshot = <dynamic, Map<String, dynamic>>{};
-    for (final key in keys) {
-      final raw = _pendingBox.get(key);
-      if (raw is Map) {
-        snapshot[key] = Map<String, dynamic>.from(raw);
+    for (final key in _pendingBox.keys.toList()) {
+      if (!key.toString().startsWith(prefix)) continue;
+      final op = await _pendingSnapshot(key);
+      if (op != null) {
+        snapshot[key] = op;
         _uploadingKeys.add(key.toString());
       }
     }
-
-    unawaited(_uploadInBackground(
-      companyCode: companyCode,
-      snapshot: snapshot,
-      onCompleted: onCompleted,
-    ));
-
+    unawaited(() async {
+      await _uploadAttendanceSnapshot(companyCode, snapshot);
+      if (onCompleted != null) {
+        try {
+          onCompleted();
+        } catch (_) {}
+      }
+    }());
     return {
       'success': true,
-      'pending_count': keys.length,
+      'pending_count': snapshot.length,
       'saved_count': 0,
-      'deleted_count': 0,
+      'deleted_count': 0
     };
-  }
+});
+}
 
-  Future<void> _uploadInBackground({
-    required String companyCode,
-    required Map<dynamic, Map<String, dynamic>> snapshot,
-    void Function()? onCompleted,
-  }) async {
-    int saved = 0;
-    int deleted = 0;
+  Future<Map<String, dynamic>> _uploadAttendanceSnapshot(
+      String companyCode, Map<dynamic, Map<String, dynamic>> snapshot,
+      {void Function(int done, int total)? onProgress}) async {
+return CachePartitions.run(() async {
+
+    int done = 0, saved = 0, deleted = 0;
     final errors = <String>[];
-
     final entries = snapshot.entries.toList();
-    const batchSize = 5;
-
-    for (int i = 0; i < entries.length; i += batchSize) {
-      final end = (i + batchSize).clamp(0, entries.length);
-      final batch = entries.sublist(i, end);
-
-      await Future.wait(batch.map((entry) async {
-        final key = entry.key;
-        final uploadedMap = entry.value;
-        final uploadedAction = uploadedMap['action']?.toString() ?? 'save';
-
+    onProgress?.call(0, entries.length);
+    // Retain existing five-at-a-time concurrency for different days/employees.
+    for (int i = 0; i < entries.length; i += 5) {
+      final end = (i + 5).clamp(0, entries.length);
+      await Future.wait(entries.sublist(i, end).map((entry) async {
         try {
-          if (uploadedAction == 'delete') {
-            final date = key.toString().split('_').last;
-            final localKey = _attendanceKey(companyCode);
-            int? existingId;
-            if (_codingBox.containsKey(localKey)) {
-              final listRaw = _codingBox.get(localKey);
-              if (listRaw is List) {
-                for (final item in listRaw) {
-                  if (item is! Map) continue;
-                  final m = Map<String, dynamic>.from(item);
-                  final emp = uploadedMap['data']?['employee_code']?.toString()
-                      ?? m['employee_code']?.toString();
-                  if (m['employee_code']?.toString() == emp &&
-                      m['date']?.toString() == date) {
-                    existingId = int.tryParse(m['id']?.toString() ?? '');
-                    break;
-                  }
-                }
-              }
-            }
-            if (existingId != null) {
-              final ok = await deleteAttendance(
-                companyCode: companyCode,
-                attendanceId: existingId,
-              );
-              if (ok) {
-                deleted++;
-                await _safeDeletePending(key, uploadedMap);
-              } else {
-                errors.add('delete $date failed');
-              }
-            } else {
-              await _safeDeletePending(key, uploadedMap);
-            }
+          final error =
+              await _uploadPendingEntry(companyCode, entry.key, entry.value);
+          if (error != null) {
+            errors.add(error);
+          } else if (entry.value['action'] == 'delete') {
+            deleted++;
           } else {
-            final data = uploadedMap['data'];
-            if (data is! Map) {
-              await _safeDeletePending(key, uploadedMap);
-              return;
-            }
-            final model = HRAttendanceModel.fromMap(
-              Map<String, dynamic>.from(data),
-            );
-            final result = await saveAttendance(model: model);
-            if (result['success'] == true) {
-              saved++;
-              await _safeDeletePending(key, uploadedMap);
-            } else {
-              errors.add('save ${model.date}: ${result['error']}');
-            }
+            saved++;
           }
         } catch (e) {
-          errors.add('$key: $e');
+          errors.add('${entry.key}: $e');
         } finally {
-          _uploadingKeys.remove(key.toString());
+          _uploadingKeys.remove(entry.key.toString());
+          done++;
+          onProgress?.call(done, entries.length);
         }
       }));
     }
+    return {
+      'success': errors.isEmpty,
+      'saved_count': saved,
+      'deleted_count': deleted,
+      'errors': errors
+    };
+});
+}
 
-    print('✅ [bg upload] saved=$saved deleted=$deleted errors=${errors.length}');
-
-    if (onCompleted != null) {
-      try { onCompleted(); } catch (_) {}
-    }
-  }
-
-  /// ⭐ يمسح الـ pending فقط لو لسه نفس اللي اترفع
-  /// (لو المستخدم عدّل/حذف أثناء الرفع، الـ pending الجديد بيفضل)
   Future<void> _safeDeletePending(
-    dynamic key,
-    Map<String, dynamic> uploadedMap,
-  ) async {
+      dynamic key, Map<String, dynamic> uploadedMap) async {
+return CachePartitions.run(() async {
+
     final current = _pendingBox.get(key);
-    if (current is! Map) return;
-    final currentMap = Map<String, dynamic>.from(current);
-
-    final sameAction = currentMap['action'] == uploadedMap['action'];
-    final sameData =
-        jsonEncode(currentMap['data']) == jsonEncode(uploadedMap['data']);
-
-    if (sameAction && sameData) {
+    // Include ownership and holds, not only action/data. A revocation applied
+    // during the request must not be erased by its acknowledgement.
+    if (current is Map &&
+        _mayUploadPending(current) &&
+        jsonEncode(current) == jsonEncode(uploadedMap)) {
       await _pendingBox.delete(key);
     }
-  }
+});
+}
 
   /// ⭐ هل المفتاح ده تحت الرفع؟
   bool isUploadingKey(String companyCode, String employeeCode, String date) {
@@ -944,6 +988,8 @@ class HRService {
   /// لو المستخدم قفل التطبيق أثناء الحفظ، الـ pending بيفضل في Hive.
   /// الدالة دي بتحاول ترفعه في المرة الجاية.
   Future<void> retryAllPending(String companyCode) async {
+return CachePartitions.run(() async {
+
     final prefix = '${companyCode}_';
     final byEmployee = <String, Set<String>>{};
 
@@ -969,8 +1015,8 @@ class HRService {
         print('❌ [retry] failed for employee $emp: $e');
       }
     }
-  }
-
+});
+}
 
   // ============================================================
   // ================= 3. VACATIONS ============================
@@ -986,6 +1032,9 @@ class HRService {
     String? branchCode,
     String? employeeCode,
   }) async {
+return CachePartitions.run(() async {
+
+    final readScope = await ReadAuthorizationSnapshot.capture();
     final localKey = _vacationKey(companyCode);
 
     // ---------- 1) Hive ----------
@@ -1017,8 +1066,7 @@ class HRService {
 
     // ---------- 2) السيرفر ----------
     try {
-      final url = Uri.parse("$baseUrl/hr/vacations/list/$companyCode")
-          .replace(
+      final url = Uri.parse("$baseUrl/hr/vacations/list/$companyCode").replace(
         queryParameters: {
           if (fromDate != null) 'from_date': fromDate,
           if (toDate != null) 'to_date': toDate,
@@ -1027,7 +1075,9 @@ class HRService {
         },
       );
 
+      readScope.check();
       final response = await AuthHttp.get(url);
+      readScope.check();
 
       if (!_ok(response.statusCode)) {
         print("❌ [vacations list] HTTP ${response.statusCode}");
@@ -1046,22 +1096,27 @@ class HRService {
 
       // نستخدم put مباشر (مش merge) عشان ده fetch كامل
       // بنستبدل القائمة المحلية بالكامل
+      readScope.check();
       await _codingBox.put(localKey, list);
+      readScope.check();
 
       return list.map((e) => HRVacationModel.fromMap(e)).toList();
-
     } catch (e) {
       print("❌ [vacations list] $e");
       return [];
     }
-  }
-
+});
+}
 
   /// حفظ / تحديث إجازة
   Future<Map<String, dynamic>> saveVacation({
     required HRVacationModel model,
   }) async {
+return CachePartitions.run(() async {
+
+    final cacheScope = await ReadAuthorizationSnapshot.capture();
     try {
+      cacheScope.check();
       final response = await AuthHttp.post(
         Uri.parse("$baseUrl/hr/vacations/save"),
         headers: {"Content-Type": "application/json"},
@@ -1076,6 +1131,13 @@ class HRService {
       }
 
       final Map<String, dynamic> result = jsonDecode(response.body);
+      if (!cacheScope.isCurrent)
+        return {
+          'success': true,
+          'id': result['id'],
+          'action': result['action'],
+          'scope_changed': true
+        };
       final localKey = _vacationKey(model.companyCode);
 
       // تحديث Hive
@@ -1108,8 +1170,7 @@ class HRService {
       currentList.removeWhere(
         (e) =>
             e['date']?.toString() == model.date &&
-            (e['branch_code']?.toString() ?? '') ==
-                (model.branchCode ?? '') &&
+            (e['branch_code']?.toString() ?? '') == (model.branchCode ?? '') &&
             (e['employee_code']?.toString() ?? '') ==
                 (model.employeeCode ?? ''),
       );
@@ -1123,21 +1184,22 @@ class HRService {
         'id': result['id'],
         'action': result['action'],
       };
-
     } catch (e) {
       return {
         'success': false,
         'error': e.toString(),
       };
     }
-  }
-
+});
+}
 
   /// حذف إجازة
   Future<bool> deleteVacation({
     required String companyCode,
     required int vacationId,
   }) async {
+return CachePartitions.run(() async {
+
     try {
       final response = await AuthHttp.delete(
         Uri.parse(
@@ -1173,25 +1235,29 @@ class HRService {
       }
 
       return true;
-
     } catch (e) {
       print("❌ [vacation delete] $e");
       return false;
     }
-  }
-
+});
+}
 
   /// Full sync للإجازات
   ///
   /// الإجازات عادةً قليلة (10-30 سجل/سنة) → ناخد كل التاريخ
   /// في طلب واحد (مش محتاجين from_date/to_date).
   Future<void> fetchAllVacations(String companyCode) async {
+return CachePartitions.run(() async {
+
+    final readScope = await ReadAuthorizationSnapshot.capture();
     print("📥 [vacations] FULL SYNC — $companyCode");
 
     try {
       final url = Uri.parse("$baseUrl/hr/vacations/list/$companyCode");
 
+      readScope.check();
       final response = await AuthHttp.get(url);
+      readScope.check();
 
       if (!_ok(response.statusCode)) {
         throw Exception('فشل تحميل الإجازات. HTTP ${response.statusCode}');
@@ -1207,32 +1273,39 @@ class HRService {
         list.add(map);
       }
 
+      readScope.check();
       await _codingBox.put(_vacationKey(companyCode), list);
+      readScope.check();
 
       print("✅ [vacations] FULL SYNC: ${list.length} سجل");
-
     } catch (e) {
       print("❌ [vacations] FULL SYNC فشل: $e");
       rethrow;
     }
-  }
-
+});
+}
 
   /// Delta sync للإجازات
   Future<void> syncVacationsChangesFromServer(
     String companyCode, [
     String? lastSync,
   ]) async {
-    final prefs = await SharedPreferences.getInstance();
+return CachePartitions.run(() async {
+
+    final readScope = await ReadAuthorizationSnapshot.capture();
+    final prefs = await CachePartitions.preferences();
+    readScope.check();
     final lastSyncKey = 'last_sync_hr_vacations_$companyCode';
     final lastSyncValue = lastSync ?? prefs.getString(lastSyncKey);
 
     if (lastSyncValue == null || lastSyncValue.isEmpty) {
       await fetchAllVacations(companyCode);
+      readScope.check();
       await prefs.setString(
         lastSyncKey,
         DateTime.now().toUtc().toIso8601String(),
       );
+      readScope.check();
       return;
     }
 
@@ -1246,7 +1319,9 @@ class HRService {
       final url = Uri.parse("$baseUrl/hr/vacations/changes/$companyCode")
           .replace(queryParameters: {'since': effectiveSince});
 
+      readScope.check();
       final response = await AuthHttp.get(url);
+      readScope.check();
 
       if (!_ok(response.statusCode)) {
         throw Exception('فشل مزامنة الإجازات. HTTP ${response.statusCode}');
@@ -1256,7 +1331,9 @@ class HRService {
 
       if (changes.isEmpty) {
         print("⏭️ [vacations] لا يوجد تغييرات");
+        readScope.check();
         await prefs.setString(lastSyncKey, syncStartedAt.toIso8601String());
+        readScope.check();
         return;
       }
 
@@ -1297,26 +1374,29 @@ class HRService {
 
       if (currentList.isEmpty) {
         await _codingBox.delete(localKey);
+        readScope.check();
       } else {
+        readScope.check();
         await _codingBox.put(localKey, currentList);
+        readScope.check();
       }
 
+      readScope.check();
       await prefs.setString(lastSyncKey, syncStartedAt.toIso8601String());
+      readScope.check();
       print("✅ [vacations] تم تحديث ${changes.length} تغيير");
-
     } catch (e) {
       print("❌ [vacations] INCREMENTAL فشل: $e");
       rethrow;
     }
-  }
-
+});
+}
 
   // ============================================================
   // ================= 4. ADJUSTMENTS ==========================
   // ============================================================
 
-  String _adjustmentsKey(String companyCode) =>
-      '${companyCode}_hr_adjustments';
+  String _adjustmentsKey(String companyCode) => '${companyCode}_hr_adjustments';
 
   /// جلب تسويات شهر معين (كل الموظفين)
   Future<List<HRAdjustmentModel>> getAdjustmentsForMonth({
@@ -1324,10 +1404,15 @@ class HRService {
     required String month,
     String? branchCode,
   }) async {
+return CachePartitions.run(() async {
+
+    final readScope = await ReadAuthorizationSnapshot.capture();
     final localKey = _adjustmentsKey(companyCode);
 
     // ---------- 1) Hive ----------
-    if (_codingBox.containsKey(localKey)) {
+    final coverageKind = 'adjustments_branch_${branchCode ?? '*'}';
+    final covered = _covered(coverageKind, companyCode, '*', month) || _covered('adjustments', companyCode, '*', month);
+    if (covered && _codingBox.containsKey(localKey)) {
       final raw = _codingBox.get(localKey);
       if (raw is List) {
         final models = raw
@@ -1351,19 +1436,21 @@ class HRService {
 
     // ---------- 2) السيرفر ----------
     try {
-      final url = Uri.parse("$baseUrl/hr/adjustments/list/$companyCode")
-          .replace(
+      final url =
+          Uri.parse("$baseUrl/hr/adjustments/list/$companyCode").replace(
         queryParameters: {
           'month': month,
           if (branchCode != null) 'branch_code': branchCode,
         },
       );
 
+      readScope.check();
       final response = await AuthHttp.get(url);
+      readScope.check();
 
       if (!_ok(response.statusCode)) {
         print("❌ [adjustments list] HTTP ${response.statusCode}");
-        return [];
+        throw StateError('تعذر تحميل شهر التسويات');
       }
 
       final List<dynamic> data = jsonDecode(response.body);
@@ -1376,21 +1463,25 @@ class HRService {
         list.add(map);
       }
 
+      readScope.check();
       await _mergeIntoHive(
         localKey,
         list,
-        uniqueKeyBuilder: (m) => m['id']?.toString() ??
+        uniqueKeyBuilder: (m) =>
+            m['id']?.toString() ??
             '${m['employee_code']}_${m['month']}_${m['type']}',
       );
+      readScope.check();
 
+      await _markCovered(coverageKind, companyCode, '*', month);
+      readScope.check();
       return list.map((e) => HRAdjustmentModel.fromMap(e)).toList();
-
     } catch (e) {
       print("❌ [adjustments list] $e");
-      return [];
+      rethrow;
     }
-  }
-
+});
+}
 
   /// جلب تسويات موظف في شهر معين
   Future<List<HRAdjustmentModel>> getEmployeeAdjustments({
@@ -1398,10 +1489,13 @@ class HRService {
     required String employeeCode,
     required String month,
   }) async {
+return CachePartitions.run(() async {
+
+    final readScope = await ReadAuthorizationSnapshot.capture();
     final localKey = _adjustmentsKey(companyCode);
 
     // ---------- 1) Hive ----------
-    if (_codingBox.containsKey(localKey)) {
+    if (_covered('adjustments', companyCode, employeeCode, month) && _codingBox.containsKey(localKey)) {
       final raw = _codingBox.get(localKey);
       if (raw is List) {
         final models = raw
@@ -1432,11 +1526,13 @@ class HRService {
         queryParameters: {'month': month},
       );
 
+      readScope.check();
       final response = await AuthHttp.get(url);
+      readScope.check();
 
       if (!_ok(response.statusCode)) {
         print("❌ [employee adjustments] HTTP ${response.statusCode}");
-        return [];
+        throw StateError('تعذر تحميل تسويات الشهر');
       }
 
       final List<dynamic> data = jsonDecode(response.body);
@@ -1449,27 +1545,33 @@ class HRService {
         list.add(map);
       }
 
-      await _mergeIntoHive(
-        localKey,
-        list,
-        uniqueKeyBuilder: (m) => m['id']?.toString() ??
-            '${m['employee_code']}_${m['month']}_${m['type']}',
-      );
+      readScope.check();
+      final prior = _codingBox.get(localKey);
+      final kept = prior is List ? prior.whereType<Map>().where((row) =>
+          row['employee_code'] != employeeCode || row['month'] != month).toList() : <Map>[];
+      await _codingBox.put(localKey, [...kept, ...list]);
+      readScope.check();
 
+      readScope.check();
+      await _markCovered('adjustments', companyCode, employeeCode, month);
+      readScope.check();
       return list.map((e) => HRAdjustmentModel.fromMap(e)).toList();
-
     } catch (e) {
       print("❌ [employee adjustments] $e");
-      return [];
+      rethrow;
     }
-  }
-
+});
+}
 
   /// حفظ تسوية (خصم/مكافأة/سلفة)
   Future<Map<String, dynamic>> saveAdjustment({
     required HRAdjustmentModel model,
   }) async {
+return CachePartitions.run(() async {
+
+    final cacheScope = await ReadAuthorizationSnapshot.capture();
     try {
+      cacheScope.check();
       final response = await AuthHttp.post(
         Uri.parse("$baseUrl/hr/adjustments/save"),
         headers: {"Content-Type": "application/json"},
@@ -1484,6 +1586,13 @@ class HRService {
       }
 
       final Map<String, dynamic> result = jsonDecode(response.body);
+      if (!cacheScope.isCurrent)
+        return {
+          'success': true,
+          'id': result['id'],
+          'action': result['action'],
+          'scope_changed': true
+        };
       final localKey = _adjustmentsKey(model.companyCode);
 
       List<Map<String, dynamic>> currentList = [];
@@ -1519,21 +1628,22 @@ class HRService {
         'id': result['id'],
         'action': result['action'],
       };
-
     } catch (e) {
       return {
         'success': false,
         'error': e.toString(),
       };
     }
-  }
-
+});
+}
 
   /// حذف تسوية
   Future<bool> deleteAdjustment({
     required String companyCode,
     required int adjustmentId,
   }) async {
+return CachePartitions.run(() async {
+
     try {
       final response = await AuthHttp.delete(
         Uri.parse(
@@ -1569,41 +1679,49 @@ class HRService {
       }
 
       return true;
-
     } catch (e) {
       print("❌ [adjustment delete] $e");
       return false;
     }
-  }
-
+});
+}
 
   /// Full sync للتسويات — آخر 6 شهور
   ///
   /// ملاحظة: الباك بيحتاج month إجباري، فبنلف على 6 شهور.
   /// 6 طلبات بس (مش كثيرة) — تتم مرة واحدة لكل جهاز.
   Future<void> fetchAllAdjustments(String companyCode) async {
+return CachePartitions.run(() async {
+
+    final readScope = await ReadAuthorizationSnapshot.capture();
     print("📥 [adjustments] FULL SYNC (آخر 6 شهور) — $companyCode");
 
     try {
       final now = DateTime.now();
-      final allItems = <Map<String, dynamic>>[];
+      var failed = false;
+      final completed = <String, List<Map<String, dynamic>>>{};
 
       // نلف على 6 شهور (الحالي + 5 قبله)
       for (int i = 0; i < 6; i++) {
         final monthDate = DateTime(now.year, now.month - i, 1);
         final monthStr = HRConstants.monthToStr(monthDate);
 
+        if (_covered('adjustments', companyCode, '*', monthStr)) continue;
         try {
+          final allItems = <Map<String, dynamic>>[];
           final url = Uri.parse(
             "$baseUrl/hr/adjustments/list/$companyCode",
           ).replace(
             queryParameters: {'month': monthStr},
           );
 
+          readScope.check();
           final response = await AuthHttp.get(url);
+          readScope.check();
 
           if (!_ok(response.statusCode)) {
             print("⚠️ [adjustments] $monthStr: HTTP ${response.statusCode}");
+            failed = true;
             continue;
           }
 
@@ -1614,38 +1732,54 @@ class HRService {
             if (map['is_deleted'] == true) continue;
             allItems.add(map);
           }
+          completed[monthStr] = allItems;
         } catch (e) {
+          if (e is ReadAuthorizationChanged) rethrow;
           print("⚠️ [adjustments] $monthStr: $e");
-          // نكمل للشهر اللي بعده
+          failed = true;
         }
       }
 
-      await _codingBox.put(_adjustmentsKey(companyCode), allItems);
-
-      print("✅ [adjustments] FULL SYNC: ${allItems.length} سجل (6 شهور)");
-
+      readScope.check();
+      for (final entry in completed.entries) {
+        readScope.check();
+        final old = _codingBox.get(_adjustmentsKey(companyCode));
+        final kept = old is List ? old.whereType<Map>().where((row) =>
+            row['month'] != entry.key).toList() : <Map>[];
+        await _codingBox.put(_adjustmentsKey(companyCode), [...kept, ...entry.value]);
+        readScope.check();
+        await _markCovered('adjustments', companyCode, '*', entry.key);
+        readScope.check();
+      }
+      if (failed) throw StateError('لم يكتمل تحميل شهور التسويات. ستتم إعادة المحاولة');
     } catch (e) {
       print("❌ [adjustments] FULL SYNC فشل: $e");
       rethrow;
     }
-  }
-
+});
+}
 
   /// Delta sync للتسويات
   Future<void> syncAdjustmentsChangesFromServer(
     String companyCode, [
     String? lastSync,
   ]) async {
-    final prefs = await SharedPreferences.getInstance();
+return CachePartitions.run(() async {
+
+    final readScope = await ReadAuthorizationSnapshot.capture();
+    final prefs = await CachePartitions.preferences();
+    readScope.check();
     final lastSyncKey = 'last_sync_hr_adjustments_$companyCode';
     final lastSyncValue = lastSync ?? prefs.getString(lastSyncKey);
 
     if (lastSyncValue == null || lastSyncValue.isEmpty) {
       await fetchAllAdjustments(companyCode);
+      readScope.check();
       await prefs.setString(
         lastSyncKey,
         DateTime.now().toUtc().toIso8601String(),
       );
+      readScope.check();
       return;
     }
 
@@ -1659,7 +1793,9 @@ class HRService {
       final url = Uri.parse("$baseUrl/hr/adjustments/changes/$companyCode")
           .replace(queryParameters: {'since': effectiveSince});
 
+      readScope.check();
       final response = await AuthHttp.get(url);
+      readScope.check();
 
       if (!_ok(response.statusCode)) {
         throw Exception('فشل مزامنة التسويات. HTTP ${response.statusCode}');
@@ -1669,7 +1805,9 @@ class HRService {
 
       if (changes.isEmpty) {
         print("⏭️ [adjustments] لا يوجد تغييرات");
+        readScope.check();
         await prefs.setString(lastSyncKey, syncStartedAt.toIso8601String());
+        readScope.check();
         return;
       }
 
@@ -1710,19 +1848,23 @@ class HRService {
 
       if (currentList.isEmpty) {
         await _codingBox.delete(localKey);
+        readScope.check();
       } else {
+        readScope.check();
         await _codingBox.put(localKey, currentList);
+        readScope.check();
       }
 
+      readScope.check();
       await prefs.setString(lastSyncKey, syncStartedAt.toIso8601String());
+      readScope.check();
       print("✅ [adjustments] تم تحديث ${changes.length} تغيير");
-
     } catch (e) {
       print("❌ [adjustments] INCREMENTAL فشل: $e");
       rethrow;
     }
-  }
-  
+});
+}
 
   // ============================================================
   // ============ 5. EMPLOYEE SETTINGS =========================
@@ -1738,11 +1880,13 @@ class HRService {
   String _employeeSettingsKey(String companyCode) =>
       '${companyCode}_hr_employee_settings';
 
-
   Future<HREmployeeSettingsModel> getEmployeeSettings({
     required String companyCode,
     required String employeeCode,
   }) async {
+return CachePartitions.run(() async {
+
+    final readScope = await ReadAuthorizationSnapshot.capture();
     final localKey = _employeeSettingsKey(companyCode);
 
     // ---------- 1) Hive ----------
@@ -1761,11 +1905,13 @@ class HRService {
 
     // ---------- 2) Server fallback ----------
     try {
+      readScope.check();
       final response = await AuthHttp.get(
         Uri.parse(
           "$baseUrl/hr/employee-settings/$companyCode/$employeeCode",
         ),
       );
+      readScope.check();
 
       if (_ok(response.statusCode)) {
         final data = jsonDecode(response.body);
@@ -1773,6 +1919,7 @@ class HRService {
           Map<String, dynamic>.from(data),
         );
         await _saveToSettingsHive(localKey, model);
+        readScope.check();
         return model;
       }
     } catch (e) {
@@ -1783,14 +1930,18 @@ class HRService {
       companyCode: companyCode,
       employeeCode: employeeCode,
     );
-  }
-
+});
+}
 
   /// حفظ إعدادات الموظف
   Future<Map<String, dynamic>> saveEmployeeSettings({
     required HREmployeeSettingsModel model,
   }) async {
+return CachePartitions.run(() async {
+
+    final cacheScope = await ReadAuthorizationSnapshot.capture();
     try {
+      cacheScope.check();
       final response = await AuthHttp.post(
         Uri.parse("$baseUrl/hr/employee-settings/save"),
         headers: {"Content-Type": "application/json"},
@@ -1805,6 +1956,13 @@ class HRService {
       }
 
       final result = jsonDecode(response.body);
+      if (!cacheScope.isCurrent)
+        return {
+          'success': true,
+          'id': result['id'],
+          'action': result['action'],
+          'scope_changed': true
+        };
 
       final localKey = _employeeSettingsKey(model.companyCode);
       final updated = model.copyWith(id: result['id']);
@@ -1815,15 +1973,14 @@ class HRService {
         'id': result['id'],
         'action': result['action'],
       };
-
     } catch (e) {
       return {
         'success': false,
         'error': e.toString(),
       };
     }
-  }
-
+});
+}
 
   /// Full sync لإعدادات كل الموظفين
   ///
@@ -1834,6 +1991,9 @@ class HRService {
   ///
   /// ده بيرجع كل السجلات اللي اتعدلت من 1970 (يعني كلهم).
   Future<void> fetchAllEmployeeSettings(String companyCode) async {
+return CachePartitions.run(() async {
+
+    final readScope = await ReadAuthorizationSnapshot.capture();
     print("📥 [employee-settings] FULL SYNC — $companyCode");
 
     try {
@@ -1844,7 +2004,9 @@ class HRService {
         queryParameters: {'since': '1970-01-01T00:00:00Z'},
       );
 
+      readScope.check();
       final response = await AuthHttp.get(url);
+      readScope.check();
 
       if (!_ok(response.statusCode)) {
         throw Exception(
@@ -1861,16 +2023,17 @@ class HRService {
         list.add(map);
       }
 
+      readScope.check();
       await _codingBox.put(_employeeSettingsKey(companyCode), list);
+      readScope.check();
 
       print("✅ [employee-settings] FULL SYNC: ${list.length} سجل");
-
     } catch (e) {
       print("❌ [employee-settings] FULL SYNC فشل: $e");
       rethrow;
     }
-  }
-
+});
+}
 
   /// Delta sync لإعدادات الموظفين
   ///
@@ -1881,17 +2044,23 @@ class HRService {
     String companyCode, [
     String? lastSync,
   ]) async {
-    final prefs = await SharedPreferences.getInstance();
+return CachePartitions.run(() async {
+
+    final readScope = await ReadAuthorizationSnapshot.capture();
+    final prefs = await CachePartitions.preferences();
+    readScope.check();
     final lastSyncKey = 'last_sync_hr_employee_settings_$companyCode';
     final lastSyncValue = lastSync ?? prefs.getString(lastSyncKey);
 
     // جهاز جديد → full sync
     if (lastSyncValue == null || lastSyncValue.isEmpty) {
       await fetchAllEmployeeSettings(companyCode);
+      readScope.check();
       await prefs.setString(
         lastSyncKey,
         DateTime.now().toUtc().toIso8601String(),
       );
+      readScope.check();
       return;
     }
 
@@ -1908,7 +2077,9 @@ class HRService {
         queryParameters: {'since': effectiveSince},
       );
 
+      readScope.check();
       final response = await AuthHttp.get(url);
+      readScope.check();
 
       if (!_ok(response.statusCode)) {
         throw Exception(
@@ -1920,7 +2091,9 @@ class HRService {
 
       if (changes.isEmpty) {
         print("⏭️ [employee-settings] لا يوجد تغييرات");
+        readScope.check();
         await prefs.setString(lastSyncKey, syncStartedAt.toIso8601String());
+        readScope.check();
         return;
       }
 
@@ -1955,25 +2128,31 @@ class HRService {
 
       if (currentList.isEmpty) {
         await _codingBox.delete(localKey);
+        readScope.check();
       } else {
+        readScope.check();
         await _codingBox.put(localKey, currentList);
+        readScope.check();
       }
 
+      readScope.check();
       await prefs.setString(lastSyncKey, syncStartedAt.toIso8601String());
+      readScope.check();
       print("✅ [employee-settings] تم تحديث ${changes.length} تغيير");
-
     } catch (e) {
       print("❌ [employee-settings] INCREMENTAL فشل: $e");
       rethrow;
     }
-  }
-
+});
+}
 
   /// Helper: حفظ إعدادات موظف في Hive (يستبدل السجل بنفس employee_code)
   Future<void> _saveToSettingsHive(
     String localKey,
     HREmployeeSettingsModel model,
   ) async {
+return CachePartitions.run(() async {
+
     List<Map<String, dynamic>> currentList = [];
 
     if (_codingBox.containsKey(localKey)) {
@@ -1993,8 +2172,8 @@ class HRService {
     currentList.add(model.toMap());
 
     await _codingBox.put(localKey, currentList);
-  }
-
+});
+}
 
   // ============================================================
   // ============ 6. SYNC ALL — 4 submodules parallel ===========
@@ -2007,21 +2186,34 @@ class HRService {
   //   - بيكتب مفاتيح مختلفة في Hive → مفيش race
 
   Future<Map<String, dynamic>> syncAll(String companyCode) async {
+return CachePartitions.run(() async {
+
+    final readScope = await ReadAuthorizationSnapshot.capture();
     final results = <String, dynamic>{};
 
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await CachePartitions.preferences();
+    readScope.check();
     final syncStartedAt = DateTime.now().toUtc().toIso8601String();
 
     Future<void> syncAttendance() async {
+return CachePartitions.run(() async {
+
+      if (!SyncReadAccess.allows('attendance')) {
+        results['attendance'] = 'skipped';
+        return;
+      }
       try {
         final key = 'last_sync_hr_attendance_$companyCode';
         final lastSync = prefs.getString(key);
 
         if (lastSync == null) {
           await fetchAllAttendance(companyCode);
+          readScope.check();
           await prefs.setString(key, syncStartedAt);
+          readScope.check();
         } else {
           await syncChangesFromServer(companyCode, lastSync);
+          readScope.check();
         }
         results['attendance'] = 'ok';
         print('  ✅ [HR] attendance');
@@ -2029,18 +2221,29 @@ class HRService {
         results['attendance'] = 'error: $e';
         print('  ❌ [HR] attendance: $e');
       }
-    }
+
+});
+}
 
     Future<void> syncVacations() async {
+return CachePartitions.run(() async {
+
+      if (!SyncReadAccess.allows('vacations')) {
+        results['vacations'] = 'skipped';
+        return;
+      }
       try {
         final key = 'last_sync_hr_vacations_$companyCode';
         final lastSync = prefs.getString(key);
 
         if (lastSync == null) {
           await fetchAllVacations(companyCode);
+          readScope.check();
           await prefs.setString(key, syncStartedAt);
+          readScope.check();
         } else {
           await syncVacationsChangesFromServer(companyCode, lastSync);
+          readScope.check();
         }
         results['vacations'] = 'ok';
         print('  ✅ [HR] vacations');
@@ -2048,18 +2251,29 @@ class HRService {
         results['vacations'] = 'error: $e';
         print('  ❌ [HR] vacations: $e');
       }
-    }
+
+});
+}
 
     Future<void> syncAdjustments() async {
+return CachePartitions.run(() async {
+
+      if (!SyncReadAccess.allows('adjustments')) {
+        results['adjustments'] = 'skipped';
+        return;
+      }
       try {
         final key = 'last_sync_hr_adjustments_$companyCode';
         final lastSync = prefs.getString(key);
 
         if (lastSync == null) {
           await fetchAllAdjustments(companyCode);
+          readScope.check();
           await prefs.setString(key, syncStartedAt);
+          readScope.check();
         } else {
           await syncAdjustmentsChangesFromServer(companyCode, lastSync);
+          readScope.check();
         }
         results['adjustments'] = 'ok';
         print('  ✅ [HR] adjustments');
@@ -2067,18 +2281,29 @@ class HRService {
         results['adjustments'] = 'error: $e';
         print('  ❌ [HR] adjustments: $e');
       }
-    }
+
+});
+}
 
     Future<void> syncSettings() async {
+return CachePartitions.run(() async {
+
+      if (!SyncReadAccess.allows('employee_settings')) {
+        results['employee_settings'] = 'skipped';
+        return;
+      }
       try {
         final key = 'last_sync_hr_employee_settings_$companyCode';
         final lastSync = prefs.getString(key);
 
         if (lastSync == null) {
           await fetchAllEmployeeSettings(companyCode);
+          readScope.check();
           await prefs.setString(key, syncStartedAt);
+          readScope.check();
         } else {
           await syncEmployeeSettingsChangesFromServer(companyCode, lastSync);
+          readScope.check();
         }
         results['employee_settings'] = 'ok';
         print('  ✅ [HR] settings');
@@ -2086,7 +2311,9 @@ class HRService {
         results['employee_settings'] = 'error: $e';
         print('  ❌ [HR] settings: $e');
       }
-    }
+
+});
+}
 
     // ⚡ الأربعة في نفس الوقت
     await Future.wait([
@@ -2095,9 +2322,11 @@ class HRService {
       syncAdjustments(),
       syncSettings(),
     ]);
+    readScope.check();
 
     return results;
-  }
+});
+}
 }
 
 // ============================================================
@@ -2118,6 +2347,6 @@ class HRService {
 // - HRConstants: delay rules defaults + date helpers
 //
 // ⚠️ قبل الاستخدام:
-// - لازم Hive.openBox('hr_pending_box') في main.dart
-// - لازم Hive.openBox('coding_box') في main.dart
+// - لازم CachePartitions.openBox('hr_pending_box') في main.dart
+// - لازم CachePartitions.openBox('coding_box') في main.dart
 // ============================================================

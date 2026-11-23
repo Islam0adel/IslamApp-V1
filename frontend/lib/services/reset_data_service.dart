@@ -1,6 +1,9 @@
+import 'cache_partitions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'journal_cache.dart';
+import 'treasury_transfer_service.dart';
 // lib/services/reset_data_service.dart
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'daily_service.dart';
 import 'coding_service.dart';
@@ -17,14 +20,34 @@ class ResetDataService {
   final HRService _hrService = HRService();
   final EmployeeService _employeeService = EmployeeService();
 
+  Future<void> _clearCompanyRecords(Box box, String companyCode) async {
+return CachePartitions.run(() async {
+
+    for (final key in box.keys.toList()) {
+      final raw = box.get(key);
+      if (raw is List) {
+        final kept = raw.where((row) => row is! Map || row['company_code']?.toString() != companyCode).toList();
+        if (kept.length == raw.length) continue;
+        if (kept.isEmpty) { await box.delete(key); }
+        else { await box.put(key, kept); }
+      } else if (raw is Map && raw['company_code']?.toString() == companyCode) {
+        await box.delete(key);
+      }
+    }
+});
+}
+
   // ============================================================
   // إعادة تعيين اليوميات
   // ============================================================
   Future<void> resetDailyTransactions(String companyCode) async {
-    final box = Hive.box('daily_transactions_box');
-    await box.clear();
+return CachePartitions.run(() async {
+
+    final box = CachePartitions.box('daily_transactions_box');
+    await JournalCache.deleteCompany(box, companyCode);
     await _dailyService.fetchAllTransactions(companyCode);
-  }
+});
+}
 
   // ============================================================
   // إعادة تعيين التكويدات (selective)
@@ -37,7 +60,9 @@ class ResetDataService {
   //   - كاش التقارير (salary_report_* / branch_salaries_*)
   // ============================================================
   Future<void> resetCoding(String companyCode) async {
-    final box = Hive.box('coding_box');
+return CachePartitions.run(() async {
+
+    final box = CachePartitions.box('coding_box');
 
     final toDelete = <dynamic>[];
     for (final k in box.keys) {
@@ -70,25 +95,32 @@ class ResetDataService {
     }
 
     await _codingService.fetchAllCoding(companyCode);
-  }
+});
+}
 
   // ============================================================
   // إعادة تعيين الجرد
   // ============================================================
   Future<void> resetInventory(String companyCode) async {
-    final box = Hive.box('inventory_box');
-    await box.clear();
+return CachePartitions.run(() async {
+
+    final box = CachePartitions.box('inventory_box');
+    await _clearCompanyRecords(box, companyCode);
     await _inventoryService.fetchAllInventory(companyCode);
-  }
+});
+}
 
   // ============================================================
   // إعادة تعيين الموردين
   // ============================================================
   Future<void> resetSupplier(String companyCode) async {
-    final box = Hive.box('supplier_box');
-    await box.clear();
+return CachePartitions.run(() async {
+
+    final box = CachePartitions.box('supplier_box');
+    await _clearCompanyRecords(box, companyCode);
     await _supplierService.fetchAllSupplier(companyCode);
-  }
+});
+}
 
   // ============================================================
   // ⭐ إعادة تعيين الموارد البشرية (جديد)
@@ -101,8 +133,10 @@ class ResetDataService {
   //   5. Full refetch من السيرفر
   // ============================================================
   Future<void> resetHR(String companyCode) async {
+return CachePartitions.run(() async {
+
     // 1) امسح مفاتيح HR
-    final box = Hive.box('coding_box');
+    final box = CachePartitions.box('coding_box');
     final hrKeys = <String>[
       '${companyCode}_employees',
       '${companyCode}_hr_attendance',
@@ -115,8 +149,16 @@ class ResetDataService {
     }
 
     // 2) امسح pending operations
-    if (Hive.isBoxOpen('hr_pending_box')) {
-      await Hive.box('hr_pending_box').clear();
+    if (CachePartitions.isBoxOpen('hr_pending_box')) {
+      final pending = CachePartitions.box('hr_pending_box');
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid != null && uid.isNotEmpty) {
+        final keys = pending.keys.where((key) {
+          final op = pending.get(key);
+          return op is Map && op['company_code'] == companyCode && op['user_uid'] == uid;
+        }).toList();
+        await pending.deleteAll(keys);
+      }
     }
 
     // 3) امسح كاش التقارير المالية
@@ -133,7 +175,7 @@ class ResetDataService {
     }
 
     // 4) امسح last_sync_hr_* — يجبر full sync في المرة الجاية
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await CachePartitions.preferences();
     final syncKeys = <String>[
       'last_sync_hr_attendance_$companyCode',
       'last_sync_hr_vacations_$companyCode',
@@ -152,16 +194,21 @@ class ResetDataService {
     await _hrService.fetchAllVacations(companyCode);
     await _hrService.fetchAllAdjustments(companyCode);
     await _hrService.fetchAllEmployeeSettings(companyCode);
-  }
+});
+}
 
   // ============================================================
   // إعادة تعيين الكل
   // ============================================================
   Future<void> resetAll(String companyCode) async {
+return CachePartitions.run(() async {
+
     await resetDailyTransactions(companyCode);
     await resetCoding(companyCode);
     await resetInventory(companyCode);
     await resetSupplier(companyCode);
     await resetHR(companyCode);
-  }
+    await TreasuryTransferService().reset(companyCode);
+});
+}
 }

@@ -1,3 +1,4 @@
+import '../../../services/cache_partitions.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -162,7 +163,7 @@ class _SalesPageState extends State<SalesPage> {
   @override
   void initState() {
     super.initState();
-    _catalogSubscription = Hive.box('coding_box').watch().listen((_) => _onCatalogChanged());
+    _catalogSubscription = CachePartitions.box('coding_box').watch().listen((_) => _onCatalogChanged());
     _load();
   }
 
@@ -199,14 +200,16 @@ class _SalesPageState extends State<SalesPage> {
   }
 
   Future<void> _load() async {
+return CachePartitions.run(() async {
+
     final company = widget.companyCode;
     _branches = catalog(company, 'branches');
     _customers = catalog(company, 'customers'); _products = catalog(company, 'items');
     _productIndex = ProductIndex(_products);
     _methods = catalog(company, 'payment_methods'); _safes = catalog(company, 'safes');
-    final users = Hive.box('users_box').get('company_$company', defaultValue: []);
+    final users = CachePartitions.box('users_box').get('company_$company', defaultValue: []);
     if (users is List) _people = users.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
-    final employees = Hive.box('coding_box').get('${company}_employees', defaultValue: []);
+    final employees = CachePartitions.box('coding_box').get('${company}_employees', defaultValue: []);
     if (employees is List) {
       for (final raw in employees.whereType<Map>()) {
         final employee = Map<String, dynamic>.from(raw);
@@ -246,7 +249,8 @@ class _SalesPageState extends State<SalesPage> {
     _discountByPct = false;
     _setDiscountPctFromAmount();
     if (mounted) setState(() => _loading = false);
-  }
+});
+}
 
   // ───────────────────────── سطور الأصناف ─────────────────────────
   // الصف الأول (index 0) هو دائمًا «صف الإدخال» الجاهز. عند Enter أو إضافة صنف
@@ -328,6 +332,8 @@ class _SalesPageState extends State<SalesPage> {
   }
 
   Future<void> _scan() async {
+return CachePartitions.run(() async {
+
     final side = (MediaQuery.of(context).size.shortestSide - 48).clamp(240.0, 450.0).toDouble();
     var handled = false;
     final value = await showDialog<String>(
@@ -361,7 +367,8 @@ class _SalesPageState extends State<SalesPage> {
     if (value == null || !mounted) return;
     final p = _productIndex.byCodeOrBarcode(value);
     if (p != null) { _addProduct(p); } else { _message('الكود غير موجود في التكويد'); }
-  }
+});
+}
 
   void _message(String text) {
     if (!mounted) return;
@@ -396,10 +403,10 @@ class _SalesPageState extends State<SalesPage> {
   });
 
   Widget _statTile(String label, String value, {Color? color, bool big = false}) {
-    final c = color ?? Theme.of(context).colorScheme.primary;
+    final c = color ?? AppTheme.accentFor(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(color: c.withAlpha(26), borderRadius: BorderRadius.circular(10), border: Border.all(color: c.withAlpha(110))),
+      decoration: BoxDecoration(color: c.withAlpha(AppTheme.isDark(context) ? 26 : 15), borderRadius: BorderRadius.circular(10), border: Border.all(color: c.withAlpha(110))),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
         Text(label, style: TextStyle(fontSize: 12, fontFamily: 'Cairo', color: c)),
         const SizedBox(height: 2),
@@ -578,7 +585,7 @@ class _SalesPageState extends State<SalesPage> {
 
   BoxDecoration _rowDecoration(bool isEntry) {
     final accent = AppTheme.accentFor(context);
-    final card = Theme.of(context).cardColor;
+    final card = AppTheme.surface(context);
     return BoxDecoration(
       color: isEntry ? Color.alphaBlend(accent.withAlpha(28), card) : card,
       borderRadius: BorderRadius.circular(10),
@@ -724,7 +731,7 @@ class _SalesPageState extends State<SalesPage> {
     ]);
     final tiles = _tileWrap([
       _statTile('المجموع قبل الخصم', money(_subtotal)),
-      _statTile('قيمة الخصم', money(_discountValue), color: Colors.red.shade600),
+      _statTile('قيمة الخصم', money(_discountValue), color: AppTheme.dangerFor(context)),
     ]);
     if (wide) {
       return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -740,11 +747,11 @@ class _SalesPageState extends State<SalesPage> {
   Widget _badge(String text, Color color) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
     decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(20)),
-    child: Text(text, style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+    child: Text(text, style: TextStyle(color: AppTheme.onAccentFor(context), fontSize: 11, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
   );
 
   Widget _creditSwitch() {
-    final color = _credit ? Colors.orange.shade700 : Colors.green.shade600;
+    final color = _credit ? AppTheme.warningOrangeFor(context) : AppTheme.successFor(context);
     return Material(
       color: color.withAlpha(28),
       clipBehavior: Clip.antiAlias,
@@ -867,23 +874,23 @@ class _SalesPageState extends State<SalesPage> {
     margin: const EdgeInsets.only(top: 8),
     padding: const EdgeInsets.all(10),
     decoration: BoxDecoration(
-      color: Colors.red.shade600.withAlpha(26),
+      color: AppTheme.dangerFor(context).withAlpha(26),
       borderRadius: BorderRadius.circular(10),
-      border: Border.all(color: Colors.red.shade600.withAlpha(140)),
+      border: Border.all(color: AppTheme.dangerFor(context).withAlpha(140)),
     ),
     child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Icon(Icons.warning_amber_rounded, color: Colors.red.shade600, size: 20),
+      Icon(Icons.warning_amber_rounded, color: AppTheme.dangerFor(context), size: 20),
       const SizedBox(width: 8),
-      Expanded(child: Text(text, style: TextStyle(fontFamily: 'Cairo', fontSize: 13, color: Colors.red.shade600))),
+      Expanded(child: Text(text, style: TextStyle(fontFamily: 'Cairo', fontSize: 13, color: AppTheme.dangerFor(context)))),
     ]),
   );
 
   Widget _paymentStatus() {
     final tiles = <Widget>[
       _statTile('الإجمالي المطلوب', money(_total), big: true),
-      _statTile(_credit ? 'المدفوع الآن' : 'المستلم', money(_received), color: Colors.blue.shade600),
-      if (_change > 0.005) _statTile('الباقي للعميل', money(_change), color: Colors.green.shade600),
-      if (_credit) _statTile('المتبقي على العميل', money(_due), color: _due > 0.005 ? Colors.orange.shade700 : Colors.green.shade600),
+      _statTile(_credit ? 'المدفوع الآن' : 'المستلم', money(_received), color: AppTheme.infoSoftFor(context)),
+      if (_change > 0.005) _statTile('الباقي للعميل', money(_change), color: AppTheme.successFor(context)),
+      if (_credit) _statTile('المتبقي على العميل', money(_due), color: _due > 0.005 ? AppTheme.warningOrangeFor(context) : AppTheme.successFor(context)),
     ];
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       _tileWrap(tiles),
@@ -922,6 +929,8 @@ class _SalesPageState extends State<SalesPage> {
 
   // ───────────────────────── الحفظ والطباعة ─────────────────────────
   Future<void> _save({bool printAfter = false, bool shareAfter = false}) async {
+return CachePartitions.run(() async {
+
     if (_branch == null || _store == null || _validSaleLines.isEmpty) { _message('اختر الفرع والمخزن وأضف صنفًا واحدًا على الأقل'); return; }
     if (_lines.any((line) => !line.isEmpty && line.product['code'] == null)) {
       _message('أكمل اختيار الصنف في كل سطر بدأته');
@@ -991,7 +1000,8 @@ class _SalesPageState extends State<SalesPage> {
         _focusEntryRow();
       }
     } catch (e) { _message('$e'); } finally { if (mounted) setState(() => _busy = false); }
-  }
+});
+}
 
   JMap _draftPrintData() => {
     'serial': widget.editItem?['serial'] ?? 'مسودة', 'date': DateFormat('yyyy-MM-dd').format(DateTime.now()),
@@ -1002,6 +1012,8 @@ class _SalesPageState extends State<SalesPage> {
   };
 
   Future<Uint8List> _invoicePdf(JMap data) async {
+return CachePartitions.run(() async {
+
     final doc = pw.Document();
     final font = pw.Font.ttf(await rootBundle.load('assets/fonts/Cairo-Regular.ttf'));
     final isCredit = n(data['due']) > 0.005;
@@ -1018,8 +1030,13 @@ class _SalesPageState extends State<SalesPage> {
       if (isCredit) pw.Text('المتبقي على العميل: ${money(n(data['due']))}'),
     ]))));
     return doc.save();
-  }
-  Future<void> _outputInvoice(JMap data, {required bool share}) async { final bytes = await _invoicePdf(data); if (share) { await Printing.sharePdf(bytes: bytes, filename: 'sale-${data['serial']}.pdf'); } else { await Printing.layoutPdf(onLayout: (_) async => bytes); } }
+});
+}
+  Future<void> _outputInvoice(JMap data, {required bool share}) async {
+return CachePartitions.run(() async {
+ final bytes = await _invoicePdf(data); if (share) { await Printing.sharePdf(bytes: bytes, filename: 'sale-${data['serial']}.pdf'); } else { await Printing.layoutPdf(onLayout: (_) async => bytes); }
+});
+}
 
   Widget _buildActions() {
     final canPrint = PermissionsService().hasPermission('المبيعات', 'طباعة');

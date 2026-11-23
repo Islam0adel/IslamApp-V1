@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {"name":"uid wins over changed email","actor":{"uid":"uid-A","email":"a@example.invalid"},"row":{"code":"E1","user_uid":"uid-A","user_email":"b@example.invalid"},"self":true},
+    {"name":"conflicting uid blocks email","actor":{"uid":"uid-A","email":"a@example.invalid"},"row":{"code":"E1","user_uid":"uid-B","user_email":"a@example.invalid"},"self":false},
+    {"name":"legacy null uid email fallback","actor":{"uid":"uid-A","email":"a@example.invalid"},"row":{"code":"E1","user_uid":null,"user_email":" A@EXAMPLE.INVALID "},"self":true},
+    {"name":"legacy empty uid email fallback","actor":{"uid":"uid-A","email":" A@example.invalid "},"row":{"code":"E1","user_uid":"","user_email":"a@example.invalid"},"self":true},
+    {"name":"other email does not link","actor":{"uid":"uid-A","email":"a@example.invalid"},"row":{"code":"E1","user_uid":null,"user_email":"b@example.invalid"},"self":false},
+    {"name":"blank identity is not self","actor":{"uid":"","email":""},"row":{"code":"E1","user_uid":"","user_email":""},"self":false},
+    {"name":"missing actor uid cannot override stored uid","actor":{"uid":"","email":"a@example.invalid"},"row":{"code":"E1","user_uid":"uid-A","user_email":"a@example.invalid"},"self":false},
+    {"name":"deleted uid link is not current self","actor":{"uid":"uid-A","email":"a@example.invalid"},"row":{"code":"E1","user_uid":"uid-A","user_email":"a@example.invalid","is_deleted":true},"self":false},
+    {"name":"deleted legacy email is not current self","actor":{"uid":"uid-A","email":"a@example.invalid"},"row":{"code":"E1","user_uid":null,"user_email":"a@example.invalid","is_deleted":true},"self":false},
+    {"name":"uid-only link works without email","actor":{"uid":"uid-A","email":""},"row":{"code":"E1","user_uid":"uid-A","user_email":null},"self":true}
+  ]
+}

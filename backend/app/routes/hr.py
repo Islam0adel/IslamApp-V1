@@ -29,6 +29,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, and_
 
+from fastapi import Request
+
+from app.core.auth_middleware import allowed_branches_for_profile
 from app.core.database import get_db
 from app.core.models import (
     Employee,
@@ -44,9 +47,230 @@ from app.core.schemas import (
     HREmployeeSettingsModel,
 )
 from app.core.sync import manager
+from app.core.hr_identity import HRTarget, own_employee_codes, resolve_own_employee_code
+from app.core.hr_audience import own_access, amounts_allowed, targets_for_codes
+from app.core.permissions import (
+    has_section_permission,
+    require_any_section_permission,
+    require_section_permission,
+)
 from app.services.hr_salary_calculator import calculate_salary
 
 import datetime
+
+
+_HR_SECTION = "الموارد البشرية"
+
+
+def _require_hr(request: Request, *keys: str):
+    """صلاحية HR: يكفي أي مفتاح من المفاتيح المعطاة (قفل افتراضي)."""
+    return require_any_section_permission(
+        request, [(_HR_SECTION, key) for key in keys]
+    )
+
+
+def _hr_has(profile: dict, *keys: str) -> bool:
+    return any(
+        has_section_permission(profile, _HR_SECTION, key) for key in keys
+    )
+
+
+# Existing nullable creator column, reserved marker for new server-owned writes.
+# It never comes from a client payload and is not returned as a display email.
+_HR_CREATOR_PREFIX = "urn:islamapp:creator:"
+
+
+def _creator_marker(profile):
+    uid = str(profile.get("uid") or "").strip()
+    return _HR_CREATOR_PREFIX + uid if uid else None
+
+
+def _public_creator(value):
+    if isinstance(value, str) and value.startswith(_HR_CREATOR_PREFIX):
+        return None
+    return value
+
+
+async def _unchanged_hr_ack(db, profile, company_code, existing, fields, read_keys):
+    """Acknowledge an already achieved intent, never perform an edit.
+
+    Either this authenticated actor created the record through this server, or
+    the existing read grant and employee/branch visibility permit seeing it.
+    Equality alone is not proof of ownership or a grant to read another record.
+    """
+    if existing is None or existing.is_deleted:
+        return None
+    if any(getattr(existing, key) != value for key, value in fields.items()):
+        return None
+    _check_hr_branch(profile, existing.branch_code)
+    marker = _creator_marker(profile)
+    own_create = marker is not None and existing.created_by == marker
+    if not own_create:
+        if not _hr_has(profile, *read_keys):
+            return None
+        visible = await _filter_docs(db, [existing], company_code, profile)
+        if not visible:
+            return None
+    return {"status": "success", "id": existing.id, "action": "unchanged"}
+
+
+def _check_hr_branch(profile: dict, branch_code) -> None:
+    allowed = allowed_branches_for_profile(profile)
+    if allowed and branch_code and str(branch_code) not in allowed:
+        raise HTTPException(
+            status_code=403,
+            detail="ليس لديك صلاحية على هذا الفرع",
+        )
+
+
+def _check_tenant(profile: dict, company_code: str) -> None:
+    """فحص صريح: شركة المسار = شركة الجلسة (صاحب البرنامج يتجاوز)."""
+    from app.core.auth_middleware import _effective_role
+    if _effective_role(profile) == "super_admin":
+        return
+    if str(profile.get("company_code", "")) != str(company_code):
+        raise HTTPException(status_code=403, detail="غير مصرح لهذه الشركة")
+
+
+def _hr_viewable_codes(profile: dict):
+    value = profile.get("hr_viewable_employees")
+    if isinstance(value, list) and value:
+        return {str(v) for v in value}
+    return None
+
+
+def _target_employee_allowed(profile: dict, employee_code: str) -> bool:
+    viewable = _hr_viewable_codes(profile)
+    return viewable is None or str(employee_code) in viewable
+
+
+async def _resolve_own_employee_code(db, company_code: str, profile: dict):
+    return await resolve_own_employee_code(db,company_code,profile)
+
+
+
+async def _visible_employee_codes(db, company_code: str, profile: dict):
+    """أكواد الموظفين الظاهرين لفروع المستخدم (None = كل الفروع).
+
+    منح "كل الفروع" تمثيلها الدقيق هو عدم وجود فلتر. الموظف بفرع
+    فارغ/غير معيّن يظهر لأي عارض له حق القسم (مطابقة سلوك العميل).
+    """
+    allowed = allowed_branches_for_profile(profile)
+    if not allowed:
+        return None
+    result = await db.execute(
+        select(Employee.code).where(
+            Employee.company_code == company_code,
+            or_(
+                Employee.branch_code.in_(allowed),
+                Employee.branch_code.is_(None),
+                Employee.branch_code == "",
+            ),
+        )
+    )
+    return {str(code) for code in result.scalars().all()}
+
+
+async def _authorize_employee_target(request: Request, db, company_code: str, employee_code, *, salary: bool = False):
+    profile=request.state.auth_user
+    _check_tenant(profile,company_code)
+    result=await db.execute(select(Employee.code,Employee.user_uid,Employee.user_email,
+        Employee.branch_code,Employee.is_deleted).where(Employee.company_code==str(company_code),
+        Employee.code==str(employee_code)))
+    row=result.one_or_none()
+    target=HRTarget.from_employee(row) if row is not None else HRTarget()
+    request.state.hr_target=target
+    if own_access(profile,target):
+        return profile
+    broad_keys=(('canViewSalaryAmounts','canOpenReportPage','canViewBranchSalaryReport','canManageEmployees')
+        if salary else ('canOpenAttendancePage','canOpenVacationsPage','canViewAdjustments',
+            'canViewBranchSalaryReport','canViewEmployees','canManageEmployees','canEditWeeklyDay',
+            'canEditWorkSchedule','canEditDelayRules'))
+    if _hr_has(profile,*broad_keys):
+        if not _target_employee_allowed(profile,employee_code):
+            raise HTTPException(status_code=403,detail='ليس لديك صلاحية عرض هذا الموظف')
+        _check_hr_branch(profile,getattr(row,'branch_code',None))
+        return profile
+    raise HTTPException(status_code=403,detail='ليس لديك صلاحية الوصول لبيانات الموظف')
+
+
+
+# عرض المرتب لمن يملك فتح التقرير دون حق مبالغ: قائمة سماح صريحة
+# بالحقول غير المالية فقط (مطابقة لعقد calculate_salary الفعلي)
+_SALARY_SAFE_KEYS = {
+    "employee_code", "employee_name", "branch_code", "company_code",
+    "month", "elapsed_days", "future_days", "absent_days",
+    "permission_days", "deduction_days", "absence_deduction_days",
+    "delay_deduction_days", "absence", "absence_with_permission",
+    "permission", "late_minutes", "late_minutes_total",
+    "early_leave_minutes_total", "overtime_minutes",
+    "overtime_minutes_total", "overtime_multiplier", "grace_minutes",
+    "attendance_details", "default_check_in", "default_check_out",
+    "flexible_hours", "check_in", "check_out", "date", "status",
+    "work_days", "present_days", "vacation_days",
+    "use_fixed_month_days", "weekly_vacation_day",
+}
+_SALARY_LINE_SAFE_KEYS = {"label", "note", "date", "type"}
+
+
+def _redact_salary_amounts(report):
+    """إسقاط كل الحقول المالية عبر قائمة سماح بالحقول غير المالية فقط."""
+    if not isinstance(report, dict):
+        return report
+    out = {k: v for k, v in report.items() if k in _SALARY_SAFE_KEYS}
+    lines = report.get("adjustment_lines")
+    if isinstance(lines, list):
+        out["adjustment_lines"] = [
+            {k: v for k, v in line.items() if k in _SALARY_LINE_SAFE_KEYS}
+            for line in lines
+            if isinstance(line, dict)
+        ]
+    return out
+
+
+
+_BRANCH_REPORT_SAFE_KEYS = {'company_code', 'month', 'branch_code'}
+_BRANCH_TOTAL_SAFE_KEYS = {'employees_count'}
+
+
+def _branch_report_payload(profile, report):
+    if _hr_has(profile, 'canViewSalaryAmounts'):
+        return report
+    totals = report.get('totals') or {}
+    return {
+        **{key: value for key, value in report.items() if key in _BRANCH_REPORT_SAFE_KEYS},
+        'totals': {key: value for key, value in totals.items() if key in _BRANCH_TOTAL_SAFE_KEYS},
+        'employees': [_redact_salary_amounts(row) for row in report.get('employees', [])],
+    }
+
+
+def _doc_visible(doc, allowed, visible_codes) -> bool:
+    if allowed is None:
+        return True
+    branch = getattr(doc, "branch_code", None)
+    if branch and str(branch) in allowed:
+        return True
+    if not branch and visible_codes is not None:
+        return str(getattr(doc, "employee_code", "")) in visible_codes
+    return False
+
+
+async def _filter_docs(db, docs, company_code: str, profile: dict):
+    allowed=allowed_branches_for_profile(profile)
+    viewable=_hr_viewable_codes(profile)
+    visible_codes=await _visible_employee_codes(db,company_code,profile) if allowed else None
+    own_codes=(await own_employee_codes(db,company_code,profile)
+        if (allowed or viewable is not None) and _hr_has(profile,'canViewOwnHRData') else set())
+    return [doc for doc in docs if str(getattr(doc,'employee_code','')) in own_codes or (
+        (not allowed or _doc_visible(doc,allowed,visible_codes)) and
+        (viewable is None or str(getattr(doc,'employee_code','')) in viewable))]
+
+
+
+def _is_own(profile: dict, doc_employee_code: str) -> bool:
+    return str(doc_employee_code) == str(
+        profile.get("employee_code", "")
+    )
 
 
 router = APIRouter()
@@ -105,7 +329,7 @@ def serialize_attendance(
         "overtime_minutes": doc.overtime_minutes,
 
         "notes": doc.notes,
-        "created_by": doc.created_by,
+        "created_by": _public_creator(doc.created_by),
 
         "updated_at": (
             doc.updated_at.isoformat()
@@ -129,9 +353,14 @@ def serialize_attendance(
 
 @router.post("/attendance/save")
 async def save_attendance(
+    request: Request,
     data: HRAttendanceModel,
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_hr(request, "canAddAttendance", "canEditAttendance")
+    _check_tenant(_profile, data.company_code)
+    _check_hr_branch(_profile, data.branch_code)
+
     try:
         company_code = data.company_code
         employee_code = data.employee_code
@@ -162,9 +391,23 @@ async def save_attendance(
 
         result = await db.execute(stmt)
         existing = result.scalar_one_or_none()
+        if existing is not None and not _hr_has(_profile, "canEditAttendance"):
+            ack = await _unchanged_hr_ack(db, _profile, company_code, existing,
+                {
+                "branch_code": data.branch_code,
+                "status": data.status or "present", "check_in": data.check_in,
+                "check_out": data.check_out, "late_minutes": data.late_minutes or 0,
+                "early_leave_minutes": data.early_leave_minutes or 0,
+                "overtime_minutes": data.overtime_minutes or 0, "notes": data.notes,
+            }, ("canOpenAttendancePage", "canViewBranchSalaryReport"))
+            if ack is not None:
+                return ack
+        _require_hr(request, "canEditAttendance" if existing is not None else "canAddAttendance")
 
         # ---------- تعديل موجود ----------
         if existing:
+            # الفرع المخزَّن أيضاً: منع تعديل سجل فرع غير مسموح
+            _check_hr_branch(_profile, existing.branch_code)
             existing.branch_code = data.branch_code
             existing.status = data.status or "present"
             existing.check_in = data.check_in
@@ -184,6 +427,7 @@ async def save_attendance(
         # ---------- إضافة جديدة ----------
         else:
             tx = HRAttendance(
+                created_by=_creator_marker(_profile),
                 company_code=company_code,
                 branch_code=data.branch_code,
                 employee_code=employee_code,
@@ -250,6 +494,7 @@ async def save_attendance(
 
 @router.get("/attendance/list/{company_code}")
 async def list_attendance(
+    request: Request,
     company_code: str,
     date: str | None = Query(None, description="YYYY-MM-DD (يوم واحد)"),
     from_date: str | None = Query(None, description="YYYY-MM-DD (بداية النطاق)"),
@@ -258,6 +503,9 @@ async def list_attendance(
     employee_code: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_hr(request, "canOpenAttendancePage", "canViewBranchSalaryReport")
+    _check_tenant(_profile, company_code)
+
     try:
         stmt = (
             select(HRAttendance)
@@ -290,7 +538,9 @@ async def list_attendance(
         stmt = stmt.order_by(HRAttendance.date, HRAttendance.employee_code)
 
         result = await db.execute(stmt)
-        docs = result.scalars().all()
+        docs = await _filter_docs(
+            db, result.scalars().all(), company_code, _profile
+        )
 
         return [serialize_attendance(doc) for doc in docs]
 
@@ -309,11 +559,16 @@ async def list_attendance(
 
 @router.get("/attendance/employee/{company_code}/{employee_code}")
 async def list_employee_attendance(
+    request: Request,
     company_code: str,
     employee_code: str,
     month: str = Query(..., description="YYYY-MM"),
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = await _authorize_employee_target(
+        request, db, company_code, employee_code
+    )
+
     try:
         stmt = (
             select(HRAttendance)
@@ -344,10 +599,14 @@ async def list_employee_attendance(
 
 @router.delete("/attendance/delete/{company_code}/{attendance_id}")
 async def delete_attendance(
+    request: Request,
     company_code: str,
     attendance_id: int,
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_hr(request, "canDeleteAttendance")
+    _check_tenant(_profile, company_code)
+
     try:
         stmt = (
             select(HRAttendance)
@@ -373,6 +632,8 @@ async def delete_attendance(
             }
 
         # Soft Delete
+        _check_hr_branch(_profile, existing.branch_code)
+
         existing.is_deleted = True
         existing.updated_at = datetime.datetime.utcnow()
 
@@ -425,10 +686,14 @@ async def delete_attendance(
 
 @router.get("/attendance/changes/{company_code}")
 async def get_attendance_changes(
+    request: Request,
     company_code: str,
     since: str = Query(..., description="ISO 8601"),
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_hr(request, "canOpenAttendancePage", "canViewBranchSalaryReport")
+    _check_tenant(_profile, company_code)
+
     try:
         since_dt = _parse_since(since)
 
@@ -442,7 +707,9 @@ async def get_attendance_changes(
         )
 
         result = await db.execute(stmt)
-        docs = result.scalars().all()
+        docs = await _filter_docs(
+            db, result.scalars().all(), company_code, _profile
+        )
 
         results = []
         for doc in docs:
@@ -482,7 +749,7 @@ def serialize_vacation(
         "date": doc.date,
         "name": doc.name,
         "type": doc.type,
-        "created_by": doc.created_by,
+        "created_by": _public_creator(doc.created_by),
 
         "updated_at": (
             doc.updated_at.isoformat()
@@ -509,9 +776,14 @@ def serialize_vacation(
 
 @router.post("/vacations/save")
 async def save_vacation(
+    request: Request,
     data: HRVacationModel,
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_hr(request, "canAddVacation", "canEditVacation")
+    _check_tenant(_profile, data.company_code)
+    _check_hr_branch(_profile, data.branch_code)
+
     try:
         company_code = data.company_code
         date = data.date
@@ -561,6 +833,15 @@ async def save_vacation(
 
         result = await db.execute(stmt)
         existing = result.scalar_one_or_none()
+        if existing is not None and not _hr_has(_profile, "canEditVacation"):
+            ack = await _unchanged_hr_ack(db, _profile, company_code, existing,
+                {
+                "branch_code": branch_code, "employee_code": employee_code,
+                "name": data.name, "type": data.type or "official",
+            }, ("canOpenVacationsPage", "canViewBranchSalaryReport"))
+            if ack is not None:
+                return ack
+        _require_hr(request, "canEditVacation" if existing is not None else "canAddVacation")
 
         # ---------- تعديل / إضافة ----------
         if existing:
@@ -578,6 +859,7 @@ async def save_vacation(
 
         else:
             tx = HRVacation(
+                created_by=_creator_marker(_profile),
                 company_code=company_code,
                 branch_code=branch_code,
                 employee_code=employee_code,
@@ -636,6 +918,7 @@ async def save_vacation(
 
 @router.get("/vacations/list/{company_code}")
 async def list_vacations(
+    request: Request,
     company_code: str,
     from_date: str | None = Query(None, description="YYYY-MM-DD"),
     to_date: str | None = Query(None, description="YYYY-MM-DD"),
@@ -643,6 +926,9 @@ async def list_vacations(
     employee_code: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_hr(request, "canOpenVacationsPage", "canViewBranchSalaryReport")
+    _check_tenant(_profile, company_code)
+
     try:
         stmt = (
             select(HRVacation)
@@ -698,7 +984,9 @@ async def list_vacations(
         stmt = stmt.order_by(HRVacation.date)
 
         result = await db.execute(stmt)
-        docs = result.scalars().all()
+        docs = await _filter_docs(
+            db, result.scalars().all(), company_code, _profile
+        )
 
         return [serialize_vacation(doc) for doc in docs]
 
@@ -715,10 +1003,14 @@ async def list_vacations(
 
 @router.delete("/vacations/delete/{company_code}/{vacation_id}")
 async def delete_vacation(
+    request: Request,
     company_code: str,
     vacation_id: int,
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_hr(request, "canDeleteVacation")
+    _check_tenant(_profile, company_code)
+
     try:
         stmt = (
             select(HRVacation)
@@ -742,6 +1034,8 @@ async def delete_vacation(
                 "status": "success",
                 "message": "الإجازة محذوفة بالفعل",
             }
+
+        _check_hr_branch(_profile, existing.branch_code)
 
         existing.is_deleted = True
         existing.updated_at = datetime.datetime.utcnow()
@@ -790,10 +1084,14 @@ async def delete_vacation(
 
 @router.get("/vacations/changes/{company_code}")
 async def get_vacation_changes(
+    request: Request,
     company_code: str,
     since: str = Query(..., description="ISO 8601"),
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_hr(request, "canOpenVacationsPage", "canViewBranchSalaryReport")
+    _check_tenant(_profile, company_code)
+
     try:
         since_dt = _parse_since(since)
 
@@ -807,7 +1105,9 @@ async def get_vacation_changes(
         )
 
         result = await db.execute(stmt)
-        docs = result.scalars().all()
+        docs = await _filter_docs(
+            db, result.scalars().all(), company_code, _profile
+        )
 
         results = []
         for doc in docs:
@@ -879,10 +1179,14 @@ def serialize_employee_settings(
 
 @router.get("/employee-settings/changes/{company_code}")
 async def get_employee_settings_changes(
+    request: Request,
     company_code: str,
     since: str = Query(..., description="ISO 8601"),
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_hr(request, "canEditWeeklyDay", "canEditWorkSchedule", "canEditDelayRules", "canOpenAttendancePage")
+    _check_tenant(_profile, company_code)
+
     try:
         since_dt = _parse_since(since)
 
@@ -931,10 +1235,15 @@ async def get_employee_settings_changes(
 
 @router.get("/employee-settings/{company_code}/{employee_code}")
 async def get_employee_settings(
+    request: Request,
     company_code: str,
     employee_code: str,
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = await _authorize_employee_target(
+        request, db, company_code, employee_code
+    )
+
     try:
         stmt = select(HREmployeeSettings).where(
             HREmployeeSettings.company_code == company_code,
@@ -974,9 +1283,13 @@ async def get_employee_settings(
 
 @router.post("/employee-settings/save")
 async def save_employee_settings(
+    request: Request,
     data: HREmployeeSettingsModel,
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_hr(request, "canEditWeeklyDay", "canEditWorkSchedule", "canEditDelayRules")
+    _check_tenant(_profile, company_code)
+
     try:
         stmt = select(HREmployeeSettings).where(
             HREmployeeSettings.company_code == data.company_code,
@@ -1092,6 +1405,20 @@ def serialize_adjustment(
     return data
 
 
+async def _adjustment_payloads(db,company_code,docs,profile,*,target=None,changes=False):
+    docs=list(docs)
+    targets={target.code:target} if target is not None else {}
+    if not _hr_has(profile,'canViewSalaryAmounts') and _hr_has(profile,'canViewOwnHRData') and target is None:
+        targets=await targets_for_codes(db,company_code,[doc.employee_code for doc in docs])
+    result=[]
+    for doc in docs:
+        payload=serialize_adjustment(doc,action=('delete' if doc.is_deleted else 'update') if changes else None)
+        if not amounts_allowed(profile,targets.get(str(doc.employee_code))):
+            payload['amount']=None
+        result.append(payload)
+    return result
+
+
 # ------------------------------------------------------------
 # 4.1 حفظ / إضافة تسوية (خصم / مكافأة / سلفة)
 #
@@ -1103,8 +1430,25 @@ def serialize_adjustment(
 @router.post("/adjustments/save")
 async def save_adjustment(
     data: HRAdjustmentModel,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
+    # صلاحية الإضافة حسب نوع التسوية فقط (الواجهة تعرض كل نوع بمفتاحه):
+    # مكافأة → canAddBonus، سلفة → canAddLoan، خصم مباشر → canAddDirectDiscount
+    _ADD_BY_TYPE = {
+        "bonus": "canAddBonus",
+        "loan": "canAddLoan",
+        "deduction": "canAddDirectDiscount",
+    }
+    _key = _ADD_BY_TYPE.get(data.type)
+    if _key is None:
+        raise HTTPException(
+            status_code=403,
+            detail="نوع تسوية غير معروف وليس لديك صلاحية الإضافة عليه",
+        )
+    _profile = _require_hr(request, _key, "canEditAdjustment")
+    _check_tenant(_profile, data.company_code)
+    _check_hr_branch(_profile, data.branch_code)
     try:
         company_code = data.company_code
         employee_code = data.employee_code
@@ -1194,11 +1538,15 @@ async def save_adjustment(
 
 @router.get("/adjustments/list/{company_code}")
 async def list_adjustments(
+    request: Request,
     company_code: str,
     month: str = Query(..., description="YYYY-MM"),
     branch_code: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_hr(request, "canViewAdjustments", "canViewBranchSalaryReport")
+    _check_tenant(_profile, company_code)
+
     try:
         stmt = (
             select(HRAdjustment)
@@ -1220,9 +1568,11 @@ async def list_adjustments(
         )
 
         result = await db.execute(stmt)
-        docs = result.scalars().all()
+        docs = await _filter_docs(
+            db, result.scalars().all(), company_code, _profile
+        )
 
-        return [serialize_adjustment(doc) for doc in docs]
+        return await _adjustment_payloads(db,company_code,docs,_profile)
 
     except Exception as e:
         raise HTTPException(
@@ -1240,11 +1590,16 @@ async def list_adjustments(
 
 @router.get("/adjustments/employee/{company_code}/{employee_code}")
 async def list_employee_adjustments(
+    request: Request,
     company_code: str,
     employee_code: str,
     month: str = Query(..., description="YYYY-MM"),
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = await _authorize_employee_target(
+        request, db, company_code, employee_code
+    )
+
     try:
         stmt = (
             select(HRAdjustment)
@@ -1260,7 +1615,7 @@ async def list_employee_adjustments(
         result = await db.execute(stmt)
         docs = result.scalars().all()
 
-        return [serialize_adjustment(doc) for doc in docs]
+        return await _adjustment_payloads(db,company_code,docs,_profile,target=getattr(request.state,'hr_target',None))
 
     except Exception as e:
         raise HTTPException(
@@ -1275,10 +1630,14 @@ async def list_employee_adjustments(
 
 @router.delete("/adjustments/delete/{company_code}/{adjustment_id}")
 async def delete_adjustment(
+    request: Request,
     company_code: str,
     adjustment_id: int,
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_hr(request, "canDeleteAdjustment")
+    _check_tenant(_profile, company_code)
+
     try:
         stmt = (
             select(HRAdjustment)
@@ -1304,6 +1663,8 @@ async def delete_adjustment(
             }
 
         # Soft Delete
+        _check_hr_branch(_profile, existing.branch_code)
+
         existing.is_deleted = True
         existing.updated_at = datetime.datetime.utcnow()
 
@@ -1353,10 +1714,14 @@ async def delete_adjustment(
 
 @router.get("/adjustments/changes/{company_code}")
 async def get_adjustment_changes(
+    request: Request,
     company_code: str,
     since: str = Query(..., description="ISO 8601"),
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_hr(request, "canViewAdjustments", "canViewBranchSalaryReport")
+    _check_tenant(_profile, company_code)
+
     try:
         since_dt = _parse_since(since)
 
@@ -1370,14 +1735,11 @@ async def get_adjustment_changes(
         )
 
         result = await db.execute(stmt)
-        docs = result.scalars().all()
+        docs = await _filter_docs(
+            db, result.scalars().all(), company_code, _profile
+        )
 
-        results = []
-        for doc in docs:
-            action = "delete" if doc.is_deleted else "update"
-            results.append(serialize_adjustment(doc, action=action))
-
-        return results
+        return await _adjustment_payloads(db,company_code,docs,_profile,changes=True)
 
     except ValueError:
         raise HTTPException(
@@ -1411,11 +1773,16 @@ async def get_adjustment_changes(
 
 @router.get("/reports/salary/{company_code}/{employee_code}")
 async def get_salary_report(
+    request: Request,
     company_code: str,
     employee_code: str,
     month: str = Query(..., description="YYYY-MM"),
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = await _authorize_employee_target(
+        request, db, company_code, employee_code, salary=True
+    )
+
     try:
         # ---------- التحقق ----------
         if len(month) != 7 or "-" not in month:
@@ -1431,6 +1798,12 @@ async def get_salary_report(
             employee_code=employee_code,
             month=month,
         )
+
+        # عقد صفحة التقرير: من فتحها بـ canOpenReportPage فقط (بدون
+        # canViewSalaryAmounts وبدون أن يكون صاحب السجل) يرى بنية
+        # التقرير مع إخفاء المبالغ، كما تفعل الواجهة عند العرض.
+        if not amounts_allowed(_profile,getattr(request.state,'hr_target',None)):
+            report = _redact_salary_amounts(report)
 
         return report
 
@@ -1456,6 +1829,7 @@ async def get_salary_report(
 
 @router.get("/reports/branches/salaries")
 async def get_branch_salaries_totals(
+    request: Request,
     company_code: str = Query(..., description="كود الشركة"),
     month: str = Query(..., description="YYYY-MM"),
     branch_code: Optional[str] = Query(
@@ -1464,6 +1838,9 @@ async def get_branch_salaries_totals(
     ),
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_hr(request, "canViewBranchSalaryReport")
+    _check_tenant(_profile, company_code)
+
     """
     يجيب إجمالي رواتب كل الموظفين في فرع/شركة لشهر محدد.
     - branch_code = null → كل الشركة
@@ -1482,13 +1859,29 @@ async def get_branch_salaries_totals(
             Employee.is_deleted.is_(False),
         )
         if branch_code:
+            # طلب فرع محدد: لازم يكون ضمن فروع العارض
+            _check_hr_branch(_profile, branch_code)
             stmt = stmt.where(Employee.branch_code == branch_code)
+
+        # تقييد التقرير بفروع العارض والموظفين المرئيين له
+        _allowed = allowed_branches_for_profile(_profile)
+        if _allowed:
+            stmt = stmt.where(
+                or_(
+                    Employee.branch_code.in_(_allowed),
+                    Employee.branch_code.is_(None),
+                    Employee.branch_code == "",
+                )
+            )
+        _viewable = _hr_viewable_codes(_profile)
+        if _viewable is not None:
+            stmt = stmt.where(Employee.code.in_(_viewable))
 
         result = await db.execute(stmt)
         employees = result.scalars().all()
 
         if not employees:
-            return {
+            return _branch_report_payload(_profile, {
                 "company_code": company_code,
                 "month": month,
                 "branch_code": branch_code or "all",
@@ -1504,7 +1897,7 @@ async def get_branch_salaries_totals(
                     "total_net_salary": 0.0,
                 },
                 "employees": [],
-            }
+            })
 
         # 2) حساب راتب كل موظف (chunks of 5)
         import asyncio
@@ -1584,13 +1977,13 @@ async def get_branch_salaries_totals(
             )
         )
 
-        return {
+        return _branch_report_payload(_profile, {
             "company_code": company_code,
             "month": month,
             "branch_code": branch_code or "all",
             "totals": totals_rounded,
             "employees": employees_data,
-        }
+        })
 
     except HTTPException:
         raise
