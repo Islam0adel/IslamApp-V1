@@ -1,3 +1,6 @@
+import '../widgets/visibility_page_shell.dart';
+import '../../services/cache_partitions.dart';
+import 'treasury_transfers_page.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
@@ -17,13 +20,14 @@ import '../../services/permissions_service.dart';
 import '../../views/dashboard/inventory_page.dart';
 import 'stock_balance_page.dart';
 import 'suppliers_dashboard_page.dart';
+import 'commercial_pages.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'notifications_page.dart';
 import 'product_lookup_page.dart';
 import '../../services/notifications_service.dart';
 import '../../services/presence_service.dart';
 import '../../views/widgets/online_users_list.dart';
-import '../../services/web_loading_helper.dart'; 
+import '../../services/web_loading_helper.dart';
 import '../../pages/hr/hr_dashboard_page.dart';   // ← NEW
 import '../../services/notification_router.dart';   // ⭐ Deep Link
 import '../../services/deep_link_service.dart';   // ⭐ Pending pattern
@@ -64,13 +68,16 @@ class _HomePageState extends State<HomePage>
 
     // ⭐ Deep Link
   StreamSubscription<Map<String, dynamic>>? _deepLinkSub;
+  bool _loggingOut = false;
   bool _syncReady = false;   // هل المزامنة خلصت؟
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    NotificationsService.instance.setCompany(widget.companyCode);
-    PresenceService.instance.start();
+    if (CachePartitions.isReady) {
+      NotificationsService.instance.setCompany(widget.companyCode);
+      PresenceService.instance.start();
+    }
     PermissionsService().addListener(_onPermissionsChanged);
 
     _mainController = AnimationController(
@@ -98,12 +105,12 @@ class _HomePageState extends State<HomePage>
       // ⭐ إخفاء شاشة التحميل (لو Home هي أول شاشة)
       hideWebLoadingScreen();
 
-      _loadAllData();
+      if (CachePartitions.isReady && !_loggingOut) _loadAllData();
     });
   }
 
   void _onPermissionsChanged() {
-    if (!mounted) return;
+    if (!mounted || _loggingOut || !CachePartitions.isReady) return;
 
     setState(() {
       _permissionsLoaded = PermissionsService().isLoaded;
@@ -112,12 +119,14 @@ class _HomePageState extends State<HomePage>
 
     _permissionsDebounce?.cancel();
     _permissionsDebounce = Timer(const Duration(milliseconds: 400), () {
-      if (!mounted) return;
+      if (!mounted || _loggingOut || !CachePartitions.isReady) return;
       _loadBranchesAndCheck(showDialog: false);
     });
   }
 
   Future<void> _loadAllData() async {
+return CachePartitions.run(() async {
+
     try {
       if (!PermissionsService().isLoaded) {
         await PermissionsService().loadPermissions();
@@ -147,10 +156,13 @@ class _HomePageState extends State<HomePage>
       _syncReady = true;
       await _consumeDeepLinkIfAny();
     }
-  }
+});
+}
 
   // ⭐ فتح الإشعار المعلق (لو موجود)
   Future<void> _consumeDeepLinkIfAny() async {
+return CachePartitions.run(() async {
+
     if (!_syncReady || !mounted) return;
 
     final pending = DeepLinkService.instance.consumePendingNotification();
@@ -161,7 +173,8 @@ class _HomePageState extends State<HomePage>
     if (!mounted) return;
 
     await NotificationRouter.openNotification(pending);
-  }
+});
+}
 
   // ⭐ callback: إشعار وصل من SW بعد ما التطبيق مفتوح
   void _onDeepLinkReceived(Map<String, dynamic> notification) {
@@ -184,12 +197,15 @@ class _HomePageState extends State<HomePage>
   }
 
   Future<void> _loadBranchesAndCheck({bool showDialog = true}) async {
+if (_loggingOut || !CachePartitions.isReady || !CachePartitions.boundWorkIsCurrent) return;
+return CachePartitions.run(() async {
+
     if (_branchCheckInProgress) return;
     _branchCheckInProgress = true;
 
     try {
       final prefs = await SharedPreferences.getInstance();
-      final Box codingBox = Hive.box('coding_box');
+      final Box codingBox = CachePartitions.box('coding_box');
       final String localKey = "${widget.companyCode}_branches";
 
       List<Map<String, String>> fetchedBranches = [];
@@ -321,7 +337,8 @@ class _HomePageState extends State<HomePage>
     } finally {
       _branchCheckInProgress = false;
     }
-  }
+});
+}
 
   void _showBranchSelectionDialog() {
     if (_branchDialogOpen) return;
@@ -357,6 +374,8 @@ class _HomePageState extends State<HomePage>
                     style: TextStyle(color: isCurrent ? AppTheme.warningFor(context) : AppTheme.textMainFor(context), fontFamily: 'Cairo', fontSize: 14),
                   ),
                   onTap: () async {
+return CachePartitions.run(() async {
+
                     final prefs = await SharedPreferences.getInstance();
                     await prefs.setString('selected_branch_code', branchCode);
                     await prefs.setString('selected_branch_name', branchName);
@@ -368,7 +387,9 @@ class _HomePageState extends State<HomePage>
                     }
                     PresenceService.instance.refresh();
                     Navigator.pop(context);
-                  },
+
+});
+},
                 ),
               );
             },
@@ -386,6 +407,8 @@ class _HomePageState extends State<HomePage>
     return '${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
   }
   Future<void> _showNotificationsPreview() async {
+return CachePartitions.run(() async {
+
     if (!mounted) return;
 
     String formatNotificationDate(String value) {
@@ -476,7 +499,7 @@ class _HomePageState extends State<HomePage>
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) {
           return ValueListenableBuilder<Box>(
-            valueListenable: Hive.box('notifications_box').listenable(),
+            valueListenable: CachePartitions.box('notifications_box').listenable(),
             builder: (context, box, _) {
               final latestItems = NotificationsService.instance
                   .getNotifications(companyCode: widget.companyCode)
@@ -588,12 +611,16 @@ class _HomePageState extends State<HomePage>
                     IconButton(
                       tooltip: 'تحديث',
                       onPressed: () async {
+return CachePartitions.run(() async {
+
                         await NotificationsService.instance
                             .refreshUnreadFromServer(
                           companyCode: widget.companyCode,
                         );
                         if (dialogContext.mounted) setDialogState(() {});
-                      },
+
+});
+},
                       icon: Icon(
                         Icons.refresh,
                         color: AppTheme.textMainFor(context),
@@ -720,6 +747,8 @@ class _HomePageState extends State<HomePage>
                                   ),
                                 ),
                                 onTap: () async {
+return CachePartitions.run(() async {
+
                                   if (item['read'] != true) {
                                     await NotificationsService.instance
                                         .markRead(
@@ -738,7 +767,9 @@ class _HomePageState extends State<HomePage>
                                   await NotificationRouter.openNotification(
                                     Map<String, dynamic>.from(item),
                                   );
-                                },
+
+});
+},
                               ),
                             );
 
@@ -816,6 +847,8 @@ class _HomePageState extends State<HomePage>
                               ),
 
                               confirmDismiss: (direction) async {
+return CachePartitions.run(() async {
+
                                 // ─── Swipe يمين → markRead فقط ───
                                 if (direction ==
                                     DismissDirection.startToEnd) {
@@ -902,7 +935,9 @@ class _HomePageState extends State<HomePage>
                                 }
 
                                 return false;
-                              },
+
+});
+},
 
                               child: card,
                             );
@@ -912,13 +947,17 @@ class _HomePageState extends State<HomePage>
                 actions: [
                   TextButton(
                     onPressed: () async {
+return CachePartitions.run(() async {
+
                       await NotificationsService.instance
                           .markAllRead(
                         companyCode: widget.companyCode,
                       );
                       if (dialogContext.mounted) setDialogState(() {});
                       if (mounted) setState(() {});
-                    },
+
+});
+},
                     child: Text(
                       'تحديد الكل كمقروء',
                       style: TextStyle(
@@ -955,10 +994,14 @@ class _HomePageState extends State<HomePage>
         },
       ),
     );
-  }
+});
+}
 
   @override
   Widget build(BuildContext context) {
+    // The old route can render while logout awaits prefs/Auth/navigation.
+    // Never resolve an account-bound box after the partition was suspended.
+    if (_loggingOut || !CachePartitions.isReady) return const SizedBox.shrink();
     return Scaffold(
       extendBodyBehindAppBar: true,
       body: Container(
@@ -1040,7 +1083,7 @@ class _HomePageState extends State<HomePage>
             width: 50,
             height: 50,
             // استخدام cacheWidth/Height بضعف الحجم عشان يطلع نضيف على الموبايل
-            cacheWidth: 90, 
+            cacheWidth: 90,
             cacheHeight: 90,
           ),
           const SizedBox(width: 4),
@@ -1070,7 +1113,7 @@ class _HomePageState extends State<HomePage>
           ),
           if (PermissionsService().canShowNotifications)
             ValueListenableBuilder<Box>(
-              valueListenable: Hive.box('notifications_box').listenable(),
+              valueListenable: CachePartitions.box('notifications_box').listenable(),
               builder: (context, box, _) {
                 final unread = NotificationsService.instance
                     .unreadCount(companyCode: widget.companyCode);
@@ -1210,6 +1253,18 @@ class _HomePageState extends State<HomePage>
   Widget _buildMenuGrid() {
     List<Widget> menuItems = [];
 
+    if (_permissionsLoaded && PermissionsService().canShowSales) {
+      menuItems.add(_menuItem(
+        'المبيعات والعملاء', Icons.point_of_sale_rounded,
+        AppTheme.successFor(context),
+        () => Navigator.push(context, MaterialPageRoute(builder: (_) => SalesDashboardPage(
+          companyCode: widget.companyCode,
+          branchCode: _selectedBranchCode,
+          userName: widget.userName,
+        ))),
+      ));
+    }
+
     if (_permissionsLoaded && PermissionsService().canShowTreasury) {
       menuItems.add(
         _menuItem(
@@ -1230,6 +1285,12 @@ class _HomePageState extends State<HomePage>
           },
         ),
       );
+    }
+
+    if (_permissionsLoaded && PermissionsService().canShowTreasuryTransfers) {
+      menuItems.add(_menuItem('تحويلات الخزائن', Icons.sync_alt_rounded, AppTheme.successFor(context),
+        () => Navigator.push(context, MaterialPageRoute(builder: (_) => !(PermissionsService().canAddTreasuryTransfer || PermissionsService().canViewTreasuryTransfers) ? const VisibilityPageShell(title: 'تحويلات الخزائن') : TreasuryTransfersPage(
+          companyCode: widget.companyCode, branchCode: _selectedBranchCode, userName: widget.userName)))));
     }
 
     if (_permissionsLoaded && PermissionsService().canShowCoding) {
@@ -1295,7 +1356,7 @@ class _HomePageState extends State<HomePage>
       );
     }
 
-    if (_permissionsLoaded && PermissionsService().canShowInventory) {
+    if (_permissionsLoaded && PermissionsService().canShowStockPage) {
       menuItems.add(
         _menuItem(
           "رصيد المخزون",
@@ -1305,7 +1366,7 @@ class _HomePageState extends State<HomePage>
             Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (c) => StockBalancePage(
+                builder: (c) => !PermissionsService().canShowStock ? const VisibilityPageShell(title: 'رصيد المخزون') : StockBalancePage(
                   companyCode: widget.companyCode,
                   selectedBranchCode: _selectedBranchCode,
                 ),
@@ -1399,11 +1460,15 @@ class _HomePageState extends State<HomePage>
         Icons.settings_rounded,
         AppTheme.extraBlueGreyFor(context),
         () async {
+return CachePartitions.run(() async {
+
           await Navigator.push(
             context,
             MaterialPageRoute(builder: (c) => const SettingsPage()),
           );
-        },
+
+});
+},
       ),
     );
 
@@ -1517,6 +1582,13 @@ class _HomePageState extends State<HomePage>
   // 5) navigate
   // ============================================================
   Future<void> _handleLogout() async {
+    if (_loggingOut) return;
+    setState(() => _loggingOut = true);
+    _permissionsDebounce?.cancel();
+    _timer.cancel();
+    PermissionsService().removeListener(_onPermissionsChanged);
+    _deepLinkSub?.cancel();
+
     // ✅ 1) أوقف الحضور أولاً — قبل أي حاجة
     try {
       await PresenceService.instance.stop();
@@ -1525,8 +1597,11 @@ class _HomePageState extends State<HomePage>
     }
 
     // ✅ 2) انتظر 500ms عشان الـ RTDB write يتأكد من السيرفر
-    // (important: signOut قد يقطع الاتصال قبل ما الـ write يوصل)
     await Future.delayed(const Duration(milliseconds: 500));
+    // ... باقي الكود زي ما هو
+
+    disposeGlobalListener();
+    CachePartitions.suspend();
 
     // 3) امسح prefs
     final prefs = await SharedPreferences.getInstance();
@@ -1553,6 +1628,7 @@ class _HomePageState extends State<HomePage>
       (route) => false,
     );
   }
+
 
   @override
   void dispose() {

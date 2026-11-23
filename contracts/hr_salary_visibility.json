@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "report_safe_keys": [
+    "absence",
+    "absence_deduction_days",
+    "absence_with_permission",
+    "absent_days",
+    "attendance_details",
+    "branch_code",
+    "check_in",
+    "check_out",
+    "company_code",
+    "date",
+    "deduction_days",
+    "default_check_in",
+    "default_check_out",
+    "delay_deduction_days",
+    "early_leave_minutes_total",
+    "elapsed_days",
+    "employee_code",
+    "employee_name",
+    "flexible_hours",
+    "future_days",
+    "grace_minutes",
+    "late_minutes",
+    "late_minutes_total",
+    "month",
+    "overtime_minutes",
+    "overtime_minutes_total",
+    "overtime_multiplier",
+    "permission",
+    "permission_days",
+    "present_days",
+    "status",
+    "use_fixed_month_days",
+    "vacation_days",
+    "weekly_vacation_day",
+    "work_days"
+  ],
+  "adjustment_line_safe_keys": [
+    "date",
+    "label",
+    "note",
+    "type"
+  ],
+  "branch_top_keys": [
+    "company_code",
+    "month",
+    "branch_code"
+  ],
+  "branch_total_safe_keys": [
+    "employees_count"
+  ]
+}

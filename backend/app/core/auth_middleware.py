@@ -5,6 +5,7 @@ import os
 import time
 from typing import Any, Dict, Optional
 
+from app.core.blocking_io import run_blocking
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from firebase_admin import auth as admin_auth
@@ -14,6 +15,8 @@ from app.core.database import AsyncSessionLocal
 from app.core.firebase_setup import db as firebase_db
 from app.core.models import Company
 from app.core.request_context import current_user_context
+from app.core.branch_scope import active_operating_branches
+from app.core.company_policy_store import active_policy_configuration, effective_policy_profile, CompanyReviewRequired
 
 
 # ============================================================
@@ -65,6 +68,7 @@ def _effective_role(profile: Dict[str, Any]) -> str:
 _PROFILE_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
 _COMPANY_CACHE: Dict[str, tuple[float, bool]] = {}
 _CACHE_SECONDS = 15
+_PROFILE_INVALIDATION = 0
 
 _PUBLIC_PATHS = {
     "/",
@@ -75,6 +79,7 @@ _PUBLIC_PATHS = {
     "/auth/check-phone",
     "/auth/check-email",              # ⭐ جديد
     "/auth/complete-registration",
+    "/auth/cancel-registration",
     "/auth/request-registration",
 }
 
@@ -84,10 +89,26 @@ _COMPANY_PATH_PREFIXES = (
 )
 
 
-def _profile_for(email: str, uid: str) -> Optional[Dict[str, Any]]:
+def invalidate_company_cache(company_code: str) -> None:
+    _COMPANY_CACHE.pop(str(company_code), None)
+
+
+def invalidate_profile_cache(email: str) -> None:
+    """إبطال الكاش فور تعديل الصلاحيات/الحالة حتى يسري التغيير
+    في أول طلب تالٍ بدلاً من انتظار انتهاء مدة الكاش."""
+    global _PROFILE_INVALIDATION
+    _PROFILE_INVALIDATION += 1
+    _PROFILE_CACHE.pop(str(email or "").strip().lower(), None)
+
+
+def profile_invalidation_revision() -> int:
+    return _PROFILE_INVALIDATION
+
+
+def _profile_for(email: str, uid: str, *, force_refresh: bool = False) -> Optional[Dict[str, Any]]:
     now = time.monotonic()
     cached = _PROFILE_CACHE.get(email)
-    if cached and now - cached[0] < _CACHE_SECONDS and cached[1].get("uid") == uid:
+    if not force_refresh and cached and now - cached[0] < _CACHE_SECONDS and cached[1].get("uid") == uid:
         return cached[1]
     if firebase_db is None:
         return None
@@ -115,7 +136,19 @@ async def _company_is_active(company_code: str) -> bool:
     return active
 
 
+def can_bypass_permissions(profile: Dict[str, Any]) -> bool:
+    """Only platform admin, or legacy company admin before reviewed activation."""
+    role = _effective_role(profile)
+    return role == "super_admin" or (
+        role == "admin" and profile.get("company_policy_active") is not True
+    )
+
+
 def _allowed_branches(profile: Dict[str, Any]) -> list[str]:
+    if profile.get('company_policy_active') is True:
+        # Projected requests normally arrive prevalidated. Direct consumers
+        # must also fail closed rather than treating an empty list as all.
+        return active_operating_branches(profile.get('allowed_branches'))
     value = profile.get("allowed_branches", ["all"])
     if value is None:
         return ["all"]
@@ -129,7 +162,7 @@ def _allowed_branches(profile: Dict[str, Any]) -> list[str]:
 def allowed_branches_for_profile(profile: Dict[str, Any]) -> Optional[list[str]]:
     """None = كل الفروع مسموحة، list = فروع محددة."""
     role = _effective_role(profile)
-    if role in ("super_admin", "admin"):
+    if can_bypass_permissions(profile):
         return None
     branches = _allowed_branches(profile)
     if not branches or "all" in [branch.lower() for branch in branches]:
@@ -142,6 +175,10 @@ def allowed_branches_for_profile(profile: Dict[str, Any]) -> Optional[list[str]]
 # ============================================================
 
 async def authenticate_http_request(request: Request, call_next):
+    return await _authenticate_http_request(request, call_next)
+
+
+async def _authenticate_http_request(request: Request, call_next):
     if (
         request.method == "OPTIONS"
         or request.url.path in _PUBLIC_PATHS
@@ -158,7 +195,7 @@ async def authenticate_http_request(request: Request, call_next):
         if not authorization.lower().startswith("bearer "):
             return JSONResponse(status_code=401, content={"detail": "يجب توثيق حساب Firebase لإتمام التسجيل"})
         try:
-            decoded_register = admin_auth.verify_id_token(
+            decoded_register = await run_blocking(admin_auth.verify_id_token,
                 authorization.split(" ", 1)[1].strip(), clock_skew_seconds=60
             )
             raw_body = await request.body()
@@ -188,14 +225,22 @@ async def authenticate_http_request(request: Request, call_next):
         return JSONResponse(status_code=401, content={"detail": "يجب تسجيل الدخول لإكمال الطلب"})
 
     try:
-        decoded = admin_auth.verify_id_token(
+        decoded = await run_blocking(admin_auth.verify_id_token,
             authorization.split(" ", 1)[1].strip(), clock_skew_seconds=60
         )
         uid = str(decoded.get("uid", ""))
         email = str(decoded.get("email", "")).strip().lower()
         if not uid or not email:
             raise ValueError("Firebase token does not include uid/email")
-        profile = _profile_for(email, uid)
+        # A concurrent explicit revocation must not be overwritten by a read
+        # that started before it. Retry fresh, fail closed under continuous churn.
+        for attempt in range(3):
+            revision = _PROFILE_INVALIDATION
+            profile = await run_blocking(_profile_for, email, uid, force_refresh=True)
+            if revision == _PROFILE_INVALIDATION:
+                break
+        else:
+            return JSONResponse(status_code=503, content={"detail": "تعذر تثبيت صلاحيات الحساب مؤقتًا"})
     except Exception as exc:
         print(f"⚠️ رفض طلب API غير موثق: {exc}")
         return JSONResponse(status_code=401, content={"detail": "انتهت الجلسة أو التوكن غير صالح، سجل الدخول مرة أخرى"})
@@ -216,6 +261,17 @@ async def authenticate_http_request(request: Request, call_next):
             content={"detail": "تم إيقاف حسابك. يرجى التواصل مع الإدارة."},
         )
 
+    # ⭐ الحظر الفوري (is_active بتتكتب من صفحة المستخدمين)
+    # الحقل الناقص (حسابات قديمة) لا يؤثر
+    if profile.get("is_active") is False:
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "تم حظر حسابك. يرجى التواصل مع الإدارة."},
+        )
+
+    if profile.get('requires_email_verification') is True and decoded.get('email_verified') is not True:
+        return JSONResponse(status_code=403, content={'detail': 'يجب التحقق من البريد الإلكتروني أولاً'})
+
     # ⭐ الدور الفعلي
     role = _effective_role(profile)
 
@@ -226,11 +282,37 @@ async def authenticate_http_request(request: Request, call_next):
     # ⭐ الشركة موقوفة؟ (super_admin معفي)
     if role != "super_admin":
         try:
-            if not await _company_is_active(company_code):
+            company_active = await _company_is_active(company_code)
+            if not company_active:
                 return JSONResponse(status_code=403, content={"detail": "الشركة غير موجودة أو موقوفة"})
         except Exception as exc:
             print(f"⚠️ تعذر التحقق من حالة الشركة: {exc}")
             return JSONResponse(status_code=503, content={"detail": "تعذر التحقق من حالة الشركة مؤقتًا"})
+
+    # The database, not a client/profile flag, determines reviewed activation.
+    # The initial identity read is current for all companies. Do not duplicate
+    # that source read when projecting the active company policy.
+    try:
+        configuration, policy_revision = None, None
+        if role != "super_admin":
+            async with AsyncSessionLocal() as policy_session:
+                configuration, policy_revision = await active_policy_configuration(policy_session, company_code)
+            if configuration is not None:
+                fresh = profile
+                if fresh is None:
+                    return JSONResponse(status_code=401, content={"detail": "الحساب غير صالح"})
+                if str(fresh.get("company_code", "")) != company_code:
+                    return JSONResponse(status_code=409, content={"detail": "تغير نطاق الحساب. أعد تحميل الجلسة"})
+                if fresh.get("is_active") is False or str(fresh.get("status", "active")).lower() in ("pending", "suspended"):
+                    return JSONResponse(status_code=403, content={"detail": "الحساب غير متاح للاستخدام"})
+                profile = fresh
+                role = _effective_role(profile)
+        profile = effective_policy_profile(profile, configuration, policy_revision, role=role)
+    except CompanyReviewRequired:
+        return JSONResponse(status_code=403, content={"detail":"تحتاج الشركة مراجعة صلاحياتها قبل الاستخدام", "code":"company_review_required"})
+    except Exception as exc:
+        print(f"⚠️ Company authorization unavailable: {exc}")
+        return JSONResponse(status_code=503, content={"detail": "تعذر التحقق من صلاحيات الشركة مؤقتًا"})
 
     # ============================================================
     # قراءة الـ JSON body وإعادته كما هو
@@ -281,7 +363,12 @@ async def authenticate_http_request(request: Request, call_next):
                 return JSONResponse(status_code=403, content={"detail": "غير مسموح بالوصول إلى هذا الفرع"})
 
             requested_branch = body.get("branch_code") or request.query_params.get("branch_code")
-            if requested_branch:
+            # Here branch_code is the target's startup preference, not the
+            # actor's business-data filter. The route locks policy/company/
+            # branches and verifies the target scope in its source transaction.
+            account_startup = (configuration is not None and request.method == 'PUT'
+                and request.url.path == '/auth/admin/edit-user')
+            if requested_branch and not account_startup:
                 requested_branch = str(requested_branch)
                 is_all_query = request.method == "GET" and requested_branch.lower() in {
                     "all", "الكل", "كل الفروع",
@@ -303,6 +390,7 @@ async def authenticate_http_request(request: Request, call_next):
     request.state.auth_user = profile
     token = current_user_context.set(profile)
     try:
-        return await call_next(request)
+        response = await call_next(request)
+        return response
     finally:
         current_user_context.reset(token)

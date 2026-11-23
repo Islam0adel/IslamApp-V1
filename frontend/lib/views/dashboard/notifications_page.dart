@@ -1,3 +1,4 @@
+import '../../services/cache_partitions.dart';
 // lib/views/dashboard/notifications_page.dart
 
 import 'package:flutter/material.dart';
@@ -28,8 +29,8 @@ class _NotificationsPageState extends State<NotificationsPage> {
   }
 
   void _loadBranches() {
-    if (!Hive.isBoxOpen('coding_box')) return;
-    final box = Hive.box('coding_box');
+    if (!CachePartitions.isBoxOpen('coding_box')) return;
+    final box = CachePartitions.box('coding_box');
     final branches = box.get('${widget.companyCode}_branches', defaultValue: []);
     if (branches is! List) return;
 
@@ -44,9 +45,12 @@ class _NotificationsPageState extends State<NotificationsPage> {
   }
 
   Future<void> _refresh() async {
+return CachePartitions.run(() async {
+
     await _service.refreshUnreadFromServer(companyCode: widget.companyCode);
     if (mounted) setState(() {});
-  }
+});
+}
 
   String _branchLabel(Map<String, dynamic> item) {
     final code = (item['branch_code'] ?? '').toString().trim();
@@ -172,17 +176,25 @@ class _NotificationsPageState extends State<NotificationsPage> {
             tooltip: 'تحديد الكل كمقروء',
             icon: const Icon(Icons.done_all),
             onPressed: () async {
+return CachePartitions.run(() async {
+
               await _service.markAllRead(companyCode: widget.companyCode);
               if (mounted) setState(() {});
-            },
+
+});
+},
           ),
           IconButton(
             tooltip: 'مسح الإشعارات',
             icon: const Icon(Icons.delete_outline),
             onPressed: () async {
+return CachePartitions.run(() async {
+
               await _service.clear(companyCode: widget.companyCode);
               if (mounted) setState(() {});
-            },
+
+});
+},
           ),
         ],
       ),
@@ -196,7 +208,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
         ),
         child: SafeArea(
           child: ValueListenableBuilder(
-            valueListenable: Hive.box('notifications_box').listenable(),
+            valueListenable: CachePartitions.box('notifications_box').listenable(),
             builder: (context, box, _) {
               final items = _service.getNotifications(
                 companyCode: widget.companyCode,
@@ -339,6 +351,8 @@ class _NotificationsPageState extends State<NotificationsPage> {
 
       // ⭐ confirmDismiss → نتحكم في هل العنصر يتشال ولا يرجع
       confirmDismiss: (direction) async {
+return CachePartitions.run(() async {
+
         if (direction == DismissDirection.startToEnd) {
           // ─── Swipe يمين → markRead فقط ───
           if (!read) {
@@ -406,7 +420,8 @@ class _NotificationsPageState extends State<NotificationsPage> {
           return false; // المستخدم لغى → يرجع
         }
         return false;
-      },
+});
+},
 
       // ────────────────────────────────────────────
       // المحتوى (البطاقة نفسها)
@@ -469,6 +484,8 @@ class _NotificationsPageState extends State<NotificationsPage> {
             ),
           ),
           onTap: () async {
+return CachePartitions.run(() async {
+
             if (!read) {
               await _service.markRead(item['id'].toString());
               if (mounted) setState(() {});
@@ -477,7 +494,9 @@ class _NotificationsPageState extends State<NotificationsPage> {
             await NotificationRouter.openNotification(
               Map<String, dynamic>.from(item),
             );
-          },
+
+});
+},
         ),
       ),
     );

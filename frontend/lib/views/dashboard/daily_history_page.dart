@@ -1,3 +1,4 @@
+import '../../services/cache_partitions.dart';
 // lib/views/dashboard/daily_history_page.dart
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -63,19 +64,21 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
         _fetchData();
       }
     };
-    Hive.box('daily_transactions_box').listenable().addListener(_boxListener!);
+    CachePartitions.box('daily_transactions_box').listenable().addListener(_boxListener!);
     _initialize();
   }
 
   @override
   void dispose() {
     if (_boxListener != null) {
-      Hive.box('daily_transactions_box').listenable().removeListener(_boxListener!);
+      CachePartitions.box('daily_transactions_box').listenable().removeListener(_boxListener!);
     }
     super.dispose();
   }
 
   Future<void> _initialize() async {
+return CachePartitions.run(() async {
+
     if (_isInitializing) return;
     _isInitializing = true;
 
@@ -85,8 +88,8 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
     // 1. سرعة عرض الصفحة (لا انتظار لتحميل البيانات)
     // 2. عدم تكرار استدعاءات المزامنة من عدة صفحات
     // 3. تحديث تلقائي عند تغيير Hive عبر المستمع (_boxListener)
-    
-    final Box dailyBox = Hive.box('daily_transactions_box');
+
+    final Box dailyBox = CachePartitions.box('daily_transactions_box');
     bool hasLocalData = dailyBox.values.any((tx) => tx is Map && tx['company_code'] == widget.companyCode);
 
     // ✅ إذا لم تكن هناك بيانات محلية، نعرض رسالة "لا توجد بيانات" بدلاً من تحميلها
@@ -102,7 +105,7 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
     final prefs = await SharedPreferences.getInstance();
     final lastSyncKey = '${ApiConstants.LAST_SYNC_DAILY}${widget.companyCode}';
     final lastSyncTime = prefs.getString(lastSyncKey);
-    
+
     if (lastSyncTime != null) {
       print("📡 جاري جلب التحديثات من السيرفر منذ آخر مزامنة: $lastSyncTime");
       await _dailyService.syncChangesFromServer(widget.companyCode, lastSyncTime);
@@ -119,16 +122,19 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
       _isInitializing = false;
       return;
     }
-    
+
     // ✅ عرض البيانات المخزنة محلياً فوراً (بدون انتظار)
     _fetchData();
     _isInitializing = false;
-  }
+});
+}
 
   void _fetchData() async {
+return CachePartitions.run(() async {
+
     // ✅ منع التنفيذ إذا كان الـ Widget غير موجود أو قيد التحديث
     if (!mounted || _isUpdating) return;
-    
+
     _isUpdating = true;
     setState(() => _isLoading = true);
     try {
@@ -161,12 +167,13 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
       });
       print("خطأ في جلب التاريخ: $e");
     }
-  }
+});
+}
 
   // 🌟 دالة مساعدة لجلب اسم الفرع من الكود الخاص به لعرضه للمستخدم
   String _getBranchName(String? code) {
     if (code == null || code == 'all' || code == '') return 'كل الفروع';
-    final Box codingBox = Hive.box('coding_box');
+    final Box codingBox = CachePartitions.box('coding_box');
     final rawData = codingBox.get("${widget.companyCode}_branches", defaultValue: []);
     for(var item in rawData) {
       if(item['code']?.toString() == code.toString()) return item['name']?.toString() ?? "فرع غير معروف";
@@ -328,6 +335,8 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
   }
 
   Future<void> _exportToPDF(List<Map<String, dynamic>> currentData) async {
+return CachePartitions.run(() async {
+
     if (!PermissionsService().canExport) {
       _showSnackBar("ليس لديك صلاحية للتصدير", AppTheme.warningOrangeFor(context));
       return;
@@ -370,9 +379,12 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
     } catch (e) {
       _showSnackBar("فشل التصدير: $e", AppTheme.dangerStrongFor(context));
     }
-  }
+});
+}
 
   Future<void> _exportToExcel(List<Map<String, dynamic>> currentData) async {
+return CachePartitions.run(() async {
+
     // ✅ التحقق من صلاحية التصدير
     if (!PermissionsService().canExport) {
       _showSnackBar("ليس لديك صلاحية لتصدير البيانات", AppTheme.warningOrangeFor(context));
@@ -459,7 +471,8 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
     } catch (e) {
       _showSnackBar("فشل التصدير: $e", AppTheme.dangerStrongFor(context));
     }
-  }
+});
+}
 
   @override
   Widget build(BuildContext context) {
@@ -491,16 +504,19 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
 
     double screenWidth = MediaQuery.of(context).size.width;
     bool isWebOrDesktop = screenWidth > 600;
-    final Box dailyBox = Hive.box('daily_transactions_box');
+    final Box dailyBox = CachePartitions.box('daily_transactions_box');
 
     return PopScope(
       canPop: false,
       onPopInvoked: (didPop) async {
+return CachePartitions.run(() async {
+
         if (didPop) return;
         if (context.mounted) {
           Navigator.pop(context);
         }
-      },
+});
+},
       child: ValueListenableBuilder(
         valueListenable: dailyBox.listenable(),
         builder: (context, Box box, child) {
@@ -775,6 +791,8 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
       String label, DateTime date, Function(DateTime?) onPick) {
     return InkWell(
       onTap: () async {
+return CachePartitions.run(() async {
+
         DateTime? p = await showDatePicker(
           context: context,
           initialDate: date,
@@ -782,7 +800,8 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
           lastDate: DateTime(2101),
         );
         if (p != null) onPick(p);
-      },
+});
+},
       child: Column(
         children: [
           Text(label,
@@ -940,7 +959,7 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
                     ],
                   ),
                 ),
-                
+
                 // الموظف
                 Expanded(
                   child: Row(
@@ -983,6 +1002,8 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
   }
 
   void _editTransaction(Map<String, dynamic> item) async {
+return CachePartitions.run(() async {
+
     // 🌟 منع التعديل لحركات التحويل المزدوجة لحماية الأرصدة
     if (item['category'] == 'تحويل خزائن') {
       _showSnackBar("لا يمكن تعديل إذن التحويل المزدوج! الرجاء حذفه وإنشاء تحويل جديد.", AppTheme.warningOrangeFor(context));
@@ -995,14 +1016,15 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
         builder: (context) => DailyPage(
           companyCode: widget.companyCode,
           editItem: item,
-          userName: widget.userName, 
+          userName: widget.userName,
           selectedBranchCode: item['branch_code']?.toString() ?? widget.selectedBranchCode,
         ),
       ),
     );
     // ✅ بعد العودة من التعديل، نعيد تحميل البيانات
     _fetchData();
-  }
+});
+}
 
   void _showOptionsModal(Map<String, dynamic> item) {
     bool canEdit = PermissionsService().canEditTransaction;
@@ -1059,59 +1081,35 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
       return;
     }
 
+    if (item['category'] == 'تحويل خزائن') {
+      _showSnackBar('تحويلات الخزائن تُدار من القسم المستقل، ولا تُحذف كأذون يومية.', AppTheme.warningOrangeFor(context));
+      return;
+    }
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: AppTheme.dialogBackground(context),
         title: Text("تأكيد الحذف", style: TextStyle(color: AppTheme.textMainFor(context), fontFamily: 'Cairo', fontSize: 15)),
         content: Text(
-          item['category'] == 'تحويل خزائن' 
-              ? "هل أنت متأكد من حذف هذا التحويل؟\n(سيقوم النظام آلياً بحذف حركة الصادر والوارد معاً لضبط الأرصدة)" 
-              : "حذف إذن رقم ${item['serial']}؟", 
+          "حذف إذن رقم ${item['serial']}؟",
           style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo', fontSize: 13),
         ),
         actions: [
           TextButton(
             onPressed: () async {
+return CachePartitions.run(() async {
+
               try {
                 // 1. حذف الإذن الأساسي الذي ضغط عليه المستخدم
                 await _dailyService.deleteTransaction(
-                    widget.companyCode, item['serial'] ?? 0, item['branch_code']?.toString() ?? "1"); 
-                
-                // 2. 🌟 البحث الذكي عن الحركة التوأم (المقابلة) وحذفها آلياً
-                if (item['category'] == 'تحويل خزائن') {
-                  int counterpartSerial = -1;
-                  String counterpartBranch = item['branch_code']?.toString() ?? "1";
-                  double targetAmount = double.tryParse(item['amount'].toString()) ?? 0.0;
-                  
-                  final box = Hive.box('daily_transactions_box');
-                  for (var val in box.values) {
-                    if (val is Map && 
-                        val['company_code'] == widget.companyCode && 
-                        val['category'] == 'تحويل خزائن' && 
-                        val['date'] == item['date'] && 
-                        val['type'] != item['type'] && // نوع عكسي (لو صادر يبحث عن الوارد)
-                        (double.tryParse(val['amount'].toString()) ?? 0.0) == targetAmount) {
-                          
-                      counterpartSerial = val['serial'] ?? -1;
-                      counterpartBranch = val['branch_code']?.toString() ?? counterpartBranch;
-                      break; // وجدنا الحركة التوأم!
-                    }
-                  }
-                  
-                  // إذا وجدنا التوأم، نحذفه فوراً من الفايربيز أيضاً
-                  if (counterpartSerial != -1) {
-                    await _dailyService.deleteTransaction(
-                        widget.companyCode, counterpartSerial, counterpartBranch);
-                  }
-                }
+                    widget.companyCode, item['serial'] ?? 0, item['branch_code']?.toString() ?? "1");
+
 
                 if (mounted) {
-                  Navigator.pop(context); 
+                  Navigator.pop(context);
                   _showSnackBar(
-                    item['category'] == 'تحويل خزائن' 
-                        ? "تم حذف حركتي التحويل (الصادر والوارد) بنجاح لضبط ميزان الخزائن"
-                        : "تم حذف الإذن بنجاح وتحديث الأرصدة محلياً", 
+                    "تم حذف الإذن بنجاح وتحديث الأرصدة محلياً",
                     AppTheme.successStrongFor(context)
                   );
                   // ✅ إعادة تحميل البيانات بعد الحذف
@@ -1119,11 +1117,13 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
                 }
               } catch (e) {
                 if (mounted) {
-                  Navigator.pop(context); 
-                  _showSnackBar("فشل الحذف: ${e.toString()}", AppTheme.dangerStrongFor(context)); 
+                  Navigator.pop(context);
+                  _showSnackBar("فشل الحذف: ${e.toString()}", AppTheme.dangerStrongFor(context));
                 }
               }
-            },
+
+});
+},
             child: Text("حذف", style: TextStyle(color: AppTheme.dangerFor(context), fontFamily: 'Cairo', fontSize: 13, fontWeight: FontWeight.bold)),
           ),
         ],

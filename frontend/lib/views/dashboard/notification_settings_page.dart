@@ -1,3 +1,4 @@
+import '../../services/cache_partitions.dart';
 // lib/views/dashboard/notification_settings_page.dart
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -33,6 +34,7 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
     'hr_employees': 'بيانات الموظفين',
     // ⭐ جديد — يظهر فقط للسوبر أدمن
     'registration_requests': 'طلبات الانضمام',
+    'commercial': 'المبيعات والمرتجعات والتحصيلات والتحويلات',
   };
 
   static const events = <String, String>{
@@ -47,22 +49,40 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
   @override
   void initState() {
     super.initState();
+    _service.settingsChanges.addListener(_settingsChanged);
+    PermissionsService().addListener(_settingsChanged);
     _service.setCompany(widget.companyCode);
     _loadSettings();
     _loadSystemPushState();
   }
 
-  Future<void> _loadSettings() async {
-    await _service.loadSettingsFromServer();
-    if (mounted) setState(() {});
+  void _settingsChanged() { if (mounted) setState(() {}); }
+  @override
+  void dispose() {
+    _service.settingsChanges.removeListener(_settingsChanged);
+    PermissionsService().removeListener(_settingsChanged);
+    super.dispose();
   }
+
+  Future<void> _loadSettings() async {
+return CachePartitions.run(() async {
+
+    await _service.ensureSettings();
+    if (mounted) setState(() {});
+});
+}
 
   Future<void> _loadSystemPushState() async {
+return CachePartitions.run(() async {
+
     final enabled = await _fcm.isSystemNotificationsEnabled();
     if (mounted) setState(() => _systemPushEnabled = enabled);
-  }
+});
+}
 
   Future<void> _toggleSystemPush(bool value) async {
+return CachePartitions.run(() async {
+
     if (_systemPushBusy) return;
     setState(() => _systemPushBusy = true);
 
@@ -116,7 +136,8 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
         ),
       );
     }
-  }
+});
+}
 
   Widget _buildSectionTitle(String title) {
     return Padding(
@@ -187,9 +208,13 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
             title: entry.value,
             value: isEnabled(entry.key),
             onChanged: (value) async {
+return CachePartitions.run(() async {
+
               await update(entry.key, value);
               if (mounted) setState(() {});
-            },
+
+});
+},
           );
         }).toList(),
       ),
@@ -430,10 +455,14 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
                       ),
                     ],
                     onChanged: (value) async {
+return CachePartitions.run(() async {
+
                       if (value == null) return;
                       await _service.setRetentionDays(value);
                       if (mounted) setState(() {});
-                    },
+
+});
+},
                   ),
                 ),
               ),

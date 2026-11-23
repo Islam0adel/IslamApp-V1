@@ -1,3 +1,4 @@
+import '../../services/cache_partitions.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -28,6 +29,8 @@ class _ProductLookupPageState extends State<ProductLookupPage> {
   }
 
   Future<void> _search({bool refresh = false}) async {
+return CachePartitions.run(() async {
+
     FocusScope.of(context).unfocus();
     final input = _controller.text.trim();
 
@@ -61,7 +64,8 @@ class _ProductLookupPageState extends State<ProductLookupPage> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
-  }
+});
+}
 
   String _text(dynamic value, [String fallback = 'غير متاح']) {
     final text = value?.toString().trim() ?? '';
@@ -128,6 +132,8 @@ class _ProductLookupPageState extends State<ProductLookupPage> {
       );
 
   Future<void> _copyProductUrl(String url) async {
+return CachePartitions.run(() async {
+
     if (url.isEmpty || url == 'غير متاح') return;
 
     await Clipboard.setData(ClipboardData(text: url));
@@ -136,7 +142,8 @@ class _ProductLookupPageState extends State<ProductLookupPage> {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('تم نسخ رابط المنتج')),
     );
-  }
+});
+}
 
   Widget _nameResults() {
     final results = _result?['results'];

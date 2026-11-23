@@ -1,7 +1,7 @@
+import 'cache_partitions.dart';
 
 import 'dart:async';
 import 'dart:convert';
-import 'package:hive_flutter/hive_flutter.dart';
 import '../core/constants.dart';
 import 'auth_http.dart';
 
@@ -12,12 +12,14 @@ class ProductLookupService {
   static const Duration _nameCacheDuration = Duration(hours: 1);
 
   Future<Map<String, dynamic>> lookup(String rawBarcode, {bool forceRefresh = false}) async {
+return CachePartitions.run(() async {
+
     final barcode = rawBarcode.trim();
     if (!RegExp(r'^\d{8,14}$').hasMatch(barcode)) {
       throw Exception('اكتب باركودًا رقميًا من 8 إلى 14 خانة');
     }
 
-    final box = Hive.box(_boxName);
+    final box = CachePartitions.box(_boxName);
     final cached = box.get(barcode);
     if (!forceRefresh && cached is Map) {
       final savedAt = DateTime.tryParse(cached['_cached_at']?.toString() ?? '');
@@ -51,13 +53,16 @@ class ProductLookupService {
       }
       rethrow;
     }
-  }
+});
+}
 
   Future<Map<String, dynamic>> searchByName(String rawQuery, {bool forceRefresh = false}) async {
+return CachePartitions.run(() async {
+
     final query = rawQuery.trim();
     if (query.length < 2) throw Exception('اكتب اسم المنتج بشكل أوضح');
 
-    final box = Hive.box(_boxName);
+    final box = CachePartitions.box(_boxName);
     final cacheKey = 'web_search:${query.toLowerCase()}';
     final cached = box.get(cacheKey);
 
@@ -96,5 +101,6 @@ class ProductLookupService {
       if (cached is Map) return Map<String, dynamic>.from(cached)..remove('_cached_at');
       rethrow;
     }
-  }
+});
+}
 }

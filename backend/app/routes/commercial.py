@@ -1,3 +1,4 @@
+from app.core.auth_middleware import can_bypass_permissions
 """Sales, customer receipts, returns and stock transfers.
 
 These records intentionally do not create entries in the legacy daily journal.
@@ -10,10 +11,13 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth_middleware import allowed_branches_for_profile
+from app.core.permissions import has_section_permission
 from app.core.database import get_db
 from app.core.models import CodingRecord, SaleRecord, SaleReturnRecord, CustomerPaymentRecord, StockTransferRecord
 from app.core.schemas import SaleModel, SaleReturnModel, CustomerPaymentModel, StockTransferModel
 from app.core.sync import manager
+from app.core.save_locks import lock_save
+from app.core.commercial_receipts import request_fingerprint, unchanged_creation, remember_creation
 
 router = APIRouter()
 
@@ -35,7 +39,7 @@ def _role(profile: dict[str, Any]) -> str:
 
 def _check_permission(request: Request, kind: str, action: str) -> dict:
     profile = request.state.auth_user
-    if _role(profile) in {"admin", "super_admin"}:
+    if can_bypass_permissions(profile):
         return profile
     category = CONFIG[kind][2]
     perms = profile.get("permissions") if isinstance(profile.get("permissions"), dict) else {}
@@ -46,7 +50,7 @@ def _check_permission(request: Request, kind: str, action: str) -> dict:
         aliases["edit"] = "تعديل تحصيل"
         aliases["delete"] = "حذف تحصيل"
     key = aliases.get(action, action)
-    if section.get(key) is not True:
+    if not has_section_permission(profile, category, key):
         raise HTTPException(status_code=403, detail=f"ليس لديك صلاحية {key} في {category}")
     return profile
 
@@ -94,6 +98,23 @@ async def save_kind(kind: str, request: Request, db: AsyncSession):
     raw = await request.json()
     record_model, schema, _, event_type, branch_field = CONFIG[kind]
     data = schema.model_validate(raw)
+    # Preflight authorization before taking shared database locks. Actual action
+    # authorization still follows the locked existing-record lookup below.
+    try:
+        preflight = _check_permission(request, kind, "add")
+    except HTTPException as denied:
+        if denied.status_code != 403:
+            raise
+        preflight = _check_permission(request, kind, "edit")
+    _check_branches(preflight, [getattr(data, branch_field)])
+    try:
+        fingerprint = request_fingerprint(data)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="بيانات الحفظ تحتوي على قيم غير صالحة")
+    owner_uid = str(preflight.get('uid', ''))
+    branch_scope = "" if kind == "transfers" else getattr(data, branch_field)
+    await lock_save(db, ("record", kind, data.id),
+                    ("sequence", kind, data.company_code, branch_scope))
     existing = await db.get(record_model, data.id)
     if existing and existing.company_code != data.company_code:
         raise HTTPException(status_code=404, detail="الحركة غير موجودة")
@@ -106,6 +127,14 @@ async def save_kind(kind: str, request: Request, db: AsyncSession):
                 raise HTTPException(status_code=409, detail="تم تعديل هذا السجل من مستخدم آخر. حدّث البيانات ثم أعد التعديل.")
         except ValueError:
             raise HTTPException(status_code=400, detail="تاريخ النسخة المراد تعديلها غير صالح")
+    if is_edit:
+        acknowledgement = await unchanged_creation(db, kind=kind, data=data, schema=schema,
+            existing=existing, owner_uid=owner_uid, fingerprint=fingerprint)
+        if acknowledgement is not None:
+            profile = _check_permission(request, kind, "add")
+            old_branches = [existing.from_branch_code, existing.to_branch_code] if kind == "transfers" else [getattr(existing, branch_field)]
+            _check_branches(profile, old_branches)
+            return acknowledgement
     profile = _check_permission(request, kind, "edit" if is_edit else "add")
     if is_edit:
         old_branches = [existing.from_branch_code, existing.to_branch_code] if kind == "transfers" else [getattr(existing, branch_field)]
@@ -146,7 +175,7 @@ async def save_kind(kind: str, request: Request, db: AsyncSession):
                 raise HTTPException(status_code=400, detail="لا يمكن تقليل كمية صنف عن الكمية التي تم إرجاعها")
         sales_permissions = profile.get("permissions") if isinstance(profile.get("permissions"), dict) else {}
         sales_section = sales_permissions.get("المبيعات") if isinstance(sales_permissions.get("المبيعات"), dict) else {}
-        can_change_price = _role(profile) in {"admin", "super_admin"} or sales_section.get("تغيير سعر البيع") is True
+        can_change_price = can_bypass_permissions(profile) or sales_section.get("تغيير سعر البيع") is True
         if not can_change_price:
             previous_prices = {}
             if old_sale:
@@ -250,6 +279,8 @@ async def save_kind(kind: str, request: Request, db: AsyncSession):
         else:
             record = record_model(**values, is_deleted=False, updated_at=datetime.utcnow())
             db.add(record)
+            remember_creation(db, kind=kind, data=data, schema=schema, record=record,
+                owner_uid=owner_uid, fingerprint=fingerprint)
             action = "insert"
         await db.commit()
         await db.refresh(record)
@@ -349,6 +380,7 @@ async def delete_kind(kind: str, company_code: str, record_id: str, request: Req
         raise HTTPException(status_code=404, detail="نوع حركة غير معروف")
     model, _, _, event_type, branch_field = CONFIG[kind]
     profile = _check_permission(request, kind, "delete")
+    await lock_save(db, ("record", kind, record_id))
     record = await db.get(model, record_id)
     if not record or record.is_deleted or record.company_code != company_code:
         raise HTTPException(status_code=404, detail="الحركة غير موجودة")
@@ -369,7 +401,7 @@ async def delete_kind(kind: str, company_code: str, record_id: str, request: Req
 
 def _check_extra_permission(request: Request, category: str, key: str) -> dict:
     profile = request.state.auth_user
-    if _role(profile) in {"admin", "super_admin"}:
+    if can_bypass_permissions(profile):
         return profile
     permissions = profile.get("permissions") if isinstance(profile.get("permissions"), dict) else {}
     section = permissions.get(category) if isinstance(permissions.get(category), dict) else {}
@@ -381,11 +413,11 @@ def _check_extra_permission(request: Request, category: str, key: str) -> dict:
 @router.get("/returnable/{company_code}/{sale_id}")
 async def returnable_sale(company_code: str, sale_id: str, request: Request, to_date: str | None = Query(default=None), exclude_return_id: str | None = Query(default=None), db: AsyncSession = Depends(get_db)):
     profile = request.state.auth_user
-    if _role(profile) not in {"admin", "super_admin"}:
+    if not can_bypass_permissions(profile):
         permissions = profile.get("permissions") if isinstance(profile.get("permissions"), dict) else {}
         sales_permissions = permissions.get("المبيعات", {}) if isinstance(permissions.get("المبيعات"), dict) else {}
         returns_permissions = permissions.get("المرتجعات", {}) if isinstance(permissions.get("المرتجعات"), dict) else {}
-        can_add_return = returns_permissions.get("إضافة") is True
+        can_add_return = has_section_permission(profile, "المرتجعات", "إضافة")
         can_edit_return = bool(exclude_return_id) and returns_permissions.get("تعديل") is True
         if sales_permissions.get("معاينة") is not True or not (can_add_return or can_edit_return):
             raise HTTPException(status_code=403, detail="ليس لديك صلاحية تسجيل مرتجع لهذه الفاتورة")
@@ -484,11 +516,11 @@ async def cash_balances(company_code: str, request: Request, branch_code: str | 
 @router.get("/stock-events/{company_code}")
 async def stock_events(company_code: str, request: Request, db: AsyncSession = Depends(get_db)):
     profile = request.state.auth_user
-    if _role(profile) not in {"admin", "super_admin"}:
+    if not can_bypass_permissions(profile):
         permissions = profile.get("permissions") if isinstance(profile.get("permissions"), dict) else {}
         stock_permissions = permissions.get("رصيد المخزون", {}) if isinstance(permissions.get("رصيد المخزون"), dict) else {}
         operational = any(
-            isinstance(permissions.get(category), dict) and permissions[category].get(key) is True
+            has_section_permission(profile, category, key)
             for category, key in (("المبيعات", "إضافة"), ("المرتجعات", "إضافة"), ("التحويلات المخزنية", "إضافة"))
         )
         if stock_permissions.get("معاينة") is not True and not operational:

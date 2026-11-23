@@ -2,11 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 
+from app.core.auth_middleware import allowed_branches_for_profile
 from app.core.database import get_db
+from app.core.permissions import require_any_section_permission
 from app.core.auth_middleware import allowed_branches_for_profile
 from app.core.models import SupplierSettlementRecord, Transaction
 from app.core.schemas import SupplierSettlementModel
 from app.core.sync import manager
+from app.core.save_locks import lock_save
 
 from typing import Optional
 import datetime
@@ -14,6 +17,24 @@ import logging
 
 
 router = APIRouter()
+
+
+_CATEGORY = "تسويات الموردين"
+
+
+def _require_any(request: Request, keys):
+    return require_any_section_permission(
+        request, [(_CATEGORY, key) for key in keys]
+    )
+
+
+def _check_branch(profile: dict, branch_code) -> None:
+    allowed = allowed_branches_for_profile(profile)
+    if allowed and branch_code and str(branch_code) not in allowed:
+        raise HTTPException(
+            status_code=403,
+            detail="ليس لديك صلاحية على هذا الفرع",
+        )
 logger = logging.getLogger(__name__)
 
 
@@ -58,10 +79,18 @@ def serialize_settlement(
 
 @router.post("/save")
 async def save_settlement(
+    request: Request,
     data: SupplierSettlementModel,
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_any(request, ["إضافة", "تعديل"])
+    _check_branch(_profile, data.branch_code)
+
     try:
+        resources = [("sequence", "settlement", data.company_code, data.branch_code)]
+        if data.add_to_daily or data.unlink_daily:
+            resources.append(("sequence", "journal", data.company_code, data.branch_code or "1"))
+        await lock_save(db, *resources)
         linked_transaction = None
         transaction_created = False
         doc_id_int = None
@@ -125,7 +154,12 @@ async def save_settlement(
         # UPDATE
         # ------------------------------------------------------
 
+        # Resolve the action from the server lookup, not a client action flag.
+        _require_any(request, ["تعديل" if existing is not None else "إضافة"])
+
         if existing:
+            # الفرع المخزَّن أيضاً: منع تعديل/نقل سجل فرع غير مسموح
+            _check_branch(_profile, existing.branch_code)
             existing.branch_code = data.branch_code
             existing.serial = data.serial
             existing.date = data.date
@@ -208,6 +242,7 @@ async def save_settlement(
                 db.add(linked_transaction)
                 transaction_created = True
             else:
+                _check_branch(_profile, linked_transaction.branch_code)
                 linked_transaction.branch_code = data.branch_code
                 linked_transaction.treasury = data.treasury
                 linked_transaction.amount = data.amount
@@ -226,6 +261,7 @@ async def save_settlement(
             ))
             linked_transaction = q.scalar_one_or_none()
             if linked_transaction is not None:
+                _check_branch(_profile, linked_transaction.branch_code)
                 linked_transaction.is_deleted = True
                 linked_transaction.updated_at = datetime.datetime.utcnow()
             record.link_id = None
@@ -321,14 +357,16 @@ async def save_settlement(
 
 @router.get("/list/{company_code}")
 async def list_settlements(
-    company_code: str,
     request: Request,
+    company_code: str,
     branch_code: Optional[str] = Query(None),
     supplier_name: Optional[str] = Query(None),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_any(request, ["معاينة", "إضافة"])
+
     try:
         stmt = (
             select(SupplierSettlementRecord)
@@ -399,11 +437,13 @@ async def list_settlements(
 
 @router.get("/changes/{company_code}")
 async def get_settlement_changes(
-    company_code: str,
     request: Request,
+    company_code: str,
     since: str = Query(...),
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_any(request, ["معاينة", "إضافة"])
+
     try:
         since_dt = datetime.datetime.fromisoformat(
             since.replace("Z", "+00:00")
@@ -481,11 +521,13 @@ async def get_settlement_changes(
 
 @router.delete("/delete/{company_code}/{doc_id}")
 async def delete_settlement(
-    company_code: str,
     request: Request,
+    company_code: str,
     doc_id: str,
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_any(request, ["حذف"])
+
     try:
         try:
             doc_id_int = int(doc_id)

@@ -1,8 +1,8 @@
+import '../../../services/cache_partitions.dart';
 // lib/pages/hr/employees/employee_form_page.dart
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 
 import '../../../core/theme.dart';
 import '../../../views/widgets/glass_card.dart';
@@ -161,7 +161,7 @@ class _EmployeeFormPageState extends State<EmployeeFormPage> {
   // ============================================================
 
   void _loadBranches() {
-    final box = Hive.box('coding_box');
+    final box = CachePartitions.box('coding_box');
     final key = '${widget.companyCode}_branches';
     final raw = box.get(key);
 
@@ -246,6 +246,8 @@ class _EmployeeFormPageState extends State<EmployeeFormPage> {
     required DateTime? current,
     required Function(DateTime?) onPicked,
   }) async {
+return CachePartitions.run(() async {
+
     final picked = await showDatePicker(
       context: context,
       initialDate: current ?? DateTime.now(),
@@ -259,7 +261,8 @@ class _EmployeeFormPageState extends State<EmployeeFormPage> {
         _hasChanges = true;
       });
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -267,6 +270,8 @@ class _EmployeeFormPageState extends State<EmployeeFormPage> {
   // ============================================================
 
   Future<void> _save() async {
+return CachePartitions.run(() async {
+
     if (!_formKey.currentState!.validate()) {
       _showSnackBar(
         "يرجى تصحيح الأخطاء أولاً",
@@ -351,10 +356,13 @@ class _EmployeeFormPageState extends State<EmployeeFormPage> {
         AppTheme.dangerStrongFor(context),
       );
     }
-  }
+});
+}
 
 
   Future<bool> _isCodeTaken(String code) async {
+return CachePartitions.run(() async {
+
     try {
       final list = await _employeeService.getEmployeesList(
         companyCode: widget.companyCode,
@@ -373,7 +381,8 @@ class _EmployeeFormPageState extends State<EmployeeFormPage> {
       // لو فشل التحقق، اسمح بالمحاولة (الباك هيرفض لو مكرر)
       return false;
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -381,6 +390,8 @@ class _EmployeeFormPageState extends State<EmployeeFormPage> {
   // ============================================================
 
   Future<void> _cancel() async {
+return CachePartitions.run(() async {
+
     if (_hasChanges && !_isSaving) {
       final confirmed = await showDialog<bool>(
         context: context,
@@ -434,7 +445,8 @@ class _EmployeeFormPageState extends State<EmployeeFormPage> {
     }
 
     if (mounted) Navigator.pop(context);
-  }
+});
+}
 
 
   void _showSnackBar(String message, Color color) {
@@ -466,9 +478,12 @@ class _EmployeeFormPageState extends State<EmployeeFormPage> {
     return PopScope(
       canPop: !_hasChanges || _isSaving,
       onPopInvoked: (didPop) async {
+return CachePartitions.run(() async {
+
         if (didPop) return;
         await _cancel();
-      },
+});
+},
       child: Scaffold(
         extendBodyBehindAppBar: true,
         appBar: AppBar(

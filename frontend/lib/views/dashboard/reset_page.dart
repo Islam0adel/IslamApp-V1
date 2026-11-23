@@ -1,3 +1,4 @@
+import '../../services/cache_partitions.dart';
 // frontend/lib/views/dashboard/reset_page.dart
 import 'package:flutter/material.dart';
 import '../../views/widgets/glass_card.dart';
@@ -24,16 +25,21 @@ class _ResetPageState extends State<ResetPage> {
   }
 
   Future<void> _loadCompanyCode() async {
+return CachePartitions.run(() async {
+
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       _companyCode = prefs.getString('company_code') ?? '';
     });
-  }
+});
+}
 
   Future<void> _resetWithConfirmation(
     String title,
     Future<void> Function() resetAction,
   ) async {
+return CachePartitions.run(() async {
+
     if (_companyCode.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -114,7 +120,8 @@ class _ResetPageState extends State<ResetPage> {
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
-  }
+});
+}
 
   @override
   Widget build(BuildContext context) {

@@ -3,6 +3,7 @@
 class CodingModel {
   final String code;
   final String name;
+  final String? branchCode;
 
   // لـ types: وارد / صادر
   final String type;
@@ -15,6 +16,14 @@ class CodingModel {
   final double profitMargin;
   final double profitPercent;
 
+  // سعر الشراء "غير محدد": سجّله كاتب بلا حق تكلفة،
+  // ولا يُستخدم في الجرد/المشتريات حتى يحدده صاحب الحق.
+  final bool costPending;
+
+  // تأكيد صريح أن صفر التكلفة مقصود — يُرسل فقط عند
+  // تأكيد المستخدم، والخادم يشترط حق سعر الشراء له.
+  final bool confirmZeroCost;
+
   // Soft Delete
   //
   // false = السجل نشط
@@ -25,6 +34,7 @@ class CodingModel {
   CodingModel({
     required this.code,
     required this.name,
+    this.branchCode,
 
     this.type = "وارد",
 
@@ -35,6 +45,9 @@ class CodingModel {
 
     this.profitMargin = 0.0,
     this.profitPercent = 0.0,
+
+    this.costPending = false,
+    this.confirmZeroCost = false,
 
     this.isDeleted = false,
   });
@@ -53,6 +66,8 @@ class CodingModel {
 
       name:
           map['name']?.toString() ?? '',
+
+      branchCode: map['branch_code']?.toString(),
 
       type:
           map['type']?.toString() ??
@@ -86,6 +101,11 @@ class CodingModel {
             map['profitPercent'],
       ),
 
+      costPending:
+          _toBool(
+        map['cost_pending'] ?? map['costPending'],
+      ),
+
       isDeleted:
           _toBool(
         map['is_deleted'],
@@ -102,6 +122,7 @@ class CodingModel {
     return {
       'code': code,
       'name': name,
+      if (branchCode != null) 'branch_code': branchCode,
 
       'type': type,
       'barcode': barcode,
@@ -117,6 +138,9 @@ class CodingModel {
 
       'profit_percent':
           profitPercent,
+
+      if (confirmZeroCost)
+        'confirm_zero_cost': true,
 
       'is_deleted':
           isDeleted,

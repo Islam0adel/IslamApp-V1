@@ -1,9 +1,9 @@
+import '../../services/cache_partitions.dart';
 // lib/views/dashboard/supplier_page.dart
 
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
 import 'package:intl/intl.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 
 import '../../services/supplier_service.dart';
 import '../../services/coding_service.dart';
@@ -115,7 +115,7 @@ class _SupplierPageState extends State<SupplierPage> {
     _selectedBranchCode =
         widget.selectedBranchCode ?? 'all';
 
-    
+
 
     _isReturn = widget.startAsReturn;
     if (_isReturn) _isAddToStore = true;
@@ -281,6 +281,8 @@ void _applyDiscount() {
   // ============================================================
 
   Future<void> _loadDropdowns() async {
+return CachePartitions.run(() async {
+
     if (!mounted) return;
 
     setState(() {
@@ -288,7 +290,7 @@ void _applyDiscount() {
     });
 
     try {
-      final box = Hive.box('coding_box');
+      final box = CachePartitions.box('coding_box');
 
       // ---------------- المخازن ----------------
 
@@ -299,6 +301,11 @@ void _applyDiscount() {
 
       _stores = rawStores
           .whereType<Map>()
+          .where((e) {
+            final assigned = e['branch_code']?.toString() ?? '';
+            return assigned.isEmpty || _selectedBranchCode == null ||
+                _selectedBranchCode == 'all' || assigned == _selectedBranchCode;
+          })
           .map(
             (e) => {
               'code': e['code']?.toString() ?? '',
@@ -356,14 +363,17 @@ void _applyDiscount() {
         });
       }
     }
-  }
+});
+}
 
   // ============================================================
   // تحميل قائمة الأصناف للاقتراحات (من التكويد)
   // ============================================================
   Future<void> _loadItemsLookup() async {
+return CachePartitions.run(() async {
+
     try {
-      final box = Hive.box('coding_box');
+      final box = CachePartitions.box('coding_box');
       final raw = box.get(
         '${widget.companyCode}_items',
         defaultValue: [],
@@ -395,7 +405,8 @@ void _applyDiscount() {
     } catch (e) {
       print('❌ خطأ في تحميل الأصناف للاقتراحات: $e');
     }
-  }
+});
+}
   // ============================================================
 // تحميل التعديل
 // ============================================================
@@ -466,9 +477,11 @@ void _loadEditData() {
   // ============================================================
 
   Future<void> _loadLastSerial() async {
+return CachePartitions.run(() async {
+
     try {
       final box =
-          Hive.box('supplier_box');
+          CachePartitions.box('supplier_box');
 
       int maxSerial = 0;
 
@@ -518,7 +531,8 @@ void _loadEditData() {
         });
       }
     }
-  }
+});
+}
 
   // ============================================================
   // رصيد المورد
@@ -527,6 +541,8 @@ void _loadEditData() {
   Future<void> _loadSupplierBalance(
     String supplierName,
   ) async {
+return CachePartitions.run(() async {
+
     if (supplierName.isEmpty) {
       if (mounted) {
         setState(() {
@@ -545,6 +561,9 @@ void _loadEditData() {
         supplierName,
       );
 
+      // null = الرصيد مخفي (بلا حق تكلفة): لا تحديث ولا حساب.
+      if (balance == null) return;
+
       if (!mounted) return;
 
       setState(() {
@@ -558,7 +577,8 @@ void _loadEditData() {
         'خطأ في جلب رصيد المورد: $e',
       );
     }
-  }
+});
+}
 
   void _updateExpectedBalance() {
   final oldAmount = widget.editItem?.totalAmount ?? 0.0;
@@ -611,7 +631,7 @@ void _loadEditData() {
         FocusNode(),
         FocusNode(),
       ]);
-      _nameFieldLinks.add(LayerLink()); 
+      _nameFieldLinks.add(LayerLink());
     });
   }
 
@@ -723,13 +743,15 @@ void _loadEditData() {
   Future<void> _autoFillItem(
     int index,
   ) async {
+return CachePartitions.run(() async {
+
     final code =
         _items[index].code.trim();
 
     if (code.isEmpty) return;
 
     final box =
-        Hive.box('coding_box');
+        CachePartitions.box('coding_box');
 
     final key =
         '${widget.companyCode}_items';
@@ -835,7 +857,8 @@ void _loadEditData() {
         'خطأ في جلب الصنف: $e',
       );
     }
-  }
+});
+}
 
   // ============================================================
   // تعبئة الصف عند اختيار صنف من قائمة الاقتراحات
@@ -919,7 +942,7 @@ void _loadEditData() {
 
     try {
       final box =
-          Hive.box('coding_box');
+          CachePartitions.box('coding_box');
 
       final raw =
           box.get(
@@ -947,6 +970,8 @@ void _loadEditData() {
   // ============================================================
 
   Future<void> _pickDate() async {
+return CachePartitions.run(() async {
+
     final picked =
         await showDatePicker(
       context: context,
@@ -966,15 +991,18 @@ void _loadEditData() {
                 .format(picked);
       });
     }
-  }
+});
+}
 
-  
+
 
   // ============================================================
   // الحفظ
   // ============================================================
 
   Future<void> _handleSave() async {
+return CachePartitions.run(() async {
+
     if (!PermissionsService()
         .canAddSupplierTransaction) {
       _showSnackBar(
@@ -1186,7 +1214,8 @@ setState(() {
         });
       }
     }
-  }
+});
+}
 
   // ============================================================
   // جدول الأصناف
@@ -1508,10 +1537,12 @@ setState(() {
         SizedBox(
           width: colWidth,
           child: Text(
-            item.total
-                .toStringAsFixed(
-              2,
-            ),
+            PermissionsService().canViewCostPrices
+                ? item.total
+                    .toStringAsFixed(
+                  2,
+                )
+                : '—',
             textAlign:
                 TextAlign.center,
             style:
@@ -1730,10 +1761,14 @@ setState(() {
           flex: 1,
           child:
               Text(
-            item.total
-                .toStringAsFixed(
-              2,
-            ),
+            // إجمالي السطر مشتق من سعر الجملة: مخفي لمن لا
+            // يملك حق التكلفة (لا صفر مضلل)
+            PermissionsService().canViewCostPrices
+                ? item.total
+                    .toStringAsFixed(
+                  2,
+                )
+                : '—',
             textAlign:
                 TextAlign.center,
             style:
@@ -1786,6 +1821,25 @@ setState(() {
     final keyboard = (field == 'quantity' || field == 'price')
         ? const TextInputType.numberWithOptions(decimal: true)
         : TextInputType.text;
+
+    // سعر الجملة وإجمالي البند لا يظهران ولا يُدخَّلان لمن لا
+    // يملك حق التكلفة: الخادم يحسبهما من كتالوج التكويد
+    if ((field == 'price' || field == 'total') &&
+        !PermissionsService().canViewCostPrices) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 2),
+        child: Center(
+          child: Text(
+            '—',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: AppTheme.textSoftFor(context),
+              fontSize: 12,
+            ),
+          ),
+        ),
+      );
+    }
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 2),
@@ -1975,6 +2029,12 @@ setState(() {
         _selectedSupplier!.isEmpty) {
       return const SizedBox
           .shrink();
+    }
+
+    // رصيد المورد مشتق من إجماليات الفواتير (أسعار جملة):
+    // مخفي لمن لا يملك حق التكلفة
+    if (!PermissionsService().canViewCostPrices) {
+      return const SizedBox.shrink();
     }
 
     return GlassCard(
@@ -2832,6 +2892,10 @@ setState(() {
                             // الخصم والإجمالي
                             // ========================
 
+                            // الخصم والإجمالي مشتقان من أسعار
+                            // الجملة: يُخفيان تماماً لمن لا يملك
+                            // حق التكلفة (الخادم يحسب من الكتالوج)
+                            if (PermissionsService().canViewCostPrices)
                             GlassCard(
                               child:
                                   Container(
@@ -3144,6 +3208,11 @@ setState(() {
   }
 
   String netTotalText() {
+    // سياسة الصلاحيات: الإجمالي لا يظهر لمن لا يملك حق التكلفة،
+    // ولا يُعرض صفر مضلل بدلاً منه
+    if (!PermissionsService().canViewCostPrices) {
+      return '—';
+    }
     return (_totalAmount -
             _discountAmount)
         .toStringAsFixed(

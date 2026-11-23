@@ -1,3 +1,4 @@
+import '../../services/cache_partitions.dart';
 import '../../core/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -8,7 +9,7 @@ import '../dashboard/home_page.dart';
 import 'verify_email_screen.dart';
 import '../../main.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import '../../services/web_loading_helper.dart'; 
+import '../../services/web_loading_helper.dart';
 import '../widgets/app_loading_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -21,7 +22,7 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-  
+
   // Nodes للتنقل بزر انتر
   final FocusNode _emailNode = FocusNode();
   final FocusNode _passNode = FocusNode();
@@ -30,7 +31,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
   final _apiService = ApiService();
   bool _isLoading = false;
   bool _rememberMe = false;
-  bool _isSyncing = false; 
+  bool _isSyncing = false;
   @override
   void initState() {
     super.initState();
@@ -136,6 +137,9 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
         await prefs.setString('selected_branch_code', result['branch_code']);
       }
 
+      await CachePartitions.activate(FirebaseAuth.instance.currentUser!.uid, result['company_code'] ?? '');
+      PermissionsService().resetForCachePartition();
+
       // ⭐ حدّث الدور في PermissionsService فوراً
       PermissionsService().setRole(result['role']?.toString());
 
@@ -196,7 +200,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
       SnackBar(content: Text(msg, textAlign: TextAlign.center), backgroundColor: color),
     );
   }
-  
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(

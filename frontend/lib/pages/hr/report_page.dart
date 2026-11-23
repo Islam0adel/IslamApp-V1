@@ -1,9 +1,10 @@
+import '../../services/cache_partitions.dart';
 // lib/pages/hr/report_page.dart
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:hive_flutter/hive_flutter.dart'; 
+
 import '../../services/permissions_service.dart';
 import '../../core/theme.dart';
 import '../../views/widgets/glass_card.dart';
@@ -83,6 +84,8 @@ class _HRReportPageState extends State<HRReportPage> {
   // ============================================================
 
   Future<void> _loadEmployees() async {
+return CachePartitions.run(() async {
+
     setState(() => _isLoading = true);
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -123,7 +126,8 @@ class _HRReportPageState extends State<HRReportPage> {
       print("❌ خطأ: $e");
       if (mounted) setState(() => _isLoading = false);
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -131,6 +135,8 @@ class _HRReportPageState extends State<HRReportPage> {
   // ============================================================
 
   Future<void> _pickMonth() async {
+return CachePartitions.run(() async {
+
     final current = DateTime.parse('$_selectedMonth-01');
 
     final picked = await showDialog<DateTime>(
@@ -154,7 +160,8 @@ class _HRReportPageState extends State<HRReportPage> {
         await _generateReport();
       }
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -162,6 +169,8 @@ class _HRReportPageState extends State<HRReportPage> {
   // ============================================================
 
   Future<void> _generateReport() async {
+return CachePartitions.run(() async {
+
     if (_selectedEmployee == null) {
       _showSnackBar(
         "اختر موظف أولاً",
@@ -205,7 +214,8 @@ class _HRReportPageState extends State<HRReportPage> {
         );
       }
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -213,6 +223,8 @@ class _HRReportPageState extends State<HRReportPage> {
   // ============================================================
 
   Future<void> _fetchFromServer() async {
+return CachePartitions.run(() async {
+
     if (_selectedEmployee == null) {
       _showSnackBar(
         "اختر موظف أولاً",
@@ -261,7 +273,8 @@ class _HRReportPageState extends State<HRReportPage> {
         );
       }
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -269,6 +282,8 @@ class _HRReportPageState extends State<HRReportPage> {
   // ============================================================
 
   Future<void> _clearCache() async {
+return CachePartitions.run(() async {
+
     if (_selectedEmployee == null) {
       _showSnackBar(
         "اختر موظف أولاً",
@@ -292,7 +307,8 @@ class _HRReportPageState extends State<HRReportPage> {
         AppTheme.successStrongFor(context),
       );
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -300,6 +316,8 @@ class _HRReportPageState extends State<HRReportPage> {
   // ============================================================
 
   Future<void> _copyAsText() async {
+return CachePartitions.run(() async {
+
     if (_report == null) return;
 
     final canSeeAmounts =
@@ -322,7 +340,8 @@ class _HRReportPageState extends State<HRReportPage> {
         AppTheme.successStrongFor(context),
       );
     }
-  }
+});
+}
 
   // ============================================================
   // ⭐ اسم الفرع من Hive (بدل الكود)
@@ -333,7 +352,7 @@ class _HRReportPageState extends State<HRReportPage> {
       return 'كل الفروع';
     }
     try {
-      final box = Hive.box('coding_box');
+      final box = CachePartitions.box('coding_box');
       final raw = box.get(
         '${_companyCode}_branches',
         defaultValue: [],
@@ -355,6 +374,8 @@ class _HRReportPageState extends State<HRReportPage> {
   // ============================================================
 
   Future<void> _exportPDF() async {
+return CachePartitions.run(() async {
+
     if (_report == null) return;
 
     setState(() => _isExporting = true);
@@ -441,7 +462,7 @@ class _HRReportPageState extends State<HRReportPage> {
           'note',
         ],
         companyName: _companyName,
-        branchName: _getBranchName(r.branchCode), 
+        branchName: _getBranchName(r.branchCode),
         employee: r.employeeName,
         period: periodLabel,
         summary: summary,
@@ -464,7 +485,8 @@ class _HRReportPageState extends State<HRReportPage> {
     } finally {
       if (mounted) setState(() => _isExporting = false);
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -472,6 +494,8 @@ class _HRReportPageState extends State<HRReportPage> {
   // ============================================================
 
   Future<void> _exportExcel() async {
+return CachePartitions.run(() async {
+
     if (_report == null) return;
 
     setState(() => _isExporting = true);
@@ -517,7 +541,7 @@ class _HRReportPageState extends State<HRReportPage> {
               'صافي الراتب': r.netSalary,
               // ⭐ الرصيد السالب
               if (r.netSalary < 0)
-                '⚠️ مدين للشركة (يُخصم لاحقًا)': r.debtRemaining,
+                ' مدين للشركة (يُخصم لاحقًا)': r.debtRemaining,
             }
           : <String, dynamic>{
               'حاضر': r.presentDays,
@@ -554,7 +578,7 @@ class _HRReportPageState extends State<HRReportPage> {
           'note',
         ],
         companyName: _companyName,
-        branchName: _getBranchName(r.branchCode),  
+        branchName: _getBranchName(r.branchCode),
         employee: r.employeeName,
         period: periodLabel,
         summary: summary,
@@ -576,7 +600,8 @@ class _HRReportPageState extends State<HRReportPage> {
     } finally {
       if (mounted) setState(() => _isExporting = false);
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -651,10 +676,14 @@ class _HRReportPageState extends State<HRReportPage> {
               color: AppTheme.textMainFor(context),
             ),
             onSelected: (value) async {
+return CachePartitions.run(() async {
+
               if (value == 'clear_cache') {
                 await _clearCache();
               }
-            },
+
+});
+},
             itemBuilder: (context) => [
               PopupMenuItem(
                 value: 'clear_cache',
@@ -774,6 +803,8 @@ class _HRReportPageState extends State<HRReportPage> {
           onChanged: _isGenerating || _isFetchingFromServer
               ? null
               : (v) async {
+return CachePartitions.run(() async {
+
                   setState(() {
                     _selectedEmployee = v;
                     _report = null;
@@ -783,7 +814,9 @@ class _HRReportPageState extends State<HRReportPage> {
                   if (v != null) {
                     await _generateReport();
                   }
-                },
+
+});
+},
           style: TextStyle(
             fontFamily: 'Cairo',
             color: AppTheme.textMainFor(context),
@@ -953,21 +986,21 @@ class _HRReportPageState extends State<HRReportPage> {
                   runSpacing: 8,
                   children: [
                     _statChip(
-                      '💰 مكافآت',
+                      ' مكافآت',
                       canSeeAmounts
                           ? '${r.bonusesTotal.toStringAsFixed(2)} ج.م'
                           : '${r.adjustmentLines.where((l) => l.type == 'bonus').length} بند',
                       AppTheme.successFor(context),
                     ),
                     _statChip(
-                      '💸 خصومات',
+                      ' خصومات',
                       canSeeAmounts
                           ? '${r.deductionsTotal.toStringAsFixed(2)} ج.م'
                           : '${r.adjustmentLines.where((l) => l.type == 'deduction').length} بند',
                       AppTheme.dangerFor(context),
                     ),
                     _statChip(
-                      '📋 سلف',
+                      ' سلف',
                       canSeeAmounts
                           ? '${r.loansTotal.toStringAsFixed(2)} ج.م'
                           : '${r.adjustmentLines.where((l) => l.type == 'loan').length} بند',
@@ -1083,7 +1116,7 @@ class _HRReportPageState extends State<HRReportPage> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      '💰 صافي الراتب',
+                      ' صافي الراتب',
                       style: TextStyle(
                         color: r.netSalary < 0
                             ? AppTheme.dangerFor(context)
@@ -1109,7 +1142,7 @@ class _HRReportPageState extends State<HRReportPage> {
                 if (r.netSalary < 0) ...[
                   const SizedBox(height: 6),
                   Text(
-                    '⚠️ مدين للشركة بـ ${r.debtRemaining.toStringAsFixed(2)} ج.م',
+                    ' مدين للشركة بـ ${r.debtRemaining.toStringAsFixed(2)} ج.م',
                     style: TextStyle(
                       color: AppTheme.dangerFor(context),
                       fontFamily: 'Cairo',

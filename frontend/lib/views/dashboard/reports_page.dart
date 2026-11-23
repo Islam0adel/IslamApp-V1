@@ -1,3 +1,4 @@
+import '../../services/cache_partitions.dart';
 // import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -15,6 +16,7 @@ import '../../views/widgets/glass_card.dart';
 import '../../services/permissions_service.dart';
 import '../../services/export_service.dart';
 import '../../services/stock_balance_service.dart';
+import '../../services/commercial_service.dart';
 
 class ReportsPage extends StatefulWidget {
   final String companyCode;
@@ -58,7 +60,12 @@ class _ReportsPageState extends State<ReportsPage> {
       _selectedReportType = 2;
       return;
     }
-    if (widget.initialReportType == 3 && PermissionsService().canViewExtendedReport && PermissionsService().canViewReportsPeriod) {
+    // التقرير الموسع مبني على قيمة المخزون بالجملة وأرصدة
+    // الموردين (بيانات تكلفة): بلا حق التكلفة لا يُعرض إطلاقاً.
+    if (widget.initialReportType == 3 &&
+        PermissionsService().canViewExtendedReport &&
+        PermissionsService().canViewReportsPeriod &&
+        PermissionsService().canViewCostPrices) {
       _selectedReportType = 3;
       return;
     }
@@ -73,7 +80,7 @@ class _ReportsPageState extends State<ReportsPage> {
 
   String _getBranchName(String? code) {
     if (code == null || code == 'all' || code == '') return 'كل الفروع';
-    final Box codingBox = Hive.box('coding_box');
+    final Box codingBox = CachePartitions.box('coding_box');
     final rawData = codingBox.get("${widget.companyCode}_branches", defaultValue: []);
     for (var item in rawData) {
       if (item['code']?.toString() == code) return item['name']?.toString() ?? "فرع غير معروف";
@@ -82,6 +89,8 @@ class _ReportsPageState extends State<ReportsPage> {
   }
 
   Future<String> _getCompanyName() async {
+return CachePartitions.run(() async {
+
     try {
       final prefs = await SharedPreferences.getInstance();
       final name = prefs.getString('company_name');
@@ -89,7 +98,7 @@ class _ReportsPageState extends State<ReportsPage> {
     } catch (e) {
       // ignore
     }
-    final Box codingBox = Hive.box('coding_box');
+    final Box codingBox = CachePartitions.box('coding_box');
     final companyData = codingBox.get("${widget.companyCode}_company");
     if (companyData is Map) {
       final name = companyData['name']?.toString() ??
@@ -129,14 +138,15 @@ class _ReportsPageState extends State<ReportsPage> {
       }
     }
     return widget.companyCode;
-  }
+});
+}
 
   String _formatNumber(double value) {
     return NumberFormat('#,##0.00', 'en_US').format(value);
   }
 
   List<Map<dynamic, dynamic>> _getFilteredTransactions() {
-    final box = Hive.box('daily_transactions_box');
+    final box = CachePartitions.box('daily_transactions_box');
     return box.values.where((tx) {
       if (tx['company_code'] != widget.companyCode) return false;
       if (tx['category'] == 'transfer_hidden') return false;
@@ -159,6 +169,8 @@ class _ReportsPageState extends State<ReportsPage> {
 
   // ===================== تصدير EXCEL =====================
   Future<void> _shareAsExcel() async {
+return CachePartitions.run(() async {
+
     if (!PermissionsService().canShareReports) {
       _showErrorSnackBar("ليس لديك صلاحية لتصدير التقارير");
       return;
@@ -294,10 +306,13 @@ class _ReportsPageState extends State<ReportsPage> {
     } catch (e) {
       _showErrorSnackBar(e.toString());
     }
-  }
+});
+}
 
   // ===================== تصدير PDF =====================
   Future<void> _shareAsPdf() async {
+return CachePartitions.run(() async {
+
     if (!PermissionsService().canShareReports) {
       _showErrorSnackBar("ليس لديك صلاحية لتصدير التقارير");
       return;
@@ -383,10 +398,13 @@ class _ReportsPageState extends State<ReportsPage> {
     } catch (e) {
       _showErrorSnackBar("تأكد من إعداد ملف الخط بشكل صحيح: $e");
     }
-  }
+});
+}
 
   // ===== دوال التصدير للتقرير الموسع (المعدلة) =====
   Future<void> _exportExtendedExcel() async {
+return CachePartitions.run(() async {
+
     if (_extendedSummary.isEmpty) await _calculateExtendedReport();
 
     List<Map<String, dynamic>> detailRows = [];
@@ -417,9 +435,12 @@ class _ReportsPageState extends State<ReportsPage> {
       period: 'من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}',
       summary: summaryMap,
     );
-  }
+});
+}
 
   Future<void> _exportExtendedPdf() async {
+return CachePartitions.run(() async {
+
     if (_extendedSummary.isEmpty) await _calculateExtendedReport();
     if (_extendedSummary.isEmpty) {
       _showEmptySheetRow();
@@ -660,7 +681,8 @@ class _ReportsPageState extends State<ReportsPage> {
     } catch (e) {
       _showErrorSnackBar("فشل تصدير PDF: $e");
     }
-  }
+});
+}
 
   void _showShareBottomSheet() {
     if (!PermissionsService().canShareReports) {
@@ -732,6 +754,8 @@ class _ReportsPageState extends State<ReportsPage> {
   }
 
   Future<void> _exportSalesPdf() async {
+return CachePartitions.run(() async {
+
     final transactions = _getFilteredTransactions();
     if (transactions.isEmpty) {
       _showEmptySheetRow();
@@ -798,9 +822,12 @@ class _ReportsPageState extends State<ReportsPage> {
       summary: summary,
       totalAmount: grandTotal,
     );
-  }
+});
+}
 
   Future<void> _selectDate(BuildContext context, bool isFrom) async {
+return CachePartitions.run(() async {
+
     final DateTime? picked = await showDatePicker(
       context: context,
       initialDate: isFrom ? _fromDate : _toDate,
@@ -834,7 +861,8 @@ class _ReportsPageState extends State<ReportsPage> {
         _calculateExtendedReport();
       }
     }
-  }
+});
+}
   @override
   Widget build(BuildContext context) {
     bool canSales = PermissionsService().canViewReportsSales;
@@ -1332,7 +1360,9 @@ class _ReportsPageState extends State<ReportsPage> {
     if (PermissionsService().canViewReportsPeriod) {
       buttons.add(_reportButton(2, 'تقرير الفترة'));
     }
-    if (PermissionsService().canViewExtendedReport && PermissionsService().canViewReportsPeriod) {
+    if (PermissionsService().canViewExtendedReport &&
+        PermissionsService().canViewReportsPeriod &&
+        PermissionsService().canViewCostPrices) {
       buttons.add(_reportButton(3, 'صافي الجرد الحالي'));
     }
     if (buttons.isEmpty) {
@@ -1488,7 +1518,23 @@ class _ReportsPageState extends State<ReportsPage> {
   }
 
   Future<void> _calculateExtendedReport() async {
-    final box = Hive.box('daily_transactions_box');
+return CachePartitions.run(() async {
+
+    // دفاع مضاعف: أرقام هذا التقرير مشتقة من بيانات التكلفة —
+    // بلا الحق لا حساب ولا قيم صفرية توحي بأرقام حقيقية.
+    if (!PermissionsService().canViewCostPrices) {
+      if (!mounted) return;
+      setState(() {
+        _extendedSummary = {
+          'غير متاح':
+              'هذا التقرير يعتمد على بيانات التكلفة ولا يظهر لصلاحيتك',
+        };
+        _extendedSupplierBalances = [];
+        _extendedInventoryValue = 0.0;
+      });
+      return;
+    }
+    final box = CachePartitions.box('daily_transactions_box');
     final from = DateTime(_fromDate.year, _fromDate.month, _fromDate.day);
     final to = DateTime(_toDate.year, _toDate.month, _toDate.day);
     double income = 0, expenses = 0, goods = 0, previousIncome = 0, previousExpenses = 0;
@@ -1526,12 +1572,53 @@ class _ReportsPageState extends State<ReportsPage> {
     final previousSupplierBalances = await _getExtendedSupplierBalances(from.subtract(const Duration(days: 1)));
     final supplierTotal = _extendedSupplierBalances.fold<double>(0, (s, e) => s + (e['الرصيد'] as double));
     final previousSupplierTotal = previousSupplierBalances.fold<double>(0, (s, e) => s + (e['الرصيد'] as double));
-    final customerTotal = 0.0;
-    final totalDebit = _extendedInventoryValue + currentCash + customerTotal;
+    double customerTotal = 0.0;
+    double previousCustomerTotal = 0.0;
+    double salesTreasuryTotal = 0.0;
+    double previousSalesTreasuryTotal = 0.0;
+    if (PermissionsService().canViewCustomerBalances) {
+      try {
+        final service = CommercialService();
+        final branch = widget.selectedBranchCode;
+        final currentCustomers = await service.customerBalances(
+          widget.companyCode,
+          branchCode: branch,
+          toDate: DateFormat('yyyy-MM-dd').format(to),
+        );
+        final previousCustomers = await service.customerBalances(
+          widget.companyCode,
+          branchCode: branch,
+          toDate: DateFormat('yyyy-MM-dd').format(from.subtract(const Duration(days: 1))),
+        );
+        customerTotal = currentCustomers.fold<double>(0, (sum, e) => sum + (e['balance'] as num).toDouble());
+        previousCustomerTotal = previousCustomers.fold<double>(0, (sum, e) => sum + (e['balance'] as num).toDouble());
+      } catch (e) {
+        debugPrint('تعذر تحميل رصيد العملاء للتقرير: $e');
+      }
+    }
+    if (PermissionsService().canViewSalesTreasuries) {
+      try {
+        final service = CommercialService();
+        final branch = widget.selectedBranchCode;
+        final currentBalances = await service.treasuryBalances(
+          widget.companyCode, branchCode: branch,
+          toDate: DateFormat('yyyy-MM-dd').format(to),
+        );
+        final previousBalances = await service.treasuryBalances(
+          widget.companyCode, branchCode: branch,
+          toDate: DateFormat('yyyy-MM-dd').format(from.subtract(const Duration(days: 1))),
+        );
+        salesTreasuryTotal = currentBalances.values.fold<double>(0, (a, b) => a + b);
+        previousSalesTreasuryTotal = previousBalances.values.fold<double>(0, (a, b) => a + b);
+      } catch (e) {
+        debugPrint('تعذر تحميل أرصدة خزائن المبيعات للتقرير: $e');
+      }
+    }
+    final totalDebit = _extendedInventoryValue + currentCash + customerTotal + salesTreasuryTotal;
     final totalCredit = supplierTotal;
     final currentNet = totalDebit - totalCredit;
     final previousInventoryValue = await _getTotalInventoryWholesale(from.subtract(const Duration(days: 1)));
-    final previousNet = previousInventoryValue + previousCash - previousSupplierTotal;
+    final previousNet = previousInventoryValue + previousCash + previousCustomerTotal + previousSalesTreasuryTotal - previousSupplierTotal;
     final netProfit = currentNet - previousNet;
     final profitDistributed = expenseByCategory['ارباح'] ?? expenseByCategory['أرباح'] ?? 0.0;
     final remainingAfterProfit = netProfit - profitDistributed;
@@ -1558,6 +1645,7 @@ class _ReportsPageState extends State<ReportsPage> {
         'الرصيد المتبقي': currentCash,
         'الجرد الفعلي بسعر الجملة': _extendedInventoryValue,
         'أرصدة العملاء غير المحصلة': customerTotal,
+        'أرصدة خزائن المبيعات': salesTreasuryTotal,
         'إجمالي ملك الشركة': totalDebit,
         'إجمالي ما على الشركة': totalCredit,
         'صافي الجرد الحالي': currentNet,
@@ -1567,10 +1655,13 @@ class _ReportsPageState extends State<ReportsPage> {
         'نسبة الربح': profitRatio,
       };
     });
-  }
+});
+}
 
   Future<List<Map<String, dynamic>>> _getExtendedSupplierBalances(DateTime to) async {
-    final coding = Hive.box('coding_box').get('${widget.companyCode}_suppliers', defaultValue: []);
+return CachePartitions.run(() async {
+
+    final coding = CachePartitions.box('coding_box').get('${widget.companyCode}_suppliers', defaultValue: []);
     final names = <String>{};
     if (coding is List) {
       for (final x in coding.whereType<Map>()) {
@@ -1579,8 +1670,8 @@ class _ReportsPageState extends State<ReportsPage> {
       }
     }
     final result = <Map<String, dynamic>>[];
-    final purchases = Hive.box('supplier_box');
-    final settlements = Hive.box('supplier_settlement_box');
+    final purchases = CachePartitions.box('supplier_box');
+    final settlements = CachePartitions.box('supplier_settlement_box');
     final totals = <String, double>{};
     for (final rawList in purchases.values) {
       if (rawList is! List) continue;
@@ -1608,10 +1699,13 @@ class _ReportsPageState extends State<ReportsPage> {
     for (final n in names) result.add({'المورد': n, 'الرصيد': totals[n] ?? 0.0});
     result.sort((a,b) => (b['الرصيد'] as double).compareTo(a['الرصيد'] as double));
     return result;
-  }
+});
+}
 
   Future<double> _getTotalInventoryWholesale(DateTime toDate) async {
-    final codingBox = Hive.box('coding_box');
+return CachePartitions.run(() async {
+
+    final codingBox = CachePartitions.box('coding_box');
     final rawStores = codingBox.get('${widget.companyCode}_stores', defaultValue: []);
     final List<String> stores = [];
     if (rawStores is List) {
@@ -1650,7 +1744,8 @@ class _ReportsPageState extends State<ReportsPage> {
     }
 
     return total;
-  }
+});
+}
 
   Widget _buildExtendedReport() {
     if (_extendedSummary.isEmpty) return Center(child: CircularProgressIndicator(color: AppTheme.textMainFor(context)));

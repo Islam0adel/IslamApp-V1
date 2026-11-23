@@ -1,10 +1,52 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.core.database import get_db
 from app.core.models import CodingRecord
+from app.core.permissions import (
+    require_any_section_permission,
+    require_section_permission,
+)
+
+# قراءة التكويد من الإعدادات: نفس مستهلكي الكتالوج في coding.py
+_GET_CODES_VIEW_CHECKS = [
+    ("التكويد", "معاينة"),
+    ("حركة الخزينة", "المعاينة"), ("حركة الخزينة", "ادخال اذون"),
+    ("حسابات الموردين", "معاينة"), ("حسابات الموردين", "اضافة"),
+    ("تسويات الموردين", "معاينة"), ("تسويات الموردين", "إضافة"),
+    ("حركة الجرد", "معاينة"), ("حركة الجرد", "اضافة"),
+    ("المبيعات", "معاينة"), ("المبيعات", "إضافة"),
+    ("المرتجعات", "معاينة"), ("المرتجعات", "إضافة"),
+    ("حسابات العملاء", "معاينة"), ("حسابات العملاء", "إضافة تحصيل"),
+    ("التحويلات المخزنية", "معاينة"), ("التحويلات المخزنية", "إضافة"),
+    ("رصيد المخزون", "معاينة"),
+    ("أرصدة خزائن المبيعات", "معاينة"),
+    ("التقارير", "تقرير المبيعات"),
+    ("الموارد البشرية", "canOpenAttendancePage"),
+    ("الموارد البشرية", "canViewEmployees"),
+    ("الموارد البشرية", "canManageEmployees"),
+]
 from app.core.sync import manager
+
+_CATEGORY = "التكويد"
+
+# نفس خريطة coding.py: القسم → مفتاح صلاحية الإضافة
+_ADD_PERMISSION_BY_CATEGORY = {
+    "stores": "اضافة مخزن",
+    "branches": "اضافة فرع",
+    "safes": "اضافة خزينة",
+    "suppliers": "اضافة مورد",
+    "customers": "اضافة عملاء",
+    "payment_methods": "اضافة طرق دفع",
+    "banks": "اضافة بنك",
+}
+
+# الفئات الصالحة فعلاً عند العميل (coding_service.categories)
+_VALID_CATEGORIES = {
+    "safes", "types", "branches", "stores",
+    "suppliers", "customers", "payment_methods", "items",
+}
 
 from pydantic import BaseModel
 
@@ -33,8 +75,17 @@ class CodingItem(BaseModel):
 @router.post("/add-code")
 async def add_coding_item(
     item: CodingItem,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
+    # نفس منطق الواجهة: فئة غير صالحة = رفض، وصالحة بلا مفتاح خاص
+    # (items/types) تستخدم حق الإضافة العام "اضافة صنف"
+    if item.category not in _VALID_CATEGORIES:
+        raise HTTPException(status_code=403, detail="فئة تكويد غير معروفة")
+    _permission_key = _ADD_PERMISSION_BY_CATEGORY.get(
+        item.category, "اضافة صنف"
+    )
+    require_section_permission(request, _CATEGORY, _permission_key)
     try:
         # ------------------------------------------------------
         # البحث عن الكود حتى لو كان Soft Deleted
@@ -77,6 +128,10 @@ async def add_coding_item(
                 existing.selling_price = 0.0
                 existing.profit_margin = 0.0
                 existing.profit_percent = 0.0
+                # خط الأساس كان يصفّر السعر عند إعادة التفعيل،
+                # فالصنف العائد بلا سعر معروف: يُوسَم "غير محدد"
+                # حتى يحدده صاحب الحق (لا إبطال لسعر قائم)
+                existing.cost_pending = item.category == "items"
 
                 existing.is_deleted = False
 
@@ -166,6 +221,10 @@ async def add_coding_item(
             profit_margin=0.0,
             profit_percent=0.0,
 
+            # لا مدخل سعر في هذه النقطة إطلاقاً: صنف جديد
+            # يُوسَم "غير محدد" أياً كان المنشئ
+            cost_pending=item.category == "items",
+
             updated_at=datetime.datetime.utcnow(),
 
             is_deleted=False,
@@ -248,8 +307,16 @@ async def add_coding_item(
 async def get_coding_items(
     company_code: str,
     category: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = request.state.auth_user
+    from app.core.auth_middleware import _effective_role
+    if _effective_role(_profile) != "super_admin" and str(
+        _profile.get("company_code", "")
+    ) != str(company_code):
+        raise HTTPException(status_code=403, detail="غير مصرح لهذه الشركة")
+    require_any_section_permission(request, _GET_CODES_VIEW_CHECKS)
     try:
         stmt = (
             select(CodingRecord)

@@ -1,3 +1,4 @@
+import '../../services/cache_partitions.dart';
 // lib/views/dashboard/inventory_history_page.dart
 
 import 'package:flutter/material.dart';
@@ -64,7 +65,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
   void initState() {
     super.initState();
     _inventoryBoxListener = _onInventoryBoxChanged;
-    Hive.box('inventory_box')
+    CachePartitions.box('inventory_box')
         .listenable()
         .addListener(_inventoryBoxListener!);
     _initialize();
@@ -73,7 +74,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
   @override
   void dispose() {
     if (_inventoryBoxListener != null) {
-      Hive.box('inventory_box')
+      CachePartitions.box('inventory_box')
           .listenable()
           .removeListener(_inventoryBoxListener!);
     }
@@ -89,6 +90,8 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
   // ============================================================
 
   Future<void> _initialize() async {
+return CachePartitions.run(() async {
+
     if (_isInitializing) return;
     _isInitializing = true;
 
@@ -101,14 +104,17 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
       _isLoading = false;
       _isInitializing = false;
     });
-  }
+});
+}
 
   // ============================================================
   // تحميل المخازن
   // ============================================================
 
   Future<void> _loadDropdowns() async {
-    final box = Hive.box('coding_box');
+return CachePartitions.run(() async {
+
+    final box = CachePartitions.box('coding_box');
     _stores = [{'code': 'all', 'name': 'كل المخازن'}];
 
     final raw = box.get(
@@ -130,7 +136,8 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
     }
 
     if (mounted) setState(() {});
-  }
+});
+}
 
   // ============================================================
   // هل المستخدم على كل الفروع؟
@@ -151,11 +158,13 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
   // ============================================================
 
   Future<void> _loadData() async {
+return CachePartitions.run(() async {
+
     if (!mounted) return;
     setState(() => _isLoading = true);
 
     try {
-      final box = Hive.box('inventory_box');
+      final box = CachePartitions.box('inventory_box');
       final List<InventoryModel> all = [];
 
       for (final key in box.keys) {
@@ -218,13 +227,16 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
         setState(() => _isLoading = false);
       }
     }
-  }
+});
+}
 
   // ============================================================
   // تحديث من السيرفر
   // ============================================================
 
   Future<void> _refreshFromServer() async {
+return CachePartitions.run(() async {
+
     if (!mounted) return;
 
     setState(() => _isLoading = true);
@@ -243,7 +255,8 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
-  }
+});
+}
 
   // ============================================================
   // أسماء الفرع والمخزن والشركة
@@ -258,7 +271,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
       return 'كل الفروع';
     }
 
-    final box = Hive.box('coding_box');
+    final box = CachePartitions.box('coding_box');
     final raw = box.get(
       '${widget.companyCode}_branches',
       defaultValue: [],
@@ -291,9 +304,12 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
   }
 
   Future<String> _getCompanyName() async {
+return CachePartitions.run(() async {
+
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString('company_name') ?? 'شركتي';
-  }
+});
+}
 
   // ============================================================
   // تنسيق الأرقام
@@ -373,6 +389,8 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
           ),
           TextButton(
             onPressed: () async {
+return CachePartitions.run(() async {
+
               Navigator.pop(ctx);
 
               if (model.docId == null) {
@@ -391,7 +409,9 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
               } else {
                 _showSnackBar('فشل الحذف', AppTheme.dangerStrongFor(context));
               }
-            },
+
+});
+},
             child: Text(
               'حذف',
               style: TextStyle(color: AppTheme.dangerStrongFor(context)),
@@ -409,13 +429,15 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
   List<Map<String, dynamic>> _getItemExportData(
     InventoryModel inv,
   ) {
+    // أعمدة الجملة بيانات تكلفة: لا تُصدَّر لمن لا يملك حقها.
+    final bool canCost = PermissionsService().canViewCostPrices;
     return inv.items.map(
       (item) => {
         'الكود': item.code,
         'الصنف': item.name,
         'الكمية': item.quantity,
-        'سعر الجملة': item.wholesalePrice,
-        'قيمة الجملة': item.wholesaleValue,
+        if (canCost) 'سعر الجملة': item.wholesalePrice,
+        if (canCost) 'قيمة الجملة': item.wholesaleValue,
         'سعر البيع': item.retailPrice,
         'قيمة البيع': item.retailValue,
       },
@@ -427,6 +449,8 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
   // ============================================================
 
   Future<void> _exportSingleExcel(InventoryModel inv) async {
+return CachePartitions.run(() async {
+
     try {
       final companyName = await _getCompanyName();
       final branchName = _getBranchName(inv.branchCode);
@@ -453,13 +477,16 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
     } catch (e) {
       _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
     }
-  }
+});
+}
 
   // ============================================================
   // تصدير إذن واحد PDF
   // ============================================================
 
   Future<void> _exportSinglePDF(InventoryModel inv) async {
+return CachePartitions.run(() async {
+
     try {
       final companyName = await _getCompanyName();
       final branchName = _getBranchName(inv.branchCode);
@@ -487,13 +514,16 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
     } catch (e) {
       _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
     }
-  }
+});
+}
 
   // ============================================================
   // تصدير كل الجردات Excel
   // ============================================================
 
   Future<void> _exportAllExcel() async {
+return CachePartitions.run(() async {
+
     if (_inventories.isEmpty) {
       _showSnackBar('لا توجد بيانات للتصدير', AppTheme.warningOrangeFor(context));
       return;
@@ -562,13 +592,16 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
     } catch (e) {
       _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
     }
-  }
+});
+}
 
   // ============================================================
   // تصدير كل الجردات PDF
   // ============================================================
 
   Future<void> _exportAllPDF() async {
+return CachePartitions.run(() async {
+
     if (_inventories.isEmpty) {
       _showSnackBar('لا توجد بيانات للتصدير', AppTheme.warningOrangeFor(context));
       return;
@@ -641,7 +674,8 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
     } catch (e) {
       _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
     }
-  }
+});
+}
 
   // ============================================================
   // SnackBar
@@ -845,6 +879,8 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                       isDense: true,
                     ),
                     onTap: () async {
+return CachePartitions.run(() async {
+
                       final picked = await showDatePicker(
                         context: context,
                         initialDate: _filterDate != null
@@ -864,7 +900,9 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                       );
 
                       _loadData();
-                    },
+
+});
+},
                   ),
                 ),
                 IconButton(
@@ -1468,16 +1506,20 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                     AppTheme.textSoftFor(context),
                   ),
                   _tableCell(
-                    _formatCurrency(
-                      entry.value.wholesalePrice,
-                    ),
+                    PermissionsService().canViewCostPrices
+                        ? _formatCurrency(
+                            entry.value.wholesalePrice,
+                          )
+                        : '—',
                     valueWidth,
                     AppTheme.successFor(context),
                   ),
                   _tableCell(
-                    _formatCurrency(
-                      entry.value.wholesaleValue,
-                    ),
+                    PermissionsService().canViewCostPrices
+                        ? _formatCurrency(
+                            entry.value.wholesaleValue,
+                          )
+                        : '—',
                     valueWidth,
                     AppTheme.successFor(context),
                   ),
@@ -1553,17 +1595,21 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
                   ),
                   Expanded(
                     child: _tableDesktopText(
-                      _formatCurrency(
-                        item.wholesalePrice,
-                      ),
+                      PermissionsService().canViewCostPrices
+                          ? _formatCurrency(
+                              item.wholesalePrice,
+                            )
+                          : '—',
                       AppTheme.successFor(context),
                     ),
                   ),
                   Expanded(
                     child: _tableDesktopText(
-                      _formatCurrency(
-                        item.wholesaleValue,
-                      ),
+                      PermissionsService().canViewCostPrices
+                          ? _formatCurrency(
+                              item.wholesaleValue,
+                            )
+                          : '—',
                       AppTheme.successFor(context),
                     ),
                   ),

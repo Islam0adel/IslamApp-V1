@@ -5,6 +5,7 @@ from app.routes import auth, transactions, coding, inventory, supplier, supplier
 from app.routes import sync, notifications, product_lookup
 from app.routes import employees
 from app.routes import commercial
+from app.routes import treasury_transfers
 from app.routes import transfers  # ⭐ التحويلات المخزنية (وحدة مستقلة)
 from app.routes import hr  # ← NEW (ملف واحد لكل HR)
 from app.core.auth_middleware import authenticate_http_request
@@ -77,3 +78,5 @@ async def root():
         "database": "PostgreSQL (Neon)",
         "sync": "WebSocket enabled"
     }
+
+app.include_router(treasury_transfers.router, prefix="/treasury-transfers", tags=["Treasury Transfers"])

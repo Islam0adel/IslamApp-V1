@@ -330,7 +330,6 @@
 
     // إخفاء شاشة التحميل
     (function () {
-      const loadingStart = Date.now();
       // ⭐ 45s = 15s sync wait + flutter init + احتياطي
 const HARD_TIMEOUT_MS = 40000;
       let hiding = false;
@@ -342,8 +341,6 @@ const HARD_TIMEOUT_MS = 40000;
         const el = document.getElementById('loading-indicator');
         if (!el) return;
 
-        const elapsed = Date.now() - loadingStart;
-        console.log(`[Loading] hiding (${reason}) — visible for ${elapsed}ms`);
 
         el.style.opacity = '0';
         el.style.pointerEvents = 'none';

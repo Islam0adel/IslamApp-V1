@@ -4,7 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 
+from app.core.auth_middleware import allowed_branches_for_profile
 from app.core.database import get_db
+from app.core.permissions import require_any_section_permission
 from app.core.auth_middleware import allowed_branches_for_profile
 from app.core.models import InventoryRecord
 from app.core.schemas import InventoryModel
@@ -17,6 +19,24 @@ import logging
 
 router = APIRouter()
 
+
+_CATEGORY = "حركة الجرد"
+
+
+def _require_any(request: Request, keys):
+    return require_any_section_permission(
+        request, [(_CATEGORY, key) for key in keys]
+    )
+
+
+def _check_branch(profile: dict, branch_code) -> None:
+    allowed = allowed_branches_for_profile(profile)
+    if allowed and branch_code and str(branch_code) not in allowed:
+        raise HTTPException(
+            status_code=403,
+            detail="ليس لديك صلاحية على هذا الفرع",
+        )
+
 logger = logging.getLogger(__name__)
 
 
@@ -24,9 +44,23 @@ logger = logging.getLogger(__name__)
 # Helper
 # ============================================================
 
+def _viewer_may_costs(request) -> bool:
+    """نفس حقوق التكلفة الثلاثة المستخدمة عند الحفظ."""
+    from app.core.permissions import has_section_permission as _hsp
+    return (
+        _hsp(request.state.auth_user, "التكويد", "سعر الشراء")
+        or _hsp(request.state.auth_user, "المبيعات", "عرض سعر الجملة")
+        or _hsp(request.state.auth_user, "رصيد المخزون", "عرض سعر الجملة")
+    )
+
+
+_COST_ITEM_FIELDS = ("wholesalePrice", "wholesaleValue")
+
+
 def serialize_inventory(
     doc: InventoryRecord,
     action: str | None = None,
+    include_costs: bool = True,
 ):
     data = {
         "doc_id": str(doc.id),
@@ -48,6 +82,19 @@ def serialize_inventory(
         "is_deleted": bool(doc.is_deleted),
     }
 
+    if not include_costs:
+        # من ليس له حق التكلفة لا تصله أسعار/قيم الجملة في أي مسلسل
+        data.pop("total_wholesale", None)
+        if isinstance(data.get("items"), list):
+            data["items"] = [
+                {
+                    k: v for k, v in item.items()
+                    if k not in _COST_ITEM_FIELDS
+                }
+                if isinstance(item, dict) else item
+                for item in data["items"]
+            ]
+
     if action is not None:
         data["action"] = action
 
@@ -61,9 +108,13 @@ def serialize_inventory(
 
 @router.post("/save")
 async def save_inventory(
+    request: Request,
     data: InventoryModel,
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_any(request, ["اضافة", "تعديل"])
+    _check_branch(_profile, data.branch_code)
+
     try:
         # ------------------------------------------------------
         # تحويل doc_id إلى int إذا وجد
@@ -90,6 +141,122 @@ async def save_inventory(
             else item.dict()
             for item in data.items
         ]
+
+        # سياسة الأسعار المتبعة في هذا المسار (مطبقة بطلب المالك عبر قناة المحادثة الموثقة بتاريخ ٢٠٢٦-١١-٢١؛ التعليق توثيق للسلوك وليس مستند تفويض بذاته):
+        # - من لا يملك أي حق تكلفة: أسعار الجملة من كتالوج التكويد
+        #   دائماً، لا يصله سعر جملة، وصنف غير معروف يُرفض برسالة
+        #   واضحة قبل أي كتابة (ذرّي).
+        # - حامل حق التكلفة: يبقى سلوكه الحالي (سعره المدخل محفوظ)
+        #   فلا يُعاد تسعير سجلات تاريخية ولا يتغير مساره.
+        # - صنف غير معروف لحامل التكلفة: يُقبل فقط لو معه حق إضافة
+        #   التكويد الفعلي (مسار إنشاء الأصناف القائم)، وإلا يُرفض.
+        from app.core.permissions import has_section_permission as _hsp
+        _may_costs = (
+            _hsp(request.state.auth_user, "التكويد", "سعر الشراء")
+            or _hsp(request.state.auth_user, "المبيعات", "عرض سعر الجملة")
+            or _hsp(request.state.auth_user, "رصيد المخزون", "عرض سعر الجملة")
+        )
+        _may_add_coding = _hsp(
+            request.state.auth_user, "التكويد", "اضافة صنف"
+        )
+        # عند تعديل سجل موجود: أسعار سطوره المخزنة موثوقة وتُحفظ
+        # (لا إعادة تسعير للتاريخ). سعر الكتالوج يُفرض فقط على
+        # السطور الجديدة لمن لا يملك حق التكلفة.
+        _stored_price_by_code = {}
+        if doc_id_int:
+            _cur = await db.execute(
+                select(InventoryRecord.items).where(
+                    InventoryRecord.id == doc_id_int,
+                    InventoryRecord.company_code == data.company_code,
+                )
+            )
+            _stored = _cur.scalar_one_or_none()
+            if isinstance(_stored, list):
+                for _si in _stored:
+                    if isinstance(_si, dict) and _si.get("code"):
+                        _stored_price_by_code[str(_si["code"])] = float(
+                            _si.get("wholesalePrice") or 0.0
+                        )
+        _codes = [
+            str(item.get("code", ""))
+            for item in items_json
+            if item.get("code")
+        ]
+        _cost_by_code = {}
+        if _codes:
+            from app.core.models import CodingRecord as _CR
+            _cost_result = await db.execute(
+                select(
+                    _CR.code,
+                    _CR.wholesale_price,
+                    _CR.cost_pending,
+                ).where(
+                    _CR.company_code == data.company_code,
+                    _CR.category == "items",
+                    _CR.code.in_(_codes),
+                    _CR.is_deleted.is_(False),
+                )
+            )
+            _cost_by_code = {}
+            _unset_cost_codes = set()
+            for code, price, pending in _cost_result.all():
+                _cost_by_code[str(code)] = float(price or 0.0)
+                if pending:
+                    _unset_cost_codes.add(str(code))
+        _total_wholesale = 0.0
+        _total_retail = 0.0
+        for item in items_json:
+            _code = str(item.get("code", ""))
+            _qty = float(item.get("quantity") or 0.0)
+            _retail = float(item.get("retailPrice") or 0.0)
+            if _code in _stored_price_by_code and not _may_costs:
+                # سطر موجود مسبقاً ولا حق تكلفة للمحرر: السعر
+                # المخزن محفوظ (لا إعادة تسعير ولا تحكم بالتكلفة).
+                # حامل حق التكلفة يُحترم سعره المدخل حتى عند التعديل
+                # (السلوك الأصلي)، فيقدر يصحح سعر سطر قائم.
+                _wholesale = _stored_price_by_code[_code]
+            elif _code in _cost_by_code:
+                if _may_costs:
+                    _wholesale = float(item.get("wholesalePrice") or 0.0)
+                else:
+                    # سعر "غير محدد" (cost_pending) ومحرر لا يرى
+                    # الأسعار: إذن بقيمة غير محددة سجل مالي خاطئ
+                    # — رفض ذري قبل أي كتابة. الصفر المصرَّح به
+                    # يمر كقيمة مشروعة. السطور المخزنة مستثناة.
+                    if _code in _unset_cost_codes:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                f"الصنف بلا سعر شراء محدد في "
+                                f"التكويد: {_code}. حدّد سعر الشراء "
+                                "من شاشة التكويد بواسطة مستخدم "
+                                "مخوّل، ثم أعد إدخال الإذن."
+                            ),
+                        )
+                    _wholesale = _cost_by_code[_code]
+            else:
+                # صنف جديد كلياً: يُقبل بسعره المدخل فقط ممن
+                # يملك حق التكلفة مع حق إضافة التكويد معاً. من
+                # لا يرى سعر الجملة لا يمكنه تزويد سعر شرعي
+                # (حقله مخفي)، فيُسجِّل الصنف أولاً من شاشة
+                # التكويد — لا سعر صفري مُختلَق يصبح كتالوجاً.
+                if not (_may_add_coding and _may_costs):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"الصنف غير موجود في التكويد: {_code}. "
+                            "سجّله أولاً من شاشة التكويد، "
+                            "ثم أعد إدخال الإذن."
+                        ),
+                    )
+                _wholesale = float(item.get("wholesalePrice") or 0.0)
+            item["wholesalePrice"] = _wholesale
+            item["wholesaleValue"] = _wholesale * _qty
+            item["retailValue"] = _retail * _qty
+            _total_wholesale += item["wholesaleValue"]
+            _total_retail += item["retailValue"]
+        data.total_wholesale = _total_wholesale
+        data.total_retail = _total_retail
 
         # ------------------------------------------------------
         # البحث عن السجل
@@ -152,7 +319,12 @@ async def save_inventory(
         # تحديث سجل موجود
         # ------------------------------------------------------
 
+        # Resolve the action from the server lookup, not a client action flag.
+        _require_any(request, ["تعديل" if existing is not None else "اضافة"])
+
         if existing:
+            # الفرع المخزَّن أيضاً: منع تعديل/نقل سجل فرع غير مسموح
+            _check_branch(_profile, existing.branch_code)
             existing.branch_code = data.branch_code
             existing.store_code = data.store_code
             existing.date = data.date
@@ -269,13 +441,15 @@ async def save_inventory(
 
 @router.get("/list/{company_code}")
 async def list_inventory(
-    company_code: str,
     request: Request,
+    company_code: str,
     branch_code: Optional[str] = Query(None),
     store_code: Optional[str] = Query(None),
     date: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_any(request, ["معاينة", "اضافة"])
+
     try:
         stmt = (
             select(InventoryRecord)
@@ -318,8 +492,9 @@ async def list_inventory(
 
         docs = result.scalars().all()
 
+        _may = _viewer_may_costs(request)
         results = [
-            serialize_inventory(doc)
+            serialize_inventory(doc, include_costs=_may)
             for doc in docs
         ]
 
@@ -348,8 +523,8 @@ async def list_inventory(
 
 @router.get("/changes/{company_code}")
 async def get_inventory_changes(
-    company_code: str,
     request: Request,
+    company_code: str,
     since: str = Query(
         ...,
         description=(
@@ -359,6 +534,8 @@ async def get_inventory_changes(
     ),
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_any(request, ["معاينة", "اضافة"])
+
     try:
         # ------------------------------------------------------
         # 1) تحويل since
@@ -419,6 +596,7 @@ async def get_inventory_changes(
 
         results = []
 
+        _may = _viewer_may_costs(request)
         for doc in docs:
             # --------------------------------------------------
             # تحديد نوع التغيير
@@ -433,6 +611,7 @@ async def get_inventory_changes(
                 serialize_inventory(
                     doc,
                     action=action,
+                    include_costs=_may,
                 )
             )
 
@@ -462,11 +641,13 @@ async def get_inventory_changes(
     "/delete/{company_code}/{doc_id}"
 )
 async def delete_inventory(
-    company_code: str,
     request: Request,
+    company_code: str,
     doc_id: str,
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = _require_any(request, ["حذف"])
+
     try:
         # ------------------------------------------------------
         # تحويل doc_id إلى int

@@ -1,3 +1,4 @@
+import 'cache_partitions.dart';
 // lib/services/api_service.dart
 
 import 'dart:convert';
@@ -10,6 +11,14 @@ import 'auth_http.dart';
 class ApiService {
   final String baseUrl = ApiConstants.baseUrl;
   final FirebaseAuth _auth = FirebaseAuth.instance;
+
+  Future<Map<String, dynamic>> getEffectiveProfile() async {
+    final response = await AuthHttp.get(Uri.parse('$baseUrl/auth/session-profile'));
+    if (response.statusCode != 200) throw StateError('Effective profile unavailable (${response.statusCode})');
+    final body = jsonDecode(response.body);
+    if (body is! Map) throw const FormatException('Invalid effective profile');
+    return Map<String, dynamic>.from(body);
+  }
 
   // ============================================================
   // 1. تسجيل الدخول (إيميل / موبايل / يوزرنيم)
@@ -126,10 +135,15 @@ class ApiService {
   }) async {
     try {
       // 1) Create Firebase Auth account
-      UserCredential userCredential = await _auth.createUserWithEmailAndPassword(
-        email: email.trim().toLowerCase(),
-        password: password,
-      );
+      UserCredential userCredential;
+      try {
+        userCredential = await _auth.createUserWithEmailAndPassword(
+          email: email.trim().toLowerCase(), password: password);
+      } on FirebaseAuthException catch (error) {
+        if (error.code != 'email-already-in-use') rethrow;
+        userCredential = await _auth.signInWithEmailAndPassword(
+          email: email.trim().toLowerCase(), password: password);
+      }
 
       // 2) Send verification email (best-effort)
       try {
@@ -160,12 +174,10 @@ class ApiService {
         }),
       );
 
-      // 4) Rollback on failure
+      // A failed response can follow a committed source binding. Keep the
+      // Firebase identity so retry/login can recover it; never delete it here.
       if (response.statusCode != 200) {
-        try {
-          await userCredential.user?.delete();
-        } catch (_) {}
-        throw jsonDecode(response.body)['detail'] ?? 'فشل إكمال التسجيل';
+        throw jsonDecode(response.body)['detail'] ?? 'فشل إكمال التسجيل؛ أعد المحاولة بنفس الحساب';
       }
 
       return jsonDecode(response.body);
@@ -224,7 +236,7 @@ class ApiService {
     if (response.statusCode == 200) {
       final decoded = jsonDecode(response.body);
       if (decoded is List) return decoded;
-      return [];
+      throw const FormatException('Invalid account-directory response');
     }
     throw jsonDecode(response.body)['detail'] ?? 'فشل جلب المستخدمين';
   }
@@ -259,15 +271,30 @@ class ApiService {
     throw jsonDecode(response.body)['detail'] ?? 'فشل إضافة المستخدم';
   }
 
+  Future<Map<String, dynamic>> getAccountEditor(String documentId) async {
+    final response = await AuthHttp.get(Uri.parse('$baseUrl/auth/user-editor/${Uri.encodeComponent(documentId.trim().toLowerCase())}'));
+    if (response.statusCode != 200) {
+      throw jsonDecode(response.body)['detail'] ?? 'تعذر تحميل بيانات الحساب الحالية';
+    }
+    final value = jsonDecode(response.body);
+    if (value is! Map) throw const FormatException('Invalid account editor response');
+    return Map<String, dynamic>.from(value);
+  }
+
   /// تعديل مستخدم
   Future<Map<String, dynamic>> adminEditUser({
     required String email,
     String? name,
+    String? invitationEmail,
     String? phoneNumber,
     String? branchCode,
     String? role,
     String? username,
     String? status,
+    bool? isActive,
+    String? expectedTargetUid,
+    String? expectedProfileVersion,
+    int? expectedPolicyRevision,
   }) async {
     final response = await AuthHttp.put(
       Uri.parse('$baseUrl/auth/admin/edit-user'),
@@ -275,11 +302,16 @@ class ApiService {
       body: jsonEncode({
         'email': email.trim().toLowerCase(),
         if (name != null) 'name': name.trim(),
+        if (invitationEmail != null) 'invitation_email': invitationEmail.trim().toLowerCase(),
         if (phoneNumber != null) 'phone_number': phoneNumber.trim(),
         if (branchCode != null) 'branch_code': branchCode.trim(),
         if (role != null) 'role': role,
         if (username != null) 'username': username.trim(),
         if (status != null) 'status': status,
+        if (isActive != null) 'is_active': isActive,
+        if (expectedTargetUid != null) 'expected_target_uid': expectedTargetUid,
+        if (expectedProfileVersion != null) 'expected_profile_version': expectedProfileVersion,
+        if (expectedPolicyRevision != null) 'expected_policy_revision': expectedPolicyRevision,
       }),
     );
     if (response.statusCode == 200) return jsonDecode(response.body);
@@ -370,7 +402,7 @@ class ApiService {
     if (response.statusCode == 200) {
       final decoded = jsonDecode(response.body);
       if (decoded is List) return decoded;
-      return [];
+      throw const FormatException('Invalid account-directory response');
     }
     throw jsonDecode(response.body)['detail'] ?? 'فشل جلب الطلبات';
   }
@@ -416,8 +448,10 @@ class ApiService {
 
   /// جلب قائمة الفروع (Hive أولاً، ثم السيرفر)
   Future<List<String>> getBranchesList(String companyCode) async {
+return CachePartitions.run(() async {
+
     try {
-      final Box codingBox = Hive.box('coding_box');
+      final Box codingBox = CachePartitions.box('coding_box');
       final String localKey = "${companyCode}_branches";
 
       if (codingBox.containsKey(localKey)) {
@@ -452,11 +486,53 @@ class ApiService {
     } catch (e) {
       return ["كل الفروع"];
     }
-  }
+});
+}
 
   // ============================================================
   // 5. الصلاحيات
   // ============================================================
+
+  Future<Map<String, dynamic>> getPermissionTargets(String companyCode) async {
+    final uri = Uri.parse('$baseUrl/auth/permission-editor-targets')
+        .replace(queryParameters: {'company_code': companyCode});
+    final response = await AuthHttp.get(uri);
+    if (response.statusCode != 200)
+      throw jsonDecode(response.body)['detail'] ?? 'تعذر تحميل المستخدمين';
+    final value = jsonDecode(response.body);
+    if (value is! Map)
+      throw const FormatException('Invalid permission target directory');
+    return Map<String, dynamic>.from(value);
+  }
+
+  Future<void> setLegacyEditorStatus(
+      {required String email,
+      required String uid,
+      required String version,
+      required bool isActive}) async {
+    final response =
+        await AuthHttp.post(Uri.parse('$baseUrl/auth/permission-editor-status'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'email': email,
+              'is_active': isActive,
+              'expected_target_uid': uid,
+              'expected_profile_version': version,
+            }));
+    if (response.statusCode != 200) {
+      throw jsonDecode(response.body)['detail'] ?? 'تعذر تغيير حالة الحساب';
+    }
+  }
+
+  Future<Map<String, dynamic>> getPermissionEditor(String email) async {
+    final response = await AuthHttp.get(Uri.parse('$baseUrl/auth/permission-editor/${Uri.encodeComponent(email.trim().toLowerCase())}'));
+    if (response.statusCode != 200) {
+      throw jsonDecode(response.body)['detail'] ?? 'تعذر تحميل نطاق الصلاحيات';
+    }
+    final value=jsonDecode(response.body);
+    if(value is! Map) throw const FormatException('Invalid permission editor response');
+    return Map<String,dynamic>.from(value);
+  }
 
   Future<void> updatePermissions(
     String email,
@@ -464,6 +540,10 @@ class ApiService {
     List<String>? allowedBranches,
     List<String>? hrViewableEmployees,
     bool clearHrViewableEmployees = false,
+    String? expectedTargetUid,
+    String? expectedProfileVersion,
+    int? expectedPolicyRevision,
+    String? startupBranchCode,
   }) async {
     try {
       final body = <String, dynamic>{
@@ -471,11 +551,16 @@ class ApiService {
         'permissions': permissions,
       };
 
+      if (expectedTargetUid != null) body['expected_target_uid']=expectedTargetUid;
+      if (expectedProfileVersion != null) body['expected_profile_version']=expectedProfileVersion;
+      if (expectedPolicyRevision != null) body['expected_policy_revision']=expectedPolicyRevision;
+      if (startupBranchCode != null) body['startup_branch_code']=startupBranchCode;
       if (allowedBranches != null) {
         body['allowed_branches'] = allowedBranches;
       }
 
       if (clearHrViewableEmployees) {
+        body['clear_hr_viewable_employees'] = true;
         body['hr_viewable_employees'] = null;
       } else if (hrViewableEmployees != null) {
         body['hr_viewable_employees'] = hrViewableEmployees;

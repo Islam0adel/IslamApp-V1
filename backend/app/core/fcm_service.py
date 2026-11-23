@@ -6,11 +6,12 @@
 المبادئ:
 - تبعث فقط إلى من مرّوا فحوصات الصلاحيات والتفضيلات في notification_events.py
 - Fire-and-forget (لا تعطل الويب سوكيت)
-- تحذف الرموز الفاشلة تلقائياً من Neon
+- تحذف فقط الرموز المؤكد انتهاء تسجيلها، لا رموز أخطاء الشبكة أو الحصة
 """
 
 import asyncio
-from typing import Optional
+from dataclasses import dataclass
+from typing import Optional, Callable, Awaitable
 
 from sqlalchemy import delete, select
 
@@ -67,18 +68,25 @@ async def delete_tokens(tokens: list[str]) -> None:
 # 2. الإرسال المتزامن (في executor)
 # ============================================================
 
+@dataclass(frozen=True)
+class FcmSendResult:
+    invalid_tokens: tuple[str, ...] = ()
+    success_count: int = 0
+
+
 def _send_sync(
     tokens: list[str],
     title: str,
     body: str,
     data: Optional[dict] = None,
-) -> list[str]:
-    """
-    إرسال إشعار إلى قائمة رموز.
-    Returns: قائمة الرموز التي فشل إرسالها (لحذفها).
+) -> FcmSendResult:
+    """Report confirmed successes and expired devices separately.
+
+    Network, quota, payload and sender-configuration failures do not establish
+    that a stored device token is invalid.
     """
     if not is_fcm_enabled() or not tokens:
-        return []
+        return FcmSendResult()
 
     # ⚠️ مهم: نستخدم `data` فقط (مش `notification`)
     # كده الـ Service Worker / التطبيق هو اللي يعرض الإشعار،
@@ -92,7 +100,8 @@ def _send_sync(
         },
     )
 
-    failed_tokens: list[str] = []
+    invalid_tokens: list[str] = []
+    success_count = 0
     try:
         # استخدم send_each_for_multicast لو موجود، وإلا send_multicast (للإصدارات القديمة)
         if hasattr(_fb_messaging, "send_each_for_multicast"):
@@ -100,18 +109,24 @@ def _send_sync(
         else:
             response = _fb_messaging.send_multicast(message)
 
-        for idx, resp in enumerate(response.responses):
-            if not resp.success:
-                failed_tokens.append(tokens[idx])
-                print(
-                    f"⚠️ FCM send failed | token={tokens[idx][:20]}... | "
-                    f"error={resp.exception}"
-                )
+        responses = list(response.responses)
+        if len(responses) != len(tokens):
+            print('⚠️ FCM response/device count mismatch; no devices removed')
+            return FcmSendResult()
+        expired_type = getattr(_fb_messaging, 'UnregisteredError', None)
+        for idx, resp in enumerate(responses):
+            if resp.success is True:
+                success_count += 1
+            else:
+                error = resp.exception
+                if isinstance(expired_type, type) and isinstance(error, expired_type):
+                    invalid_tokens.append(tokens[idx])
+                print(f'⚠️ FCM send failed | device_index={idx} | kind={type(error).__name__}')
     except Exception as exc:
-        print(f"❌ FCM multicast error: {exc}")
-        return tokens  # نعتبر الكل فشل — يُحذف في المرة الجاية
+        print(f'❌ FCM multicast error | kind={type(exc).__name__}')
+        return FcmSendResult()
 
-    return failed_tokens
+    return FcmSendResult(tuple(invalid_tokens), success_count)
 
 
 # ============================================================
@@ -124,12 +139,13 @@ async def send_push_to_user(
     title: str,
     body: str,
     data: Optional[dict] = None,
+    authorization_check: Optional[Callable[[list[str]], Awaitable[bool]]] = None,
 ) -> None:
     """
     إرسال إشعار Push لمستخدم معين (كل أجهزته).
     آمن للاستدعاء من background tasks.
     """
-    if not is_fcm_enabled():
+    if not is_fcm_enabled() or authorization_check is None:
         return
 
     try:
@@ -137,22 +153,24 @@ async def send_push_to_user(
         if not tokens:
             return
 
+        if not await authorization_check(tokens):
+            return
         loop = asyncio.get_running_loop()
-        failed = await loop.run_in_executor(
+        result = await loop.run_in_executor(
             None, _send_sync, tokens, title, body, data
         )
 
-        if failed:
-            await delete_tokens(failed)
+        if result.invalid_tokens:
+            await delete_tokens(list(result.invalid_tokens))
 
-        success = len(tokens) - len(failed)
+        success = result.success_count
         if success > 0:
             print(
                 f"📤 FCM sent | user={user_uid} | "
                 f"devices={success}/{len(tokens)}"
             )
     except Exception as exc:
-        print(f"❌ send_push_to_user failed for {user_uid}: {exc}")
+        print(f"❌ send_push_to_user failed | user={user_uid} | kind={type(exc).__name__}")
 
 
 # ============================================================
@@ -165,24 +183,26 @@ def send_push_to_user_bg(
     title: str,
     body: str,
     data: Optional[dict] = None,
-) -> None:
+    authorization_check: Optional[Callable[[list[str]], Awaitable[bool]]] = None,
+) -> asyncio.Task | None:
     """
     جدولة إرسال Push في الخلفية.
     لا يوقف تنفيذ الكود المُستدعي.
     """
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(
+        return loop.create_task(
             send_push_to_user(
                 user_uid=user_uid,
                 company_code=company_code,
                 title=title,
                 body=body,
                 data=data,
+                authorization_check=authorization_check,
             )
         )
     except RuntimeError:
         # لا يوجد event loop (نادر جداً) — تجاهل
         pass
     except Exception as exc:
-        print(f"⚠️ Could not schedule push for {user_uid}: {exc}")
+        print(f"⚠️ Could not schedule push | user={user_uid} | kind={type(exc).__name__}")

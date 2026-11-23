@@ -39,6 +39,11 @@ class Company(Base):
         default=True,
     )
 
+    # Existing installations remain legacy until reviewed. Only the explicit
+    # company-creation workflow sets this guard for a new company.
+    requires_permission_review = Column(Boolean, nullable=False, default=False,
+                                        server_default=text('FALSE'))
+
     created_at = Column(
         DateTime,
         server_default=func.now(),
@@ -49,6 +54,22 @@ class Company(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+
+
+# Stored separately so existing company rows remain on their current policy
+# until a reviewed configuration is explicitly activated by the new workflow.
+class CompanyPermissionPolicy(Base):
+    __tablename__ = "company_permission_policies"
+
+    company_code = Column(String(50), primary_key=True, nullable=False)
+    revision = Column(Integer, nullable=False, default=0)
+    draft = Column(JSON, nullable=True)
+    draft_base_active_revision = Column(Integer, nullable=True)
+    active = Column(JSON, nullable=True)
+    active_revision = Column(Integer, nullable=True)
+    reviewed_by_uid = Column(String(128), nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
 # ==========================================
@@ -158,6 +179,19 @@ class CodingRecord(Base):
     wholesale_price = Column(
         Float,
         default=0.0,
+    )
+
+    # True = السعر "غير محدد": سجَّل الصنفَ من لا يملك حق
+    # التكلفة فحُجب عنه حقل السعر، فالصفر المخزن غياب قيمة لا
+    # صفراً مصرَّحاً به. يُزال فقط عند حفظ سعر صراحةً من مستخدم
+    # يملك الحق (بما فيه صفر صريح مقصود). القيمة الافتراضية
+    # false للسجلات القائمة تحفظ دلالة أصفارها التاريخية —
+    # لا تخمين بأن كل صفر قديم "غير محدد".
+    cost_pending = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
     )
 
     selling_price = Column(
@@ -1705,3 +1739,70 @@ class UserFcmToken(Base):
         Index("idx_fcm_tokens_user_company", "user_uid", "company_code"),
         Index("idx_fcm_tokens_company", "company_code"),
     )
+
+
+class TreasuryTransferRecord(Base):
+    """One independent transfer, not two daily-journal vouchers."""
+    __tablename__ = "treasury_transfers"
+    id = Column(String(36), primary_key=True)
+    company_code = Column(String(50), nullable=False, index=True)
+    branch_code = Column(String(50), nullable=False, index=True)
+    serial = Column(Integer, nullable=False)
+    from_treasury = Column(String(255), nullable=False)
+    to_treasury = Column(String(255), nullable=False)
+    amount = Column(Float, nullable=False)
+    statement = Column(Text, nullable=False, default="")
+    date = Column(String(20), nullable=False, index=True)
+    employee = Column(String(255), nullable=False, default="غير معروف")
+    created_by_uid = Column(String(128), nullable=False, default="")
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+    is_deleted = Column(Boolean, nullable=False, default=False, server_default="false")
+    __table_args__ = (
+        Index("idx_treasury_transfers_company_branch_serial", "company_code", "branch_code", "serial", unique=True),
+        Index("idx_treasury_transfers_company_changes", "company_code", "updated_at"),
+    )
+
+
+class CommercialCreationReceipt(Base):
+    """Owner-bound proof of one commercial create, not a second document copy."""
+    __tablename__ = "commercial_creation_receipts"
+    kind = Column(String(32), primary_key=True)
+    record_id = Column(String(100), primary_key=True)
+    owner_uid = Column(String(128), nullable=False)
+    company_code = Column(String(50), nullable=False)
+    request_hash = Column(String(64), nullable=False)
+    record_hash = Column(String(64), nullable=False)
+    original_serial = Column(Integer, nullable=False)
+    record_updated_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class JournalSaveReceipt(Base):
+    """Immutable owner-bound acknowledgement of a journal save intention."""
+    __tablename__ = "journal_save_receipts"
+    operation_id = Column(String(64), primary_key=True)
+    owner_uid = Column(String(128), nullable=False)
+    company_code = Column(String(50), nullable=False)
+    branch_code = Column(String(50), nullable=False)
+    request_hash = Column(String(64), nullable=False)
+    transaction_id = Column(Integer, nullable=False)
+    original_serial = Column(Integer, nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class TreasurySyncState(Base):
+    """Transactional per-company clock, held through treasury commit."""
+    __tablename__ = 'treasury_sync_states'
+    company_code = Column(String(50), primary_key=True)
+    revision = Column(Integer, nullable=False, default=0)
+    initialized = Column(Boolean, nullable=False, default=False)
+
+
+class TreasurySyncEntry(Base):
+    """Latest state per transfer, including tombstones. No unbounded event history."""
+    __tablename__ = 'treasury_sync_entries'
+    company_code = Column(String(50), primary_key=True)
+    transfer_id = Column(String(36), primary_key=True)
+    revision = Column(Integer, nullable=False)
+    payload = Column(JSON, nullable=False)
+    __table_args__ = (Index('idx_treasury_sync_revision', 'company_code', 'revision'),)

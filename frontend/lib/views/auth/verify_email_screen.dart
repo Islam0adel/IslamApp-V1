@@ -1,9 +1,9 @@
+import '../../services/cache_partitions.dart';
 // lib/views/auth/verify_email_screen.dart
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../core/theme.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../services/api_service.dart';
@@ -36,19 +36,6 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
           AppTheme.warningOrangeFor(context),
         );
         return;
-      }
-
-      // ⭐ تحديث email_verified في Firestore
-      try {
-        final user = FirebaseAuth.instance.currentUser;
-        if (user?.email != null) {
-          await FirebaseFirestore.instance
-              .collection('users')
-              .doc(user!.email!.toLowerCase())
-              .update({'email_verified': true});
-        }
-      } catch (e) {
-        print('⚠️ email_verified update failed: $e');
       }
 
       final result = await _apiService.verifyUser();
@@ -89,6 +76,9 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
     if ((result['branch_code'] ?? '').toString().isNotEmpty) {
       await prefs.setString('selected_branch_code', result['branch_code']);
     }
+
+    await CachePartitions.activate(FirebaseAuth.instance.currentUser!.uid, result['company_code'] ?? '');
+    PermissionsService().resetForCachePartition();
 
     PermissionsService().setRole(result['role']?.toString());
 

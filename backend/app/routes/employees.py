@@ -1,9 +1,10 @@
 # backend/app/routes/employees.py
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, and_, or_, true
 
+from app.core.auth_middleware import allowed_branches_for_profile
 from app.core.database import get_db
 from app.core.models import (
     Employee,
@@ -12,10 +13,165 @@ from app.core.models import (
     HRAdjustment,
     HREmployeeSettings,
 )
+from app.core.permissions import (
+    has_section_permission,
+    require_any_section_permission,
+    require_section_permission,
+)
 from app.core.schemas import EmployeeModel
+from app.core.hr_audience import HRTarget, own_access, amounts_allowed
+from app.core.hr_identity import employee_self_clause
 from app.core.sync import manager
 
 import datetime
+
+
+# ------------------------------------------------------------------
+# صلاحيات الموظفين والـ HR:
+# - سجل الموظفين: عرض أساسي (كود/اسم/فرع) عبر "عرض الموظفين"،
+#   والبيانات الشخصية والراتب الأساسي عبر صلاحيات HR فقط.
+# ------------------------------------------------------------------
+# صلاحيات تؤهّل لرؤية كامل بيانات الموظف (شخصية ووظيفية)،
+# مطابقة لاستخدام الواجهة في hr_dashboard/employees_list/profile:
+_HR_SECTION = "الموارد البشرية"
+_HR_PERMISSIONS = (
+    (_HR_SECTION, "canViewEmployees"),
+    (_HR_SECTION, "canManageEmployees"),
+    (_HR_SECTION, "canOpenAttendancePage"),
+    (_HR_SECTION, "canOpenVacationsPage"),
+    (_HR_SECTION, "canViewAdjustments"),
+    (_HR_SECTION, "canViewBranchSalaryReport"),
+)
+
+# من يحق له جلب سجل الموظفين أصلاً:
+# - صلاحيات HR أعلاه + canViewOwnHRData (الواجهة تعرض له سجله فقط)
+# - أو صلاحية في قسم مستهلك لمرجع الموظفين (كود/اسم/فرع): تحصيلات العملاء
+#   والمبيعات تستخدم قوائم اختيار الموظفين.
+_EMPLOYEES_VIEW_CHECKS = list(_HR_PERMISSIONS) + [
+    (_HR_SECTION, "canViewOwnHRData"),
+    ("حسابات العملاء", "إضافة تحصيل"),
+    ("حسابات العملاء", "معاينة"),
+    ("المبيعات", "إضافة"),
+    ("المبيعات", "معاينة"),
+]
+
+# حقول العقد المرجعي لمن له "عرض الموظفين" فقط: كود/اسم/فرع/وظيفة
+# لأن قوائم الاختيار في الشاشات (المبيعات والتحصيلات والحضور) تعتمد عليها.
+_REFERENCE_WORK_FIELDS = {
+    "id", "company_code", "code", "name",
+    "job_title", "department", "branch_code",
+    "status",
+    "updated_at", "is_deleted", "action",
+}
+
+
+def _can_view_hr(profile: dict) -> bool:
+    return any(
+        has_section_permission(profile, category, key)
+        for category, key in _HR_PERMISSIONS
+    )
+
+
+def _is_own_only_viewer(profile: dict) -> bool:
+    """canViewOwnHRData فقط دون أي صلاحية HR أوسع → يرى سجله فقط."""
+    return (
+        has_section_permission(profile, _HR_SECTION, "canViewOwnHRData")
+        and not _can_view_hr(profile)
+    )
+
+
+def _is_own_doc(profile: dict, doc) -> bool:
+    return HRTarget.from_employee(doc).matches_account(profile)
+
+
+def _employee_payload(
+    doc,
+    *,
+    viewer_can_hr: bool,
+    viewer_can_salary: bool = True,
+    action: str | None = None,
+    viewer_profile: dict | None = None,
+) -> dict:
+    """حمولة الموظف حسب صلاحية العارض:
+    - HR: كامل البيانات، والراتب فقط مع canViewSalaryAmounts.
+    - غير HR: العقد المرجعي فقط (كود/اسم/فرع/وظيفة/حالة).
+    - سجل العارض نفسه يحتفظ بحقول الهوية (user_uid/user_email) لأن
+      العميل يحل بها currentEmployeeCode؛ لا تظهر في سجلات الآخرين.
+    """
+    data = serialize_employee(doc, action=action)
+    if viewer_profile is not None and own_access(viewer_profile, HRTarget.from_employee(doc)):
+        return data
+    if not viewer_can_hr:
+        is_own = viewer_profile is not None and _is_own_doc(viewer_profile, doc)
+        keep = set(_REFERENCE_WORK_FIELDS)
+        if is_own:
+            keep |= {"user_uid", "user_email"}
+        data = {
+            key: value
+            for key, value in data.items()
+            if key in keep
+        }
+    elif not viewer_can_salary:
+        data["salary"] = None
+    return data
+
+
+def _check_branch(profile: dict, branch_code) -> None:
+    allowed = allowed_branches_for_profile(profile)
+    if allowed and branch_code and str(branch_code) not in allowed:
+        raise HTTPException(
+            status_code=403,
+            detail="ليس لديك صلاحية على هذا الفرع",
+        )
+
+
+def _check_tenant(profile: dict, company_code: str) -> None:
+    """فحص صريح: شركة المسار = شركة الجلسة (صاحب البرنامج يتجاوز)."""
+    from app.core.auth_middleware import _effective_role
+    if _effective_role(profile) == "super_admin":
+        return
+    if str(profile.get("company_code", "")) != str(company_code):
+        raise HTTPException(status_code=403, detail="غير مصرح لهذه الشركة")
+
+
+def _hr_viewable_codes(profile: dict):
+    """قائمة الموظفين المرئيين لهذا المستخدم في HR (فارغة/غائبة = الكل)."""
+    value = profile.get("hr_viewable_employees")
+    if isinstance(value, list) and value:
+        return {str(v) for v in value}
+    return None
+
+
+def _branch_filter_clause(profile: dict):
+    """فلتر فروع للاستعلامات، None = كل الفروع.
+
+    الموظف بفرع فارغ/غير معيّن يظهر لأي عارض له حق القسم، مطابقة
+    سلوك العميل (canViewEmployee يتخطى فحص الفرع عند فرع فارغ).
+    """
+    allowed = allowed_branches_for_profile(profile)
+    if not allowed:
+        return None
+    from sqlalchemy import or_
+    return or_(
+        Employee.branch_code.in_(allowed),
+        Employee.branch_code.is_(None),
+        Employee.branch_code == "",
+    )
+
+
+def _employee_visibility_clause(profile):
+    own = employee_self_clause(profile)
+    if _is_own_only_viewer(profile):
+        return own
+    branch = _branch_filter_clause(profile)
+    clauses = [branch] if branch is not None else []
+    viewable = _hr_viewable_codes(profile)
+    if viewable is not None:
+        clauses.append(Employee.code.in_(viewable))
+    broad = and_(*clauses) if clauses else true()
+    if has_section_permission(profile, _HR_SECTION, 'canViewOwnHRData'):
+        return or_(broad, own)
+    return broad
 
 
 router = APIRouter()
@@ -213,8 +369,23 @@ def _serialize_settings(doc: HREmployeeSettings | None):
 @router.post("/save")
 async def save_employee(
     data: EmployeeModel,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = request.state.auth_user
+    # إضافة أو تعديل حسب وجود السجل
+    _existing_stmt = select(Employee).where(
+        Employee.company_code == data.company_code,
+        Employee.code == (data.code or "").strip(),
+    )
+    _existing_result = await db.execute(_existing_stmt)
+    _existing_doc = _existing_result.scalar_one_or_none()
+    require_section_permission(request, _HR_SECTION, "canManageEmployees")
+    _check_tenant(_profile, data.company_code)
+    _check_branch(_profile, data.branch_code)
+    if _existing_doc is not None:
+        # الفرع المخزَّن أيضاً: منع تعديل/نقل سجل فرع غير مسموح
+        _check_branch(_profile, _existing_doc.branch_code)
     try:
         company_code = data.company_code
         code = (data.code or "").strip()
@@ -251,6 +422,8 @@ async def save_employee(
         # تعديل موجود
         # ------------------------------------------------------
 
+        _old_link_email = str(existing.user_email or "").strip().lower() if existing else ""
+        _old_link_uid = str(existing.user_uid or "") if existing else ""
         if existing:
             existing.name = data.name
             existing.phone = data.phone
@@ -329,6 +502,11 @@ async def save_employee(
             db.add(tx)
             action = "insert"
 
+        _link_changed = (
+            _old_link_email != str(data.user_email or "").strip().lower()
+            or _old_link_uid != str(data.user_uid or "")
+        )
+
         # ------------------------------------------------------
         # حفظ
         # ------------------------------------------------------
@@ -339,6 +517,18 @@ async def save_employee(
         # ------------------------------------------------------
         # WebSocket broadcast
         # ------------------------------------------------------
+
+        # Reconcile both explicit account links before delivering new HR data.
+        # UID-only links are included; an email cannot override a different UID.
+        if _link_changed:
+            from app.core.auth_middleware import invalidate_profile_cache
+            for email in {_old_link_email, str(data.user_email or "").strip().lower()} - {""}:
+                invalidate_profile_cache(email)
+            await manager.notify_hr_link_changed(company_code, [
+                HRTarget(code=code, uid=_old_link_uid, email=_old_link_email),
+                HRTarget(code=code, uid=str(data.user_uid or ""),
+                         email=str(data.user_email or "")),
+            ])
 
         await manager.broadcast(
             company_code,
@@ -374,8 +564,13 @@ async def save_employee(
 @router.get("/list/{company_code}")
 async def list_employees(
     company_code: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = require_any_section_permission(request, _EMPLOYEES_VIEW_CHECKS)
+    _check_tenant(_profile, company_code)
+    _can_hr = _can_view_hr(_profile)
+    _viewable = _hr_viewable_codes(_profile)
     try:
         stmt = (
             select(Employee)
@@ -385,11 +580,22 @@ async def list_employees(
             )
             .order_by(Employee.code)
         )
+        stmt = stmt.where(_employee_visibility_clause(_profile))
 
         result = await db.execute(stmt)
         docs = result.scalars().all()
 
-        results = [serialize_employee(doc) for doc in docs]
+        results = [
+            _employee_payload(
+                doc,
+                viewer_can_hr=_can_hr,
+                viewer_can_salary=has_section_permission(
+                    _profile, _HR_SECTION, "canViewSalaryAmounts"
+                ),
+                viewer_profile=_profile,
+            )
+            for doc in docs
+        ]
 
         # ترتيب حسب الكود (رقمي لو ممكن)
         results.sort(
@@ -417,8 +623,12 @@ async def list_employees(
 async def get_employee(
     company_code: str,
     code: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = require_any_section_permission(request, _EMPLOYEES_VIEW_CHECKS)
+    _check_tenant(_profile, company_code)
+    _can_hr = _can_view_hr(_profile)
     try:
         stmt = (
             select(Employee)
@@ -438,7 +648,21 @@ async def get_employee(
                 detail="الموظف غير موجود",
             )
 
-        return serialize_employee(doc)
+        if not own_access(_profile, HRTarget.from_employee(doc)):
+            if _is_own_only_viewer(_profile):
+                raise HTTPException(status_code=403, detail="يمكنك عرض بياناتك فقط")
+            _check_branch(_profile, doc.branch_code)
+            _viewable = _hr_viewable_codes(_profile)
+            if _viewable is not None and str(doc.code) not in _viewable:
+                raise HTTPException(status_code=403, detail="ليس لديك صلاحية عرض هذا الموظف")
+        return _employee_payload(
+            doc,
+            viewer_can_hr=_can_hr,
+            viewer_can_salary=has_section_permission(
+                _profile, _HR_SECTION, "canViewSalaryAmounts"
+            ),
+            viewer_profile=_profile,
+        )
 
     except HTTPException:
         raise
@@ -458,8 +682,11 @@ async def get_employee(
 async def delete_employee(
     company_code: str,
     code: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = require_section_permission(request, _HR_SECTION, "canManageEmployees")
+    _check_tenant(_profile, company_code)
     try:
         stmt = (
             select(Employee)
@@ -484,6 +711,8 @@ async def delete_employee(
                 "message": "الموظف محذوف بالفعل",
             }
 
+        _check_branch(_profile, existing.branch_code)
+
         # Soft Delete
         existing.is_deleted = True
         existing.updated_at = datetime.datetime.utcnow()
@@ -492,6 +721,12 @@ async def delete_employee(
         await db.refresh(existing)
 
         # WebSocket broadcast
+        # Deletion removes own-HR access, so send only a control invalidation
+        # to that linked account, not the deleted employee's private payload.
+        await manager.notify_hr_link_changed(company_code, [HRTarget(
+            code=code, uid=str(existing.user_uid or ""),
+            email=str(existing.user_email or ""), deleted=True,
+        )])
         await manager.broadcast(
             company_code,
             {
@@ -540,12 +775,16 @@ async def delete_employee(
 async def get_employee_profile(
     company_code: str,
     code: str,
+    request: Request,
     month: str = Query(
         None,
         description="YYYY-MM (افتراضي: الشهر الحالي)",
     ),
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = request.state.auth_user
+    _check_tenant(_profile, company_code)
+    _can_hr = _can_view_hr(_profile)
     try:
         # ---------- 1) الموظف ----------
         stmt = select(Employee).where(
@@ -561,6 +800,17 @@ async def get_employee_profile(
                 status_code=404,
                 detail="الموظف غير موجود",
             )
+
+        target = HRTarget.from_employee(employee)
+        personal = own_access(_profile, target)
+        if not personal:
+            if not _can_hr:
+                raise HTTPException(status_code=403, detail="ليس لديك صلاحية عرض ملف الموظف")
+            _check_branch(_profile, employee.branch_code)
+            _viewable = _hr_viewable_codes(_profile)
+            if _viewable is not None and str(employee.code) not in _viewable:
+                raise HTTPException(status_code=403, detail="ليس لديك صلاحية عرض هذا الموظف")
+        can_amounts = amounts_allowed(_profile, target)
 
         # ---------- 2) الشهر (افتراضي: الحالي) ----------
         if not month:
@@ -670,7 +920,8 @@ async def get_employee_profile(
 
         # ---------- 7) Response ----------
         return {
-            "employee": serialize_employee(employee),
+            "employee": _employee_payload(employee, viewer_can_hr=_can_hr,
+                viewer_can_salary=can_amounts, viewer_profile=_profile),
             "month": month,
             "attendance": {
                 "records": [
@@ -692,13 +943,13 @@ async def get_employee_profile(
             ],
             "adjustments": {
                 "records": [
-                    _serialize_adjustment(a)
+                    {**_serialize_adjustment(a), **({"amount": None} if not can_amounts else {})}
                     for a in adjustment_docs
                 ],
                 "summary": {
-                    "bonuses_total": bonuses_total,
-                    "deductions_total": deductions_total,
-                    "loans_total": loans_total,
+                    "bonuses_total": bonuses_total if can_amounts else None,
+                    "deductions_total": deductions_total if can_amounts else None,
+                    "loans_total": loans_total if can_amounts else None,
                 },
             },
             "settings": _serialize_settings(settings_doc),
@@ -735,6 +986,7 @@ async def get_employee_profile(
 @router.get("/changes/{company_code}")
 async def get_employee_changes(
     company_code: str,
+    request: Request,
 
     since: str = Query(
         ...,
@@ -746,6 +998,9 @@ async def get_employee_changes(
 
     db: AsyncSession = Depends(get_db),
 ):
+    _profile = require_any_section_permission(request, _EMPLOYEES_VIEW_CHECKS)
+    _check_tenant(_profile, company_code)
+    _can_hr = _can_view_hr(_profile)
     try:
         # ------------------------------------------------------
         # تحويل since
@@ -776,9 +1031,14 @@ async def get_employee_changes(
             .order_by(Employee.updated_at)
         )
 
+        stmt = stmt.where(_employee_visibility_clause(_profile))
+
         result = await db.execute(stmt)
         docs = result.scalars().all()
 
+        _can_salary = has_section_permission(
+            _profile, _HR_SECTION, "canViewSalaryAmounts"
+        )
         results = []
 
         for doc in docs:
@@ -788,7 +1048,13 @@ async def get_employee_changes(
                 action = "update"
 
             results.append(
-                serialize_employee(doc, action=action)
+                _employee_payload(
+                    doc,
+                    viewer_can_hr=_can_hr,
+                    viewer_can_salary=_can_salary,
+                    action=action,
+                    viewer_profile=_profile,
+                )
             )
 
         return results

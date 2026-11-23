@@ -1,5 +1,7 @@
+import 'cache_partitions.dart';
 // lib/services/global_sync_service.dart
 
+import 'dart:async';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import 'websocket_sync_service.dart';
@@ -25,6 +27,7 @@ class GlobalSyncService {
   // ============================================================
 
   bool useWebSocket = true;
+  bool get authorizationReady => _wsService.authorizationReady;
 
   String? _currentCompanyCode;
   bool _callbackAttached = false;
@@ -45,6 +48,9 @@ class GlobalSyncService {
   /// syncAllDataIfNeeded(companyCode)
   void Function()? onWebSocketConnected;
 
+  /// يُبلَّغ عند permissions_changed؛ resync=true يلزم مزامنة كاملة
+  FutureOr<void> Function({required bool resync})? onPermissionsChanged;
+
   // ⭐ جديد: يتم استدعاؤها لما WebSocket يفشل يتصل
   void Function()? onWebSocketConnectionFailed;
 
@@ -56,22 +62,22 @@ class GlobalSyncService {
   /// موجودة للتوافق مع أي كود قديم يعتمد عليها.
 
   Box get dailyBox =>
-      Hive.box(
+      CachePartitions.box(
         'daily_transactions_box',
       );
 
   Box get codingBox =>
-      Hive.box(
+      CachePartitions.box(
         'coding_box',
       );
 
   Box get inventoryBox =>
-      Hive.box(
+      CachePartitions.box(
         'inventory_box',
       );
 
   Box get supplierBox =>
-      Hive.box(
+      CachePartitions.box(
         'supplier_box',
       );
 
@@ -119,6 +125,7 @@ class GlobalSyncService {
 
   _callbackAttached = false;
   _wsService.onConnected = null;
+  _wsService.onPermissionsChanged = null;
 }
 
 
@@ -140,7 +147,7 @@ class GlobalSyncService {
       // --------------------------------------------------------
       // Callback عند الاتصال أو إعادة الاتصال
       // --------------------------------------------------------
-      
+
       if (!_callbackAttached) {
   _callbackAttached = true;
 
@@ -163,6 +170,14 @@ class GlobalSyncService {
 
     if (callback != null) {
       callback();
+    }
+  };
+
+  _wsService.onPermissionsChanged = ({required bool resync}) {
+    print("🔐 تغيّرت صلاحيات الحساب (resync=$resync)");
+    final callback = onPermissionsChanged;
+    if (callback != null) {
+      return callback(resync: resync);
     }
   };
 };

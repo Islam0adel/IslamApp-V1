@@ -1,9 +1,9 @@
+import '../../services/cache_partitions.dart';
 // lib/views/dashboard/stock_balance_page.dart
 
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
 import 'package:intl/intl.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 
 // import '../../models/inventory_model.dart';
 import '../../views/widgets/glass_card.dart';
@@ -54,9 +54,11 @@ class _StockBalancePageState extends State<StockBalancePage> {
   // ============================================================
 
   Future<void> _loadDropdowns() async {
+return CachePartitions.run(() async {
+
     try {
       final box =
-          Hive.box('coding_box');
+          CachePartitions.box('coding_box');
 
       _stores = [];
 
@@ -70,7 +72,9 @@ class _StockBalancePageState extends State<StockBalancePage> {
         for (final item in raw) {
           if (item is Map &&
               item['code'] != null &&
-              item['name'] != null) {
+              item['name'] != null &&
+              ((item['branch_code']?.toString() ?? '').isEmpty ||
+                  item['branch_code']?.toString() == _selectedBranchCode)) {
             _stores.add({
               'code': item['code'].toString(),
               'name': item['name'].toString(),
@@ -95,7 +99,8 @@ class _StockBalancePageState extends State<StockBalancePage> {
         '❌ خطأ في تحميل المخازن: $e',
       );
     }
-  }
+});
+}
 
   // ============================================================
   // اسم الفرع
@@ -113,7 +118,7 @@ class _StockBalancePageState extends State<StockBalancePage> {
 
     try {
       final box =
-          Hive.box('coding_box');
+          CachePartitions.box('coding_box');
 
       final raw =
           box.get(
@@ -165,6 +170,8 @@ class _StockBalancePageState extends State<StockBalancePage> {
   // ============================================================
 
   Future<void> _calculateBalances() async {
+return CachePartitions.run(() async {
+
     if (_selectedBranchCode == null ||
         _selectedStoreCode == null) {
       if (!mounted) return;
@@ -212,7 +219,8 @@ class _StockBalancePageState extends State<StockBalancePage> {
         _isLoading = false;
       });
     }
-  }
+});
+}
 
   // ============================================================
   // الإجماليات
@@ -261,6 +269,8 @@ class _StockBalancePageState extends State<StockBalancePage> {
   // ============================================================
 
   Future<void> _exportExcel() async {
+return CachePartitions.run(() async {
+
     if (_itemsData.isEmpty) {
       ScaffoldMessenger.of(context)
           .showSnackBar(
@@ -369,13 +379,16 @@ class _StockBalancePageState extends State<StockBalancePage> {
         ),
       );
     }
-  }
+});
+}
 
   // ============================================================
   // تصدير PDF
   // ============================================================
 
   Future<void> _exportPDF() async {
+return CachePartitions.run(() async {
+
     if (_itemsData.isEmpty) {
       ScaffoldMessenger.of(context)
           .showSnackBar(
@@ -507,7 +520,8 @@ class _StockBalancePageState extends State<StockBalancePage> {
         ),
       );
     }
-  }
+});
+}
 
   // ============================================================
   // تاريخ آخر جرد
@@ -521,7 +535,7 @@ class _StockBalancePageState extends State<StockBalancePage> {
 
     try {
       final box =
-          Hive.box('inventory_box');
+          CachePartitions.box('inventory_box');
 
       final selectedDay =
           DateTime(
@@ -1212,6 +1226,8 @@ class _StockBalancePageState extends State<StockBalancePage> {
                                 GestureDetector(
                               onTap:
                                   () async {
+return CachePartitions.run(() async {
+
                                 final picked =
                                     await showDatePicker(
                                   context:
@@ -1236,7 +1252,9 @@ class _StockBalancePageState extends State<StockBalancePage> {
 
                                   _calculateBalances();
                                 }
-                              },
+
+});
+},
                               child:
                                   Container(
                                 padding:

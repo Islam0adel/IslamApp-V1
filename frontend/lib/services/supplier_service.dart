@@ -1,21 +1,21 @@
+import 'cache_partitions.dart';
 // lib/services/supplier_service.dart
 
 import 'dart:convert';
 
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/supplier_transaction_model.dart';
 import '../core/constants.dart';
 import 'auth_http.dart';
+import 'permissions_service.dart';
 
 class SupplierService {
   final String baseUrl = ApiConstants.baseUrl;
 
-  final Box _supplierBox = Hive.box('supplier_box');
-  final Box _codingBox = Hive.box('coding_box');
-  final Box _settlementBox =
-      Hive.box('supplier_settlement_box');
+  Box get _supplierBox => CachePartitions.box('supplier_box');
+  Box get _codingBox => CachePartitions.box('coding_box');
+  Box get _settlementBox => CachePartitions.box('supplier_settlement_box');
 
   // ============================================================
   // التحقق هل الاختيار = كل الفروع
@@ -42,11 +42,21 @@ class SupplierService {
   // نحسب كل الفروع.
   // ============================================================
 
-  Future<double> getSupplierBalance(
+  /// الرصيد مشتق من إجماليات الفواتير (أسعار جملة): لا يُحسب
+  /// ولا يُعرض لمن لا يملك حق التكلفة. الإرجاع null = "مخفي"،
+  /// والواجهة تعرض '—' ولا تجري أي حساب على القيمة. لا NaN
+  /// يتسلل إلى الحسابات أو يُحفظ في الحقول الرقمية.
+  Future<double?> getSupplierBalance(
     String companyCode,
     String branchCode,
     String supplierName,
   ) async {
+return CachePartitions.run(() async {
+
+    if (!PermissionsService().canViewCostPrices) {
+      return null;
+    }
+
     double balance = 0.0;
 
     final bool allBranches =
@@ -82,8 +92,8 @@ class SupplierService {
           continue;
         }
 
-        if (map['supplier_name']?.toString() !=
-            supplierName) {
+if (map['supplier_name']?.toString().trim() !=
+            supplierName.trim()) {
           continue;
         }
 
@@ -122,8 +132,8 @@ class SupplierService {
           continue;
         }
 
-        if (map['supplier_name']?.toString() !=
-            supplierName) {
+        if (map['supplier_name']?.toString().trim() !=
+            supplierName.trim()) {
           continue;
         }
 
@@ -132,8 +142,13 @@ class SupplierService {
       }
     }
 
+    if (balance.abs() < 0.0001) {
+      balance = 0.0;
+    }
+
     return balance;
-  }
+});
+}
 
   // ============================================================
   // 2. حفظ فاتورة مشتريات
@@ -143,6 +158,8 @@ class SupplierService {
       saveSupplierTransaction(
     SupplierTransactionModel model,
   ) async {
+return CachePartitions.run(() async {
+
     try {
       // --------------------------------------------------------
       // إعادة حساب إجمالي الأصناف
@@ -242,7 +259,14 @@ class SupplierService {
       // تحديث التكويد
       // --------------------------------------------------------
 
-      if (model.isAddToCoding) {
+      // تحديث التكويد من فاتورة الشراء: فقط لمن يملك حق إضافة
+      // التكويد مع حق عرض التكلفة معاً. بلا حق التكلفة تكون
+      // أسعار البنود مخفية محلياً (صفر)، وإرسالها إلى التكويد
+      // كان سيمسح سعر الجملة المخزن بصفر — فلا نداء جانبي أصلاً.
+      // الأصناف المعروفة محفوظة بالفعل بأسعار الكتالوج من الخادم.
+      if (model.isAddToCoding &&
+          PermissionsService().canAddCodingItem &&
+          PermissionsService().canViewCostPrices) {
         await _updateCodingFromPurchase(
           companyCode:
               model.companyCode,
@@ -265,7 +289,8 @@ class SupplierService {
         'error': e.toString(),
       };
     }
-  }
+});
+}
 
   // ============================================================
   // 3. حفظ الفاتورة محلياً
@@ -274,6 +299,8 @@ class SupplierService {
   Future<void> _saveLocalTransaction(
   SupplierTransactionModel model,
 ) async {
+return CachePartitions.run(() async {
+
   try {
     final String newKey =
         '${model.companyCode}_'
@@ -368,6 +395,28 @@ class SupplierService {
     localItem['doc_id'] = docId;
     localItem['is_deleted'] = false;
 
+    // من لا يملك حق التكلفة: لا تُخزَّن أسعار ولا إجماليات على
+    // الجهاز (الخادم يحفظ القيم الصحيحة ويزوّد بها أصحاب الحق
+    // فقط). تخزينها هنا محلياً كان سيسرّبها للكاش.
+    if (!PermissionsService().canViewCostPrices) {
+      localItem.remove('total_amount');
+      localItem.remove('totalAmount');
+      final rawItems = localItem['items'];
+      if (rawItems is List) {
+        localItem['items'] = rawItems.map((e) {
+          if (e is Map) {
+            final m = Map<String, dynamic>.from(e);
+            m.remove('price');
+            m.remove('total');
+            m.remove('discountAmount');
+            m.remove('discountRate');
+            return m;
+          }
+          return e;
+        }).toList();
+      }
+    }
+
     // ============================================================
     // 3. قراءة مفتاح التاريخ/الفرع/الشركة الجديد
     // ============================================================
@@ -419,6 +468,8 @@ class SupplierService {
 
     rethrow;
   }
+
+});
 }
 
   // ============================================================
@@ -461,6 +512,8 @@ int _getNextSerial(String companyCode, String branchCode) {
     required String companyCode,
     required List<SupplierItem> items,
   }) async {
+return CachePartitions.run(() async {
+
     final Map<String, SupplierItem>
         uniqueItems = {};
 
@@ -492,7 +545,8 @@ int _getNextSerial(String companyCode, String branchCode) {
         );
       }
     }
-  }
+});
+}
 
   // ============================================================
   // 6. حفظ / تعديل صنف في التكويد
@@ -502,6 +556,8 @@ int _getNextSerial(String companyCode, String branchCode) {
     required String companyCode,
     required SupplierItem item,
   }) async {
+return CachePartitions.run(() async {
+
     final key =
         '${companyCode}_items';
 
@@ -649,7 +705,8 @@ int _getNextSerial(String companyCode, String branchCode) {
       '✅ تم ${action == 'insert' ? 'إضافة' : 'تحديث'} '
       'الصنف في التكويد: ${item.code}',
     );
-  }
+});
+}
 
   // ============================================================
   // 7. تحديث قائمة التكويد محلياً
@@ -659,6 +716,8 @@ int _getNextSerial(String companyCode, String branchCode) {
     String key,
     Map<String, dynamic> item,
   ) async {
+return CachePartitions.run(() async {
+
     List<Map<String, dynamic>>
         list = [];
 
@@ -713,7 +772,8 @@ int _getNextSerial(String companyCode, String branchCode) {
       key,
       list,
     );
-  }
+});
+}
 
   // ============================================================
   // 8. جلب حركات الموردين
@@ -729,6 +789,8 @@ int _getNextSerial(String companyCode, String branchCode) {
     String? startDate,
     String? endDate,
   }) async {
+return CachePartitions.run(() async {
+
     try {
       final List<
               SupplierTransactionModel>
@@ -866,7 +928,8 @@ int _getNextSerial(String companyCode, String branchCode) {
 
       return [];
     }
-  }
+});
+}
 
   // ============================================================
   // 9. حذف حركة مورد
@@ -876,6 +939,8 @@ int _getNextSerial(String companyCode, String branchCode) {
   String companyCode,
   String docId,
 ) async {
+return CachePartitions.run(() async {
+
   try {
     final response = await AuthHttp.delete(
       Uri.parse(
@@ -959,6 +1024,8 @@ int _getNextSerial(String companyCode, String branchCode) {
 
     return false;
   }
+
+});
 }
 
   // ============================================================
@@ -968,6 +1035,8 @@ int _getNextSerial(String companyCode, String branchCode) {
   Future<void> fetchAllSupplier(
     String companyCode,
   ) async {
+return CachePartitions.run(() async {
+
     print(
       '📥 الموردين: بدء FULL SYNC '
       'للشركة $companyCode',
@@ -1058,7 +1127,8 @@ int _getNextSerial(String companyCode, String branchCode) {
 
       rethrow;
     }
-  }
+});
+}
 
   // ============================================================
   // 11. Incremental Sync
@@ -1070,7 +1140,9 @@ Future<void> syncChangesFromServer(
   String companyCode, [
   String? lastSync,
 ]) async {
-  final prefs = await SharedPreferences.getInstance();
+return CachePartitions.run(() async {
+
+  final prefs = await CachePartitions.preferences();
   final String lastSyncKey =
       '${ApiConstants.LAST_SYNC_SUPPLIER}$companyCode';
   final String? lastSyncValue =
@@ -1231,6 +1303,8 @@ Future<void> syncChangesFromServer(
     print('❌ فشل مزامنة الموردين: $e');
     rethrow;
   }
+
+});
 }
 
   // ============================================================

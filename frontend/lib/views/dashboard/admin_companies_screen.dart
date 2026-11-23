@@ -1,3 +1,6 @@
+import '../../services/cache_partitions.dart';
+import '../../services/admin_cache_events.dart';
+import 'company_policy_review_page.dart';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../../core/theme.dart';
@@ -26,17 +29,37 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
   @override
   void initState() {
     super.initState();
-    _loadFromHive();
+    PermissionsService().addListener(_scopeChanged);
+    AdminCacheEvents.companies.addListener(_directoryChanged);
+    _refresh();
+  }
+
+  void _directoryChanged() {
+    if (mounted && PermissionsService().isSuperAdmin) _loadFromHive();
+  }
+
+  void _scopeChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadFromHive() async {
+return CachePartitions.run(() async {
+
     // لو Hive فاضي، جيب من السيرفر أول مرة
-    if (_service.getCompaniesFromHive().isEmpty) {
-      await _refresh();
+    if (!_service.hasSnapshot) {
+      try {
+        await _service.ensureCached();
+        if (mounted) setState(() {});
+      } catch (error) {
+        if (mounted) _showSnackBar(error.toString(), AppTheme.dangerStrongFor(context));
+      }
     }
-  }
+});
+}
 
   Future<void> _refresh() async {
+return CachePartitions.run(() async {
+
     setState(() => _isLoading = true);
     try {
       await _service.fetchAllCompanies();
@@ -47,9 +70,12 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
-  }
+});
+}
 
   Future<void> _addCompany() async {
+return CachePartitions.run(() async {
+
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isLoading = true);
     try {
@@ -71,9 +97,12 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
-  }
+});
+}
 
   Future<void> _updateCompany() async {
+return CachePartitions.run(() async {
+
     if (!_editFormKey.currentState!.validate()) return;
     setState(() => _isLoading = true);
     try {
@@ -94,9 +123,12 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
-  }
+});
+}
 
   Future<void> _deleteCompany(String code) async {
+return CachePartitions.run(() async {
+
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -134,9 +166,12 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
-  }
+});
+}
 
   Future<void> _toggleCompany(String code, bool currentStatus) async {
+return CachePartitions.run(() async {
+
     setState(() => _isLoading = true);
     try {
       await _service.toggleCompanyStatus(
@@ -154,7 +189,8 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
-  }
+});
+}
 
   void _showAddCompanyDialog() {
     _codeController.clear();
@@ -392,7 +428,9 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
                                               : AppTheme.dangerFor(context),
                                         ),
                                       ),
-                                      trailing: Switch(
+                                      trailing: Row(mainAxisSize: MainAxisSize.min,children:[
+                                        IconButton(tooltip:'مراجعة صلاحيات الشركة',icon:const Icon(Icons.admin_panel_settings_outlined),onPressed:_isLoading?null:()=>Navigator.push(context,MaterialPageRoute(builder:(_)=>CompanyPolicyReviewPage(companyCode:code,companyName:name)))),
+                                        Switch(
                                         value: isActive,
                                         onChanged: _isLoading
                                             ? null
@@ -400,7 +438,7 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
                                                 _toggleCompany(code, isActive),
                                         activeThumbColor:
                                             AppTheme.successStrongFor(context),
-                                      ),
+                                      )]),
                                     ),
                                   ),
                                 );
@@ -419,6 +457,8 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
 
   @override
   void dispose() {
+    PermissionsService().removeListener(_scopeChanged);
+    AdminCacheEvents.companies.removeListener(_directoryChanged);
     _codeController.dispose();
     _nameController.dispose();
     _editCodeController.dispose();

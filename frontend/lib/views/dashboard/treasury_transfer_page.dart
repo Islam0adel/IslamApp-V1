@@ -1,21 +1,24 @@
+import '../../services/cache_partitions.dart';
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
 import '../../views/widgets/glass_card.dart';
-import '../../services/daily_service.dart'; // مسار الخدمة التي تحفظ الإذن
+import '../../services/treasury_transfer_service.dart';
+import '../../services/permissions_service.dart';
 // import '../../models/coding_model.dart';
 
 class TreasuryTransferPage extends StatefulWidget {
   final String companyCode;
   final String? userName;
   final String? selectedBranchCode;
+  final Map<String, dynamic>? editItem;
 
   const TreasuryTransferPage({
     super.key,
     required this.companyCode,
     this.userName,
     this.selectedBranchCode,
+    this.editItem,
   });
 
   @override
@@ -23,7 +26,9 @@ class TreasuryTransferPage extends StatefulWidget {
 }
 
 class _TreasuryTransferPageState extends State<TreasuryTransferPage> {
-  final DailyService _dailyService = DailyService();
+  final TreasuryTransferService _transferService = TreasuryTransferService();
+  late String _recordId;
+  Map<String, dynamic>? _submittedPayload;
   final TextEditingController _amountController = TextEditingController();
   final TextEditingController _statementController = TextEditingController();
 
@@ -35,7 +40,16 @@ class _TreasuryTransferPageState extends State<TreasuryTransferPage> {
   @override
   void initState() {
     super.initState();
+    _recordId = widget.editItem?['id']?.toString() ?? _transferService.newId();
     _loadTreasuriesLocally();
+    final edit = widget.editItem;
+    if (edit != null) {
+      _fromTreasury = edit['from_treasury'].toString();
+      _toTreasury = edit['to_treasury'].toString();
+      _treasuriesList = {..._treasuriesList, _fromTreasury, _toTreasury}.toList();
+      _amountController.text = edit['amount'].toString();
+      _statementController.text = edit['statement']?.toString() ?? '';
+    }
   }
 
   @override
@@ -49,15 +63,15 @@ class _TreasuryTransferPageState extends State<TreasuryTransferPage> {
   // 🌟 قراءة الخزائن من الـ Hive محلياً بنفس الطريقة المطابقة لصفحة اليومية
   void _loadTreasuriesLocally() {
     try {
-      final box = Hive.box('coding_box');
+      final box = CachePartitions.box('coding_box');
       List<String> activeTreasuries = [];
 
       // 1. استخدام المفتاح الدقيق الذي تستخدمه صفحة اليومية لجلب الخزائن
       String safesKey = "${widget.companyCode}_safes";
-      
+
       if (box.containsKey(safesKey)) {
         var localSafes = box.get(safesKey);
-        
+
         if (localSafes is List) {
           for (var safe in localSafes) {
             // استخراج اسم الخزينة من الماب
@@ -75,7 +89,7 @@ class _TreasuryTransferPageState extends State<TreasuryTransferPage> {
         setState(() {
           _treasuriesList = activeTreasuries.toSet().toList(); // إزالة التكرار إن وجد
           _fromTreasury = _treasuriesList.first;
-          
+
           // اختيار الخزينة الثانية كقيمة افتراضية لـ (إلى) لو كان فيه أكتر من خزينة
           _toTreasury = _treasuriesList.length > 1 ? _treasuriesList[1] : _treasuriesList.first;
         });
@@ -93,79 +107,55 @@ class _TreasuryTransferPageState extends State<TreasuryTransferPage> {
   }
 
   Future<void> _executeTransfer() async {
-    final double amount = double.tryParse(_amountController.text) ?? 0.0;
-    
-    if (amount <= 0) {
-      _showSnackBar("الرجاء إدخال مبلغ صحيح أكبر من الصفر", AppTheme.warningOrangeFor(context));
+return CachePartitions.run(() async {
+
+    final permission = PermissionsService();
+    if (widget.editItem == null ? !permission.canAddTreasuryTransfer : !permission.canEditTreasuryTransfer) {
+      _showSnackBar('ليس لديك صلاحية لهذه العملية', AppTheme.warningOrangeFor(context));
+      return;
+    }
+    final amount = double.tryParse(_amountController.text) ?? 0;
+    if (!amount.isFinite || amount <= 0) {
+      _showSnackBar('الرجاء إدخال مبلغ صحيح أكبر من الصفر', AppTheme.warningOrangeFor(context));
       return;
     }
     if (_fromTreasury == _toTreasury) {
-      _showSnackBar("لا يمكن التحويل لنفس الخزينة!", AppTheme.warningOrangeFor(context));
+      _showSnackBar('لا يمكن التحويل لنفس الخزينة', AppTheme.warningOrangeFor(context));
       return;
     }
-
-    setState(() => _isLoading = true);
-
-    try {
-      // 🌟 1. تعديل الفرع ليتطابق مع طريقتك في صفحة اليومية
-      String branch = widget.selectedBranchCode ?? "all"; 
-      
-      // 🌟 2. تعديل التاريخ ليكون (يوم-شهر-سنة) فقط بدون وقت لتنجح الفلترة في صفحة المعاينة
-      String date = DateFormat('yyyy-MM-dd').format(DateTime.now()); 
-      
-      String statement = _statementController.text.trim().isEmpty 
-          ? "تحويل مالي بين الخزائن" 
-          : _statementController.text.trim();
-
-      // حركة الصادر (خصم من الخزينة الأولى)
-      await _dailyService.saveTransaction(
-        companyCode: widget.companyCode,
-        serial: 0,
-        treasury: _fromTreasury,
-        amount: amount,
-        statement: "$statement (إلى $_toTreasury)",
-        category: "تحويل خزائن", // 🌟 3. اسم تصنيف مقروء واحترافي
-        date: date,
-        type: "صادر", // خصم
-        branchCode: branch, // 🌟 تم التعديل إلى branchCode
-        employee: widget.userName ?? "غير معروف",
-      );
-
-      // تأخير بسيط لمنع تداخل السيريالات
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      // حركة الوارد (إضافة للخزينة الثانية)
-      await _dailyService.saveTransaction(
-        companyCode: widget.companyCode,
-        serial: 0,
-        treasury: _toTreasury,
-        amount: amount,
-        statement: "$statement (من $_fromTreasury)",
-        category: "تحويل خزائن", // 🌟 نفس التصنيف
-        date: date,
-        type: "وارد", // إضافة
-        branchCode: branch, // 🌟 تم التعديل إلى branchCode
-        employee: widget.userName ?? "غير معروف",
-      );
-
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _amountController.clear();
-          _statementController.clear();
-        });
-        _showSnackBar("تم التحويل بنجاح!", AppTheme.successStrongFor(context));
-        Future.delayed(const Duration(seconds: 1), () {
-          if (mounted) Navigator.pop(context);
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isLoading = false);
-        _showSnackBar("حدث خطأ أثناء التحويل: $e", AppTheme.dangerStrongFor(context));
-      }
+    final branch = widget.editItem?['branch_code']?.toString() ?? widget.selectedBranchCode;
+    if (branch == null || {'', 'all', 'الكل', 'كل الفروع'}.contains(branch)) {
+      _showSnackBar('اختر فرعاً محدداً من الصفحة الرئيسية أولاً', AppTheme.warningOrangeFor(context));
+      return;
     }
-  }
+    // An uncertain response retries the identical foreground intent and ID.
+    _submittedPayload ??= {
+      'id': _recordId, 'company_code': widget.companyCode, 'branch_code': branch,
+      'serial': widget.editItem?['serial'] ?? 0,
+      'from_treasury': _fromTreasury, 'to_treasury': _toTreasury, 'amount': amount,
+      'statement': _statementController.text.trim().isEmpty ? 'تحويل مالي بين الخزائن' : _statementController.text.trim(),
+      'employee': widget.editItem?['employee'] ?? widget.userName ?? 'غير معروف',
+      'date': widget.editItem?['date'] ?? DateFormat('yyyy-MM-dd').format(DateTime.now()),
+      if (widget.editItem != null) 'base_updated_at': widget.editItem!['updated_at'],
+    };
+    setState(() => _isLoading = true);
+    try {
+      final result = await _transferService.save(_submittedPayload!);
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      _showSnackBar(result['refresh_pending'] == true
+          ? 'تم حفظ التحويل، لكن تحديث الأرصدة لم يكتمل. اضغط تحديث في السجل.'
+          : 'تم حفظ التحويل بنجاح', AppTheme.successStrongFor(context));
+      await Future<void>.delayed(const Duration(seconds: 1));
+      if (mounted) Navigator.pop(context, true);
+    } catch (error) {
+      if (!mounted) return;
+      if (error is TreasuryTransferFailure && !error.uncertain) _submittedPayload = null;
+      setState(() => _isLoading = false);
+      _showSnackBar(error is TreasuryTransferFailure && !error.uncertain ? error.toString() : 'لم يتم تأكيد الحفظ. أعد المحاولة من نفس الصفحة بنفس البيانات، أو حدّث السجل للتحقق قبل إنشاء تحويل آخر.', AppTheme.dangerStrongFor(context));
+    }
+});
+}
 
   void _showSnackBar(String msg, Color color) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -179,7 +169,13 @@ class _TreasuryTransferPageState extends State<TreasuryTransferPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return AnimatedBuilder(animation: PermissionsService(), builder: (context, _) {
+      final permissions = PermissionsService();
+      final allowed = widget.editItem == null ? permissions.canAddTreasuryTransfer :
+          permissions.canEditTreasuryTransfer && permissions.canViewTreasuryTransfers;
+      if (!allowed) return Scaffold(appBar: AppBar(title: const Text('تحويلات الخزائن')),
+          body: const Center(child: Text('لم تعد لديك صلاحية عرض هذه العملية.')));
+      return PopScope(canPop: !_isLoading, child: Scaffold(
       appBar: AppBar(
         title: const Text("تحويل بين الخزائن", style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
         centerTitle: true,
@@ -260,7 +256,7 @@ class _TreasuryTransferPageState extends State<TreasuryTransferPage> {
                             child: _isLoading
                                 ? CircularProgressIndicator(color: Theme.of(context).colorScheme.onPrimary)
                                 : Text(
-                                    "تنفيذ التحويل",
+                                    _submittedPayload != null ? 'إعادة تأكيد الحفظ' : widget.editItem != null ? 'حفظ التعديل' : 'تنفيذ التحويل',
                                     style: TextStyle(color: Theme.of(context).colorScheme.onPrimary, fontSize: 16, fontWeight: FontWeight.bold, fontFamily: 'Cairo'),
                                   ),
                           ),
@@ -274,7 +270,8 @@ class _TreasuryTransferPageState extends State<TreasuryTransferPage> {
           ),
         ),
       ),
-    );
+    ));
+    });
   }
 
   // ==================== دوال بناء الحقول ====================
@@ -301,7 +298,7 @@ class _TreasuryTransferPageState extends State<TreasuryTransferPage> {
               items: _treasuriesList.map((String t) {
                 return DropdownMenuItem(value: t, child: Text(t));
               }).toList(),
-              onChanged: onChanged,
+              onChanged: _isLoading || _submittedPayload != null ? null : onChanged,
             ),
           ),
         ),
@@ -311,6 +308,7 @@ class _TreasuryTransferPageState extends State<TreasuryTransferPage> {
 
   Widget _buildTextField({required BuildContext context, required TextEditingController controller, required String label, required IconData icon, bool isNumber = false}) {
     return TextField(
+      enabled: !_isLoading && _submittedPayload == null,
       controller: controller,
       keyboardType: isNumber ? const TextInputType.numberWithOptions(decimal: true) : TextInputType.text,
       style: TextStyle(color: AppTheme.textMainFor(context), fontFamily: 'Cairo'),

@@ -1,3 +1,4 @@
+import '../../services/cache_partitions.dart';
 // lib/pages/hr/attendance_page.dart
 
 import 'package:flutter/material.dart';
@@ -192,6 +193,8 @@ class _AttendancePageState extends State<AttendancePage> {
   // ============================================================
 
   Future<void> _loadEmployees() async {
+return CachePartitions.run(() async {
+
     setState(() => _isLoading = true);
 
     try {
@@ -230,7 +233,8 @@ class _AttendancePageState extends State<AttendancePage> {
       print("❌ خطأ في تحميل الموظفين: $e");
       if (mounted) setState(() => _isLoading = false);
     }
-  }
+});
+}
 
 
     // ============================================================
@@ -240,6 +244,8 @@ class _AttendancePageState extends State<AttendancePage> {
   // ============================================================
 
   Future<void> _loadMonthData({bool showLoader = true}) async {
+return CachePartitions.run(() async {
+
     if (_selectedEmployee == null) return;
     if (showLoader) setState(() => _isLoading = true);
 
@@ -292,10 +298,13 @@ class _AttendancePageState extends State<AttendancePage> {
       print("❌ خطأ في تحميل بيانات الشهر: $e");
       if (mounted) setState(() => _isLoading = false);
     }
-  }
+});
+}
 
   /// ⭐ تحديث من السيرفر — متوازي عشان يكون سريع
   Future<void> _refreshFromServer() async {
+return CachePartitions.run(() async {
+
     setState(() => _isLoading = true);
 
     try {
@@ -325,7 +334,8 @@ class _AttendancePageState extends State<AttendancePage> {
         await _loadMonthData(showLoader: false);
       }
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -333,6 +343,8 @@ class _AttendancePageState extends State<AttendancePage> {
   // ============================================================
 
   Future<void> _pickMonth() async {
+return CachePartitions.run(() async {
+
     final canProceed = await _confirmSaveIfNeeded();
     if (!canProceed) return;
 
@@ -347,7 +359,8 @@ class _AttendancePageState extends State<AttendancePage> {
       });
       _loadMonthData();
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -355,6 +368,8 @@ class _AttendancePageState extends State<AttendancePage> {
   // ============================================================
 
   Future<void> _onEmployeeChanged(EmployeeModel? v) async {
+return CachePartitions.run(() async {
+
     if (v == null || v.code == _selectedEmployee?.code) return;
 
     final canProceed = await _confirmSaveIfNeeded();
@@ -367,10 +382,13 @@ class _AttendancePageState extends State<AttendancePage> {
       _employeeSettings = null;
     });
     _loadMonthData();
-  }
+});
+}
 
 
   Future<bool> _confirmSaveIfNeeded() async {
+return CachePartitions.run(() async {
+
     if (!_hasUnsavedChanges) return true;
 
     final result = await showDialog<String>(
@@ -440,7 +458,8 @@ class _AttendancePageState extends State<AttendancePage> {
       return true;
     }
     return false;
-  }
+});
+}
 
 
   // ============================================================
@@ -498,7 +517,7 @@ class _AttendancePageState extends State<AttendancePage> {
     if (dailyRate <= 0) return 0;
     return (_totalDiscountsAmount / dailyRate).round();
   }
-  
+
 
   // ============================================================
   // Helpers — وقت (HH:MM → دقائق)
@@ -545,6 +564,8 @@ class _AttendancePageState extends State<AttendancePage> {
   // ============================================================
 
     Future<void> _quickRecordAttendance(String dateStr) async {
+return CachePartitions.run(() async {
+
     if (_selectedEmployee == null) return;
 
     // ⭐ فحص الصلاحية
@@ -592,7 +613,8 @@ class _AttendancePageState extends State<AttendancePage> {
 
     if (!mounted) return;
     setState(() {});
-  }
+});
+}
 
 
   // ============================================================
@@ -600,6 +622,8 @@ class _AttendancePageState extends State<AttendancePage> {
   // ============================================================
 
     Future<void> _editDay(String dateStr) async {
+return CachePartitions.run(() async {
+
     if (_selectedEmployee == null) return;
 
     // ⭐ فحص الصلاحية
@@ -643,7 +667,8 @@ class _AttendancePageState extends State<AttendancePage> {
       if (!mounted) return;
       setState(() {});
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -656,6 +681,8 @@ class _AttendancePageState extends State<AttendancePage> {
   // ============================================================
 
   Future<void> _deleteDay(String dateStr) async {
+return CachePartitions.run(() async {
+
     if (_selectedEmployee == null) return;
 
     if (!PermissionsService().canDeleteAttendance) {
@@ -728,7 +755,8 @@ class _AttendancePageState extends State<AttendancePage> {
 
     if (!mounted) return;
     setState(() {});
-  }
+});
+}
 
 
   // ============================================================
@@ -749,6 +777,8 @@ class _AttendancePageState extends State<AttendancePage> {
   // ============================================================
 
     Future<void> _manageDiscounts(String dateStr) async {
+return CachePartitions.run(() async {
+
     if (_selectedEmployee == null) return;
     if (_isSaving) return;
 
@@ -783,7 +813,8 @@ class _AttendancePageState extends State<AttendancePage> {
 
     if (!mounted) return;
     setState(() {});
-  }
+});
+}
 
 
   // ============================================================
@@ -795,6 +826,8 @@ class _AttendancePageState extends State<AttendancePage> {
     required double days,
     required String reason,
   }) async {
+return CachePartitions.run(() async {
+
     if (_selectedEmployee == null) return false;
 
     final dailyRate = _selectedEmployee!.salary / 30;
@@ -830,7 +863,8 @@ class _AttendancePageState extends State<AttendancePage> {
     );
 
     return true;
-  }
+});
+}
 
 
   // ============================================================
@@ -838,6 +872,8 @@ class _AttendancePageState extends State<AttendancePage> {
   // ============================================================
 
   Future<bool> _deleteDiscount(int id) async {
+return CachePartitions.run(() async {
+
     if (_selectedEmployee == null) return false;
 
     final ok = await _hrService.deleteAdjustment(
@@ -858,9 +894,10 @@ class _AttendancePageState extends State<AttendancePage> {
     );
 
     return true;
-  }
+});
+}
 
-  
+
 
   // ============================================================
   // ⭐ Helpers — إدارة الخصومات على مستوى اليوم
@@ -876,6 +913,8 @@ class _AttendancePageState extends State<AttendancePage> {
 
   /// إعادة تحميل خصومات الشهر من السيرفر
   Future<void> _reloadAdjustments() async {
+return CachePartitions.run(() async {
+
     if (_selectedEmployee == null) return;
 
     final all = await _hrService.getAdjustmentsForMonth(
@@ -893,7 +932,8 @@ class _AttendancePageState extends State<AttendancePage> {
               a.isDeduction)
           .toList();
     });
-  }
+});
+}
 
 
   /// بناء سبب الخصم من عدد الأيام
@@ -917,6 +957,8 @@ class _AttendancePageState extends State<AttendancePage> {
   // ============================================================
 
   Future<void> _saveAll() async {
+return CachePartitions.run(() async {
+
     if (_selectedEmployee == null) return;
     if (!_hasUnsavedChanges) return;
     if (_isSaving) return;
@@ -965,7 +1007,8 @@ class _AttendancePageState extends State<AttendancePage> {
           : "تم الحفظ ✅",
       AppTheme.successStrongFor(context),
     );
-  }
+});
+}
 
 
   // ============================================================
@@ -987,7 +1030,7 @@ class _AttendancePageState extends State<AttendancePage> {
     );
   }
 
- 
+
 
   // ============================================================
   // build
@@ -1003,13 +1046,16 @@ class _AttendancePageState extends State<AttendancePage> {
     return PopScope(
       canPop: !_hasUnsavedChanges,
       onPopInvoked: (didPop) async {
+return CachePartitions.run(() async {
+
         if (didPop) return;
 
         final canProceed = await _confirmSaveIfNeeded();
         if (canProceed && mounted) {
           Navigator.pop(context);
         }
-      },
+});
+},
       child: Scaffold(
         extendBodyBehindAppBar: true,
         appBar: AppBar(
@@ -1032,7 +1078,7 @@ class _AttendancePageState extends State<AttendancePage> {
               Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  
+
                   IconButton(
                     icon: Icon(
                       _hasUnsavedChanges
@@ -1393,7 +1439,7 @@ class _AttendancePageState extends State<AttendancePage> {
     );
   }
 
-  
+
 
   // ============================================================
   // بطاقة اليوم
@@ -1713,7 +1759,7 @@ class _AttendancePageState extends State<AttendancePage> {
       ),
     );
   }
-  
+
 
   // ============================================================
   // ⭐ Badge صغير لعرض الخصم على بطاقة اليوم
@@ -2076,6 +2122,8 @@ class _ManageDiscountsDialogState extends State<_ManageDiscountsDialog> {
   // ============================================================
 
   Future<void> _handleAdd() async {
+return CachePartitions.run(() async {
+
     if (_days <= 0) return;
     if (_isProcessing) return;
 
@@ -2117,10 +2165,13 @@ class _ManageDiscountsDialogState extends State<_ManageDiscountsDialog> {
         _errorMessage = 'خطأ: $e';
       });
     }
-  }
+});
+}
 
 
   Future<void> _handleDelete(HRAdjustmentModel discount) async {
+return CachePartitions.run(() async {
+
     if (discount.id == null) return;
     if (_isProcessing) return;
 
@@ -2208,7 +2259,8 @@ class _ManageDiscountsDialogState extends State<_ManageDiscountsDialog> {
         _errorMessage = 'خطأ: $e';
       });
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -2853,6 +2905,8 @@ class _EditAttendanceDialogState extends State<_EditAttendanceDialog> {
   }
 
   Future<void> _pickTime({required bool isCheckIn}) async {
+return CachePartitions.run(() async {
+
     final current = isCheckIn ? _checkIn : _checkOut;
     final parts = current.split(':');
     final initH = int.tryParse(parts.isNotEmpty ? parts[0] : '9') ?? 9;
@@ -2875,7 +2929,8 @@ class _EditAttendanceDialogState extends State<_EditAttendanceDialog> {
         }
       });
     }
-  }
+});
+}
 
   int _timeToMinutes(String time) {
     final parts = time.split(':');

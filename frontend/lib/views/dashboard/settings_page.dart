@@ -1,20 +1,22 @@
+import '../../services/cache_partitions.dart';
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../views/widgets/glass_card.dart';
-import '../../main.dart'; 
+import '../../main.dart';
 import '../../views/dashboard/admin_companies_screen.dart';
 import '../../views/dashboard/company_users_page.dart';
 // 1. استدعاء صفحة الصلاحيات الجديدة (تأكد من مسار الملف عندك)
-import '../../views/dashboard/permissions_page.dart'; 
+import '../../views/dashboard/permissions_page.dart';
 import '../../services/permissions_service.dart';
 import '../../views/dashboard/reset_page.dart';
 import '../../views/auth/forgot_password_screen.dart';
 import 'notification_settings_page.dart';
+import 'pending_ownership_page.dart';
 
 
 class SettingsPage extends StatefulWidget {
-  const SettingsPage({super.key}); 
+  const SettingsPage({super.key});
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -36,11 +38,13 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
       vsync: this,
       duration: const Duration(milliseconds: 800),
     )..forward();
-    _loadUserData(); 
+    _loadUserData();
   }
 
   // دالة لقراءة البيانات المقروءة عند تسجيل الدخول
   Future<void> _loadUserData() async {
+return CachePartitions.run(() async {
+
   final prefs = await SharedPreferences.getInstance();
 
   final email = prefs.getString('user_email') ?? '';
@@ -65,6 +69,8 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
       _isLoadingData = false;
     });
   }
+
+});
 }
 
   @override
@@ -78,18 +84,21 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
     _isDark = Theme.of(context).brightness == Brightness.dark;
 
     return PopScope(
-      canPop: false, 
+      canPop: false,
       onPopInvoked: (didPop) async {
-        if (didPop) return; 
-        
+return CachePartitions.run(() async {
+
+        if (didPop) return;
+
         if (context.mounted) {
-          Navigator.pop(context); 
+          Navigator.pop(context);
         }
-      },
+});
+},
       child: Scaffold(
         extendBodyBehindAppBar: true,
         appBar: AppBar(
-          title: Text('الإعدادات', 
+          title: Text('الإعدادات',
             style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold, color: AppTheme.textMainFor(context))),
           centerTitle: true,
           backgroundColor: AppTheme.appBarBgGlass,
@@ -109,7 +118,7 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
                 ),
               ),
             ),
-            
+
             Positioned(
               top: -100,
               right: -50,
@@ -122,7 +131,7 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
                 ),
               ),
             ),
-  
+
             SafeArea(
               child: FadeTransition(
                 opacity: _controller,
@@ -143,7 +152,7 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
                             ),
                             const SizedBox(width: 15),
                             Expanded(
-                              child: _isLoadingData 
+                              child: _isLoadingData
                                   ? Align(
                                       alignment: Alignment.centerRight,
                                       child: SizedBox(
@@ -179,7 +188,7 @@ class _SettingsPageState extends State<SettingsPage> with TickerProviderStateMix
                         ),
                       ),
                       const SizedBox(height: 25),
-  
+
                       _buildSectionTitle("المظهر والنظام"),
                       const SizedBox(height: 10),
                       GlassCard(
@@ -214,6 +223,8 @@ _buildSettingRow(
     value: _showBranchDialog,
     activeThumbColor: AppTheme.accentFor(context),
     onChanged: (value) async {
+return CachePartitions.run(() async {
+
       final prefs = await SharedPreferences.getInstance();
 
       final email =
@@ -229,7 +240,9 @@ _buildSettingRow(
           _showBranchDialog = value;
         });
       }
-    },
+
+});
+},
   ),
 ),
                             Divider(color: GlassStyle.line10For(context), height: 20),
@@ -244,15 +257,15 @@ if (PermissionsService().canShowNotifications) ...[
                             _buildSettingRow(
                               icon: Icons.translate_rounded,
                               title: 'لغة التطبيق',
-                              trailing: Text('العربية', 
+                              trailing: Text('العربية',
                                 style: TextStyle(color: AppTheme.accentFor(context), fontFamily: 'Cairo')),
                             ),
                           ],
                         ),
                       ),
-                      
+
                       const SizedBox(height: 25),
-  
+
                       _buildSectionTitle("الدعم والخصوصية"),
                       const SizedBox(height: 10),
                       GlassCard(
@@ -262,11 +275,13 @@ if (PermissionsService().canShowNotifications) ...[
 
 
                             // ⭐ إدارة المستخدمين — admin + super_admin
-                            if (PermissionsService().canManageUsers) ...[
+                            if (PermissionsService().canOpenUserManagement) ...[
                               _buildSettingRow(
                                 icon: Icons.people_alt_rounded,
                                 title: 'إدارة المستخدمين',
                                 onTap: () async {
+return CachePartitions.run(() async {
+
                                   await Navigator.push(
                                     context,
                                     MaterialPageRoute(
@@ -282,7 +297,36 @@ if (PermissionsService().canShowNotifications) ...[
                                       ),
                                     ),
                                   );
-                                },
+
+});
+},
+                              ),
+                              Divider(
+                                  color: GlassStyle.line10For(context),
+                                  height: 20),
+                            ],
+
+                            // ⭐ عمليات معلقة مجهولة المالك — admin
+                            // (قرار نسب/حذف صريح لكل عملية)
+                            if (PermissionsService().canManageUsers) ...[
+                              _buildSettingRow(
+                                icon: Icons.sync_problem_rounded,
+                                title: 'عمليات معلقة مجهولة المالك',
+                                onTap: () async {
+return CachePartitions.run(() async {
+
+                                  await Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          PendingOwnershipPage(
+                                        companyCode: _companyCode,
+                                      ),
+                                    ),
+                                  );
+
+});
+},
                               ),
                               Divider(
                                   color: GlassStyle.line10For(context),
@@ -295,18 +339,22 @@ if (PermissionsService().canShowNotifications) ...[
                                 icon: Icons.security_rounded,
                                 title: 'إدارة الصلاحيات',
                                 onTap: () async {
+return CachePartitions.run(() async {
+
                                   await Navigator.push(
                                     context,
                                     MaterialPageRoute(
                                         builder: (_) => const PermissionsPage()),
                                   );
-                                },
+
+});
+},
                               ),
                               Divider(
                                   color: GlassStyle.line10For(context),
                                   height: 20),
                             ],
-                            
+
                             _buildSettingRow(
                               icon: Icons.lock_reset_rounded,
                               title: 'تغيير كلمة المرور',
@@ -336,7 +384,7 @@ if (PermissionsService().canShowNotifications) ...[
                               },
                             ),
                             Divider(color: GlassStyle.line10For(context), height: 20),
-                            
+
                             // زر إدارة الشركات — super_admin فقط
                             if (PermissionsService().isSuperAdmin) ...[
                               Divider(
@@ -355,7 +403,7 @@ if (PermissionsService().canShowNotifications) ...[
                                 },
                               ),
                             ],
-                            
+
                             Divider(color: GlassStyle.line10For(context), height: 20),
                             _buildSettingRow(
                               icon: Icons.info_outline_rounded,
@@ -365,7 +413,7 @@ if (PermissionsService().canShowNotifications) ...[
                           ],
                         ),
                       ),
-                      
+
                       const SizedBox(height: 40),
                       Opacity(
                         opacity: 0.3,

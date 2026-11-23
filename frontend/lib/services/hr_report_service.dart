@@ -1,3 +1,7 @@
+import 'cache_partitions.dart';
+import 'permissions_service.dart';
+import 'salary_visibility.dart';
+import 'read_authorization_snapshot.dart';
 // lib/services/hr_report_service.dart
 
 import 'dart:convert';
@@ -11,7 +15,6 @@ import 'auth_http.dart';
 import 'employee_service.dart';
 import 'hr_service.dart';
 import 'hr_salary_calculator.dart';
-
 
 /// خدمة تقارير الرواتب
 ///
@@ -30,12 +33,11 @@ import 'hr_salary_calculator.dart';
 /// - الإبطال (invalidate) بيتنادى من الصفحات بعد أي تعديل
 class HRReportService {
   final String baseUrl = ApiConstants.baseUrl;
-  final Box _codingBox = Hive.box('coding_box');
+  Box get _codingBox => CachePartitions.box('coding_box');
   final HRService _hrService = HRService();
 
   /// مدة صلاحية الكاش
   static const Duration _cacheTTL = Duration(minutes: 30);
-
 
   // ============================================================
   // Cache key
@@ -50,6 +52,69 @@ class HRReportService {
   ) =>
       'salary_report_${companyCode}__${employeeCode}__$month';
 
+  bool _sameCompany(String company) {
+    final ps = PermissionsService();
+    return ps.isLoaded &&
+        (ps.isSuperAdmin || ps.isCurrentIdentityForCompany(company));
+  }
+
+  bool _ownReport(String company, String employee) {
+    final ps = PermissionsService();
+    return ps.isCurrentIdentityForCompany(company) &&
+        ps.canViewOwnHRData &&
+        ps.isCurrentEmployee(employee);
+  }
+
+  bool _ordinaryTarget(String employee, String branch) {
+    final ps = PermissionsService();
+    if (ps.canBypassPermissions)
+      return true; // Existing legacy role policy, until reviewed activation.
+    final branches = ps.allowedBranches;
+    final employees = ps.hrViewableEmployees;
+    return (branch.isEmpty ||
+            branches == null ||
+            branches.isEmpty ||
+            branches.contains('all') ||
+            branches.contains(branch)) &&
+        (employees == null ||
+            employees.isEmpty ||
+            employees.contains(employee));
+  }
+
+  bool _readReport(String company, String employee, String branch) {
+    final ps = PermissionsService();
+    if (!_sameCompany(company)) return false;
+    if (_ownReport(company, employee)) return true;
+    return (ps.canBypassPermissions ||
+            ps.canOpenReportPage ||
+            ps.canViewSalaryAmounts ||
+            ps.canViewBranchSalaryReport ||
+            ps.canManageEmployees) &&
+        _ordinaryTarget(employee, branch);
+  }
+
+  bool _keepAmounts(String company, String employee, String branch) =>
+      _readReport(company, employee, branch) &&
+      (PermissionsService().canBypassPermissions ||
+          _ownReport(company, employee) ||
+          PermissionsService().canViewSalaryAmounts);
+
+  bool _readBranchReport(String company, String? branch) {
+    final ps = PermissionsService();
+    if (!_sameCompany(company) ||
+        (!ps.canBypassPermissions && !ps.canViewBranchSalaryReport)) return false;
+    final branches = ps.allowedBranches;
+    return ps.canBypassPermissions ||
+        branch == null ||
+        branch.isEmpty ||
+        branches == null ||
+        branches.isEmpty ||
+        branches.contains('all') ||
+        branches.contains(branch);
+  }
+
+  bool get _keepBranchAmounts =>
+      PermissionsService().canBypassPermissions || PermissionsService().canViewSalaryAmounts;
 
   // ============================================================
   // 1. الدالة الرئيسية: جلب تقرير راتب
@@ -68,13 +133,17 @@ class HRReportService {
     bool useCache = true,
     bool? includePending,
   }) async {
+return CachePartitions.run(() async {
+
+    final readScope = await ReadAuthorizationSnapshot.capture();
     // -------- auto-detect pending --------
     final effectiveIncludePending =
         includePending ?? _hasPendingFor(companyCode, employeeCode, month);
 
     // -------- 1) Cache (فقط لو مفيش pending) --------
     if (useCache && !effectiveIncludePending) {
-      final cached = _getCached(companyCode, employeeCode, month);
+      final cached = await _getCached(companyCode, employeeCode, month);
+      readScope.check();
       if (cached != null) {
         print('⚡ [salary-report] من الـ cache');
         return cached;
@@ -89,6 +158,7 @@ class HRReportService {
         month: month,
         includePending: effectiveIncludePending,
       );
+      readScope.check();
       if (local != null) {
         // نخزن في الـ cache فقط للتقارير الرسمية (بدون pending)
         if (!effectiveIncludePending) {
@@ -98,6 +168,7 @@ class HRReportService {
             month,
             local,
           );
+          readScope.check();
         }
         print('🧮 [salary-report] حساب محلي');
         return local;
@@ -107,13 +178,16 @@ class HRReportService {
     }
 
     // -------- 3) Backend fallback --------
-    return await _fetchFromBackend(
+    readScope.check();
+    final backend = await _fetchFromBackend(
       companyCode: companyCode,
       employeeCode: employeeCode,
       month: month,
     );
-  }
-
+    readScope.check();
+    return backend;
+});
+}
 
   // ============================================================
   // 2. جلب التقرير من السيرفر مباشرة (بدون cache/local)
@@ -126,13 +200,15 @@ class HRReportService {
     required String employeeCode,
     required String month,
   }) async {
+return CachePartitions.run(() async {
+
     return _fetchFromBackend(
       companyCode: companyCode,
       employeeCode: employeeCode,
       month: month,
     );
-  }
-
+});
+}
 
   // ============================================================
   // 3. الحساب المحلي
@@ -144,15 +220,22 @@ class HRReportService {
     required String month,
     required bool includePending,
   }) async {
+return CachePartitions.run(() async {
+
+    final readScope = await ReadAuthorizationSnapshot.capture();
+    if (!_readReport(companyCode, employeeCode, '')) return null;
     // -------- بيانات الموظف --------
     final employeeData = await _getEmployeeData(
       companyCode: companyCode,
       employeeCode: employeeCode,
     );
+    readScope.check();
     if (employeeData == null) {
       throw Exception('الموظف غير موجود محليًا أو على السيرفر');
     }
 
+    if (!_readReport(companyCode, employeeCode,
+        (employeeData['branch_code'] ?? '').toString())) return null;
     final employeeName = employeeData['name']?.toString() ?? '';
     final baseSalary = _toDouble(employeeData['salary']);
     final branchCode = employeeData['branch_code']?.toString() ?? '1';
@@ -162,6 +245,7 @@ class HRReportService {
       companyCode: companyCode,
       employeeCode: employeeCode,
     );
+    readScope.check();
 
     // -------- الحضور (مع أو بدون pending) --------
     final attendanceMap = includePending
@@ -175,6 +259,7 @@ class HRReportService {
             employeeCode: employeeCode,
             month: month,
           );
+    readScope.check();
 
     // -------- الإجازات --------
     final vacations = await _hrService.getVacations(
@@ -184,6 +269,7 @@ class HRReportService {
       branchCode: branchCode,
       employeeCode: employeeCode,
     );
+    readScope.check();
 
     // -------- التسويات --------
     final adjustments = await _hrService.getEmployeeAdjustments(
@@ -191,6 +277,7 @@ class HRReportService {
       employeeCode: employeeCode,
       month: month,
     );
+    readScope.check();
 
     // -------- الحساب --------
     final reportMap = HRSalaryCalculator.calculate(
@@ -206,9 +293,12 @@ class HRReportService {
       adjustments: adjustments,
     );
 
-    return HRSalaryReportModel.fromMap(reportMap);
-  }
-
+    return HRSalaryReportModel.fromMap(
+        _keepAmounts(companyCode, employeeCode, branchCode)
+            ? reportMap
+            : SalaryVisibility.report(reportMap));
+});
+}
 
   // ============================================================
   // 4. Backend fallback
@@ -219,12 +309,18 @@ class HRReportService {
     required String employeeCode,
     required String month,
   }) async {
+return CachePartitions.run(() async {
+
+    final readScope = await ReadAuthorizationSnapshot.capture();
+    if (!_readReport(companyCode, employeeCode, '')) return null;
     try {
       final url = Uri.parse(
         "$baseUrl/hr/reports/salary/$companyCode/$employeeCode",
       ).replace(queryParameters: {'month': month});
 
+      readScope.check();
       final response = await AuthHttp.get(url);
+      readScope.check();
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         print("❌ [salary-report backend] HTTP ${response.statusCode}");
@@ -232,42 +328,61 @@ class HRReportService {
       }
 
       final Map<String, dynamic> data = jsonDecode(response.body);
-      final report = HRSalaryReportModel.fromMap(data);
+      if (data['company_code'] != companyCode ||
+          data['employee_code'] != employeeCode ||
+          !_readReport(companyCode, employeeCode,
+              (data['branch_code'] ?? '').toString())) return null;
+      final visible = _keepAmounts(
+              companyCode, employeeCode, (data['branch_code'] ?? '').toString())
+          ? data
+          : SalaryVisibility.report(data);
+      final report = HRSalaryReportModel.fromMap(visible);
 
       // نخزن في الـ cache عشان النداء الجاي يكون فوري
       await _saveToCache(companyCode, employeeCode, month, report);
+      readScope.check();
 
       print('🌐 [salary-report] من السيرفر');
       return report;
-
     } catch (e) {
       print("❌ [salary-report backend] $e");
       return null;
     }
-  }
-
+});
+}
 
   // ============================================================
   // 5. إدارة الـ Cache
   // ============================================================
 
-  HRSalaryReportModel? _getCached(
+  Future<HRSalaryReportModel?> _getCached(
     String companyCode,
     String employeeCode,
     String month,
-  ) {
+  ) async {
+return CachePartitions.run(() async {
+
     final key = _cacheKey(companyCode, employeeCode, month);
     final raw = _codingBox.get(key);
     if (raw is! Map) return null;
 
     final map = Map<String, dynamic>.from(raw);
 
+    if (map['company_code'] != companyCode ||
+        map['employee_code'] != employeeCode ||
+        map['month'] != month ||
+        !_keepAmounts(
+            companyCode, employeeCode, (map['branch_code'] ?? '').toString())) {
+      await _codingBox.delete(key);
+      await _codingBox.compact();
+      return null;
+    }
+
     // فحص TTL
     final cachedAtStr = map['_cached_at']?.toString();
     if (cachedAtStr != null) {
       final cachedAt = DateTime.tryParse(cachedAtStr);
-      if (cachedAt != null &&
-          DateTime.now().difference(cachedAt) > _cacheTTL) {
+      if (cachedAt != null && DateTime.now().difference(cachedAt) > _cacheTTL) {
         // منتهي → امسحه
         _codingBox.delete(key);
         return null;
@@ -276,15 +391,18 @@ class HRReportService {
 
     map.remove('_cached_at');
     return HRSalaryReportModel.fromMap(map);
-  }
+});
+}
 
-
-    Future<void> _saveToCache(
+  Future<void> _saveToCache(
     String companyCode,
     String employeeCode,
     String month,
     HRSalaryReportModel report,
   ) async {
+return CachePartitions.run(() async {
+
+    if (!_keepAmounts(companyCode, employeeCode, report.branchCode)) return;
     final key = _cacheKey(companyCode, employeeCode, month);
 
     final data = <String, dynamic>{
@@ -325,7 +443,7 @@ class HRReportService {
       'loans_total': report.loansTotal,
 
       'net_salary': report.netSalary,
-      'debt_remaining': report.debtRemaining,   // ⭐ إضافة
+      'debt_remaining': report.debtRemaining, // ⭐ إضافة
 
       // التفاصيل
       'adjustment_lines': report.adjustmentLines
@@ -350,8 +468,8 @@ class HRReportService {
     };
 
     await _codingBox.put(key, data);
-  }
-
+});
+}
 
   /// إبطال الكاش لموظف/شهر محدد
   ///
@@ -365,21 +483,22 @@ class HRReportService {
     String? employeeCode,
     String? month,
   }) async {
+return CachePartitions.run(() async {
+
     final toDelete = <dynamic>[];
 
-        for (final key in _codingBox.keys) {
+    for (final key in _codingBox.keys) {
       final keyStr = key.toString();
       final isReport = keyStr.startsWith('salary_report_');
       final isBranchTotals = keyStr.startsWith('branch_salaries_');
       if (!isReport && !isBranchTotals) continue;
 
-            if (companyCode != null &&
+      if (companyCode != null &&
           !keyStr.contains('salary_report_${companyCode}__') &&
           !keyStr.contains('branch_salaries_${companyCode}__')) {
         continue;
       }
-      if (employeeCode != null &&
-          !keyStr.contains('__${employeeCode}__')) {
+      if (employeeCode != null && !keyStr.contains('__${employeeCode}__')) {
         continue;
       }
       if (month != null && !keyStr.endsWith('__$month')) {
@@ -396,15 +515,17 @@ class HRReportService {
     if (toDelete.isNotEmpty) {
       print('🗑️ [salary-report cache] مسح ${toDelete.length} تقرير');
     }
-  }
-
+});
+}
 
   /// مسح كل الكاش (يُستدعى عند logout أو reset)
   Future<void> clearAllCache() async {
+return CachePartitions.run(() async {
+
     await invalidateCache();
     print('🗑️ [salary-report cache] تم مسح كل التقارير');
-  }
-
+});
+}
 
   // ============================================================
   // 6. Helpers
@@ -426,8 +547,7 @@ class HRReportService {
       final date = keyStr.substring(keyStr.length - 10);
       if (!date.startsWith('$month-')) continue;
 
-      final withoutDate =
-          keyStr.substring(0, keyStr.length - 11);
+      final withoutDate = keyStr.substring(0, keyStr.length - 11);
       final prefix = '${companyCode}_';
       if (!withoutDate.startsWith(prefix)) continue;
       final pEmployee = withoutDate.substring(prefix.length);
@@ -438,18 +558,21 @@ class HRReportService {
     return false;
   }
 
-
   /// دمج الحضور المحفوظ مع pending
   Future<Map<String, HRAttendanceModel>> _getAttendanceWithPending({
     required String companyCode,
     required String employeeCode,
     required String month,
   }) async {
+return CachePartitions.run(() async {
+
+    final readScope = await ReadAuthorizationSnapshot.capture();
     final committed = await _hrService.getEmployeeMonthAttendance(
       companyCode: companyCode,
       employeeCode: employeeCode,
       month: month,
     );
+    readScope.check();
 
     final merged = Map<String, HRAttendanceModel>.from(committed);
 
@@ -462,8 +585,7 @@ class HRReportService {
       final date = keyStr.substring(keyStr.length - 10);
       if (!date.startsWith('$month-')) continue;
 
-      final withoutDate =
-          keyStr.substring(0, keyStr.length - 11);
+      final withoutDate = keyStr.substring(0, keyStr.length - 11);
       final prefix = '${companyCode}_';
       if (!withoutDate.startsWith(prefix)) continue;
       final pEmployee = withoutDate.substring(prefix.length);
@@ -485,14 +607,17 @@ class HRReportService {
     }
 
     return merged;
-  }
-
+});
+}
 
   /// جلب بيانات الموظف (Hive أولاً، ثم السيرفر)
   Future<Map<String, dynamic>?> _getEmployeeData({
     required String companyCode,
     required String employeeCode,
   }) async {
+return CachePartitions.run(() async {
+
+    final readScope = await ReadAuthorizationSnapshot.capture();
     // 1) Hive
     final localKey = '${companyCode}_employees';
     final raw = _codingBox.get(localKey);
@@ -514,20 +639,20 @@ class HRReportService {
         companyCode: companyCode,
         code: employeeCode,
       );
+      readScope.check();
       if (emp != null) return emp.toMap();
     } catch (e) {
       print('⚠️ [salary-report] employee fetch: $e');
     }
 
     return null;
-  }
+});
+}
 
-
-    double _toDouble(dynamic value) {
+  double _toDouble(dynamic value) {
     if (value is num) return value.toDouble();
     return double.tryParse(value?.toString() ?? '') ?? 0.0;
   }
-
 
   // ============================================================
   // ⭐ إجمالي رواتب الفروع/الشركة
@@ -544,6 +669,10 @@ class HRReportService {
     String? branchCode,
     bool forceRefresh = false,
   }) async {
+return CachePartitions.run(() async {
+
+    final readScope = await ReadAuthorizationSnapshot.capture();
+    if (!_readBranchReport(companyCode, branchCode)) return null;
     final cacheKey =
         'branch_salaries_${companyCode}__${month}__${branchCode ?? "all"}';
 
@@ -557,9 +686,23 @@ class HRReportService {
         );
         if (cachedAt != null &&
             DateTime.now().difference(cachedAt) <= _cacheTTL) {
-          map.remove('_cached_at');
-          print('⚡ [branch-salaries] من الـ cache');
-          return map;
+          final employees = map['employees'];
+          final rowsAllowed = employees is List &&
+              employees.whereType<Map>().length == employees.length &&
+              employees.every((row) => _ordinaryTarget(
+                  (row['employee_code'] ?? '').toString(),
+                  (row['branch_code'] ?? '').toString()));
+          if (_keepBranchAmounts &&
+              rowsAllowed &&
+              map['company_code'] == companyCode) {
+            map.remove('_cached_at');
+            print('⚡ [branch-salaries] من الـ cache');
+            return map;
+          }
+          await _codingBox.delete(cacheKey);
+          readScope.check();
+          await _codingBox.compact();
+          readScope.check();
         }
       }
     }
@@ -572,13 +715,18 @@ class HRReportService {
           month: month,
           branchCode: branchCode,
         );
+        readScope.check();
         if (local != null) {
-          await _codingBox.put(cacheKey, {
-            '_cached_at': DateTime.now().toUtc().toIso8601String(),
-            ...local,
-          });
+          readScope.check();
+          if (_keepBranchAmounts) {
+            await _codingBox.put(cacheKey, {
+              '_cached_at': DateTime.now().toUtc().toIso8601String(),
+              ...local,
+            });
+            readScope.check();
+          }
           print('🧮 [branch-salaries] حساب محلي');
-          return local;
+          return _keepBranchAmounts ? local : SalaryVisibility.branch(local);
         }
       } catch (e) {
         print('⚠️ [branch-salaries] local calc failed: $e');
@@ -596,7 +744,9 @@ class HRReportService {
           'branch_code': branchCode,
       });
 
+      readScope.check();
       final response = await AuthHttp.get(url);
+      readScope.check();
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         print('❌ [branch-salaries] HTTP ${response.statusCode}');
@@ -605,18 +755,30 @@ class HRReportService {
 
       final data = jsonDecode(response.body) as Map<String, dynamic>;
 
-      await _codingBox.put(cacheKey, {
-        '_cached_at': DateTime.now().toUtc().toIso8601String(),
-        ...data,
-      });
-
+      readScope.check();
+      if (data['company_code'] != companyCode ||
+          !_readBranchReport(companyCode, branchCode)) return null;
+      final rows = data['employees'];
+      if (rows is! List ||
+          rows.whereType<Map>().length != rows.length ||
+          rows.any((row) => !_ordinaryTarget(
+              (row['employee_code'] ?? '').toString(),
+              (row['branch_code'] ?? '').toString()))) return null;
+      if (_keepBranchAmounts) {
+        await _codingBox.put(cacheKey, {
+          '_cached_at': DateTime.now().toUtc().toIso8601String(),
+          ...data,
+        });
+        readScope.check();
+      }
       print('🌐 [branch-salaries] من السيرفر');
-      return data;
+      return _keepBranchAmounts ? data : SalaryVisibility.branch(data);
     } catch (e) {
       print('❌ [branch-salaries] $e');
       return null;
     }
-  }
+});
+}
 
   // ============================================================
   // ⭐ حساب الإجماليات محلياً من Hive
@@ -627,6 +789,9 @@ class HRReportService {
     required String month,
     String? branchCode,
   }) async {
+return CachePartitions.run(() async {
+
+    final readScope = await ReadAuthorizationSnapshot.capture();
     // 1) الموظفين من Hive
     final localKey = '${companyCode}_employees';
     final raw = _codingBox.get(localKey);
@@ -637,6 +802,8 @@ class HRReportService {
       if (item is! Map) continue;
       final map = Map<String, dynamic>.from(item);
       if (map['is_deleted'] == true) continue;
+      if (!_ordinaryTarget((map['code'] ?? '').toString(),
+          (map['branch_code'] ?? '').toString())) continue;
       if (branchCode != null && branchCode.isNotEmpty) {
         if (map['branch_code']?.toString() != branchCode) continue;
       }
@@ -658,6 +825,7 @@ class HRReportService {
     int count = 0;
 
     for (final emp in employees) {
+      readScope.check();
       try {
         final report = await _calculateLocally(
           companyCode: companyCode,
@@ -665,6 +833,7 @@ class HRReportService {
           month: month,
           includePending: false,
         );
+        readScope.check();
         if (report == null) continue;
 
         count++;
@@ -702,10 +871,8 @@ class HRReportService {
 
     // 3) ترتيب حسب الكود
     employeesData.sort((a, b) {
-      final aCode =
-          int.tryParse(a['employee_code']?.toString() ?? '0') ?? 0;
-      final bCode =
-          int.tryParse(b['employee_code']?.toString() ?? '0') ?? 0;
+      final aCode = int.tryParse(a['employee_code']?.toString() ?? '0') ?? 0;
+      final bCode = int.tryParse(b['employee_code']?.toString() ?? '0') ?? 0;
       return aCode.compareTo(bCode);
     });
 
@@ -726,7 +893,8 @@ class HRReportService {
       },
       'employees': employeesData,
     };
-  }
+});
+}
 
   // ⭐ helper للتقريب
   static double _round2(double v) => (v * 100).round() / 100;

@@ -1,3 +1,8 @@
+import 'cache_partitions.dart';
+import 'journal_cache.dart';
+import 'admin_cache_events.dart';
+import 'permissions_service.dart';
+import 'treasury_transfer_service.dart';
 // lib/services/websocket_sync_service.dart
 
 import 'dart:async';
@@ -5,14 +10,34 @@ import 'dart:convert';
 
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:hive_flutter/hive_flutter.dart';
 
 import 'daily_service.dart';
 import '../core/constants.dart';
 import 'notifications_service.dart';
 
-
 class WebSocketSyncService {
+  static final userDirectoryChanges = AdminCacheEvents.users;
+  void _directoryChanged() {
+    final company = _companyCode;
+    if (company == null || company.isEmpty) return;
+    AdminCacheEvents.userDirectory(company);
+    AdminCacheEvents.companyDirectory();
+  }
+
+  WebSocketSyncService({WebSocketChannel Function(Uri)? channelFactory})
+      : _openChannel = channelFactory ?? WebSocketChannel.connect;
+  final WebSocketChannel Function(Uri) _openChannel;
+  String? _connectionUid;
+  int _connectGeneration = 0;
+  int _cacheGeneration = -1;
+  Timer? _authTimeout;
+  Future<void> _permissionRefresh = Future<void>.value();
+  bool _authorizationReady = false;
+  bool get authorizationReady => isConnected && _authorizationReady;
+  @visibleForTesting
+  Future<void> get debugAuthorizationRefresh => _permissionRefresh;
   // ============================================================
   // WebSocket
   // ============================================================
@@ -45,6 +70,11 @@ class WebSocketSyncService {
   /// main.dart هو المسؤول عن syncAllDataIfNeeded().
   void Function()? onConnected;
 
+  /// يُستدعى عند وصول permissions_changed من الخادم
+  /// (تغيير صلاحيات/فروع/حالة الحساب). المعامل resync=true يعني
+  /// أن النطاق قد يكون اتسع ويلزم إعادة مزامنة كاملة لا تزايدية.
+  FutureOr<void> Function({required bool resync})? onPermissionsChanged;
+
   // ⭐ جديد: يتم استدعاؤها لما الاتصال يفشل (سيرفر واقع، DNS، timeout)
   void Function()? onConnectionFailed;
 
@@ -59,143 +89,161 @@ class WebSocketSyncService {
     if (cb != null) cb();
   }
 
-
   // ============================================================
   // Hive Boxes
   // ============================================================
 
-  final Box _dailyBox =
-      Hive.box('daily_transactions_box');
+  Box get _dailyBox => CachePartitions.box('daily_transactions_box');
 
-  final Box _codingBox =
-      Hive.box('coding_box');
+  Box get _codingBox => CachePartitions.box('coding_box');
 
-  final Box _inventoryBox =
-      Hive.box('inventory_box');
+  Box get _inventoryBox => CachePartitions.box('inventory_box');
 
-  final Box _supplierBox =
-      Hive.box('supplier_box');
+  Box get _supplierBox => CachePartitions.box('supplier_box');
 
-  final Box _settlementBox =
-      Hive.box('supplier_settlement_box');
-
+  Box get _settlementBox => CachePartitions.box('supplier_settlement_box');
 
   // ============================================================
   // 1. الاتصال
   // ============================================================
 
-  
-Future<void> connect(String companyCode) async {
-  if (_isConnected || _isConnecting) {
-    print("✅ WebSocket متصل أو جاري الاتصال بالفعل");
-    return;
-  }
-
-  _isConnecting = true;
-  _manualDisconnect = false;
-  _companyCode = companyCode;
-  _baseUrl = ApiConstants.baseUrl;
-
-  try {
-    final user = FirebaseAuth.instance.currentUser;
-    final token = await user?.getIdToken();
-
-    if (token == null || token.isEmpty) {
-      print('⚠️ تم إيقاف WebSocket لعدم وجود Firebase ID token صالح');
-      _isConnected = false;
-      _isConnecting = false;
-      _notifyConnectionFailed();
-      return;
-    }
-
-    final String url = '${ApiConstants.baseUrl}/sync/ws/$companyCode';
-    final Uri wsUri = Uri.parse(
-      url.replaceFirst('http://', 'ws://').replaceFirst('https://', 'wss://'),
-    );
-
-    print('🔌 محاولة الاتصال بـ WebSocket الموثق للشركة: $companyCode');
-
-    final channel = WebSocketChannel.connect(wsUri);
-    _channel = channel;
-
-    // ⭐⭐⭐ استمع للرسائل قبل ready — يمنع ضياع auth_success على الويب
-    channel.stream.listen(
-      (message) {
-        if (!identical(_channel, channel)) return;
-        print('🔔 WebSocket raw: $message');   // ← log تشخيصي
-        _handleMessage(message);
-      },
-      onError: (error) {
-        if (!identical(_channel, channel)) return;
-        print("❌ خطأ في WebSocket: $error");
-        _isConnected = false;
-        _isConnecting = false;
-        _channel = null;
-        _notifyConnectionFailed();
-        _scheduleReconnect();
-      },
-      onDone: () {
-        if (!identical(_channel, channel)) return;
-        print("🔌 تم قطع اتصال WebSocket");
-        _isConnected = false;
-        _isConnecting = false;
-        _channel = null;
-        if (_manualDisconnect) {
-          print("ℹ️ الاتصال تم قطعه يدويًا، لن يتم إعادة الاتصال");
+  Future<void> connect(String companyCode) async {
+    return CachePartitions.run(() async {
+      final ownerUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+      if (_isConnected || _isConnecting) {
+        if (_connectionUid == ownerUid && _companyCode == companyCode) {
+          print("✅ WebSocket متصل أو جاري الاتصال بالفعل");
           return;
         }
-        _scheduleReconnect();
-      },
-      cancelOnError: true,
-    );
+        disconnect();
+      }
+      NotificationsService.instance.bindCompany(companyCode);
+      final generation = ++_connectGeneration;
+      _connectionUid = ownerUid;
+      _cacheGeneration = CachePartitions.generation;
+      _permissionRefresh = Future<void>.value();
+      _authorizationReady = false;
+      _isConnecting = true;
+      _manualDisconnect = false;
+      _companyCode = companyCode;
+      _baseUrl = ApiConstants.baseUrl;
 
-    // انتظر فتح القناة (بعد listen — عشان ما تضيعش رسائل)
-    await channel.ready;
+      try {
+        final user = FirebaseAuth.instance.currentUser;
+        final token = await user?.getIdToken();
+        if (generation != _connectGeneration) return;
+        if (FirebaseAuth.instance.currentUser?.uid != ownerUid) {
+          disconnect();
+          return;
+        }
 
-    if (_manualDisconnect || !identical(_channel, channel)) {
-      await channel.sink.close();
-      return;
-    }
+        if (token == null || token.isEmpty) {
+          print('⚠️ تم إيقاف WebSocket لعدم وجود Firebase ID token صالح');
+          _isConnected = false;
+          _isConnecting = false;
+          _notifyConnectionFailed();
+          return;
+        }
 
-    // إرسال auth
-    channel.sink.add(
-      jsonEncode({
-        'type': 'auth',
-        'token': token,
-      }),
-    );
+        final String url = '${ApiConstants.baseUrl}/sync/ws/$companyCode';
+        final Uri wsUri = Uri.parse(
+          url
+              .replaceFirst('http://', 'ws://')
+              .replaceFirst('https://', 'wss://'),
+        );
 
-    print("⏳ تم إرسال بيانات المصادقة، في انتظار تأكيد السيرفر");
+        print('🔌 محاولة الاتصال بـ WebSocket الموثق للشركة: $companyCode');
 
-    // ⭐ Timeout 15s — لو auth_success ما وصلش، أعد المحاولة
-    Future.delayed(const Duration(seconds: 15), () {
-      if (!_isConnected &&
-          identical(_channel, channel) &&
-          !_manualDisconnect) {
-        print('⚠️ لم يتم استقبال auth_success بعد 15 ثانية — إعادة المحاولة');
-        try {
-          channel.sink.close();
-        } catch (_) {}
-        _channel = null;
+        final channel = _openChannel(wsUri);
+        _channel = channel;
+
+        // ⭐⭐⭐ استمع للرسائل قبل ready — يمنع ضياع auth_success على الويب
+        channel.stream.listen(
+          (message) {
+            if (!identical(_channel, channel)) return;
+            if (FirebaseAuth.instance.currentUser?.uid != ownerUid) {
+              disconnect();
+              return;
+            }
+            print('🔔 WebSocket raw: $message'); // ← log تشخيصي
+            _handleMessage(message);
+          },
+          onError: (error) {
+            if (!identical(_channel, channel)) return;
+            print("❌ خطأ في WebSocket: $error");
+            _isConnected = false;
+            _isConnecting = false;
+            _channel = null;
+            _notifyConnectionFailed();
+            _scheduleReconnect();
+          },
+          onDone: () {
+            if (!identical(_channel, channel)) return;
+            print("🔌 تم قطع اتصال WebSocket");
+            _isConnected = false;
+            _isConnecting = false;
+            _channel = null;
+            if (_manualDisconnect) {
+              print("ℹ️ الاتصال تم قطعه يدويًا، لن يتم إعادة الاتصال");
+              return;
+            }
+            _scheduleReconnect();
+          },
+          cancelOnError: true,
+        );
+
+        // انتظر فتح القناة (بعد listen — عشان ما تضيعش رسائل)
+        await channel.ready;
+
+        if (_manualDisconnect ||
+            !identical(_channel, channel) ||
+            generation != _connectGeneration ||
+            FirebaseAuth.instance.currentUser?.uid != ownerUid) {
+          await channel.sink.close();
+          return;
+        }
+
+        // إرسال auth
+        channel.sink.add(
+          jsonEncode({
+            'type': 'auth',
+            'token': token,
+          }),
+        );
+
+        print("⏳ تم إرسال بيانات المصادقة، في انتظار تأكيد السيرفر");
+
+        // ⭐ Timeout 15s — لو auth_success ما وصلش، أعد المحاولة
+        _authTimeout?.cancel();
+        _authTimeout = Timer(const Duration(seconds: 15), () {
+          if (!_isConnected &&
+              identical(_channel, channel) &&
+              !_manualDisconnect) {
+            print(
+                '⚠️ لم يتم استقبال auth_success بعد 15 ثانية — إعادة المحاولة');
+            try {
+              channel.sink.close();
+            } catch (_) {}
+            _channel = null;
+            _isConnecting = false;
+            _notifyConnectionFailed();
+            _scheduleReconnect();
+          }
+        });
+      } catch (e) {
+        if (generation != _connectGeneration) return;
+        _isConnected = false;
         _isConnecting = false;
+
+        print("❌ فشل الاتصال بـ WebSocket: $e");
         _notifyConnectionFailed();
-        _scheduleReconnect();
+
+        if (!_manualDisconnect) {
+          _scheduleReconnect();
+        }
       }
     });
-  } catch (e) {
-    _isConnected = false;
-    _isConnecting = false;
-
-    print("❌ فشل الاتصال بـ WebSocket: $e");
-    _notifyConnectionFailed();
-
-    if (!_manualDisconnect) {
-      _scheduleReconnect();
-    }
   }
-}
-
-
 
   // ============================================================
   // 2. إعادة الاتصال
@@ -206,11 +254,9 @@ Future<void> connect(String companyCode) async {
     // لا توجد شركة
     // ----------------------------------------------------------
 
-    if (_companyCode == null ||
-        _baseUrl == null) {
+    if (_companyCode == null || _baseUrl == null) {
       return;
     }
-
 
     // ----------------------------------------------------------
     // قطع يدوي
@@ -220,7 +266,6 @@ Future<void> connect(String companyCode) async {
       return;
     }
 
-
     // ----------------------------------------------------------
     // يوجد reconnect مجدول
     // ----------------------------------------------------------
@@ -229,20 +274,16 @@ Future<void> connect(String companyCode) async {
       return;
     }
 
-
     _reconnectScheduled = true;
-
 
     print(
       "⏳ سيتم إعادة الاتصال بـ WebSocket بعد 5 ثوانٍ...",
     );
 
-
     Future.delayed(
       const Duration(seconds: 5),
       () {
         _reconnectScheduled = false;
-
 
         // ------------------------------------------------------
         // لو رجع الاتصال
@@ -252,7 +293,6 @@ Future<void> connect(String companyCode) async {
           return;
         }
 
-
         // ------------------------------------------------------
         // لو تم disconnect يدوي أثناء الانتظار
         // ------------------------------------------------------
@@ -261,38 +301,35 @@ Future<void> connect(String companyCode) async {
           return;
         }
 
-
-        final companyCode =
-            _companyCode;
-
+        final companyCode = _companyCode;
 
         if (companyCode == null) {
           return;
         }
 
-
         print(
           "🔄 محاولة إعادة الاتصال بـ WebSocket...",
         );
-
 
         connect(companyCode);
       },
     );
   }
 
-
   // ============================================================
   // 3. قطع الاتصال
   // ============================================================
 
   void disconnect() {
+    _connectGeneration++;
+    _connectionUid = null;
+    _authTimeout?.cancel();
+    _authTimeout = null;
     _dailySummaryTimer?.cancel();
-_dailySummaryTimer = null;
+    _dailySummaryTimer = null;
     print(
       "🔌 طلب قطع اتصال WebSocket",
     );
-
 
     // ----------------------------------------------------------
     // disconnect يدوي
@@ -300,7 +337,6 @@ _dailySummaryTimer = null;
 
     _manualDisconnect = true;
     _isConnecting = false;
-
 
     // ----------------------------------------------------------
     // إلغاء reconnect
@@ -312,7 +348,6 @@ _dailySummaryTimer = null;
 
     _connectionFailedNotified = false;
 
-
     // ----------------------------------------------------------
     // إغلاق Channel
     // ----------------------------------------------------------
@@ -321,9 +356,7 @@ _dailySummaryTimer = null;
       _channel?.sink.close();
     } catch (_) {}
 
-
     _channel = null;
-
 
     // ----------------------------------------------------------
     // تنظيف الحالة
@@ -332,233 +365,389 @@ _dailySummaryTimer = null;
     _companyCode = null;
     _baseUrl = null;
 
-
     print(
       "🔌 تم قطع اتصال WebSocket",
     );
   }
-
 
   // ============================================================
   // 4. حالة الاتصال
   // ============================================================
 
   bool get isConnected =>
-      _isConnected;
-
+      _isConnected && _connectionUid == FirebaseAuth.instance.currentUser?.uid;
 
   // ============================================================
   // 5. معالجة الرسائل
   // ============================================================
 
-  
-void _handleMessage(dynamic message) {
-  try {
-    final dynamic decoded = jsonDecode(message);
+  void _handleMessage(dynamic message) {
+    if (CachePartitions.enabled &&
+        (_cacheGeneration != CachePartitions.generation ||
+            !CachePartitions.isReady)) return;
+    try {
+      final dynamic decoded = jsonDecode(message);
 
-    if (decoded is! Map) {
-      print("⚠️ رسالة WebSocket غير صحيحة");
-      return;
-    }
-
-    final Map<String, dynamic> data =
-        Map<String, dynamic>.from(decoded);
-
-    final String type = data['type']?.toString() ?? '';
-
-    // تأكيد نجاح المصادقة قبل اعتبار WebSocket متصلًا.
-    if (type == 'auth_success') {
-      final String confirmedCompany =
-          data['company_code']?.toString() ?? '';
-
-      if (confirmedCompany != _companyCode) {
-        print("⚠️ تأكيد WebSocket لا يطابق الشركة الحالية");
-        _isConnected = false;
-        _isConnecting = false;
-        _scheduleReconnect();
+      if (decoded is! Map) {
+        print("⚠️ رسالة WebSocket غير صحيحة");
         return;
       }
 
-      final bool wasConnected = _isConnected;
+      final Map<String, dynamic> data = Map<String, dynamic>.from(decoded);
 
-      _isConnected = true;
-      _isConnecting = false;
-      _connectionFailedNotified = false;
+      final String type = data['type']?.toString() ?? '';
 
-      print("✅ تم تأكيد مصادقة WebSocket للشركة: $confirmedCompany");
+      // تأكيد نجاح المصادقة قبل اعتبار WebSocket متصلًا.
+      if (type == 'auth_success') {
+        final String confirmedCompany = data['company_code']?.toString() ?? '';
 
-      unawaited(
-        NotificationsService.instance.refreshUnreadFromServer(
-          companyCode: confirmedCompany,
-        ),
-      );
-
-      if (!wasConnected) {
-        final callback = onConnected;
-        if (callback != null) {
-          print("🔄 إبلاغ Sync Manager بنجاح اتصال WebSocket");
-          callback();
+        if (confirmedCompany != _companyCode) {
+          print("⚠️ تأكيد WebSocket لا يطابق الشركة الحالية");
+          _isConnected = false;
+          _isConnecting = false;
+          _scheduleReconnect();
+          return;
         }
+
+        final bool wasConnected = _isConnected;
+        _authTimeout?.cancel();
+        _authTimeout = null;
+
+        _isConnected = true;
+        _isConnecting = false;
+        // Reconnect is an explicit catch-up boundary, including preferences.
+        unawaited(NotificationsService.instance.loadSettingsFromServer());
+        _connectionFailedNotified = false;
+
+        print("✅ تم تأكيد مصادقة WebSocket للشركة: $confirmedCompany");
+
+        // Reconcile disposable HR history on reconnect too: an offline client may
+        // have missed an employee unlink/delete or a narrowed employee list.
+        final generation = _connectGeneration;
+        unawaited(() async {
+          await _handlePermissionsChanged(false);
+          if (generation != _connectGeneration || !authorizationReady) return;
+          _directoryChanged();
+          if (!wasConnected) onConnected?.call();
+        }()
+            .catchError((Object error) {
+          print('⚠️ Reconnect reconciliation failed: $error');
+        }));
+
+        return;
       }
 
-      return;
+      if (type == 'user_directory_changed') {
+        final raw = data['data'];
+        if (_isConnected &&
+            raw is Map &&
+            raw['company_code'] is String &&
+            (raw['company_code'] == _companyCode ||
+                PermissionsService().isSuperAdmin)) {
+          AdminCacheEvents.userDirectory(raw['company_code'] as String);
+        }
+        return;
+      }
+
+      if (type == 'notification_settings_changed') {
+        if (_isConnected)
+          unawaited(NotificationsService.instance
+              .loadSettingsFromServer(force: true));
+        return;
+      }
+
+      if (type == 'company_directory_changed') {
+        if (_isConnected) AdminCacheEvents.companyDirectory();
+        return;
+      }
+
+      // حدث حساب موجّه: تغيير صلاحيات/فروع/حالة هذا المستخدم
+      if (type == 'permissions_changed') {
+        final dynamic rawAccount = data['data'];
+        final bool resync = rawAccount is Map && rawAccount['resync'] == true;
+        print("🔐 permissions_changed وصل (resync=$resync)");
+        unawaited(_handlePermissionsChanged(resync));
+        return;
+      }
+
+      final String action = data['action']?.toString() ?? 'update';
+      final dynamic rawPayload = data['data'];
+
+      print("📩 استقبال رسالة: type=$type, action=$action");
+
+      if (rawPayload is! Map) {
+        print("⚠️ بيانات الرسالة غير صحيحة");
+        return;
+      }
+
+      final Map<String, dynamic> payload =
+          Map<String, dynamic>.from(rawPayload);
+
+      // حفظ الإشعار من نفس حدث المزامنة؛ لا يوجد polling مستقل للإشعارات.
+      unawaited(_processNotificationEvent(data));
+
+      // --------------------------------------------------------
+      // لو is_deleted=true اعتبرها delete حتى لو
+      // action لم يصل بالشكل المتوقع.
+      // --------------------------------------------------------
+
+      if (payload['company_code'] != _companyCode) return;
+
+      final bool isDelete = action == 'delete' || payload['is_deleted'] == true;
+
+      switch (type) {
+        // ======================================================
+        // اليومية
+        // ======================================================
+
+        case 'transaction':
+          unawaited(
+            _updateTransactionBox(
+              payload,
+              isDelete ? 'delete' : action,
+            ),
+          );
+          break;
+
+        // ======================================================
+        // التكويد
+        // ======================================================
+
+        case 'coding':
+          _updateCodingBox(
+            payload,
+            isDelete ? 'delete' : action,
+          );
+          break;
+
+        // ======================================================
+        // الجرد
+        // ======================================================
+
+        case 'inventory':
+          unawaited(
+            _updateInventoryBox(
+              payload,
+              isDelete ? 'delete' : action,
+            ),
+          );
+          break;
+
+        // ======================================================
+        // الموردين
+        // ======================================================
+
+        case 'supplier':
+          unawaited(
+            _updateSupplierBox(
+              payload,
+              isDelete ? 'delete' : action,
+            ),
+          );
+          break;
+
+        // ======================================================
+        // التسويات
+        // ======================================================
+
+        case 'settlement':
+          unawaited(
+            _updateSettlementBox(
+              payload,
+              isDelete ? 'delete' : action,
+            ),
+          );
+          break;
+        case 'treasury_transfer':
+          unawaited(TreasuryTransferService()
+              .applyEvent(payload, effects: false)
+              .catchError((Object error) {
+            print('Treasury records event failed: $error');
+          }));
+          break;
+        case 'treasury_balance_changed':
+          unawaited(TreasuryTransferService()
+              .applyEvent(payload, effects: true)
+              .catchError((Object error) {
+            print('Treasury effects event failed: $error');
+          }));
+          break;
+        case 'sale':
+          unawaited(_updateCommercialBox('sales_box', payload, isDelete));
+          break;
+        case 'sale_return':
+          unawaited(
+              _updateCommercialBox('sales_returns_box', payload, isDelete));
+          break;
+        case 'customer_payment':
+          unawaited(
+              _updateCommercialBox('customer_payments_box', payload, isDelete));
+          break;
+        case 'stock_transfer':
+          unawaited(
+              _updateCommercialBox('stock_transfers_box', payload, isDelete));
+          break;
+        // ======================================================
+        // حضور HR
+        // ======================================================
+
+        case 'hr_attendance':
+          _updateHRAttendanceBox(
+            payload,
+            isDelete ? 'delete' : action,
+          );
+          break;
+
+        // ======================================================
+        // إجازات HR
+        // ======================================================
+
+        case 'hr_vacation':
+          _updateHRVacationBox(
+            payload,
+            isDelete ? 'delete' : action,
+          );
+          break;
+
+        // ======================================================
+        // تسويات HR
+        // ======================================================
+
+        case 'hr_adjustment':
+          _updateHRAdjustmentBox(
+            payload,
+            isDelete ? 'delete' : action,
+          );
+          break;
+
+        // ======================================================
+        // إعدادات الموظف في HR (جديد — كان ناقص)
+        // ======================================================
+
+        case 'hr_employee_settings':
+          _updateHREmployeeSettingsBox(
+            payload,
+            isDelete ? 'delete' : action,
+          );
+          break;
+
+        // ======================================================
+        // الموظفين
+        // ======================================================
+
+        case 'employee':
+          _updateEmployeeBox(
+            payload,
+            isDelete ? 'delete' : action,
+          );
+          break;
+
+        default:
+          print("⚠️ نوع غير معروف: $type");
+      }
+    } catch (e) {
+      print("⚠️ خطأ في معالجة رسالة WebSocket: $e");
     }
-
-    final String action = data['action']?.toString() ?? 'update';
-    final dynamic rawPayload = data['data'];
-
-    print("📩 استقبال رسالة: type=$type, action=$action");
-
-    if (rawPayload is! Map) {
-      print("⚠️ بيانات الرسالة غير صحيحة");
-      return;
-    }
-
-    final Map<String, dynamic> payload =
-        Map<String, dynamic>.from(rawPayload);
-
-    // حفظ الإشعار من نفس حدث المزامنة؛ لا يوجد polling مستقل للإشعارات.
-    unawaited(_processNotificationEvent(data));
-
-    // --------------------------------------------------------
-    // لو is_deleted=true اعتبرها delete حتى لو
-    // action لم يصل بالشكل المتوقع.
-    // --------------------------------------------------------
-
-    final bool isDelete =
-        action == 'delete' || payload['is_deleted'] == true;
-
-    switch (type) {
-      // ======================================================
-      // اليومية
-      // ======================================================
-
-      case 'transaction':
-        unawaited(
-          _updateTransactionBox(
-            payload,
-            isDelete ? 'delete' : action,
-          ),
-        );
-        break;
-
-      // ======================================================
-      // التكويد
-      // ======================================================
-
-      case 'coding':
-        _updateCodingBox(
-          payload,
-          isDelete ? 'delete' : action,
-        );
-        break;
-
-      // ======================================================
-      // الجرد
-      // ======================================================
-
-      case 'inventory':
-        unawaited(
-          _updateInventoryBox(
-            payload,
-            isDelete ? 'delete' : action,
-          ),
-        );
-        break;
-
-      // ======================================================
-      // الموردين
-      // ======================================================
-
-      case 'supplier':
-        unawaited(
-          _updateSupplierBox(
-            payload,
-            isDelete ? 'delete' : action,
-          ),
-        );
-        break;
-
-            // ======================================================
-      // التسويات
-      // ======================================================
-
-      case 'settlement':
-        unawaited(
-          _updateSettlementBox(
-            payload,
-            isDelete ? 'delete' : action,
-          ),
-        );
-        break;
-            // ======================================================
-      // حضور HR
-      // ======================================================
-
-      case 'hr_attendance':
-        _updateHRAttendanceBox(
-          payload,
-          isDelete ? 'delete' : action,
-        );
-        break;
-
-      // ======================================================
-      // إجازات HR
-      // ======================================================
-
-      case 'hr_vacation':
-        _updateHRVacationBox(
-          payload,
-          isDelete ? 'delete' : action,
-        );
-        break;
-
-            // ======================================================
-      // تسويات HR
-      // ======================================================
-
-      case 'hr_adjustment':
-        _updateHRAdjustmentBox(
-          payload,
-          isDelete ? 'delete' : action,
-        );
-        break;
-
-      // ======================================================
-      // إعدادات الموظف في HR (جديد — كان ناقص)
-      // ======================================================
-
-      case 'hr_employee_settings':
-        _updateHREmployeeSettingsBox(
-          payload,
-          isDelete ? 'delete' : action,
-        );
-        break;
-
-      // ======================================================
-      // الموظفين
-      // ======================================================
-
-      case 'employee':
-        _updateEmployeeBox(
-          payload,
-          isDelete ? 'delete' : action,
-        );
-        break;
-      
-      default:
-        print("⚠️ نوع غير معروف: $type");
-    }
-  } catch (e) {
-    print("⚠️ خطأ في معالجة رسالة WebSocket: $e");
   }
-}
 
-
+  Future<void> _handlePermissionsChanged(bool resync) {
+    final company = _companyCode;
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final generation = _connectGeneration;
+    if (company == null || uid.isEmpty || _connectionUid != uid) {
+      return Future<void>.value();
+    }
+    _authorizationReady = false;
+    final notifications = NotificationsService.instance;
+    // Close the HR cache now, even while an earlier refresh is still running.
+    final invalidation =
+        notifications.invalidateHRAuthorization(companyCode: company, uid: uid);
+    final previous = _permissionRefresh;
+    bool current() =>
+        generation == _connectGeneration &&
+        FirebaseAuth.instance.currentUser?.uid == uid &&
+        _companyCode == company;
+    final work = () async {
+      try {
+        final token = await invalidation;
+        await previous;
+        if (!current()) return;
+        final callback = onPermissionsChanged;
+        if (callback != null) await callback(resync: resync);
+        if (!current() || !notifications.finishHRAuthorization(token)) return;
+        _authorizationReady = true;
+        // Current scope is verified and old HR content purged. Enqueue
+        // history before onConnected can start business-module fanout.
+        await notifications.startPriorityRefresh(companyCode: company);
+      } catch (error) {
+        // Keep HR hidden if its old content could not be purged or refreshed.
+        print('⚠️ Notification authorization refresh failed: $error');
+      }
+    }();
+    _permissionRefresh = work;
+    return work;
+  }
 
   Future<void> _processNotificationEvent(Map<String, dynamic> event) async {
-    // الحدث الحالي يُحفظ محليًا فورًا؛ سجل Neon يُحدّث عند فتح الصفحة أو إعادة الاتصال فقط.
-    await NotificationsService.instance.handleSyncEvent(event);
+    return CachePartitions.run(() async {
+      if (event['suppress_notification'] == true) return;
+      // الحدث الحالي يُحفظ محليًا فورًا؛ سجل Neon يُحدّث عند فتح الصفحة أو إعادة الاتصال فقط.
+      await NotificationsService.instance.handleSyncEvent(event);
+    });
+  }
+
+  Future<void> _updateCommercialBox(
+      String name, Map<String, dynamic> payload, bool isDelete) async {
+    return CachePartitions.run(() async {
+      await CachePartitions.box('commercial_stock_events_box')
+          .delete('${payload['company_code']}_synced_at');
+      final box = CachePartitions.box(name);
+      final id = payload['id']?.toString() ?? '';
+      if (id.isEmpty) return;
+      const kindsByBox = {
+        'sales_box': 'sales',
+        'sales_returns_box': 'returns',
+        'customer_payments_box': 'customer-payments',
+        'stock_transfers_box': 'transfers',
+      };
+      final kind = kindsByBox[name];
+      if (kind != null && CachePartitions.isBoxOpen('commercial_pending_box')) {
+        final pending =
+            CachePartitions.box('commercial_pending_box').get('$kind:$id');
+        if (pending is Map) return;
+      }
+      for (final key in box.keys.toList()) {
+        final raw = box.get(key);
+        if (raw is! List) continue;
+        final list = raw
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+        list.removeWhere((e) => e['id']?.toString() == id);
+        if (list.isEmpty) {
+          await box.delete(key);
+        } else {
+          await box.put(key, list);
+        }
+      }
+      if (isDelete) return;
+      final company = payload['company_code']?.toString() ?? '';
+      final date = payload['date']?.toString() ?? '';
+      final branch = name == 'stock_transfers_box'
+          ? payload['from_branch_code']?.toString() ?? ''
+          : payload['branch_code']?.toString() ?? '';
+      final key = '${company}_${branch}_$date';
+      final raw = box.get(key);
+      final list = raw is List
+          ? raw
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList()
+          : <Map<String, dynamic>>[];
+      payload['is_deleted'] = false;
+      list.add(payload);
+      await box.put(key, list);
+    });
   }
 
   // ============================================================
@@ -566,54 +755,52 @@ void _handleMessage(dynamic message) {
   // ============================================================
 
   Future<void> _updateTransactionBox(
-  Map<String, dynamic> payload,
-  String action,
-) async {
-  final String branchCode =
-      payload['branch_code']?.toString() ?? '1';
+    Map<String, dynamic> payload,
+    String action,
+  ) async {
+    return CachePartitions.run(() async {
+      final String branchCode = payload['branch_code']?.toString() ?? '1';
 
-  final String? serial =
-      payload['serial']?.toString();
+      final String? serial = payload['serial']?.toString();
 
-  if (serial == null || serial.isEmpty) {
-    print("⚠️ لا يوجد serial في رسالة اليومية");
-    return;
+      if (serial == null || serial.isEmpty) {
+        print("⚠️ لا يوجد serial في رسالة اليومية");
+        return;
+      }
+
+      if (_companyCode == null) return;
+      final String id = JournalCache.key(_companyCode!, branchCode, serial);
+
+      try {
+        if (action == 'delete') {
+          await JournalCache.delete(_dailyBox,
+              company: _companyCode!, branch: branchCode, serial: serial);
+
+          print(
+            "🗑️ تم حذف اليومية [$id] من Hive",
+          );
+        } else {
+          payload['is_deleted'] = false;
+
+          await JournalCache.put(_dailyBox, payload,
+              expectedCompany: _companyCode);
+
+          print(
+            "✅ تم تحديث اليومية [$id] في Hive",
+          );
+        }
+
+        // تحديث الرصيد بعد اكتمال تعديل Hive فعليًا
+        _scheduleDailySummaryRefresh(
+          branchCode: branchCode,
+        );
+      } catch (e) {
+        print(
+          "❌ خطأ في تحديث اليومية [$id]: $e",
+        );
+      }
+    });
   }
-
-  final String id =
-      "branch_${branchCode}_$serial";
-
-  try {
-    if (action == 'delete') {
-      await _dailyBox.delete(id);
-
-      print(
-        "🗑️ تم حذف اليومية [$id] من Hive",
-      );
-    } else {
-      payload['is_deleted'] = false;
-
-      await _dailyBox.put(
-        id,
-        payload,
-      );
-
-      print(
-        "✅ تم تحديث اليومية [$id] في Hive",
-      );
-    }
-
-    // تحديث الرصيد بعد اكتمال تعديل Hive فعليًا
-    _scheduleDailySummaryRefresh(
-  branchCode: branchCode,
-);
-  } catch (e) {
-    print(
-      "❌ خطأ في تحديث اليومية [$id]: $e",
-    );
-  }
-}
-
 
   // ============================================================
   // تحديث أرصدة اليومية
@@ -621,41 +808,39 @@ void _handleMessage(dynamic message) {
   // حماية من عدم وجود companyCode
   // ============================================================
 
+  void _scheduleDailySummaryRefresh({
+    String? branchCode,
+  }) {
+    _dailySummaryTimer?.cancel();
 
-void _scheduleDailySummaryRefresh({
-  String? branchCode,
-}) {
-  _dailySummaryTimer?.cancel();
+    _dailySummaryTimer = Timer(
+      const Duration(milliseconds: 150),
+      () async {
+        final companyCode = _companyCode;
 
-  _dailySummaryTimer = Timer(
-    const Duration(milliseconds: 150),
-    () async {
-      final companyCode = _companyCode;
+        if (companyCode == null) {
+          return;
+        }
 
-      if (companyCode == null) {
-        return;
-      }
+        try {
+          await DailyService().getDailySummaryLocal(
+            companyCode,
+            branchCode: branchCode,
+          );
 
-      try {
-        await DailyService().getDailySummaryLocal(
-          companyCode,
-          branchCode: branchCode,
-        );
-
-        print(
-          "✅ تم تحديث رصيد اليومية"
-          "${branchCode != null ? ' للفرع $branchCode' : ' لكل الفروع'}"
-          " بعد WebSocket",
-        );
-      } catch (e) {
-        print(
-          "❌ خطأ في تحديث أرصدة اليومية: $e",
-        );
-      }
-    },
-  );
-}
-
+          print(
+            "✅ تم تحديث رصيد اليومية"
+            "${branchCode != null ? ' للفرع $branchCode' : ' لكل الفروع'}"
+            " بعد WebSocket",
+          );
+        } catch (e) {
+          print(
+            "❌ خطأ في تحديث أرصدة اليومية: $e",
+          );
+        }
+      },
+    );
+  }
 
   // ============================================================
   // 7. تحديث التكويد
@@ -665,69 +850,46 @@ void _scheduleDailySummaryRefresh({
     Map<String, dynamic> payload,
     String action,
   ) {
-    final dynamic companyCode =
-        payload['company_code'];
+    final dynamic companyCode = payload['company_code'];
 
+    final dynamic category = payload['category'];
 
-    final dynamic category =
-        payload['category'];
+    final dynamic code = payload['code'];
 
-
-    final dynamic code =
-        payload['code'];
-
-
-    if (companyCode == null ||
-        category == null ||
-        code == null) {
+    if (companyCode == null || category == null || code == null) {
       print(
         "⚠️ بيانات تكويد ناقصة",
       );
       return;
     }
 
+    final String key = "${companyCode}_$category";
 
-    final String key =
-        "${companyCode}_$category";
-
-
-    List<Map<String, dynamic>>
-        list = [];
-
+    List<Map<String, dynamic>> list = [];
 
     if (_codingBox.containsKey(key)) {
-      final raw =
-          _codingBox.get(key);
-
+      final raw = _codingBox.get(key);
 
       if (raw is List) {
         list = raw
             .whereType<Map>()
             .map(
-              (e) =>
-                  Map<String, dynamic>
-                      .from(e),
+              (e) => Map<String, dynamic>.from(e),
             )
             .where(
-              (e) =>
-                  e['is_deleted'] !=
-                  true,
+              (e) => e['is_deleted'] != true,
             )
             .toList();
       }
     }
-
 
     // ----------------------------------------------------------
     // إزالة النسخة القديمة
     // ----------------------------------------------------------
 
     list.removeWhere(
-      (item) =>
-          item['code']?.toString() ==
-          code.toString(),
+      (item) => item['code']?.toString() == code.toString(),
     );
-
 
     // ----------------------------------------------------------
     // DELETE
@@ -747,7 +909,6 @@ void _scheduleDailySummaryRefresh({
         );
       }
 
-
       print(
         "🗑️ تم حذف التكويد "
         "[$category/$code] من Hive",
@@ -756,44 +917,33 @@ void _scheduleDailySummaryRefresh({
       return;
     }
 
-
     // ----------------------------------------------------------
     // INSERT / UPDATE
     // ----------------------------------------------------------
 
-    payload['is_deleted'] =
-        false;
-
+    payload['is_deleted'] = false;
 
     list.add(
       payload,
     );
 
-
     list.sort(
       (a, b) {
-        final int aCode =
-            int.tryParse(
-                  a['code']?.toString() ??
-                      '0',
-                ) ??
-                0;
+        final int aCode = int.tryParse(
+              a['code']?.toString() ?? '0',
+            ) ??
+            0;
 
-
-        final int bCode =
-            int.tryParse(
-                  b['code']?.toString() ??
-                      '0',
-                ) ??
-                0;
-
+        final int bCode = int.tryParse(
+              b['code']?.toString() ?? '0',
+            ) ??
+            0;
 
         return aCode.compareTo(
           bCode,
         );
       },
     );
-
 
     unawaited(
       _codingBox.put(
@@ -802,13 +952,11 @@ void _scheduleDailySummaryRefresh({
       ),
     );
 
-
     print(
       "✅ تم تحديث التكويد "
       "[$category/$code]",
     );
   }
-
 
   // ============================================================
   // 8. تحديث الجرد
@@ -821,317 +969,295 @@ void _scheduleDailySummaryRefresh({
     Map<String, dynamic> payload,
     String action,
   ) async {
-    final String? docId =
-        payload['doc_id']?.toString();
+    return CachePartitions.run(() async {
+      final String? docId = payload['doc_id']?.toString();
 
-    if (docId == null ||
-        docId.isEmpty) {
-      print(
-        "⚠️ لا يوجد doc_id في رسالة الجرد",
+      if (docId == null || docId.isEmpty) {
+        print(
+          "⚠️ لا يوجد doc_id في رسالة الجرد",
+        );
+        return;
+      }
+
+      // ========================================================
+      // الخطوة 1: حذف doc_id من جميع المفاتيح
+      // ========================================================
+
+      final keys = _inventoryBox.keys.toList();
+
+      for (final oldKey in keys) {
+        final raw = _inventoryBox.get(oldKey);
+
+        if (raw is! List) {
+          continue;
+        }
+
+        final List<Map<String, dynamic>> updatedList = [];
+        bool found = false;
+
+        for (final value in raw) {
+          if (value is! Map) {
+            continue;
+          }
+
+          final map = Map<String, dynamic>.from(value);
+
+          if (map.isEmpty) {
+            continue;
+          }
+
+          if (map['doc_id']?.toString() == docId) {
+            found = true;
+            continue;
+          }
+
+          if (map['is_deleted'] == true) {
+            continue;
+          }
+
+          updatedList.add(map);
+        }
+
+        if (!found) {
+          continue;
+        }
+
+        if (updatedList.isEmpty) {
+          await _inventoryBox.delete(oldKey);
+        } else {
+          await _inventoryBox.put(oldKey, updatedList);
+        }
+      }
+
+      // ========================================================
+      // الخطوة 2: لو حذف، توقف هنا
+      // ========================================================
+
+      if (action == 'delete' || payload['is_deleted'] == true) {
+        print(
+          "🗑️ تم حذف الجرد [$docId] من Hive",
+        );
+
+        return;
+      }
+
+      // ========================================================
+      // الخطوة 3: إضافة في المفتاح الجديد
+      // ========================================================
+
+      final String companyCode = payload['company_code']?.toString() ?? '';
+      final String branchCode = payload['branch_code']?.toString() ?? '';
+      final String storeCode = payload['store_code']?.toString() ?? '';
+      final String date = payload['date']?.toString() ?? '';
+
+      if (companyCode.isEmpty ||
+          branchCode.isEmpty ||
+          storeCode.isEmpty ||
+          date.isEmpty) {
+        print(
+          "⚠️ بيانات المفتاح ناقصة للجرد [$docId]",
+        );
+        return;
+      }
+
+      final String newKey = "${companyCode}_${branchCode}_${storeCode}_$date";
+
+      List<Map<String, dynamic>> list = [];
+
+      final raw = _inventoryBox.get(newKey);
+
+      if (raw is List) {
+        list = raw
+            .whereType<Map>()
+            .map(
+              (e) => Map<String, dynamic>.from(e),
+            )
+            .where(
+              (e) => e['is_deleted'] != true,
+            )
+            .toList();
+      }
+
+      // منع التكرار (مرة أخرى للتأكيد)
+      list.removeWhere(
+        (item) => item['doc_id']?.toString() == docId,
       );
-      return;
-    }
 
-    // ========================================================
-    // الخطوة 1: حذف doc_id من جميع المفاتيح
-    // ========================================================
+      payload['is_deleted'] = false;
 
-    final keys = _inventoryBox.keys.toList();
-
-    for (final oldKey in keys) {
-      final raw = _inventoryBox.get(oldKey);
-
-      if (raw is! List) {
-        continue;
-      }
-
-      final List<Map<String, dynamic>> updatedList = [];
-      bool found = false;
-
-      for (final value in raw) {
-        if (value is! Map) {
-          continue;
-        }
-
-        final map = Map<String, dynamic>.from(value);
-
-        if (map.isEmpty) {
-          continue;
-        }
-
-        if (map['doc_id']?.toString() == docId) {
-          found = true;
-          continue;
-        }
-
-        if (map['is_deleted'] == true) {
-          continue;
-        }
-
-        updatedList.add(map);
-      }
-
-      if (!found) {
-        continue;
-      }
-
-      if (updatedList.isEmpty) {
-        await _inventoryBox.delete(oldKey);
-      } else {
-        await _inventoryBox.put(oldKey, updatedList);
-      }
-    }
-
-    // ========================================================
-    // الخطوة 2: لو حذف، توقف هنا
-    // ========================================================
-
-    if (action == 'delete' ||
-        payload['is_deleted'] == true) {
-      print(
-        "🗑️ تم حذف الجرد [$docId] من Hive",
+      list.add(
+        Map<String, dynamic>.from(payload),
       );
 
-      return;
-    }
+      await _inventoryBox.put(newKey, list);
 
-    // ========================================================
-    // الخطوة 3: إضافة في المفتاح الجديد
-    // ========================================================
-
-    final String companyCode =
-        payload['company_code']?.toString() ?? '';
-    final String branchCode =
-        payload['branch_code']?.toString() ?? '';
-    final String storeCode =
-        payload['store_code']?.toString() ?? '';
-    final String date =
-        payload['date']?.toString() ?? '';
-
-    if (companyCode.isEmpty ||
-        branchCode.isEmpty ||
-        storeCode.isEmpty ||
-        date.isEmpty) {
       print(
-        "⚠️ بيانات المفتاح ناقصة للجرد [$docId]",
+        "✅ تم تحديث الجرد [$docId] في Hive",
       );
-      return;
-    }
-
-    final String newKey =
-        "${companyCode}_${branchCode}_${storeCode}_$date";
-
-    List<Map<String, dynamic>> list = [];
-
-    final raw = _inventoryBox.get(newKey);
-
-    if (raw is List) {
-      list = raw
-          .whereType<Map>()
-          .map(
-            (e) => Map<String, dynamic>.from(e),
-          )
-          .where(
-            (e) => e['is_deleted'] != true,
-          )
-          .toList();
-    }
-
-    // منع التكرار (مرة أخرى للتأكيد)
-    list.removeWhere(
-      (item) =>
-          item['doc_id']?.toString() == docId,
-    );
-
-    payload['is_deleted'] = false;
-
-    list.add(
-      Map<String, dynamic>.from(payload),
-    );
-
-    await _inventoryBox.put(newKey, list);
-
-    print(
-      "✅ تم تحديث الجرد [$docId] في Hive",
-    );
+    });
   }
-
 
   // ============================================================
   // 9. تحديث الموردين
   // ============================================================
 
   Future<void> _updateSupplierBox(
-  Map<String, dynamic> payload,
-  String action,
-) async {
-  final String? docId =
-      payload['doc_id']?.toString();
+    Map<String, dynamic> payload,
+    String action,
+  ) async {
+    return CachePartitions.run(() async {
+      final String? docId = payload['doc_id']?.toString();
 
-  if (docId == null || docId.isEmpty) {
-    print(
-      '⚠️ لا يوجد doc_id في رسالة المورد',
-    );
-    return;
-  }
-
-  // ============================================================
-  // 1. حذف النسخة القديمة من جميع مفاتيح supplier_box
-  // ============================================================
-
-  final keys =
-      _supplierBox.keys.toList();
-
-  for (final oldKey in keys) {
-    final raw =
-        _supplierBox.get(oldKey);
-
-    if (raw is! List) {
-      continue;
-    }
-
-    final List<Map<String, dynamic>> updatedList = [];
-
-    bool found = false;
-
-    for (final value in raw) {
-      if (value is! Map) {
-        continue;
+      if (docId == null || docId.isEmpty) {
+        print(
+          '⚠️ لا يوجد doc_id في رسالة المورد',
+        );
+        return;
       }
 
-      final map =
-          Map<String, dynamic>.from(
-        value.map(
-          (k, v) => MapEntry(
-            k.toString(),
-            v,
-          ),
-        ),
-      );
+      // ============================================================
+      // 1. حذف النسخة القديمة من جميع مفاتيح supplier_box
+      // ============================================================
 
-      if (map['doc_id']?.toString() == docId) {
-        found = true;
-        continue;
-      }
+      final keys = _supplierBox.keys.toList();
 
-      if (map['is_deleted'] == true) {
-        continue;
-      }
+      for (final oldKey in keys) {
+        final raw = _supplierBox.get(oldKey);
 
-      updatedList.add(map);
-    }
+        if (raw is! List) {
+          continue;
+        }
 
-    if (!found) {
-      continue;
-    }
+        final List<Map<String, dynamic>> updatedList = [];
 
-    if (updatedList.isEmpty) {
-      await _supplierBox.delete(oldKey);
-    } else {
-      await _supplierBox.put(
-        oldKey,
-        updatedList,
-      );
-    }
-  }
+        bool found = false;
 
-  // ============================================================
-  // 2. لو حذف → خلاص
-  // ============================================================
+        for (final value in raw) {
+          if (value is! Map) {
+            continue;
+          }
 
-  if (action == 'delete' ||
-      payload['is_deleted'] == true) {
-    print(
-      '🗑️ تم حذف فاتورة المورد [$docId] من Hive',
-    );
-
-    return;
-  }
-
-  // ============================================================
-  // 3. تجهيز المفتاح الجديد
-  // ============================================================
-
-  final String companyCode =
-      payload['company_code']?.toString() ?? '';
-
-  final String branchCode =
-      payload['branch_code']?.toString() ?? '';
-
-  final String date =
-      payload['date']?.toString() ?? '';
-
-  if (companyCode.isEmpty ||
-      branchCode.isEmpty ||
-      date.isEmpty) {
-    print(
-      '⚠️ بيانات المفتاح ناقصة للمورد [$docId]',
-    );
-    return;
-  }
-
-  final String newKey =
-      '${companyCode}_${branchCode}_$date';
-
-  // ============================================================
-  // 4. قراءة البيانات الموجودة في المفتاح الجديد
-  // ============================================================
-
-  List<Map<String, dynamic>> list = [];
-
-  final raw =
-      _supplierBox.get(newKey);
-
-  if (raw is List) {
-    list = raw
-        .whereType<Map>()
-        .map(
-          (e) => Map<String, dynamic>.from(
-            e.map(
+          final map = Map<String, dynamic>.from(
+            value.map(
               (k, v) => MapEntry(
                 k.toString(),
                 v,
               ),
             ),
-          ),
-        )
-        .where(
-          (e) =>
-              e.isNotEmpty &&
-              e['is_deleted'] != true,
-        )
-        .toList();
+          );
+
+          if (map['doc_id']?.toString() == docId) {
+            found = true;
+            continue;
+          }
+
+          if (map['is_deleted'] == true) {
+            continue;
+          }
+
+          updatedList.add(map);
+        }
+
+        if (!found) {
+          continue;
+        }
+
+        if (updatedList.isEmpty) {
+          await _supplierBox.delete(oldKey);
+        } else {
+          await _supplierBox.put(
+            oldKey,
+            updatedList,
+          );
+        }
+      }
+
+      // ============================================================
+      // 2. لو حذف → خلاص
+      // ============================================================
+
+      if (action == 'delete' || payload['is_deleted'] == true) {
+        print(
+          '🗑️ تم حذف فاتورة المورد [$docId] من Hive',
+        );
+
+        return;
+      }
+
+      // ============================================================
+      // 3. تجهيز المفتاح الجديد
+      // ============================================================
+
+      final String companyCode = payload['company_code']?.toString() ?? '';
+
+      final String branchCode = payload['branch_code']?.toString() ?? '';
+
+      final String date = payload['date']?.toString() ?? '';
+
+      if (companyCode.isEmpty || branchCode.isEmpty || date.isEmpty) {
+        print(
+          '⚠️ بيانات المفتاح ناقصة للمورد [$docId]',
+        );
+        return;
+      }
+
+      final String newKey = '${companyCode}_${branchCode}_$date';
+
+      // ============================================================
+      // 4. قراءة البيانات الموجودة في المفتاح الجديد
+      // ============================================================
+
+      List<Map<String, dynamic>> list = [];
+
+      final raw = _supplierBox.get(newKey);
+
+      if (raw is List) {
+        list = raw
+            .whereType<Map>()
+            .map(
+              (e) => Map<String, dynamic>.from(
+                e.map(
+                  (k, v) => MapEntry(
+                    k.toString(),
+                    v,
+                  ),
+                ),
+              ),
+            )
+            .where(
+              (e) => e.isNotEmpty && e['is_deleted'] != true,
+            )
+            .toList();
+      }
+
+      // ============================================================
+      // 5. منع التكرار
+      // ============================================================
+
+      list.removeWhere(
+        (item) => item['doc_id']?.toString() == docId,
+      );
+
+      // ============================================================
+      // 6. إضافة النسخة الجديدة
+      // ============================================================
+
+      payload['is_deleted'] = false;
+
+      list.add(
+        Map<String, dynamic>.from(payload),
+      );
+
+      await _supplierBox.put(
+        newKey,
+        list,
+      );
+
+      print(
+        '✅ تم تحديث فاتورة المورد [$docId] من المزامنة',
+      );
+    });
   }
-
-  // ============================================================
-  // 5. منع التكرار
-  // ============================================================
-
-  list.removeWhere(
-    (item) =>
-        item['doc_id']?.toString() == docId,
-  );
-
-  // ============================================================
-  // 6. إضافة النسخة الجديدة
-  // ============================================================
-
-  payload['is_deleted'] = false;
-
-  list.add(
-    Map<String, dynamic>.from(payload),
-  );
-
-  await _supplierBox.put(
-    newKey,
-    list,
-  );
-
-  print(
-    '✅ تم تحديث فاتورة المورد [$docId] من المزامنة',
-  );
-}
-
 
   // ============================================================
   // 10. تحديث التسويات
@@ -1144,139 +1270,131 @@ void _scheduleDailySummaryRefresh({
     Map<String, dynamic> payload,
     String action,
   ) async {
-    final String? docId =
-        payload['doc_id']?.toString();
+    return CachePartitions.run(() async {
+      final String? docId = payload['doc_id']?.toString();
 
-    if (docId == null ||
-        docId.isEmpty) {
-      print(
-        "⚠️ لا يوجد doc_id في رسالة التسوية",
+      if (docId == null || docId.isEmpty) {
+        print(
+          "⚠️ لا يوجد doc_id في رسالة التسوية",
+        );
+        return;
+      }
+
+      // ========================================================
+      // الخطوة 1: حذف doc_id من جميع المفاتيح
+      // ========================================================
+
+      final keys = _settlementBox.keys.toList();
+
+      for (final oldKey in keys) {
+        final raw = _settlementBox.get(oldKey);
+
+        if (raw is! List) {
+          continue;
+        }
+
+        final List<Map<String, dynamic>> updatedList = [];
+        bool found = false;
+
+        for (final value in raw) {
+          if (value is! Map) {
+            continue;
+          }
+
+          final map = Map<String, dynamic>.from(value);
+
+          if (map.isEmpty) {
+            continue;
+          }
+
+          if (map['doc_id']?.toString() == docId) {
+            found = true;
+            continue;
+          }
+
+          if (map['is_deleted'] == true) {
+            continue;
+          }
+
+          updatedList.add(map);
+        }
+
+        if (!found) {
+          continue;
+        }
+
+        if (updatedList.isEmpty) {
+          await _settlementBox.delete(oldKey);
+        } else {
+          await _settlementBox.put(oldKey, updatedList);
+        }
+      }
+
+      // ========================================================
+      // الخطوة 2: لو حذف، توقف هنا
+      // ========================================================
+
+      if (action == 'delete' || payload['is_deleted'] == true) {
+        print(
+          "🗑️ تم حذف التسوية [$docId] من Hive",
+        );
+
+        return;
+      }
+
+      // ========================================================
+      // الخطوة 3: إضافة في المفتاح الجديد
+      // ========================================================
+
+      final String companyCode = payload['company_code']?.toString() ?? '';
+      final String branchCode = payload['branch_code']?.toString() ?? '';
+      final String date = payload['date']?.toString() ?? '';
+
+      if (companyCode.isEmpty || branchCode.isEmpty || date.isEmpty) {
+        print(
+          "⚠️ بيانات المفتاح ناقصة للتسوية [$docId]",
+        );
+        return;
+      }
+
+      final String newKey = "${companyCode}_${branchCode}_$date";
+
+      List<Map<String, dynamic>> list = [];
+
+      final raw = _settlementBox.get(newKey);
+
+      if (raw is List) {
+        list = raw
+            .whereType<Map>()
+            .map(
+              (e) => Map<String, dynamic>.from(e),
+            )
+            .where(
+              (e) => e['is_deleted'] != true,
+            )
+            .toList();
+      }
+
+      // منع التكرار (مرة أخرى للتأكيد)
+      list.removeWhere(
+        (item) => item['doc_id']?.toString() == docId,
       );
-      return;
-    }
 
-    // ========================================================
-    // الخطوة 1: حذف doc_id من جميع المفاتيح
-    // ========================================================
+      payload['is_deleted'] = false;
 
-    final keys = _settlementBox.keys.toList();
-
-    for (final oldKey in keys) {
-      final raw = _settlementBox.get(oldKey);
-
-      if (raw is! List) {
-        continue;
-      }
-
-      final List<Map<String, dynamic>> updatedList = [];
-      bool found = false;
-
-      for (final value in raw) {
-        if (value is! Map) {
-          continue;
-        }
-
-        final map = Map<String, dynamic>.from(value);
-
-        if (map.isEmpty) {
-          continue;
-        }
-
-        if (map['doc_id']?.toString() == docId) {
-          found = true;
-          continue;
-        }
-
-        if (map['is_deleted'] == true) {
-          continue;
-        }
-
-        updatedList.add(map);
-      }
-
-      if (!found) {
-        continue;
-      }
-
-      if (updatedList.isEmpty) {
-        await _settlementBox.delete(oldKey);
-      } else {
-        await _settlementBox.put(oldKey, updatedList);
-      }
-    }
-
-    // ========================================================
-    // الخطوة 2: لو حذف، توقف هنا
-    // ========================================================
-
-    if (action == 'delete' ||
-        payload['is_deleted'] == true) {
-      print(
-        "🗑️ تم حذف التسوية [$docId] من Hive",
+      list.add(
+        Map<String, dynamic>.from(payload),
       );
 
-      return;
-    }
+      await _settlementBox.put(newKey, list);
 
-    // ========================================================
-    // الخطوة 3: إضافة في المفتاح الجديد
-    // ========================================================
-
-    final String companyCode =
-        payload['company_code']?.toString() ?? '';
-    final String branchCode =
-        payload['branch_code']?.toString() ?? '';
-    final String date =
-        payload['date']?.toString() ?? '';
-
-    if (companyCode.isEmpty ||
-        branchCode.isEmpty ||
-        date.isEmpty) {
       print(
-        "⚠️ بيانات المفتاح ناقصة للتسوية [$docId]",
+        "✅ تم تحديث التسوية [$docId] في Hive",
       );
-      return;
-    }
-
-    final String newKey =
-        "${companyCode}_${branchCode}_$date";
-
-    List<Map<String, dynamic>> list = [];
-
-    final raw = _settlementBox.get(newKey);
-
-    if (raw is List) {
-      list = raw
-          .whereType<Map>()
-          .map(
-            (e) => Map<String, dynamic>.from(e),
-          )
-          .where(
-            (e) => e['is_deleted'] != true,
-          )
-          .toList();
-    }
-
-    // منع التكرار (مرة أخرى للتأكيد)
-    list.removeWhere(
-      (item) =>
-          item['doc_id']?.toString() == docId,
-    );
-
-    payload['is_deleted'] = false;
-
-    list.add(
-      Map<String, dynamic>.from(payload),
-    );
-
-    await _settlementBox.put(newKey, list);
-
-    print(
-      "✅ تم تحديث التسوية [$docId] في Hive",
-    );
+    });
   }
 
-    // ============================================================
+  // ============================================================
   // 11. تحديث الموظفين
   //
   // الموظفين بيخزنوا في نفس coding_box بمفتاح
@@ -1342,7 +1460,7 @@ void _scheduleDailySummaryRefresh({
 
     print("✅ تم تحديث الموظف [$code]");
   }
-    // ============================================================
+  // ============================================================
   // 11. تحديث حضور HR
   // ============================================================
 
@@ -1494,7 +1612,7 @@ void _scheduleDailySummaryRefresh({
     unawaited(_codingBox.put(key, list));
     print("✅ تحديث تسوية HR [$id]");
   }
-  
+
   // ============================================================
   // 14. تحديث إعدادات HR (جديد)
   //
@@ -1552,5 +1670,4 @@ void _scheduleDailySummaryRefresh({
 
     print("✅ تحديث إعدادات HR [$empCode]");
   }
-  
 }

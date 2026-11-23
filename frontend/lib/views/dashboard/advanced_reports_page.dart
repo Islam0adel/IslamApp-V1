@@ -1,3 +1,6 @@
+import '../../services/cache_partitions.dart';
+import 'dart:async';
+import '../../services/treasury_transfer_service.dart';
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
 import 'package:intl/intl.dart';
@@ -50,6 +53,7 @@ class _AdvancedReportsPageState extends State<AdvancedReportsPage> {
   List<Map<String, dynamic>> _rows = [];
   Map<String, dynamic> _summary = {};
   bool _loading = true;
+  StreamSubscription<BoxEvent>? _treasuryEffectsSubscription;
 
   // متغيرات التاريخ القابلة للتغيير
   late DateTime _fromDate;
@@ -62,12 +66,14 @@ class _AdvancedReportsPageState extends State<AdvancedReportsPage> {
   // ============================================================
 
   Future<String> _getCompanyName() async {
+return CachePartitions.run(() async {
+
     try {
       final prefs = await SharedPreferences.getInstance();
       final name = prefs.getString('company_name');
       if (name != null && name.isNotEmpty) return name;
     } catch (_) {}
-    final Box codingBox = Hive.box('coding_box');
+    final Box codingBox = CachePartitions.box('coding_box');
     final companyData = codingBox.get("${widget.companyCode}_company");
     if (companyData is Map) {
       final name = companyData['name']?.toString() ??
@@ -79,11 +85,12 @@ class _AdvancedReportsPageState extends State<AdvancedReportsPage> {
         codingBox.get("${widget.companyCode}_companyName")?.toString();
     if (directName != null && directName.isNotEmpty) return directName;
     return widget.companyCode;
-  }
+});
+}
 
   String _getBranchName(String? code) {
     if (code == null || code == 'all' || code.isEmpty) return 'كل الفروع';
-    final Box codingBox = Hive.box('coding_box');
+    final Box codingBox = CachePartitions.box('coding_box');
     final rawData = codingBox.get("${widget.companyCode}_branches", defaultValue: []);
     for (var item in rawData) {
       if (item['code']?.toString() == code) return item['name']?.toString() ?? code;
@@ -115,7 +122,7 @@ String _formatPercent(num value) {
   double _num(dynamic v) => v is num ? v.toDouble() : double.tryParse(v?.toString() ?? '0') ?? 0;
 
   List<Map<String, dynamic>> _transactions({DateTime? before}) {
-    final box = Hive.box('daily_transactions_box');
+    final box = CachePartitions.box('daily_transactions_box');
     final from = DateTime(_fromDate.year, _fromDate.month, _fromDate.day);
     final to = DateTime(_toDate.year, _toDate.month, _toDate.day);
     final result = <Map<String, dynamic>>[];
@@ -137,7 +144,7 @@ String _formatPercent(num value) {
   }
 
   List<Map<String, dynamic>> _purchases() {
-    final box = Hive.box('supplier_box');
+    final box = CachePartitions.box('supplier_box');
     final from = DateTime(_fromDate.year, _fromDate.month, _fromDate.day);
     final to = DateTime(_toDate.year, _toDate.month, _toDate.day);
     final result = <Map<String, dynamic>>[];
@@ -155,7 +162,7 @@ String _formatPercent(num value) {
   }
 
   List<Map<String, dynamic>> _inventoryItems() {
-    final box = Hive.box('inventory_box');
+    final box = CachePartitions.box('inventory_box');
     final latest = <String, Map<String, dynamic>>{};
     DateTime? latestDate;
     for (final rawList in box.values) {
@@ -187,7 +194,9 @@ String _formatPercent(num value) {
 //  + المرتجعات + الأسعار التاريخية)
 // ============================================================
 Future<double> _inventoryValueAt(DateTime date) async {
-  final codingBox = Hive.box('coding_box');
+return CachePartitions.run(() async {
+
+  final codingBox = CachePartitions.box('coding_box');
 
   // 1) جلب كل المخازن
   final rawStores = codingBox.get(
@@ -237,15 +246,19 @@ Future<double> _inventoryValueAt(DateTime date) async {
   }
 
   return total;
+
+});
 }
 
 // ============================================================
 // حساب إجمالي أرصدة الموردين في تاريخ محدد
 // ============================================================
 Future<double> _supplierBalanceAt(DateTime date) async {
+return CachePartitions.run(() async {
+
   double total = 0.0;
-  final purchases = Hive.box('supplier_box');
-  final settlements = Hive.box('supplier_settlement_box');
+  final purchases = CachePartitions.box('supplier_box');
+  final settlements = CachePartitions.box('supplier_settlement_box');
 
   // المشتريات
   for (final rawList in purchases.values) {
@@ -274,17 +287,19 @@ Future<double> _supplierBalanceAt(DateTime date) async {
   }
 
   return total;
+
+});
 }
 
   List<Map<String, dynamic>> _codingItems() {
-    final box = Hive.box('coding_box');
+    final box = CachePartitions.box('coding_box');
     final raw = box.get('${widget.companyCode}_items', defaultValue: []);
     if (raw is! List) return [];
     return raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
   }
 
   List<Map<String, dynamic>> _supplierRows() {
-    final box = Hive.box('supplier_box');
+    final box = CachePartitions.box('supplier_box');
     final sums = <String, double>{};
     for (final rawList in box.values) {
       if (rawList is! List) continue;
@@ -297,7 +312,7 @@ Future<double> _supplierBalanceAt(DateTime date) async {
         sums[name] = (sums[name] ?? 0) + _num(raw['total_amount']);
       }
     }
-    final settlementBox = Hive.box('supplier_settlement_box');
+    final settlementBox = CachePartitions.box('supplier_settlement_box');
     for (final rawList in settlementBox.values) {
       if (rawList is! List) continue;
       for (final raw in rawList) {
@@ -321,7 +336,26 @@ Future<double> _supplierBalanceAt(DateTime date) async {
   // بناء التقرير
   // ============================================================
 
+  // تقارير تعتمد أرقامها على بيانات التكلفة: لا تُحسب إطلاقاً
+  // لمن لا يملك الحق — القيم المحلية مخفية عنه، وأي حساب عليها
+  // كان سيُنتج أصفاراً توحي بأرقام حقيقية خاطئة.
+  static const Set<int> _costDerivedReportIds = {6, 8, 9, 10, 12, 15};
+
   Future<void> _buildReport() async {
+return CachePartitions.run(() async {
+
+    if (_costDerivedReportIds.contains(widget.reportId) &&
+        !PermissionsService().canViewCostPrices) {
+      setState(() {
+        _rows = [];
+        _summary = {
+          'غير متاح':
+              'هذا التقرير يعتمد على بيانات التكلفة ولا يظهر لصلاحيتك',
+        };
+        _loading = false;
+      });
+      return;
+    }
     final tx = _transactions();
     final rows = <Map<String, dynamic>>[];
     Map<String, dynamic> summary = {};
@@ -415,6 +449,11 @@ Future<double> _supplierBalanceAt(DateTime date) async {
         for (final t in tx) {
           final s = t['treasury']?.toString() ?? 'غير محدد';
           safes[s] = (safes[s] ?? 0) + (t['type'] == 'وارد' ? 1 : -1) * _num(t['amount']);
+        }
+        final effects = TreasuryTransferService().balanceEffects(widget.companyCode,
+            branchCode: widget.selectedBranchCode, fromDate: _fromDate, toDate: _toDate);
+        for (final entry in effects.entries) {
+          safes[entry.key] = (safes[entry.key] ?? 0) + entry.value;
         }
         rows.addAll(safes.entries.map<Map<String, dynamic>>((e) => {'الخزينة': e.key, 'الرصيد': e.value}));
         summary = {'إجمالي أرصدة الخزائن': safes.values.fold(0.0, (s, v) => s + v)};
@@ -700,7 +739,8 @@ Future<double> _supplierBalanceAt(DateTime date) async {
 
     _rows = rows;
     _summary = summary;
-  }
+});
+}
 
   // ============================================================
   // دورة الحياة
@@ -711,12 +751,22 @@ Future<double> _supplierBalanceAt(DateTime date) async {
     super.initState();
     _fromDate = widget.fromDate;
     _toDate = widget.toDate;
-    _buildReport(); // ← غيّرها إلى:
+    if (widget.reportId == 5 && CachePartitions.isBoxOpen(TreasuryTransferService.effectsBox)) {
+      _treasuryEffectsSubscription = CachePartitions.box(TreasuryTransferService.effectsBox).watch().listen((_) {
+        if (mounted) _buildReport().then((_) {if (mounted) setState(() {});});
+      });
+    }
   // _buildReport().then((_) { if (mounted) setState(() { _loading = false; }); });
   _buildReport().then((_) {
     if (mounted) setState(() => _loading = false);
   });
-   
+
+  }
+
+  @override
+  void dispose() {
+    _treasuryEffectsSubscription?.cancel();
+    super.dispose();
   }
 
   // ============================================================
@@ -724,6 +774,8 @@ Future<double> _supplierBalanceAt(DateTime date) async {
   // ============================================================
 
   Future<void> _selectDate(BuildContext context, bool isFrom) async {
+return CachePartitions.run(() async {
+
     final picked = await showDatePicker(
       context: context,
       initialDate: isFrom ? _fromDate : _toDate,
@@ -755,7 +807,8 @@ Future<double> _supplierBalanceAt(DateTime date) async {
 await _buildReport();
 if (mounted) setState(() {});
     }
-  }
+});
+}
 
   Widget _dateButton(String label, DateTime date, VoidCallback onTap) {
     return InkWell(
@@ -784,6 +837,8 @@ if (mounted) setState(() {});
   // ============================================================
 
   Future<void> _exportExcel() async {
+return CachePartitions.run(() async {
+
   final companyName = await _getCompanyName();
   final branchName = _getBranchName(widget.selectedBranchCode);
   final period = 'من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}';
@@ -831,9 +886,13 @@ if (mounted) setState(() {});
     period: period,
     summary: formattedSummary,
   );
+
+});
 }
 
   Future<void> _exportPdf() async {
+return CachePartitions.run(() async {
+
     final companyName = await _getCompanyName();
     final branchName = _getBranchName(widget.selectedBranchCode);
     final period = 'من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}';
@@ -883,7 +942,8 @@ if (mounted) setState(() {});
       period: period,
       summary: formattedSummary,
     );
-  }
+});
+}
 
   // ============================================================
   // بناء الواجهة

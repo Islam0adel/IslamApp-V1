@@ -1,13 +1,15 @@
 # backend/app/routes/auth.py
 import os
+import asyncio
 import re
 import time
 import uuid
+from functools import partial
 from datetime import datetime
 from typing import Dict
 
 from fastapi import APIRouter, HTTPException, Header, Body, Query, Depends, Request
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, StrictInt, StrictStr, StrictBool
 from app.core.firebase_setup import db, get_realtime_database  # Firestore + RTDB Admin
 from google.cloud import firestore
 from firebase_admin import auth as admin_auth
@@ -15,9 +17,101 @@ from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.database import get_db, AsyncSessionLocal
-from app.core.models import Company, Employee, Notification, AuditLog, Branch, CodingRecord
+from app.core.models import Company, CompanyPermissionPolicy, Employee, Notification, AuditLog, Branch, CodingRecord
 from app.core.schemas import CompanyModel
 from app.core.fcm_service import send_push_to_user_bg
+from app.core.sync import manager as sync_manager
+from app.core.auth_middleware import invalidate_profile_cache
+from app.core.notification_events import invalidate_company_recipients, current_push_allowed
+from app.core.permission_directory import read_permission_targets
+from app.core.account_editor import read_account_editor, write_account_editor
+from app.core.account_management import read_management_directory, read_requests
+from app.core.account_lifecycle import reject_request, destructive_account
+from app.core.registration_hr import require_hr_owner, link_registration_employee
+from app.core.invitations import create_invitation
+from app.core.company_policy_review import review_context, activate_review, require_root
+from app.core.invitation_binding import bind_invitation, verify_invited_account, cancel_invited_account
+from app.core.permission_editor import read_permission_editor, write_permission_editor, write_legacy_editor_status, finish_mutation
+from app.core.startup_branch import validate_startup_branch
+from app.core.permission_policy import validate_permission_map
+from app.core.company_policy_store import (
+    read_policy, save_policy_draft, PolicyConflict, UnknownPolicyCompany, load_effective_policy_profile,
+)
+
+
+async def _notify_user_directory_changed(company_code: str) -> None:
+    try:
+        await sync_manager.notify_user_directory_changed(str(company_code))
+    except Exception as exc:
+        print(f'User-directory refresh hint unavailable: {exc}')
+
+
+async def _notify_company_changed(company_code: str) -> None:
+    """Hold local sockets immediately after a company mutation commits.
+
+    Control delivery does not carry business data or require another DB read.
+    Clients revalidate on the signal; disconnected clients reconcile at startup.
+    """
+    from app.core.auth_middleware import invalidate_company_cache
+    code = str(company_code)
+    invalidate_company_cache(code)
+    invalidate_company_recipients(code)
+    connections = list(sync_manager.active_connections.get(code, set()))
+    emails = {str(sync_manager.connection_profiles.get(ws, {}).get('email', '')).strip().lower()
+              for ws in connections}
+    for email in emails:
+        if email:
+            invalidate_profile_cache(email)
+            sync_manager.replace_user_profile(code, email, None)
+    await sync_manager.notify_company_directory_changed()
+    for email in emails:
+        if email:
+            try:
+                await sync_manager.send_to_user(code, email, {'type': 'permissions_changed',
+                    'data': {'email': email, 'resync': True}, 'suppress_notification': True})
+            except Exception as exc:
+                print(f'Company control delivery failed: {exc}')
+
+
+async def _notify_permissions_changed(company_code: str, email: str) -> None:
+    """إشعار فوري للجهاز صاحب الحساب بأن صلاحياته/حالته تغيرت.
+
+    العميل يستقبل permissions_changed فيعيد تحميل ملفه فوراً
+    (أو يقفل الشاشات عند الحظر). الإرسال موجّه لصاحب الحساب فقط.
+    """
+    invalidate_profile_cache(str(email))
+    invalidate_company_recipients(str(company_code))
+    # Block stale business deliveries before any await. A failed source read
+    # leaves the socket held until its ordinary fresh-profile check succeeds.
+    sync_manager.replace_user_profile(str(company_code), str(email), None)
+    try:
+        doc = db.collection("users").document(str(email).strip().lower()).get()
+        fresh = doc.to_dict() if doc.exists else None
+        if fresh is not None:
+            fresh['email'] = str(email).strip().lower()
+            async with AsyncSessionLocal() as session:
+                fresh = await load_effective_policy_profile(session, fresh, role=_effective_role(fresh))
+        sync_manager.replace_user_profile(str(company_code), str(email), fresh)
+    except Exception as exc:
+        print(f"⚠️ Socket authorization refresh failed: {exc}")
+    try:
+        await sync_manager.send_to_user(
+            str(company_code),
+            str(email),
+            {
+                "type": "permissions_changed",
+                "data": {
+                    "email": str(email).strip().lower(),
+                    # إلزام العميل بإعادة مزامنة كاملة: المنح قد توسّعت
+                    # (فروع/أقسام جديدة) والنسخ المحلية القديمة ناقصة
+                    "resync": True,
+                },
+                "suppress_notification": True,
+            },
+        )
+    except Exception as e:
+        print(f"⚠️ permissions_changed notify failed: {e}")
+    await _notify_user_directory_changed(company_code)
 
 router = APIRouter()
 
@@ -233,7 +327,7 @@ async def _auto_create_employee_if_needed(
         company_stmt = select(Company).where(
             Company.code == company_clean,
             Company.is_active.is_(True),
-        )
+        ).with_for_update()
         company_result = await db.execute(company_stmt)
         company = company_result.scalar_one_or_none()
 
@@ -301,6 +395,7 @@ async def _auto_create_employee_if_needed(
         existing = result.scalar_one_or_none()
 
         if existing:
+            require_hr_owner(existing, user_uid, email_clean)
             if user_uid and not existing.user_uid:
                 existing.user_uid = user_uid
                 existing.updated_at = datetime.utcnow()
@@ -327,6 +422,7 @@ async def _auto_create_employee_if_needed(
             existing_by_phone = result.scalar_one_or_none()
 
             if existing_by_phone:
+                require_hr_owner(existing_by_phone, user_uid, email_clean)
                 existing_by_phone.user_email = email_clean
                 existing_by_phone.user_uid = user_uid or ""
                 existing_by_phone.updated_at = datetime.utcnow()
@@ -376,6 +472,9 @@ async def _auto_create_employee_if_needed(
             "branch_code": final_branch_code,
         }
 
+    except HTTPException:
+        await db.rollback()
+        raise
     except Exception as e:
         print(f"❌ _auto_create_employee_if_needed: {e}")
         try:
@@ -444,6 +543,10 @@ def find_pending_user(phone: str = "", email: str = ""):
         except Exception:
             pass
 
+    if email:
+        matches=list(db.collection('users').where('invitation_email','==',email).limit(2).stream())
+        if len(matches)==1:return matches[0]
+        if len(matches)>1:raise HTTPException(status_code=409,detail='يوجد تعارض في بريد الدعوة. راجع الإدارة')
     return None
 
 def find_user_by_identifier(identifier: str):
@@ -576,9 +679,13 @@ class UserRegister(BaseModel):
 class PermissionsUpdateModel(BaseModel):
     email: str
     permissions: dict
-    allowed_branches: Optional[List[str]] = None
-    hr_viewable_employees: Optional[List[str]] = None
-    clear_hr_viewable_employees: bool = False
+    allowed_branches: Optional[List[StrictStr]] = None
+    hr_viewable_employees: Optional[List[StrictStr]] = None
+    clear_hr_viewable_employees: StrictBool = False
+    expected_target_uid: Optional[StrictStr] = None
+    expected_profile_version: Optional[StrictStr] = None
+    expected_policy_revision: Optional[StrictInt] = None
+    startup_branch_code: Optional[StrictStr] = None
 
 # ============================================================
 # ⭐ Models جديدة — Admin Add User / Phone Check / Complete Reg
@@ -705,6 +812,9 @@ async def notify_super_admins_of_registration_request(
                         "company_code": admin_company,
                         "title": title,
                         "body": body_text,
+                        "authorization_check": partial(current_push_allowed, user_uid=admin_uid,
+                            company_code=admin_company, recipient_email=admin_email_clean,
+                            section='registration_requests', action='add'),
                         "data": {
                             "type": "registration_request",
                             "section": "registration_requests",
@@ -838,204 +948,21 @@ async def request_registration(data: RegistrationRequestModel):
 # ==========================================
 # ⭐ 2.12. قائمة طلبات الانضمام (للأدمن)
 # ==========================================
-@router.get("/admin/registration-requests")
-async def list_registration_requests(
-    request: Request,
-    status: str = Query("pending"),  # pending | approved | rejected | all
-):
-    """قائمة طلبات الانضمام للشركة."""
+@router.get('/admin/registration-requests')
+async def list_registration_requests(request: Request,status: str=Query('pending'),session: AsyncSession=Depends(get_db)):
     try:
-        actor = getattr(request.state, "auth_user", {})
-        actor_role = _effective_role(actor)
-        actor_company = str(actor.get("company_code", ""))
-
-        if actor_role not in ("super_admin", "admin"):
-            raise HTTPException(status_code=403, detail="غير مصرح")
-
-        target_company = None if actor_role == "super_admin" else actor_company
-        if actor_role != "super_admin" and not target_company:
-            raise HTTPException(status_code=403, detail="الحساب غير مرتبط بشركة")
-
-        query = db.collection("registration_requests")
-        if target_company:
-            query = query.where("company_code", "==", target_company)
-        if status != "all":
-            query = query.where("status", "==", status)
-
-        results = []
-        for doc in query.stream():
-            rd = doc.to_dict() or {}
-            created_raw = rd.get("created_at")
-            created_str = None
-            try:
-                if created_raw is not None and hasattr(created_raw, "isoformat"):
-                    created_str = created_raw.isoformat()
-            except Exception:
-                pass
-
-            results.append({
-                "id": doc.id,
-                "name": rd.get("name", ""),
-                "phone_number": rd.get("phone_number", ""),
-                "email": rd.get("email", ""),
-                "company_code": rd.get("company_code", ""),
-                "company_name": rd.get("company_name", ""),
-                "branch_code": rd.get("branch_code", ""),
-                "note": rd.get("note", ""),
-                "status": rd.get("status", "pending"),
-                "created_at": created_str,
-            })
-
-        results.sort(key=lambda x: x.get("created_at") or "", reverse=True)
-        return results
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"⚠️ list_registration_requests error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return await read_requests(session,db,getattr(request.state,'auth_user',{}),status,_effective_role)
+    except HTTPException:raise
+    except Exception:raise HTTPException(status_code=503,detail='تعذر تحميل طلبات الانضمام الحالية')
 
 
 # ==========================================
 # ⭐ 2.13. الموافقة على طلب انضمام
 # ==========================================
 @router.post("/admin/registration-requests/{request_id}/approve")
-async def approve_registration_request(
-    request_id: str,
-    data: ApproveRequestModel,
-    request: Request,
-    session: AsyncSession = Depends(get_db),
-):
-    """
-    الموافقة على طلب:
-    - ينشئ سجل في users (status: pending)
-    - يحدّث الطلب لـ approved
-    """
-    try:
-        actor = getattr(request.state, "auth_user", {})
-        actor_role = _effective_role(actor)
-        actor_company = str(actor.get("company_code", ""))
-
-        if actor_role not in ("super_admin", "admin"):
-            raise HTTPException(status_code=403, detail="غير مصرح")
-
-        req_ref = db.collection("registration_requests").document(request_id)
-        req_doc = req_ref.get()
-        if not req_doc.exists:
-            raise HTTPException(status_code=404, detail="الطلب غير موجود")
-
-        rd = req_doc.to_dict() or {}
-        if rd.get("status") != "pending":
-            raise HTTPException(status_code=400, detail="الطلب تمت مراجعته بالفعل")
-
-        # ⭐ تحديد الشركة: من الطلب أولاً، أو من الـ payload
-        company_code = str(rd.get("company_code", "") or "").strip()
-        payload_company = (data.company_code or "").strip()
-        if not company_code:
-            company_code = payload_company
-
-        if not company_code:
-            raise HTTPException(
-                status_code=400,
-                detail="يجب تحديد الشركة (الطلب غير مرتبط بشركة)",
-            )
-
-        # Admin مسموح له فقط بشركته
-        if actor_role != "super_admin":
-            if company_code != actor_company:
-                raise HTTPException(status_code=403, detail="غير مسموح")
-            # لو الطلب مش مربوط بشركة، الـ admin العادي ميقدرش يوافق
-            if not str(rd.get("company_code", "") or "").strip():
-                raise HTTPException(
-                    status_code=403,
-                    detail="الطلب غير مرتبط بشركة — يجب أن يوافق عليه السوبر أدمن",
-                )
-
-        # تحقق من الدور
-        if actor_role == "admin" and data.role != "employee":
-            raise HTTPException(status_code=403, detail="غير مسموح بتعيين هذا الدور")
-        if data.role not in ("admin", "employee"):
-            raise HTTPException(status_code=400, detail="دور غير صالح")
-
-        # جيب الشركة
-        stmt = select(Company).where(Company.code == company_code)
-        result = await session.execute(stmt)
-        company = result.scalar_one_or_none()
-        if not company:
-            raise HTTPException(status_code=404, detail="الشركة غير موجودة")
-
-        phone = (rd.get("phone_number") or "").strip()
-        email = (rd.get("email") or "").strip().lower()
-        name = (rd.get("name") or "").strip()
-
-        if not phone and not email:
-            raise HTTPException(status_code=400, detail="الطلب بدون رقم أو إيميل")
-
-        # branch
-        bc = (data.branch_code or "").strip()
-        if bc in ("all", "", "الكل", "كل الفروع"):
-            final_branch = ""
-            final_allowed = ["all"]
-        else:
-            final_branch = bc
-            final_allowed = [bc]
-
-        # doc id
-        if phone:
-            doc_id = f"phone_{phone}"
-        else:
-            doc_id = email
-
-        # تحقق مفيش مستخدم بنفس doc_id
-        if db.collection("users").document(doc_id).get().exists:
-            raise HTTPException(status_code=400, detail="يوجد مستخدم بنفس الرقم/البريد")
-
-        job_code = ROLE_TO_JOB_CODE[data.role]
-        user_data = {
-            "phone_number": phone,
-            "name": name,
-            "company_code": company_code,
-            "company_name": company.name,
-            "branch_code": final_branch,
-            "role": data.role,
-            "job_code": job_code,
-            "job_title": ROLE_TITLES[data.role],
-            "email": email,
-            "uid": "",
-            "allowed_branches": final_allowed,
-            "is_active": True,
-            "permissions": _default_employee_permissions() if data.role == "employee" else {},
-            "status": "pending",
-            "email_verified": False,
-            "requires_email_verification": True,
-            "created_by_admin": str(actor.get("email", "")),
-            "created_at": firestore.SERVER_TIMESTAMP,
-            "from_registration_request": request_id,
-        }
-        db.collection("users").document(doc_id).set(user_data)
-
-        # حدّث الطلب
-        req_ref.update({
-            "status": "approved",
-            "company_code": company_code,      # ⭐ سجّل الشركة اللي اتاختارت
-            "company_name": company.name,
-            "reviewed_at": firestore.SERVER_TIMESTAMP,
-            "reviewed_by": str(actor.get("email", "")),
-            "user_doc_id": doc_id,
-        })
-
-        return {
-            "status": "success",
-            "message": f"تمت الموافقة على {name}. يمكنه إكمال التسجيل برقمه/بريده.",
-            "user_doc_id": doc_id,
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"⚠️ approve_registration_request error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
+async def approve_registration_request(request_id: str, data: ApproveRequestModel, request: Request,
+    session: AsyncSession = Depends(get_db)):
+    return await _create_invitation_action(data, request, session, request_id)
 
 # ==========================================
 # ⭐ 2.14. رفض طلب انضمام
@@ -1044,38 +971,24 @@ async def approve_registration_request(
 async def reject_registration_request(
     request_id: str,
     request: Request,
+    session: AsyncSession = Depends(get_db),
 ):
-    """رفض طلب انضمام."""
     try:
-        actor = getattr(request.state, "auth_user", {})
-        actor_role = _effective_role(actor)
-        actor_company = str(actor.get("company_code", ""))
-
-        if actor_role not in ("super_admin", "admin"):
-            raise HTTPException(status_code=403, detail="غير مصرح")
-
-        req_ref = db.collection("registration_requests").document(request_id)
-        req_doc = req_ref.get()
-        if not req_doc.exists:
-            raise HTTPException(status_code=404, detail="الطلب غير موجود")
-
-        rd = req_doc.to_dict() or {}
-        if actor_role != "super_admin" and str(rd.get("company_code", "")) != actor_company:
-            raise HTTPException(status_code=403, detail="غير مسموح")
-
-        req_ref.update({
-            "status": "rejected",
-            "reviewed_at": firestore.SERVER_TIMESTAMP,
-            "reviewed_by": str(actor.get("email", "")),
-        })
-
-        return {"status": "success", "message": "تم رفض الطلب"}
-
+        if not isinstance(session, AsyncSession):
+            raise HTTPException(status_code=503, detail='تعذر التحقق من سياسة الشركة')
+        async def commit():
+            result = await reject_request(session, db, getattr(request.state, 'auth_user', {}), request_id, _effective_role)
+            await session.rollback()
+            return result
+        result, interrupted = await finish_mutation(commit())
+        if interrupted:
+            raise asyncio.CancelledError()
+        return {'status': 'success', 'message': 'تم رفض الطلب', 'changed': result['changed']}
     except HTTPException:
         raise
-    except Exception as e:
-        print(f"⚠️ reject_registration_request error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=503, detail='تعذر تأكيد رفض الطلب. أعد تحميل القائمة للتحقق قبل المحاولة مجدداً')
+
 # ==========================================
 # 1. تسجيل مستخدم جديد
 # ==========================================
@@ -1084,6 +997,14 @@ async def register(
     user: UserRegister,
     session: AsyncSession = Depends(get_db)
 ):
+    # التسجيل المباشر مسار قديم متوقف: شاشتا العميل اللتان كانتا تستدعيانه
+    # معلّقتان، والمسار المعتمد هو طلب التسجيل ثم موافقة الإدارة
+    # (request_registration / approve_registration_request). إبقاء هذا
+    # المسار مفتوحاً كان ينشئ حساب موظف نشطاً بكل الفروع فوراً دون موافقة.
+    raise HTTPException(
+        status_code=403,
+        detail="التسجيل المباشر متوقف. يرجى إرسال طلب تسجيل وانتظار موافقة الإدارة.",
+    )
     try:
         email_clean = user.email.strip().lower()
         comp_code = user.company_code.strip()
@@ -1133,6 +1054,7 @@ async def register(
             "created_at": firestore.SERVER_TIMESTAMP,
         }
         user_ref.set(user_data_to_save)
+        await _notify_user_directory_changed(comp_code)
 
         # ============================================================
         # ⭐ ربط / إنشاء الموظف تلقائياً
@@ -1223,7 +1145,22 @@ async def verify_user(
         if not user_doc.exists:
             raise HTTPException(status_code=404, detail="بيانات المستخدم غير موجودة")
 
-        data = user_doc.to_dict()
+        data = user_doc.to_dict() or {}
+        if not decoded_token.get('uid') or str(data.get('uid') or '') != str(decoded_token['uid']):
+            raise HTTPException(status_code=403, detail='هوية الحساب غير مطابقة')
+        if data.get('account_lifecycle') is not None or data.get('is_active') is False or str(data.get('status', 'active')).lower() == 'suspended':
+            raise HTTPException(status_code=403, detail='الحساب غير متاح')
+        if data.get('requires_email_verification') is True and decoded_token.get('email_verified') is not True:
+            raise HTTPException(status_code=403, detail='يجب التحقق من بريد الدعوة أولاً')
+        if data.get('requires_email_verification') is True:
+            async def confirm():
+                value = await verify_invited_account(session, db, str(email).strip().lower(), str(decoded_token['uid']))
+                await session.rollback()
+                return value
+            data, interrupted = await finish_mutation(confirm())
+            if interrupted: raise asyncio.CancelledError()
+        elif str(data.get('status', 'active')).lower() == 'pending':
+            raise HTTPException(status_code=403, detail='الحساب معلق')
         comp_code = data.get("company_code")
 
         # ✅ التحقق من الشركة من Neon (PostgreSQL)
@@ -1498,6 +1435,7 @@ async def check_email(data: CheckEmailModel):
 async def complete_registration(
     data: CompleteRegistrationModel,
     authorization: Optional[str] = Header(None),
+    session: AsyncSession = Depends(get_db),
 ):
     """
     إكمال التسجيل:
@@ -1547,54 +1485,29 @@ async def complete_registration(
             )
 
         user_data = doc.to_dict() or {}
+        if user_data.get('account_lifecycle') is not None:
+            raise HTTPException(status_code=409, detail='إجراء إداري غير مكتمل على الحساب. راجع الإدارة')
 
-        # تأكد إنه مش مكمل التسجيل قبل كده
-        if user_data.get("uid") and user_data.get("email"):
-            raise HTTPException(
-                status_code=400,
-                detail="هذا الحساب مسجل بالفعل",
-            )
 
-        # ⭐ تأكد إن الإيميل لا يتعارض مع مستخدم آخر
-        if user_data.get("email") and user_data["email"] != email_clean:
-            raise HTTPException(
-                status_code=400,
-                detail="البيانات مرتبطة بحساب آخر",
-            )
+        invited_email = str(user_data.get('invitation_email') or user_data.get('email') or '').strip().lower()
+        if not invited_email:
+            raise HTTPException(status_code=409, detail='الدعوة القديمة تحتاج إضافة بريدها بواسطة الإدارة قبل استكمال التسجيل')
+        if invited_email != email_clean:
+            raise HTTPException(status_code=403, detail='يجب التسجيل بنفس بريد الدعوة')
+        if user_data.get('uid') and user_data.get('uid') != uid:
+            raise HTTPException(status_code=409, detail='هذا الحساب مرتبط بهوية أخرى')
+        if user_data.get('is_active') is False:
+            raise HTTPException(status_code=403, detail='الدعوة موقوفة')
+        username_final = _validate_username(data.username) if data.username and data.username.strip() else ''
 
-        # 3. تأكد إن الإيميل مش مستخدم بحساب تاني (ما عدا السجل الحالي)
-        existing_email_doc = db.collection("users").document(email_clean).get()
-        if existing_email_doc.exists and existing_email_doc.id != doc.id:
-            raise HTTPException(
-                status_code=400,
-                detail="البريد الإلكتروني مسجل بالفعل",
-            )
-
-        # 4. لو فيه username → تحقق منه
-        username_final = ""
-        if data.username and data.username.strip():
-            username_final = _validate_username(data.username)
-            if _is_username_taken(username_final, exclude_doc_id=doc.id):
-                raise HTTPException(
-                    status_code=400,
-                    detail="اسم المستخدم مستخدم بالفعل",
-                )
-
-        # 5. حدّث السجل الحالي (اللي الأدمن أنشأه)
-        user_data.update({
-            "uid": uid,
-            "email": email_clean,
-            "status": "active",
-            "email_verified": False,
-            "requires_email_verification": True,
-            "registered_at": firestore.SERVER_TIMESTAMP,
-            # ⭐ نضمن وجود الحقول دي
-            "is_active": user_data.get("is_active", True),
-            "permissions": user_data.get("permissions", {}),
-        })
-        if username_final:
-            user_data["username"] = username_final
-
+        if not isinstance(session, AsyncSession):
+            raise HTTPException(status_code=503, detail='تعذر التحقق من سياسة الشركة')
+        async def commit_binding():
+            bound = await bind_invitation(session, db, doc.id, email_clean, uid, username_final, _effective_role)
+            await session.rollback()
+            return bound
+        _, interrupted = await finish_mutation(commit_binding())
+        if interrupted: raise asyncio.CancelledError()
         # ============================================================
         # ⭐ ربط / إنشاء الموظف تلقائياً
         # ============================================================
@@ -1603,41 +1516,22 @@ async def complete_registration(
         if data.employee_code and data.employee_code.strip():
             # ─── ربط يدوي (المستخدم أدخل كود موظف موجود) ───
             emp_code = data.employee_code.strip()
-            try:
-                async with AsyncSessionLocal() as session:
-                    from sqlalchemy import select as _sel
-                    emp_stmt = _sel(Employee).where(
-                        Employee.company_code == str(user_data.get("company_code", "")),
-                        Employee.code == emp_code,
-                        Employee.is_deleted.is_(False),
-                    )
-                    emp_result = await session.execute(emp_stmt)
-                    emp = emp_result.scalar_one_or_none()
-                    if emp:
-                        emp.user_email = email_clean
-                        emp.user_uid = uid
-                        emp.updated_at = datetime.utcnow()
-                        await session.commit()
-                        user_data["employee_code"] = emp_code
-                        linked_employee = {
-                            "code": emp.code,
-                            "name": emp.name,
-                            "linked": True,
-                        }
-                        print(f"🔗 [Manual] ربط المستخدم بموظف #{emp.code}")
-                    else:
-                        print(f"⚠️ employee_code '{emp_code}' not found — creating new")
-            except Exception as e:
-                print(f"⚠️ employee link failed: {e}")
+            async with AsyncSessionLocal() as hr_session:
+                linked_employee = await link_registration_employee(
+                    hr_session, company_code=str(user_data.get('company_code', '')),
+                    employee_code=emp_code, uid=uid, email=email_clean,
+                    invited_phone=str(user_data.get('phone_number') or ''),
+                    assigned_employee_code=str(user_data.get('employee_code') or ''))
+            user_data['employee_code'] = emp_code
 
         # ⭐ لو مفيش ربط يدوي (أو فشل) → إنشاء تلقائي
         if linked_employee is None:
             # ⚠️ لا ننشئ موظف للسوبر أدمن
             if email_clean not in SUPER_ADMIN_EMAILS:
                 try:
-                    async with AsyncSessionLocal() as session:
+                    async with AsyncSessionLocal() as hr_session:
                         linked_employee = await _auto_create_employee_if_needed(
-                            db=session,
+                            db=hr_session,
                             user_email=email_clean,
                             user_uid=uid,
                             user_name=user_data.get("name", ""),
@@ -1647,20 +1541,12 @@ async def complete_registration(
                         )
                         if linked_employee:
                             user_data["employee_code"] = linked_employee["code"]
+                except HTTPException:
+                    raise
                 except Exception as e:
                     print(f"⚠️ auto-create employee failed: {e}")
 
-        # 5. نحفظ المستند بالـ ID الخاص بالموبايل (بيبقى موجود)، 
-        #    لكن كمان نعمل نسخة بمفتاح الإيميل للتوافق مع باقي النظام
-        #    (الـ auth_middleware بيستخدم email كـ document ID)
-        
-        # نحذف السجل القديم (المؤقت) وننشئ واحد جديد بالإيميل
-        old_doc_id = doc.id  # بيبقى عادة phone أو temp_xxx
-        if old_doc_id != email_clean:
-            db.collection("users").document(email_clean).set(user_data)
-            db.collection("users").document(old_doc_id).delete()
-        else:
-            db.collection("users").document(email_clean).set(user_data)
+        await _notify_user_directory_changed(str(user_data.get('company_code', '')))
 
         return {
             "status": "success",
@@ -1678,586 +1564,245 @@ async def complete_registration(
 # ==========================================
 # ⭐ 2.6.5. جلب مستخدمي الشركة
 # ==========================================
-@router.get("/company-users")
-async def list_company_users(
-    request: Request,
-    company_code: Optional[str] = Query(None),
-):
-    """
-    قائمة مستخدمي الشركة:
-      - الأدمن (99): يقدر يحدد أي شركة، أو بدون شركة = كل الشركات
-      - أدمن الشركة (201): يشوف شركته فقط
-    """
+@router.get("/session-profile")
+async def current_session_profile(request: Request):
+    """Authenticated own effective scope, never another admin's policy map."""
+    profile = getattr(request.state, "auth_user", {})
+    if not profile.get("uid"):
+        raise HTTPException(status_code=401, detail="يجب تسجيل الدخول")
+    fields = ("uid", "email", "company_code", "role", "job_code", "is_active",
+              "permissions", "allowed_branches", "hr_viewable_employees",
+              "company_policy_active", "company_policy_revision",
+              "company_permissions", "assigned_permissions", "delegable_permissions", "delegable_branches")
+    return {key: profile[key] for key in fields if key in profile}
+
+
+@router.get('/user-management-directory')
+async def user_management_directory(request: Request,company_code: Optional[str]=Query(None),session: AsyncSession=Depends(get_db)):
     try:
-        actor = getattr(request.state, "auth_user", {})
-        actor_job_code = str(actor.get("job_code", "1"))
-        actor_company = str(actor.get("company_code", ""))
+        return await read_management_directory(session,db,getattr(request.state,'auth_user',{}),company_code,_effective_role)
+    except HTTPException:raise
+    except Exception:raise HTTPException(status_code=503,detail='تعذر تحميل قائمة المستخدمين الحالية')
 
-        # تحديد الشركة المستهدفة
-        if actor_job_code == "99":
-            target_company = (company_code or "").strip() or None
-        else:
-            if actor_job_code not in ("201", "200"):
-                raise HTTPException(status_code=403, detail="غير مصرح")
-            target_company = actor_company
-            if not target_company:
-                raise HTTPException(status_code=403, detail="الحساب غير مرتبط بشركة")
 
-        # Query Firestore
-        query = db.collection("users")
-        if target_company:
-            query = query.where("company_code", "==", target_company)
-
-        results = []
-        for doc in query.stream():
-            data = doc.to_dict() or {}
-            created_at_raw = data.get("created_at")
-            created_at_str = None
-            try:
-                if created_at_raw is not None and hasattr(created_at_raw, "isoformat"):
-                    created_at_str = created_at_raw.isoformat()
-            except Exception:
-                pass
-
-            results.append({
-                "email": doc.id,
-                "name": data.get("name", ""),
-                "phone_number": data.get("phone_number", ""),
-                "company_code": data.get("company_code", ""),
-                "company_name": data.get("company_name", ""),
-                "branch_code": data.get("branch_code", ""),
-                "job_code": data.get("job_code", "1"),
-                "job_title": data.get("job_title", ""),
-                "status": data.get("status", "active"),
-                "email_verified": bool(data.get("email_verified", False)),
-                "requires_email_verification": bool(
-                    data.get("requires_email_verification", False)
-                ),
-                "has_account": bool(data.get("uid")),
-                "username": data.get("username", ""),
-                "created_at": created_at_str,
-            })
-
-        # ترتيب: pending أولاً ثم active ثم suspended، وبعدين بالاسم
-        def sort_key(u):
-            order = {"pending": 0, "active": 1, "suspended": 2}
-            return (order.get(u["status"], 3), u.get("name", ""))
-
-        results.sort(key=sort_key)
-        return results
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"⚠️ list_company_users error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
+@router.get('/company-users')
+async def list_company_users(request: Request,company_code: Optional[str]=Query(None),session: AsyncSession=Depends(get_db)):
+    # Preserve the list-shaped API used by existing clients, with the same
+    # current-source authorization and privacy boundary as the richer directory.
+    return (await user_management_directory(request,company_code,session))['users']
 
 
 # ==========================================
 # ⭐ 2.7. الأدمن يضيف موظف جديد (Invitation Model)
 # ==========================================
 @router.post("/admin/add-user")
-async def admin_add_user(
-    data: AdminAddUserModel,
-    request: Request,
-    session: AsyncSession = Depends(get_db),
-):
-    """
-    إضافة مستخدم:
-      - الاسم اختياري
-      - رقم الموبايل أو الإيميل مطلوب (واحد على الأقل)
-      - Super Admin: يضيف admin/employee لأي شركة
-      - Admin: يضيف employee لشركته فقط
-    """
+async def admin_add_user(data: AdminAddUserModel, request: Request, session: AsyncSession = Depends(get_db)):
+    return await _create_invitation_action(data, request, session)
+
+
+async def _create_invitation_action(data, request, session, request_id=None):
     try:
-        # 1. صلاحية المنشئ
-        actor = getattr(request.state, "auth_user", {})
-        actor_role = _effective_role(actor)
-        actor_company = str(actor.get("company_code", ""))
-
-        if actor_role == "super_admin":
-            allowed_roles = {"admin", "employee"}
-            target_company = (data.company_code or "").strip()
-            if not target_company:
-                raise HTTPException(status_code=400, detail="يجب تحديد الشركة")
-        elif actor_role == "admin":
-            allowed_roles = {"employee"}
-            target_company = actor_company
-            if not target_company:
-                raise HTTPException(status_code=400, detail="حسابك غير مرتبط بشركة")
-        else:
-            raise HTTPException(status_code=403, detail="غير مصرح لك بإضافة مستخدمين")
-
-        # 2. تحقق من الدور
-        if data.role not in allowed_roles:
-            raise HTTPException(
-                status_code=403,
-                detail=f"غير مسموح بتعيين الدور '{data.role}'",
-            )
-
-        # 3. البيانات الأساسية — phone OR email
-        name = (data.name or "").strip()
-        phone = (data.phone_number or "").strip()
-        email = (data.email or "").strip().lower()
-
-        if not phone and not email:
-            raise HTTPException(
-                status_code=400,
-                detail="رقم الموبايل أو الإيميل مطلوب (واحد على الأقل)",
-            )
-
-        # تحقق من phone
-        if phone:
-            if not re.match(r"^[0-9]{8,15}$", phone):
-                raise HTTPException(status_code=400, detail="رقم الموبايل غير صحيح")
-            existing = find_user_by_phone(phone)
-            if existing is not None:
-                raise HTTPException(status_code=400, detail="رقم الموبايل مسجل بالفعل")
-
-        # تحقق من email
-        if email:
-            if not re.match(r"^[\w\.-]+@[\w\.-]+\.[a-zA-Z]{2,}$", email):
-                raise HTTPException(status_code=400, detail="صيغة البريد الإلكتروني غير صحيحة")
-            if db.collection("users").document(email).get().exists:
-                raise HTTPException(status_code=400, detail="البريد الإلكتروني مسجل بالفعل")
-            # تحقق doc email_XXX
-            if db.collection("users").document(_email_doc_id(email)).get().exists:
-                raise HTTPException(status_code=400, detail="البريد الإلكتروني مسجل بالفعل")
-
-        # 4. جيب الشركة
-        stmt = select(Company).where(Company.code == target_company)
-        result = await session.execute(stmt)
-        company = result.scalar_one_or_none()
-        if not company:
-            raise HTTPException(status_code=404, detail="الشركة غير موجودة")
-        if not company.is_active:
-            raise HTTPException(status_code=403, detail="الشركة موقوفة")
-
-        # 5. username
-        username_final = ""
-        if data.username and data.username.strip():
-            username_final = _validate_username(data.username)
-            if _is_username_taken(username_final):
-                raise HTTPException(status_code=400, detail="اسم المستخدم مستخدم بالفعل")
-
-        # 6. أنشئ سجل مؤقت في Firestore
-        #    doc_id: phone_XXX أو email_XXX
-        if phone:
-            temp_doc_id = f"phone_{phone}"
-        else:
-            temp_doc_id = _email_doc_id(email)
-
-        job_code = ROLE_TO_JOB_CODE[data.role]
-
-        # معالجة الفرع (all = موظف عام)
-        branch_input = (data.branch_code or "").strip()
-        if branch_input in ("all", "", "الكل", "كل الفروع"):
-            final_branch = ""
-            final_allowed = ["all"]
-        else:
-            final_branch = branch_input
-            final_allowed = [branch_input]
-
-        user_data = {
-            "phone_number": phone or "",
-            "name": name,  # ممكن يكون ""
-            "company_code": target_company,
-            "company_name": company.name,
-            "branch_code": final_branch,
-            "role": data.role,
-            "job_code": job_code,
-            "job_title": ROLE_TITLES[data.role],
-            "email": email or "",
-            "uid": "",
-            "allowed_branches": final_allowed,
-            "is_active": True,
-            "permissions": _default_employee_permissions() if data.role == "employee" else {},
-            "status": "pending",
-            "email_verified": False,
-            "requires_email_verification": True,
-            "created_by_admin": str(actor.get("email", "")),
-            "created_at": firestore.SERVER_TIMESTAMP,
-        }
-        if username_final:
-            user_data["username"] = username_final
-        db.collection("users").document(temp_doc_id).set(user_data)
-
-        display_name = name or email or phone
-        return {
-            "status": "success",
-            "message": f"تم إضافة {display_name} كـ {ROLE_TITLES[data.role]} في {company.name}",
-            "temp_doc_id": temp_doc_id,
-            "role": data.role,
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"⚠️ admin_add_user error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        if not isinstance(session, AsyncSession):
+            raise HTTPException(status_code=503, detail='تعذر التحقق من سياسة الشركة')
+        async def commit_and_refresh():
+            result = await create_invitation(session, db, getattr(request.state, 'auth_user', {}), data,
+                _effective_role, ROLE_TO_JOB_CODE, ROLE_TITLES, _default_employee_permissions,
+                _validate_username, request_id)
+            await session.rollback()
+            await _notify_user_directory_changed(result['company_code'])
+            return result
+        result, interrupted = await finish_mutation(commit_and_refresh())
+        if interrupted: raise asyncio.CancelledError()
+        return {'status': 'success', 'message': 'تم إعداد الدعوة. يجب التسجيل بنفس البريد والتحقق منه', **result}
+    except HTTPException: raise
+    except Exception:
+        raise HTTPException(status_code=503, detail='تعذر تأكيد حفظ الدعوة. أعد تحميل القائمة للتحقق قبل المحاولة مجدداً')
 
 # ==========================================
 # ⭐ 2.8. تعديل مستخدم (Admin)
 # ==========================================
 class AdminEditUserModel(BaseModel):
     email: str
+    invitation_email: Optional[str] = None
     name: Optional[str] = None
     phone_number: Optional[str] = None
     branch_code: Optional[str] = None
     role: Optional[str] = None
     username: Optional[str] = None
     status: Optional[str] = None
+    is_active: Optional[StrictBool] = None
+    expected_target_uid: Optional[StrictStr] = None
+    expected_profile_version: Optional[StrictStr] = None
+    expected_policy_revision: Optional[StrictInt] = None
 
 
-@router.put("/admin/edit-user")
-async def admin_edit_user(
-    data: AdminEditUserModel,
-    request: Request,
-):
-    """
-    تعديل بيانات مستخدم:
-      - Super Admin: أي مستخدم في أي شركة
-      - Admin: مستخدمين شركته فقط (بدون تغيير role لـ admin)
-    """
+@router.get('/user-editor/{document_id}')
+async def get_user_editor(document_id: str,request: Request,session: AsyncSession=Depends(get_db)):
     try:
-        actor = getattr(request.state, "auth_user", {})
-        actor_role = _effective_role(actor)
-        actor_company = str(actor.get("company_code", ""))
+        return await read_account_editor(session,db,getattr(request.state,'auth_user',{}),document_id.strip().lower(),_effective_role)
+    except HTTPException:raise
+    except Exception:raise HTTPException(status_code=503,detail='تعذر تحميل بيانات الحساب الحالية')
 
-        if actor_role not in ("super_admin", "admin"):
-            raise HTTPException(status_code=403, detail="غير مصرح")
 
-        target_email = data.email.strip().lower()
-        if not target_email:
-            raise HTTPException(status_code=400, detail="البريد مطلوب")
-
-        doc = db.collection("users").document(target_email).get()
-        if not doc.exists:
-            raise HTTPException(status_code=404, detail="المستخدم غير موجود")
-
-        target_data = doc.to_dict() or {}
-        target_company = str(target_data.get("company_code", ""))
-        target_role = _effective_role({**target_data, "email": target_email})
-
-        # ⭐ فحص الصلاحية
-        if actor_role == "admin":
-            if target_company != actor_company:
-                raise HTTPException(status_code=403, detail="غير مسموح بتعديل مستخدم من شركة أخرى")
-            if target_role in ("super_admin", "admin"):
-                raise HTTPException(status_code=403, detail="غير مسموح بتعديل مدير")
-
-        updates = {}
-
-        if data.name is not None:
-            updates["name"] = data.name.strip()
-
-        if data.phone_number is not None:
-            new_phone = data.phone_number.strip()
-            if new_phone and new_phone != target_data.get("phone_number"):
-                # فحص إنه مش مستخدم
-                existing = find_user_by_phone(new_phone)
-                if existing is not None and existing.id != doc.id:
-                    raise HTTPException(status_code=400, detail="رقم الموبايل مسجل بمستخدم آخر")
-                updates["phone_number"] = new_phone
-
-        if data.branch_code is not None:
-            bc = data.branch_code.strip()
-            if bc in ("all", "", "الكل", "كل الفروع"):
-                updates["branch_code"] = ""
-                updates["allowed_branches"] = ["all"]
-            else:
-                updates["branch_code"] = bc
-                updates["allowed_branches"] = [bc]
-
-        if data.username is not None:
-            new_username = data.username.strip().lower()
-            if new_username:
-                _validate_username(new_username)
-                if _is_username_taken(new_username, exclude_doc_id=doc.id):
-                    raise HTTPException(status_code=400, detail="اسم المستخدم مستخدم بالفعل")
-                updates["username"] = new_username
-            else:
-                updates["username"] = ""
-
-        actor_email = str(actor.get("email", "")).strip().lower()
-        target_email_clean = data.email.strip().lower()
-        is_self = actor_email == target_email_clean
-
-        if data.role is not None:
-            if data.role not in ("admin", "employee", "super_admin"):
-                raise HTTPException(status_code=400, detail="دور غير صالح")
-
-            if actor_role == "admin" and data.role != "employee":
-                raise HTTPException(status_code=403, detail="غير مسموح بتعيين هذا الدور")
-
-            # ⭐ Super Admin له قواعد خاصة
-            if target_role == "super_admin":
-                if actor_role != "super_admin":
-                    raise HTTPException(status_code=403, detail="غير مسموح بتعديل السوبر أدمن")
-                if is_self and data.role != "super_admin":
-                    raise HTTPException(status_code=403, detail="لا يمكن تغيير دور السوبر أدمن")
-
-            # تعيين دور super_admin جديد
-            if data.role == "super_admin" and actor_role != "super_admin":
-                raise HTTPException(status_code=403, detail="غير مسموح بتعيين سوبر أدمن")
-
-            updates["role"] = data.role
-            updates["job_code"] = ROLE_TO_JOB_CODE[data.role]
-            updates["job_title"] = ROLE_TITLES[data.role]
-            if data.role == "admin":
-                updates["permissions"] = {}
-
-        if data.status is not None:
-            if data.status not in ("active", "pending", "suspended"):
-                raise HTTPException(status_code=400, detail="حالة غير صالحة")
-            if target_role == "super_admin":
-                if actor_role != "super_admin":
-                    raise HTTPException(status_code=403, detail="غير مسموح")
-                if is_self and data.status != "active":
-                    raise HTTPException(status_code=403, detail="لا يمكن إيقاف السوبر أدمن")
-            updates["status"] = data.status
-
-        if not updates:
-            return {"status": "success", "message": "لا توجد تغييرات"}
-
-        updates["updated_at"] = firestore.SERVER_TIMESTAMP
-        doc.reference.update(updates)
-
-        return {
-            "status": "success",
-            "message": "تم التحديث بنجاح",
-            "updates": {k: v for k, v in updates.items() if k != "updated_at"},
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"⚠️ admin_edit_user error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+@router.put('/admin/edit-user')
+async def admin_edit_user(data: AdminEditUserModel,request: Request,session: AsyncSession=Depends(get_db)):
+    try:
+        if not isinstance(session,AsyncSession):raise HTTPException(status_code=503,detail='تعذر التحقق من سياسة الشركة')
+        async def commit_and_refresh():
+            result=await write_account_editor(session,db,getattr(request.state,'auth_user',{}),data.email.strip().lower(),
+                data,_effective_role,ROLE_TO_JOB_CODE,ROLE_TITLES,_validate_username)
+            await session.rollback()
+            if result['updates']:await _notify_permissions_changed(result['company_code'],data.email.strip().lower())
+            return result
+        result,interrupted=await finish_mutation(commit_and_refresh())
+        if interrupted:raise asyncio.CancelledError()
+        return {'status':'success','message':'تم التحديث بنجاح' if result['updates'] else 'لا توجد تغييرات','updates':result['updates']}
+    except HTTPException:raise
+    except Exception:raise HTTPException(status_code=503,detail='تعذر تأكيد تعديل الحساب. أعد تحميل بياناته للتحقق قبل المحاولة مجدداً')
 
 
 # ==========================================
 # ⭐ 2.9. حذف مستخدم (Admin)
 # ==========================================
 @router.delete("/admin/delete-user")
-async def admin_delete_user(
-    request: Request,
-    email: str = Query(..., min_length=1),
-):
-    """
-    حذف مستخدم:
-      - Super Admin: يحذف أي مستخدم (ما عدا نفسه)
-      - Admin: يحذف موظفين شركته فقط
-    """
+async def admin_delete_user(request: Request, email: str = Query(..., min_length=1), session: AsyncSession = Depends(get_db)):
+    return await _destructive_user_action(request, email, session, 'delete')
+
+
+@router.post('/admin/reset-pending-user')
+async def admin_reset_pending_user(request: Request, email: str = Query(..., min_length=1), session: AsyncSession = Depends(get_db)):
+    return await _destructive_user_action(request, email, session, 'reset')
+
+
+async def _destructive_user_action(request, email, session, action):
     try:
-        actor = getattr(request.state, "auth_user", {})
-        actor_role = _effective_role(actor)
-        actor_email = str(actor.get("email", "")).strip().lower()
-        actor_company = str(actor.get("company_code", ""))
-
-        if actor_role not in ("super_admin", "admin"):
-            raise HTTPException(status_code=403, detail="غير مصرح")
-
-        target_email = email.strip().lower()
-        if target_email == actor_email:
-            raise HTTPException(status_code=400, detail="لا يمكن حذف حسابك")
-
-        doc = db.collection("users").document(target_email).get()
-        if not doc.exists:
-            raise HTTPException(status_code=404, detail="المستخدم غير موجود")
-
-        target_data = doc.to_dict() or {}
-        target_company = str(target_data.get("company_code", ""))
-        target_role = _effective_role({**target_data, "email": target_email})
-
-        if actor_role == "admin":
-            if target_company != actor_company:
-                raise HTTPException(status_code=403, detail="غير مسموح بحذف مستخدم من شركة أخرى")
-            if target_role != "employee":
-                raise HTTPException(status_code=403, detail="غير مسموح بحذف مدير")
-
-        if target_role == "super_admin":
-            raise HTTPException(status_code=403, detail="لا يمكن حذف السوبر أدمن")
-
-        # حذف من Firebase Auth (لو عنده uid)
-        uid = str(target_data.get("uid", "") or "")
-        if uid:
+        if not isinstance(session, AsyncSession):
+            raise HTTPException(status_code=503, detail='تعذر التحقق من سياسة الشركة')
+        async def commit_and_refresh():
             try:
-                admin_auth.delete_user(uid)
-            except Exception as e:
-                print(f"⚠️ Firebase Auth delete failed (continuing): {e}")
-
-        # حذف من Firestore
-        doc.reference.delete()
-
-        return {"status": "success", "message": "تم حذف المستخدم"}
-
+                result = await destructive_account(session, db, getattr(request.state, 'auth_user', {}),
+                    email.strip().lower(), action, _effective_role, admin_auth, _notify_permissions_changed)
+                await session.rollback()
+                await _notify_permissions_changed(result['company_code'], email.strip().lower())
+                return result
+            finally:
+                # Preparation may have blocked the account even when Auth failed.
+                invalidate_profile_cache(email.strip().lower())
+        result, interrupted = await finish_mutation(commit_and_refresh())
+        if interrupted:
+            raise asyncio.CancelledError()
+        return {'status': 'success', 'message': 'تم حذف المستخدم' if action == 'delete' else 'تمت إعادة تهيئة الحساب، يمكنه إكمال التسجيل من جديد'}
     except HTTPException:
         raise
-    except Exception as e:
-        print(f"⚠️ admin_delete_user error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=503, detail='لم يكتمل الإجراء. أعد تحميل الحساب للتحقق؛ إذا كان موقوفاً فأعد نفس الإجراء لإكماله')
 
 
-# ==========================================
-# ⭐ 2.10. إعادة تعيين مستخدم معلق (Reset Pending)
-# ==========================================
-@router.post("/admin/reset-pending-user")
-async def admin_reset_pending_user(
-    request: Request,
-    email: str = Query(..., min_length=1),
-):
-    """
-    إعادة تعيين مستخدم عالق (pending):
-      - يمسح uid, email, username, email_verified
-      - يرجعه لـ status=pending
-      - المستخدم يقدر يدخل رقمه من جديد
-    """
-    try:
-        actor = getattr(request.state, "auth_user", {})
-        actor_role = _effective_role(actor)
-        actor_company = str(actor.get("company_code", ""))
-
-        if actor_role not in ("super_admin", "admin"):
-            raise HTTPException(status_code=403, detail="غير مصرح")
-
-        target_email = email.strip().lower()
-        doc = db.collection("users").document(target_email).get()
-        if not doc.exists:
-            raise HTTPException(status_code=404, detail="المستخدم غير موجود")
-
-        target_data = doc.to_dict() or {}
-        target_company = str(target_data.get("company_code", ""))
-        target_role = _effective_role({**target_data, "email": target_email})
-
-        if actor_role == "admin" and target_company != actor_company:
-            raise HTTPException(status_code=403, detail="غير مسموح")
-        if target_role == "super_admin":
-            raise HTTPException(status_code=403, detail="غير مسموح بالسوبر أدمن")
-
-        # امسح uid من Firebase Auth
-        uid = str(target_data.get("uid", "") or "")
-        if uid:
-            try:
-                admin_auth.delete_user(uid)
-            except Exception as e:
-                print(f"⚠️ Firebase Auth delete failed (continuing): {e}")
-
-        # احتفظ بـ phone و name و company و branch و role
-        # امسح uid, email, email_verified, username, registered_at
-        reset_data = {
-            "uid": "",
-            "email": target_data.get("original_email") or "",
-            "email_verified": False,
-            "requires_email_verification": True,
-            "status": "pending",
-            "registered_at": None,
-            "updated_at": firestore.SERVER_TIMESTAMP,
-        }
-        if "username" in target_data:
-            reset_data["username"] = ""
-
-        doc.reference.update(reset_data)
-
-        return {
-            "status": "success",
-            "message": "تم إعادة تعيين المستخدم — يمكنه إكمال التسجيل من جديد",
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"⚠️ admin_reset_pending_user error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 # ==========================================
 # ⭐ 2.15. إلغاء التسجيل (من شاشة تحقق الإيميل)
 # ==========================================
 @router.post("/cancel-registration")
-async def cancel_registration(
-    authorization: Optional[str] = Header(None),
-):
-    """
-    إلغاء التسجيل (للمستخدم اللي مش قادر يكمل بسبب بيانات غلط):
-      - يحذف Firebase Auth user
-      - يعيد Firestore record لـ pending (مع الحفاظ على البيانات الأخرى)
-    """
+async def cancel_registration(authorization: Optional[str] = Header(None), session: AsyncSession = Depends(get_db)):
+    if not authorization or not authorization.startswith('Bearer '):
+        raise HTTPException(status_code=401,detail='التوثيق مطلوب')
     try:
-        if not authorization or not authorization.startswith("Bearer "):
-            raise HTTPException(status_code=401, detail="التوثيق مطلوب")
-
-        try:
-            token = authorization.split(" ", 1)[1].strip()
-            decoded = admin_auth.verify_id_token(token, clock_skew_seconds=60)
-            uid = str(decoded.get("uid", ""))
-            email = str(decoded.get("email", "")).strip().lower()
-        except Exception as exc:
-            print(f"⚠️ cancel_registration token invalid: {exc}")
-            raise HTTPException(status_code=401, detail="توكن غير صالح")
-
-        if not uid or not email:
-            raise HTTPException(status_code=400, detail="بيانات ناقصة")
-
-        # ابحث عن السجل الحالي (بالإيميل أو بالموبايل)
-        user_doc = db.collection("users").document(email).get()
-
-        # لو مش موجود بالإيميل → ابحث بالموبايل المرتبط بالـ uid
-        if not user_doc.exists:
-            for d in db.collection("users").stream():
-                dd = d.to_dict() or {}
-                if str(dd.get("uid", "")) == uid:
-                    user_doc = d
-                    break
-
-        if user_doc.exists:
-            data = user_doc.to_dict() or {}
-            phone = str(data.get("phone_number", "") or "")
-
-            # احتفظ بالبيانات (name, phone, company, branch, role, permissions)
-            # امسح بس: uid, email, verified, status, registered_at
-            reset_data = {
-                **data,
-                "uid": "",
-                "email": "",
-                "email_verified": False,
-                "requires_email_verification": True,
-                "status": "pending",
-                "registered_at": None,
-                "updated_at": firestore.SERVER_TIMESTAMP,
-            }
-
-            # لو فيه موبايل → ارجع لـ phone_xxx doc
-            if phone:
-                new_doc_id = f"phone_{phone}"
-                db.collection("users").document(new_doc_id).set(reset_data)
-                if new_doc_id != user_doc.id:
-                    user_doc.reference.delete()
-            else:
-                user_doc.reference.set(reset_data)
-
-        # احذف من Firebase Auth
-        try:
-            admin_auth.delete_user(uid)
-        except Exception as e:
-            print(f"⚠️ delete firebase user failed: {e}")
-
-        return {
-            "status": "success",
-            "message": "تم إلغاء التسجيل — يمكنك البدء من جديد",
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"⚠️ cancel_registration error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
+        decoded=admin_auth.verify_id_token(authorization.split(' ',1)[1].strip(),clock_skew_seconds=60)
+    except Exception:
+        raise HTTPException(status_code=401,detail='توكن غير صالح')
+    uid=str(decoded.get('uid') or '')
+    email=str(decoded.get('email') or '').strip().lower()
+    if not uid or not email or decoded.get('email_verified') is True:
+        raise HTTPException(status_code=403,detail='هذا المسار لإلغاء التسجيل غير المكتمل فقط')
+    try:
+        async def commit():
+            code=await cancel_invited_account(session,db,email,uid,admin_auth,_notify_permissions_changed)
+            await session.rollback()
+            await _notify_permissions_changed(code,email)
+        _,interrupted=await finish_mutation(commit())
+        if interrupted:raise asyncio.CancelledError()
+        return {'status':'success','message':'تم إلغاء التسجيل. بريد الدعوة محفوظ لإعادة المحاولة'}
+    except HTTPException:raise
+    except Exception:
+        raise HTTPException(status_code=503,detail='تعذر تأكيد الإلغاء. أعد نفس الإجراء للتحقق والإكمال')
 
 
 # ==========================================
 # 4. إدارة الشركات (جميعها في Neon)
 # ==========================================
+
+class CompanyPolicyDraftModel(BaseModel):
+    reconciled_active_revision: Optional[StrictInt] = None
+    expected_revision: StrictInt
+    configuration: dict
+
+
+class CompanyPolicyActivationModel(BaseModel):
+    expected_revision: StrictInt
+    source_review_token: StrictStr
+    confirmed_review: StrictBool
+
+
+@router.get('/companies/{company_code}/permission-policy/review')
+async def get_company_policy_review(company_code: str, request: Request, session: AsyncSession=Depends(get_db)):
+    try:
+        return await review_context(session,db,getattr(request.state,'auth_user',{}),company_code,_effective_role)
+    except HTTPException:raise
+    except Exception:raise HTTPException(status_code=503,detail='تعذر تحميل مراجعة الصلاحيات الحالية')
+
+
+@router.post('/companies/{company_code}/permission-policy/activate')
+async def activate_company_policy(company_code: str, data: CompanyPolicyActivationModel, request: Request, session: AsyncSession=Depends(get_db)):
+    if data.confirmed_review is not True:raise HTTPException(status_code=400,detail='راجع الصلاحيات وأكد التفعيل صراحة')
+    try:
+        async def commit():
+            result=await activate_review(session,db,getattr(request.state,'auth_user',{}),company_code,_effective_role,
+                data.expected_revision,data.source_review_token)
+            invalidate_company_recipients(company_code)
+            await sync_manager.notify_company_directory_changed()
+            for target in result.pop('refresh_accounts',[]):
+                await _notify_permissions_changed(company_code,target)
+            await _notify_user_directory_changed(company_code)
+            return result
+        result,interrupted=await finish_mutation(commit())
+        if interrupted:raise asyncio.CancelledError()
+        return {'status':'success',**result}
+    except HTTPException:raise
+    except Exception:raise HTTPException(status_code=503,detail='تعذر تأكيد تفعيل السياسة. أعد تحميل المراجعة قبل المحاولة مجدداً')
+
+
+@router.get("/companies/{company_code}/permission-policy")
+async def get_company_permission_policy(
+    company_code: str, request: Request, session: AsyncSession = Depends(get_db)
+):
+    _require_program_admin(request)
+    await asyncio.to_thread(require_root,db,getattr(request.state,'auth_user',{}),_effective_role)
+    try:
+        return await read_policy(session, company_code)
+    except UnknownPolicyCompany:
+        raise HTTPException(status_code=404, detail="الشركة غير موجودة")
+
+
+@router.put("/companies/{company_code}/permission-policy/draft")
+async def put_company_permission_policy_draft(
+    company_code: str, data: CompanyPolicyDraftModel, request: Request,
+    session: AsyncSession = Depends(get_db)
+):
+    _require_program_admin(request)
+    await review_context(session,db,getattr(request.state,'auth_user',{}),company_code,_effective_role)
+    try:
+        result = await save_policy_draft(
+            session, company_code, data.configuration,
+            expected_revision=data.expected_revision,
+            reconciled_active_revision=data.reconciled_active_revision,
+        )
+        return {**result, "saved_as_draft": True, "authorization_changed": False}
+    except UnknownPolicyCompany:
+        raise HTTPException(status_code=404, detail="الشركة غير موجودة")
+    except PolicyConflict:
+        raise HTTPException(status_code=409, detail="تغيرت المسودة أو صلاحيات المديرين المفعلة. أعد تحميل المراجعة وقارن القيم الحالية بالمسودة قبل الحفظ")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
 
 @router.post("/companies/add")
 async def add_new_company(
@@ -2282,12 +1827,15 @@ async def add_new_company(
     new_company = Company(
         code=comp_code,
         name=comp_name,
-        is_active=True
+        is_active=True,
+        requires_permission_review=True,
     )
     session.add(new_company)
     await session.commit()
 
-    return {"status": "success", "message": f"تم تكويد شركة [{comp_name}] بنجاح"}
+    await sync_manager.notify_company_directory_changed()
+    return {"status": "success", "message": f"تمت إضافة شركة [{comp_name}] وتحتاج مراجعة صلاحياتها قبل الاستخدام",
+            "requires_permission_review": True}
 
 
 @router.get("/companies/all")
@@ -2309,6 +1857,7 @@ async def get_all_companies(
             "code": c.code,
             "name": c.name,
             "is_active": c.is_active,
+            "requires_permission_review": c.requires_permission_review,
             "created_at": c.created_at.isoformat() if c.created_at else None,
         }
         for c in companies
@@ -2334,8 +1883,13 @@ async def toggle_company_status(
     if not company:
         raise HTTPException(status_code=404, detail="الشركة غير موجودة")
 
-    company.is_active = is_active
-    await session.commit()
+    async def commit():
+        company.is_active = is_active
+        await session.commit()
+        await _notify_company_changed(code.strip())
+    _, interrupted = await finish_mutation(commit())
+    if interrupted:
+        raise asyncio.CancelledError()
 
     status_txt = "تفعيلها" if is_active else "إيقافها لعدم السداد"
     return {"status": "success", "message": f"تم تحديث حالة الشركة بنجاح و{status_txt}"}
@@ -2367,6 +1921,12 @@ async def update_company(
             raise HTTPException(status_code=404, detail="الشركة غير موجودة")
 
         if old_code != new_code:
+            # A code rename is not a policy migration. Do not recreate a
+            # reviewed/new company as an unreviewed legacy company.
+            policy_exists = await session.scalar(select(CompanyPermissionPolicy.company_code).where(
+                CompanyPermissionPolicy.company_code == old_code))
+            if company.requires_permission_review or policy_exists is not None:
+                raise HTTPException(status_code=409, detail="تغيير كود شركة لها مراجعة صلاحيات يحتاج نقل بيانات منفصل. يمكنك تعديل الاسم دون تغيير الكود")
             # التحقق من عدم وجود شركة أخرى بنفس الكود الجديد
             stmt2 = select(Company).where(Company.code == new_code)
             result2 = await session.execute(stmt2)
@@ -2379,6 +1939,7 @@ async def update_company(
                 code=new_code,
                 name=new_name,
                 is_active=company.is_active,
+                requires_permission_review=company.requires_permission_review,
                 created_at=company.created_at
             )
             session.add(new_company)
@@ -2399,6 +1960,9 @@ async def update_company(
                 user_doc.reference.update({"company_name": new_name})
 
         await session.commit()
+        await _notify_company_changed(old_code)
+        if old_code != new_code:
+            await _notify_company_changed(new_code)
         return {"status": "success", "message": "تم تعديل بيانات الشركة"}
 
     except HTTPException:
@@ -2424,14 +1988,18 @@ async def delete_company(
         if code == "01":
             raise HTTPException(status_code=403, detail="لا يمكن حذف الشركة الافتراضية")
 
-        stmt = select(Company).where(Company.code == code)
+        stmt = select(Company).where(Company.code == code).with_for_update()
         result = await session.execute(stmt)
         company = result.scalar_one_or_none()
         if not company:
             raise HTTPException(status_code=404, detail="الشركة غير موجودة")
 
+        policy=await session.scalar(select(CompanyPermissionPolicy).where(
+            CompanyPermissionPolicy.company_code==code).with_for_update())
+        if policy is not None:await session.delete(policy)
         await session.delete(company)
         await session.commit()
+        await _notify_company_changed(code)
 
         # حذف المستخدمين المرتبطين بالشركة من Firestore
         users_ref = db.collection("users").where("company_code", "==", code).get()
@@ -2450,61 +2018,84 @@ async def delete_company(
 # ==========================================
 # 5. تحديث الصلاحيات (يبقى في Firestore)
 # ==========================================
-@router.post("/update-permissions")
-async def update_user_permissions(data: PermissionsUpdateModel, request: Request):
+@router.get('/permission-editor-targets')
+async def get_permission_targets(request: Request, company_code: str = Query(''),
+                                 session: AsyncSession = Depends(get_db)):
     try:
-        actor = getattr(request.state, "auth_user", {})
-        actor_role = _effective_role(actor)
-        actor_email = str(actor.get("email", "")).strip().lower()
-        actor_permissions = actor.get("permissions", {})
-        general_permissions = actor_permissions.get("صلاحيات عامة", {}) if isinstance(actor_permissions, dict) else {}
-        can_manage_permissions = isinstance(general_permissions, dict) and general_permissions.get("صفحة الصلاحيات(الاعدادات)") is True
-
-        if actor_role not in ("super_admin", "admin") and not can_manage_permissions:
-            raise HTTPException(status_code=403, detail="غير مصرح لك بتعديل الصلاحيات")
-
-        email = data.email.strip().lower()
-        user_ref = db.collection("users").document(email)
-        user_doc = user_ref.get()
-        if not user_doc.exists:
-            raise HTTPException(status_code=404, detail="المستخدم غير موجود")
-
-        target_data = user_doc.to_dict() or {}
-        target_role = _effective_role({**target_data, "email": email})
-
-        # ⭐ حماية السوبر أدمن — مفيش حد يعدل صلاحياته ما عدا نفسه
-        if target_role == "super_admin":
-            if actor_role != "super_admin":
-                raise HTTPException(
-                    status_code=403,
-                    detail="غير مسموح بتعديل صلاحيات السوبر أدمن",
-                )
-            # super_admin يقدر يعدل نفسه أو سوبر أدمن تاني
-        elif actor_role == "admin":
-            # admin مش يقدر يعدل admin تاني
-            if str(target_data.get("company_code", "")) != str(actor.get("company_code", "")):
-                raise HTTPException(status_code=403, detail="غير مسموح بتعديل صلاحيات مستخدم من شركة أخرى")
-            if target_role == "admin":
-                raise HTTPException(status_code=403, detail="لا يمكن تعديل صلاحيات مدير")
-        update_data = {
-            "permissions": data.permissions,
-            "updated_at": firestore.SERVER_TIMESTAMP
-        }
-
-        if data.allowed_branches is not None:
-            update_data["allowed_branches"] = data.allowed_branches
-
-        # ⭐ جديد: فلترة الموظفين في HR
-        if data.clear_hr_viewable_employees:
-            update_data["hr_viewable_employees"] = None
-        elif data.hr_viewable_employees is not None:
-            update_data["hr_viewable_employees"] = data.hr_viewable_employees
-        user_ref.update(update_data)
-        return {"status": "success", "message": "تم تحديث الصلاحيات بنجاح"}
+        return await read_permission_targets(session, db, getattr(request.state, 'auth_user', {}),
+                                             company_code, _effective_role)
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=503, detail='تعذر تحميل قائمة المستخدمين الحالية')
+
+
+@router.get('/permission-editor/{email}')
+async def get_permission_editor(email: str, request: Request, session: AsyncSession = Depends(get_db)):
+    actor = getattr(request.state, 'auth_user', {})
+    try:
+        return await read_permission_editor(session, db, actor, email.strip().lower(), _effective_role)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=503, detail='تعذر التحقق من نطاق الصلاحيات مؤقتاً')
+
+
+class LegacyEditorStatusModel(BaseModel):
+    email: StrictStr
+    is_active: StrictBool
+    expected_target_uid: StrictStr
+    expected_profile_version: StrictStr
+
+
+@router.post('/permission-editor-status')
+async def legacy_editor_status(data: LegacyEditorStatusModel, request: Request,
+                               session: AsyncSession = Depends(get_db)):
+    try:
+        if not isinstance(session, AsyncSession):
+            raise HTTPException(status_code=503, detail='تعذر التحقق من سياسة الشركة')
+        async def commit_and_refresh():
+            result = await write_legacy_editor_status(session, db, getattr(request.state, 'auth_user', {}),
+                data.email.strip().lower(), data, _effective_role)
+            await session.rollback()
+            if result['changed']:
+                await _notify_permissions_changed(result['company_code'], data.email.strip().lower())
+            return result
+        result, interrupted = await finish_mutation(commit_and_refresh())
+        if interrupted: raise asyncio.CancelledError()
+        return {'status': 'success', 'changed': result['changed']}
+    except HTTPException: raise
+    except Exception:
+        raise HTTPException(status_code=503, detail='تعذر تأكيد تغيير الحالة. أعد تحميل الحساب للتحقق')
+
+
+@router.post("/update-permissions")
+async def update_user_permissions(data: PermissionsUpdateModel, request: Request,
+                                  session: AsyncSession = Depends(get_db)):
+    try:
+        try:
+            validate_permission_map(data.permissions)
+        except ValueError:
+            raise HTTPException(status_code=400, detail='الصلاحيات يجب أن تحتوي على أقسام مسماة وقيم صحيحة أو خاطئة فقط')
+        if not isinstance(session, AsyncSession):
+            raise HTTPException(status_code=503, detail='تعذر التحقق من سياسة الشركة')
+        actor = getattr(request.state, "auth_user", {})
+        async def commit_and_refresh():
+            result = await write_permission_editor(session, db, actor,
+                data.email.strip().lower(), data, _effective_role)
+            # Release authority locks only after the source commit settles.
+            await session.rollback()
+            await _notify_permissions_changed(result['company_code'], data.email.strip().lower())
+            return result
+        result, interrupted = await finish_mutation(commit_and_refresh())
+        if interrupted:
+            raise asyncio.CancelledError()
+        return {'status': 'success', 'message': 'تم تحديث الصلاحيات بنجاح',
+                'company_policy_active': result['company_policy_active']}
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=503, detail='تعذر إتمام تحديث الصلاحيات. أعد تحميل بيانات المستخدم للتحقق قبل المحاولة مجدداً')
 
 
 @router.delete("/admin/presence/{email}")

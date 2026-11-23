@@ -22,6 +22,10 @@ class CodingModel(BaseModel):
 
     profit_margin: Optional[float] = 0.0
     profit_percent: Optional[float] = 0.0
+    # تأكيد صريح من المستخدم أن سعر الشراء صفر عن قصد.
+    # مطلوب لإزالة علامة "غير محدد" عند حفظ صفر — الحفظ
+    # العادي وحده لا يُعتبر موافقة على الصفر.
+    confirm_zero_cost: Optional[bool] = False
 
 
 # ============================================================
@@ -47,6 +51,8 @@ class TransactionModel(BaseModel):
     add_to_settlement: bool = False
     link_id: Optional[str] = None
     unlink_settlement: bool = False
+    operation_id: Optional[str] = Field(default=None, min_length=16, max_length=64)
+    base_updated_at: Optional[str] = None
 
 
 # ============================================================

@@ -1,3 +1,4 @@
+import '../../services/cache_partitions.dart';
 // lib/views/dashboard/inventory_page.dart
 
 import 'dart:io';
@@ -6,7 +7,6 @@ import '../../core/theme.dart';
 import 'package:intl/intl.dart';
 import 'package:excel/excel.dart' as excel_lib;
 import 'package:file_picker/file_picker.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../services/inventory_service.dart';
@@ -99,7 +99,7 @@ class _InventoryPageState extends State<InventoryPage> {
       return 'كل الفروع';
     }
 
-    final box = Hive.box('coding_box');
+    final box = CachePartitions.box('coding_box');
     final raw = box.get(
       '${widget.companyCode}_branches',
       defaultValue: [],
@@ -123,6 +123,8 @@ class _InventoryPageState extends State<InventoryPage> {
   // ============================================================
 
   Future<void> _loadDropdowns() async {
+return CachePartitions.run(() async {
+
     if (!mounted) return;
 
     setState(() => _isLoading = true);
@@ -135,7 +137,7 @@ class _InventoryPageState extends State<InventoryPage> {
           prefs.getString('selected_branch_code') ??
           'all';
 
-      final box = Hive.box('coding_box');
+      final box = CachePartitions.box('coding_box');
 
       final rawStores = box.get(
             '${widget.companyCode}_stores',
@@ -145,6 +147,11 @@ class _InventoryPageState extends State<InventoryPage> {
 
       _stores = rawStores
           .whereType<Map>()
+          .where((e) {
+            final assigned = e['branch_code']?.toString() ?? '';
+            return assigned.isEmpty || _selectedBranchCode == null ||
+                _selectedBranchCode == 'all' || assigned == _selectedBranchCode;
+          })
           .map(
             (e) => {
               'code': e['code']?.toString() ?? '',
@@ -177,14 +184,17 @@ class _InventoryPageState extends State<InventoryPage> {
         setState(() => _isLoading = false);
       }
     }
-  }
+});
+}
 
   // ============================================================
 // تحميل قائمة الأصناف للاقتراحات (من التكويد)
 // ============================================================
 Future<void> _loadItemsLookup() async {
+return CachePartitions.run(() async {
+
   try {
-    final box = Hive.box('coding_box');
+    final box = CachePartitions.box('coding_box');
     final raw = box.get(
       '${widget.companyCode}_items',
       defaultValue: [],
@@ -218,6 +228,8 @@ Future<void> _loadItemsLookup() async {
   } catch (e) {
     debugPrint('❌ خطأ في تحميل الأصناف للاقتراحات: $e');
   }
+
+});
 }
 
   // ============================================================
@@ -323,8 +335,10 @@ Future<void> _loadItemsLookup() async {
   // ============================================================
 
   Future<void> _loadLastSerial() async {
+return CachePartitions.run(() async {
+
     try {
-      final box = Hive.box('inventory_box');
+      final box = CachePartitions.box('inventory_box');
       final branchCode = _selectedBranchCode ?? 'all';
 
       int maxSerial = 0;
@@ -373,7 +387,8 @@ Future<void> _loadItemsLookup() async {
         });
       }
     }
-  }
+});
+}
 
   // ============================================================
   // إضافة صف
@@ -527,6 +542,8 @@ Future<void> _loadItemsLookup() async {
   // ============================================================
 
   Future<void> _autoFillItem(int index) async {
+return CachePartitions.run(() async {
+
     if (index >= _items.length) return;
 
     final code =
@@ -534,7 +551,7 @@ Future<void> _loadItemsLookup() async {
 
     if (code.isEmpty) return;
 
-    final box = Hive.box('coding_box');
+    final box = CachePartitions.box('coding_box');
 
     final raw = box.get(
       '${widget.companyCode}_items',
@@ -640,7 +657,8 @@ Future<void> _loadItemsLookup() async {
         '❌ خطأ في جلب الصنف: $e',
       );
     }
-  }
+});
+}
 
 // ============================================================
 // تعبئة الصف عند اختيار صنف من القائمة المنسدلة
@@ -755,6 +773,8 @@ void _fillRowFromSelectedItem(
   // ============================================================
 
   Future<void> _saveInventory() async {
+return CachePartitions.run(() async {
+
     final isEdit =
         widget.editItem != null;
 
@@ -923,7 +943,8 @@ void _fillRowFromSelectedItem(
         });
       }
     }
-  }
+});
+}
 
   // ============================================================
   // قراءة الأرقام من Excel
@@ -1147,6 +1168,8 @@ void _fillRowFromSelectedItem(
   // ============================================================
 
   Future<void> _importFromExcel() async {
+return CachePartitions.run(() async {
+
     if (!PermissionsService()
         .canImportInventory) {
       _showSnackBar(
@@ -1457,7 +1480,8 @@ void _fillRowFromSelectedItem(
         });
       }
     }
-  }
+});
+}
 
   // ============================================================
   // Build
@@ -1780,6 +1804,8 @@ void _fillRowFromSelectedItem(
   Widget _buildSmallDateField() =>
       GestureDetector(
         onTap: () async {
+return CachePartitions.run(() async {
+
           final picked =
               await showDatePicker(
             context:
@@ -1805,7 +1831,9 @@ void _fillRowFromSelectedItem(
               );
             });
           }
-        },
+
+});
+},
         child:
             Container(
           padding:
@@ -2869,6 +2897,26 @@ void _fillRowFromSelectedItem(
       field == 'quantity' ||
       field == 'wholesalePrice' ||
       field == 'retailPrice';
+
+  // سعر الجملة لا يظهر ولا يُدخَّل لمن لا يملك حق التكلفة:
+  // الخادم يحسبه من كتالوج التكويد
+  if (field == 'wholesalePrice' &&
+      !PermissionsService().canViewCostPrices) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: Center(
+        child: Text(
+          '—',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: AppTheme.textSoftFor(context),
+            fontSize: 13,
+            fontFamily: 'Cairo',
+          ),
+        ),
+      ),
+    );
+  }
 
   return Padding(
     padding: const EdgeInsets.symmetric(horizontal: 2),

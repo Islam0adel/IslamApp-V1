@@ -1,7 +1,14 @@
+import 'cache_partitions.dart';
+import 'dart:async';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'journal_save_client.dart';
+import 'journal_save_intent.dart';
+import 'permissions_service.dart';
+import 'journal_cache.dart';
+import 'treasury_transfer_service.dart';
 import 'dart:convert';
 
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/constants.dart';
 import 'auth_http.dart';
@@ -19,8 +26,7 @@ class DailyService {
   // Hive
   // ============================================================
 
-  final Box _transactionBox =
-      Hive.box('daily_transactions_box');
+  Box get _transactionBox => CachePartitions.box('daily_transactions_box');
 
 
   // ============================================================
@@ -31,13 +37,14 @@ class DailyService {
     String companyCode, {
     String? branchCode,
   }) async {
+return CachePartitions.run(() async {
+
     try {
       // --------------------------------------------------------
       // قراءة الخزائن من التكويد المحلي
       // --------------------------------------------------------
 
-      final Box codingBox =
-          Hive.box('coding_box');
+      final Box codingBox = CachePartitions.box('coding_box');
 
       final String localKey =
           "${companyCode}_safes";
@@ -198,6 +205,14 @@ class DailyService {
       }
 
 
+      // Independent transfers change balances only, never journal turnover.
+      final effects = TreasuryTransferService().balanceEffects(companyCode, branchCode: branchCode);
+      for (final entry in effects.entries) {
+        if (treasuryBalances.containsKey(entry.key)) {
+          treasuryBalances[entry.key] = treasuryBalances[entry.key]! + entry.value;
+        }
+      }
+
       // --------------------------------------------------------
       // حفظ الأرصدة محلياً
       // --------------------------------------------------------
@@ -231,7 +246,8 @@ await _transactionBox.put(
         "balances": {},
       };
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -242,6 +258,8 @@ await _transactionBox.put(
   Future<List<dynamic>> fetchAllTransactions(
     String companyCode,
   ) async {
+return CachePartitions.run(() async {
+
     try {
       final response = await AuthHttp.get(
         Uri.parse(
@@ -289,10 +307,6 @@ await _transactionBox.put(
         }
 
 
-        final String branchCode =
-            item['branch_code']
-                    ?.toString() ??
-                '1';
 
         final String serial =
             item['serial']?.toString() ?? '';
@@ -303,14 +317,7 @@ await _transactionBox.put(
         }
 
 
-        final String key =
-            "branch_${branchCode}_$serial";
-
-
-        await _transactionBox.put(
-          key,
-          item,
-        );
+        await JournalCache.put(_transactionBox, item, expectedCompany: companyCode);
       }
 
 
@@ -338,7 +345,8 @@ await _transactionBox.put(
 
       rethrow;
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -361,8 +369,10 @@ await _transactionBox.put(
     String companyCode, [
     String? lastSync,
   ]) async {
+return CachePartitions.run(() async {
+
     final prefs =
-        await SharedPreferences.getInstance();
+        await CachePartitions.preferences();
 
     final String lastSyncKey =
         '${ApiConstants.LAST_SYNC_DAILY}$companyCode';
@@ -513,9 +523,7 @@ final String effectiveSince =
 
         if (action == 'delete' ||
             map['is_deleted'] == true) {
-          await _transactionBox.delete(
-            key,
-          );
+          await JournalCache.delete(_transactionBox, company: companyCode, branch: branchCode, serial: serial);
 
           print(
             '🗑️ تم حذف اليومية [$key] من Hive',
@@ -538,10 +546,7 @@ final String effectiveSince =
         map['is_deleted'] = false;
 
 
-        await _transactionBox.put(
-          key,
-          map,
-        );
+        await JournalCache.put(_transactionBox, map, expectedCompany: companyCode);
 
 
         print(
@@ -584,12 +589,138 @@ final String effectiveSince =
       // لا نغير lastSync عند الفشل.
       rethrow;
     }
-  }
+});
+}
 
 
   // ============================================================
   // 4. حفظ / تعديل حركة
   // ============================================================
+
+  DateTime? _serverStamp(dynamic value) {
+    final text = value?.toString() ?? '';
+    if (text.isEmpty) return null;
+    final hasZone = RegExp(r'(Z|[+-]\d{2}:\d{2})$').hasMatch(text);
+    return DateTime.tryParse(hasZone ? text : '${text}Z')?.toUtc();
+  }
+
+  bool _journalOwnerAllowed(JournalSaveIntent intent, String branch) {
+    final rights = PermissionsService();
+    return FirebaseAuth.instance.currentUser?.uid == intent.ownerUid &&
+        (rights.canAddTransaction ||
+            rights.canEditTransaction ||
+            rights.canViewTransactions) &&
+        rights.canAccessBranch(branch);
+  }
+
+  bool _settlementOwnerAllowed(JournalSaveIntent intent, String branch) {
+    final rights = PermissionsService();
+    return _journalOwnerAllowed(intent, branch) &&
+        (rights.canViewSupplierSettlements ||
+            rights.canAddSupplierSettlement ||
+            rights.canEditSupplierSettlement);
+  }
+
+  /// Retry only the captured intention, never rebuild it from an edited form.
+  Future<Map<String, dynamic>> saveCapturedTransaction(JournalSaveIntent intent,
+      {JournalIntentStore? store}) async {
+return CachePartitions.run(() async {
+
+    var dailyChanged = false;
+    var settlementChanged = false;
+    final dailyWatch =
+        _transactionBox.watch().listen((_) => dailyChanged = true);
+    final Box? settlements = CachePartitions.isBoxOpen('supplier_settlement_box')
+        ? CachePartitions.box('supplier_settlement_box')
+        : null;
+    final settlementWatch =
+        settlements?.watch().listen((_) => settlementChanged = true);
+    try {
+      return await JournalSaveClient(store: store).submit(intent,
+          applySnapshot: (result) async {
+        final row = Map<String, dynamic>.from(result['record'] as Map);
+        final branch = row['branch_code'].toString();
+        if (!_journalOwnerAllowed(intent, branch) || row['is_deleted'] == true)
+          return false;
+        final serial = row['serial'].toString();
+        final key = JournalCache.key(intent.companyCode, branch, serial);
+        final legacy = 'branch_${branch}_$serial';
+        final cached = _transactionBox.get(key) ?? _transactionBox.get(legacy);
+        var refreshed = true;
+        final oldStamp =
+            cached is Map && cached['company_code'] == intent.companyCode
+                ? _serverStamp(cached['updated_at'])
+                : null;
+        final incomingStamp = _serverStamp(row['updated_at']);
+        if (cached == null && dailyChanged) {
+          // A deletion observed after this request must not be undone by a late ack.
+          refreshed = false;
+        } else if (oldStamp == null ||
+            incomingStamp != null && !incomingStamp.isBefore(oldStamp)) {
+          if (!_journalOwnerAllowed(intent, branch)) return false;
+          await JournalCache.put(_transactionBox, row,
+              expectedCompany: intent.companyCode);
+        }
+        final linkedRaw = result['linked_settlement'];
+        if (linkedRaw is Map) {
+          final linked = Map<String, dynamic>.from(linkedRaw);
+          final docId = linked['doc_id']?.toString() ?? '';
+          final linkedBranch = linked['branch_code']?.toString() ?? '';
+          // Journal authority alone must not populate another module's cache.
+          if (!_settlementOwnerAllowed(intent, linkedBranch)) return refreshed;
+          if (settlements == null ||
+              docId.isEmpty ||
+              linked['company_code'] != intent.companyCode ||
+              !_settlementOwnerAllowed(intent, linkedBranch)) return false;
+          Map? current;
+          for (final value in settlements.values.whereType<List>()) {
+            for (final record in value.whereType<Map>()) {
+              if (record['company_code'] == intent.companyCode &&
+                  record['doc_id']?.toString() == docId) current = record;
+            }
+          }
+          final previousStamp = _serverStamp(current?['updated_at']);
+          final linkedStamp = _serverStamp(linked['updated_at']);
+          if (previousStamp != null &&
+              (linkedStamp == null || linkedStamp.isBefore(previousStamp)))
+            return refreshed;
+          if (current == null && settlementChanged) return false;
+          // Remove only this company's previous location for this document.
+          for (final oldKey in settlements.keys.toList()) {
+            if (!_settlementOwnerAllowed(intent, linkedBranch)) return false;
+            final value = settlements.get(oldKey);
+            if (value is! List) continue;
+            final remaining = value
+                .where((record) =>
+                    record is! Map ||
+                    record['company_code'] != intent.companyCode ||
+                    record['doc_id']?.toString() != docId)
+                .toList();
+            if (remaining.length == value.length) continue;
+            if (remaining.isEmpty) {
+              await settlements.delete(oldKey);
+            } else {
+              await settlements.put(oldKey, remaining);
+            }
+          }
+          if (linked['is_deleted'] != true) {
+            if (!_settlementOwnerAllowed(intent, linkedBranch)) return false;
+            final target =
+                '${intent.companyCode}_${linkedBranch}_${linked['date']}';
+            final old = settlements.get(target);
+            final list = old is List ? List<dynamic>.from(old) : <dynamic>[];
+            list.add(linked);
+            await settlements.put(target, list);
+          }
+        }
+        return refreshed;
+      });
+    } finally {
+      await dailyWatch.cancel();
+      await settlementWatch?.cancel();
+    }
+});
+}
 
   Future<Map<String, dynamic>> saveTransaction({
     required String companyCode,
@@ -602,7 +733,36 @@ final String effectiveSince =
     required String type,
     String? employee,
     required String branchCode,
+    String? linkId,
+    String? supplierName,
+    bool addToSettlement = false,
+    bool unlinkSettlement = false,
+    String? baseUpdatedAt,
+    JournalSaveIntent? intent,
+    JournalIntentStore? intentStore,
   }) async {
+return CachePartitions.run(() async {
+
+    if (intent != null) {
+      intent.capture({
+        'company_code': companyCode,
+        'base_updated_at': baseUpdatedAt,
+        'serial': serial,
+        'treasury': treasury,
+        'amount': amount,
+        'statement': statement,
+        'category': category,
+        'date': date,
+        'type': type,
+        'employee': employee ?? 'غير محدد',
+        'branch_code': branchCode,
+        'link_id': linkId,
+        'supplier_name': supplierName,
+        'add_to_settlement': addToSettlement,
+        'unlink_settlement': unlinkSettlement,
+      });
+      return saveCapturedTransaction(intent, store: intentStore);
+    }
     try {
       final response = await AuthHttp.post(
         Uri.parse(
@@ -643,6 +803,11 @@ final String effectiveSince =
 
           'branch_code':
               branchCode,
+          'base_updated_at': baseUpdatedAt,
+          'link_id': linkId,
+          'supplier_name': supplierName,
+          'add_to_settlement': addToSettlement,
+          'unlink_settlement': unlinkSettlement,
         }),
       );
 
@@ -672,6 +837,9 @@ final String effectiveSince =
       final int assignedSerial =
           (result['serial'] as num?)?.toInt() ??
               serial;
+      final String? assignedLinkId = unlinkSettlement
+          ? null
+          : (result['link_id']?.toString() ?? linkId);
 
 
       // --------------------------------------------------------
@@ -710,14 +878,14 @@ final String effectiveSince =
 
         'branch_code':
             branchCode,
+        'link_id': assignedLinkId,
+        'add_to_settlement': addToSettlement,
+        'supplier_name': unlinkSettlement ? null : supplierName,
+        'unlink_settlement': unlinkSettlement,
 
         'is_deleted':
             false,
       };
-
-
-      final String uniqueId =
-          "branch_${branchCode}_$assignedSerial";
 
 
       print(
@@ -731,22 +899,47 @@ final String effectiveSince =
       // تحديث محلي فوري
       // --------------------------------------------------------
 
-      await _transactionBox.put(
-        uniqueId,
-        transactionData,
-      );
+      await JournalCache.put(_transactionBox, transactionData, expectedCompany: companyCode);
+
+      final linkedRaw = result['linked_settlement'];
+      if (linkedRaw is Map) {
+        final linked = Map<String, dynamic>.from(linkedRaw);
+        final settlementBox = CachePartitions.box('supplier_settlement_box');
+        final settlementKey = '${linked['company_code']}_${linked['branch_code']}_${linked['date']}';
+        for (final oldKey in settlementBox.keys.toList()) {
+          final rawList = settlementBox.get(oldKey);
+          if (rawList is! List) continue;
+          final list = rawList.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+          list.removeWhere((e) => e['doc_id']?.toString() == linked['doc_id']?.toString());
+          if (list.isEmpty) {
+            await settlementBox.delete(oldKey);
+          } else if (list.length != rawList.length) {
+            await settlementBox.put(oldKey, list);
+          }
+        }
+        if (linked['is_deleted'] != true) {
+          final rawList = settlementBox.get(settlementKey);
+          final list = rawList is List
+              ? rawList.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
+              : <Map<String, dynamic>>[];
+          list.add(linked);
+          await settlementBox.put(settlementKey, list);
+        }
+      }
 
 
       return {
         "success": true,
         "serial": assignedSerial,
+        "link_id": assignedLinkId,
       };
     } catch (e) {
       throw Exception(
         'فشل عملية الحفظ: $e',
       );
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -759,6 +952,8 @@ final String effectiveSince =
     String companyCode,
     int fromSerial,
   ) async {
+return CachePartitions.run(() async {
+
     try {
       final response = await AuthHttp.get(
         Uri.parse(
@@ -811,9 +1006,7 @@ final String effectiveSince =
               item['serial']
                   .toString();
 
-          await _transactionBox.delete(
-            "branch_${bCode}_$serial",
-          );
+          await JournalCache.delete(_transactionBox, company: companyCode, branch: bCode, serial: serial);
 
           continue;
         }
@@ -823,23 +1016,17 @@ final String effectiveSince =
         // العادي
         // ------------------------------------------------------
 
-        final String bCode =
-            item['branch_code']
-                    ?.toString() ??
-                "1";
 
 
-        await _transactionBox.put(
-          "branch_${bCode}_${item['serial']}",
-          item,
-        );
+        await JournalCache.put(_transactionBox, item, expectedCompany: companyCode);
       }
     } catch (e) {
       print(
         "⚠️ خطأ في المزامنة الخلفية: $e",
       );
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -855,6 +1042,8 @@ final String effectiveSince =
     String endDate, {
     String? branchCode,
   }) async {
+return CachePartitions.run(() async {
+
     try {
       List<dynamic> resultData =
           [];
@@ -962,10 +1151,6 @@ final String effectiveSince =
           }
 
 
-          final String bCode =
-              item['branch_code']
-                      ?.toString() ??
-                  "1";
 
 
           final String serial =
@@ -979,10 +1164,7 @@ final String effectiveSince =
           }
 
 
-          await _transactionBox.put(
-            "branch_${bCode}_$serial",
-            item,
-          );
+          await JournalCache.put(_transactionBox, item, expectedCompany: companyCode);
         }
 
 
@@ -1087,7 +1269,8 @@ final String effectiveSince =
 
       return fallbackData;
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -1099,7 +1282,18 @@ final String effectiveSince =
     int serial,
     String branchCode,
   ) async {
+return CachePartitions.run(() async {
+
     try {
+      String? linkedSettlementId;
+      for (final raw in _transactionBox.values) {
+        if (raw is Map && raw['company_code']?.toString() == companyCode &&
+            raw['branch_code']?.toString() == branchCode &&
+            raw['serial']?.toString() == serial.toString()) {
+          linkedSettlementId = raw['link_id']?.toString();
+          break;
+        }
+      }
       final response =
           await AuthHttp.delete(
         Uri.parse(
@@ -1125,13 +1319,20 @@ final String effectiveSince =
       // نحذف محليًا فورًا
       // --------------------------------------------------------
 
-      final String docId =
-          "branch_${branchCode}_$serial";
 
-
-      await _transactionBox.delete(
-        docId,
-      );
+      await JournalCache.delete(_transactionBox, company: companyCode, branch: branchCode, serial: serial.toString());
+      if (linkedSettlementId != null && linkedSettlementId.isNotEmpty) {
+        final settlementBox = CachePartitions.box('supplier_settlement_box');
+        for (final key in settlementBox.keys.toList()) {
+          final raw = settlementBox.get(key);
+          if (raw is! List) continue;
+          final list = raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+          for (final item in list.where((e) => e['link_id']?.toString() == linkedSettlementId)) {
+            item['is_deleted'] = true;
+          }
+          await settlementBox.put(key, list);
+        }
+      }
 
 
       // --------------------------------------------------------
@@ -1147,7 +1348,8 @@ final String effectiveSince =
         'خطأ أثناء الحذف: $e',
       );
     }
-  }
+});
+}
 
 
   // ============================================================
@@ -1215,6 +1417,8 @@ final String effectiveSince =
   Future<void> syncAllTransactions(
     String companyCode,
   ) async {
+return CachePartitions.run(() async {
+
     try {
       final String startDate =
           '2020-01-01';
@@ -1274,10 +1478,6 @@ final String effectiveSince =
         }
 
 
-        final String bCode =
-            item['branch_code']
-                    ?.toString() ??
-                '1';
 
 
         final String serial =
@@ -1291,10 +1491,7 @@ final String effectiveSince =
         }
 
 
-        await _transactionBox.put(
-          "branch_${bCode}_$serial",
-          item,
-        );
+        await JournalCache.put(_transactionBox, item, expectedCompany: companyCode);
       }
 
 
@@ -1320,5 +1517,6 @@ final String effectiveSince =
 
       rethrow;
     }
-  }
+});
+}
 }

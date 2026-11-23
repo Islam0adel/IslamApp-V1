@@ -1,12 +1,22 @@
-import 'dart:async';                              // ← NEW: للـ StreamSubscription
+import '../../services/page_visibility.dart';
+import '../../services/cache_partitions.dart';
+import '../../services/permission_bulk_edit.dart';
+import '../widgets/permission_bulk_actions.dart';
+import '../../services/permission_catalog.dart';
+import '../widgets/permission_action_switch.dart';
+import '../widgets/permission_editor_state.dart';
+import '../../services/permission_hierarchy.dart';
+import '../../services/permission_editor_snapshot.dart';
+import '../../services/read_authorization_snapshot.dart';
+import '../../services/websocket_sync_service.dart';
+import 'dart:async'; // ← NEW: للـ StreamSubscription
 import 'package:flutter/material.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../core/theme.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../services/api_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 import '../../services/permissions_service.dart';
-import '../../services/presence_service.dart';   // ← NEW
+import '../../services/presence_service.dart'; // ← NEW
 
 class PermissionsPage extends StatefulWidget {
   const PermissionsPage({super.key});
@@ -20,9 +30,34 @@ class _PermissionsPageState extends State<PermissionsPage> {
   String? selectedUserJobCode;
   String currentCompanyCode = '';
   bool _isLoading = true;
+  PermissionEditorSnapshot? _editor;
+  ReadAuthorizationSnapshot? _editorScope;
+  String? _editorError;
+  bool _saving = false;
+  bool _revalidating = false;
+  bool _revalidateAgain = false;
+  String _startupBranch = '';
+  List<String> get _draftBranches =>
+      _allowAllBranches ? ['all'] : List<String>.from(_selectedBranchCodes);
+  bool get _editorReady =>
+      _editor != null &&
+      _editorError == null &&
+      !_saving &&
+      !_revalidating &&
+      (_editorScope?.isCurrent ?? false);
+  bool _canToggle(String category, String key, bool next) =>
+      _editorReady &&
+      _editor!.canToggle(category, key, next, userPermissions, _draftBranches);
+  bool _canEditBranch(String code) =>
+      _editorReady && _editor!.canEditBranch(code, userPermissions);
+  bool get _canEditEmployees =>
+      _editorReady &&
+      _editor!.canEditEmployees(userPermissions, _draftBranches);
 
-    // ✅ NEW: حالة is_active للمستخدم المختار (افتراضي = نشط)
+  // ✅ NEW: حالة is_active للمستخدم المختار (افتراضي = نشط)
   bool _selectedUserIsActive = true;
+  bool get _rootSelfStatus =>
+      _editor?.root == true && _editor?.data['is_self'] == true;
 
   // ⭐ HR: فلترة الموظفين
   List<String>? _hrViewableEmployees; // null/empty = كل الموظفين
@@ -30,354 +65,274 @@ class _PermissionsPageState extends State<PermissionsPage> {
   List<Map<String, String>> _allEmployees = [];
 
   Map<String, Map<String, bool>> userPermissions = {};
+  Map<String, Map<String, bool>> _displayedPermissions = {};
 
-  List<QueryDocumentSnapshot> usersList = [];
+  List<Map<String, dynamic>> usersList = [];
   List<Map<String, String>> _allBranches = [];
   bool _allowAllBranches = true;
   List<String> _selectedBranchCodes = [];
 
-  // ✅ NEW: Stream محفوظ — عشان ما نعملش stream جديد كل rebuild
-  Stream<QuerySnapshot>? _usersStream;
-
-  // ✅ NEW: request ID — الاستدعاء الأخير بس هو اللي بيفوز
+  Future<List<Map<String, dynamic>>>? _targetsFuture;
+  ReadAuthorizationSnapshot? _directoryScope;
+  bool _targetsLoading = false;
+  bool _reloadTargetsPending = false;
   int _loadUserRequestId = 0;
+  int _contextRequestId = 0;
+  ReadAuthorizationSnapshot? _pageContext;
 
-  // ✅ NEW: اشتراك لحظي في مستند المستخدم المختار
-  StreamSubscription<DocumentSnapshot>? _selectedUserSub;
-
-    @override
+  @override
   void initState() {
     super.initState();
-    _loadCompanyCode().then((_) {
-      _loadBranches();
-      _loadEmployeesForFilter();  // ⭐ جديد
-    });
+    PermissionsService().addListener(_actorScopeChanged);
+    WebSocketSyncService.userDirectoryChanges.addListener(_directoryHint);
+    _loadCompanyCode();
   }
 
-  Future<void> _loadBranches() async {
-    if (currentCompanyCode.isEmpty) return;
+  void _directoryHint() {
+    final company = WebSocketSyncService.userDirectoryChanges.value.company;
+    if (!mounted ||
+        (currentCompanyCode.isNotEmpty && company != currentCompanyCode))
+      return;
+    _refreshTargetDirectory(forceRefresh: true);
+    _actorScopeChanged(force: true);
+  }
 
-    final box = Hive.box('coding_box');
-    final branchesKey = '${currentCompanyCode}_branches';
-    var branches = box.get(branchesKey) as List? ?? [];
-
-    if (!mounted) return;
-
-    setState(() {
-      _allBranches = branches.map((e) {
-        return {
-          'code': e['code'].toString(),
-          'name': e['name'].toString(),
-        };
-      }).toList();
-
-      if (_allBranches.isEmpty) {
-        _allBranches = [
-          {
-            'code': 'none',
-            'name': 'لا توجد فروع مسجلة',
+  Future<List<Map<String, dynamic>>> _readTargetDirectory(
+      {bool forceRefresh = false}) async {
+    return CachePartitions.run(() async {
+      try {
+        final value = await PermissionsService().loadPermissionTargets(
+            currentCompanyCode,
+            forceRefresh: forceRefresh);
+        value.readScope.check();
+        if (mounted) {
+          _directoryScope = value.readScope;
+          if (_editor != null &&
+              !value.users.any((row) => row['email'] == selectedUserId)) {
+            _editorError =
+                'الحساب المختار لم يعد متاحاً. أعد التحميل أو اختر حساباً آخر';
           }
-        ];
+        }
+        return value.users;
+      } finally {
+        _targetsLoading = false;
+        if (mounted && _reloadTargetsPending) {
+          _reloadTargetsPending = false;
+          scheduleMicrotask(_refreshTargetDirectory);
+        }
       }
     });
   }
 
-    // ⭐ جديد: تحميل الموظفين من Hive (لفلترة HR)
-  Future<void> _loadEmployeesForFilter() async {
-    if (currentCompanyCode.isEmpty) return;
-
-    final box = Hive.box('coding_box');
-    final key = '${currentCompanyCode}_employees';
-    final raw = box.get(key);
-
-    if (raw is! List) {
-      if (mounted) setState(() => _allEmployees = []);
+  void _refreshTargetDirectory({bool forceRefresh = false}) {
+    if (!mounted) return;
+    if (_targetsLoading) {
+      _reloadTargetsPending = true;
       return;
     }
-
-    final list = <Map<String, String>>[];
-    for (final item in raw) {
-      if (item is! Map) continue;
-      if (item['is_deleted'] == true) continue;
-
-      final code = item['code']?.toString() ?? '';
-      final name = item['name']?.toString() ?? '';
-      if (code.isEmpty) continue;
-
-      list.add({'code': code, 'name': name});
-    }
-
-    // ترتيب حسب الكود
-    list.sort((a, b) {
-      final aCode = int.tryParse(a['code'] ?? '0') ?? 0;
-      final bCode = int.tryParse(b['code'] ?? '0') ?? 0;
-      return aCode.compareTo(bCode);
+    _targetsLoading = true;
+    _directoryScope = null;
+    setState(() {
+      _targetsFuture = _readTargetDirectory(forceRefresh: forceRefresh);
     });
+  }
 
-    if (mounted) {
-      setState(() => _allEmployees = list);
-    }
+  Future<void> _actorScopeChanged({bool force = false}) async {
+    return CachePartitions.run(() async {
+      if (!mounted) return;
+      if (_pageContext != null && !_pageContext!.sameContext) {
+        ++_loadUserRequestId;
+        setState(() {
+          _pageContext = null;
+          _editor = null;
+          _editorScope = null;
+          _editorError = null;
+          _directoryScope = null;
+          selectedUserId = null;
+          selectedUserJobCode = null;
+          usersList = [];
+          userPermissions = {};
+          _allBranches = [];
+          _allEmployees = [];
+          _selectedBranchCodes = [];
+          _startupBranch = '';
+          _hrViewableEmployees = null;
+          _allowAllBranches = true;
+          _allowAllEmployees = true;
+        });
+        await _loadCompanyCode();
+        return;
+      }
+      if ((_directoryScope == null || !_directoryScope!.isCurrent) &&
+          !_targetsLoading) _refreshTargetDirectory(forceRefresh: true);
+      if (_saving || _revalidating) {
+        if (force) _revalidateAgain = true;
+        return;
+      }
+      if (_editor == null || (!force && (_editorScope?.isCurrent ?? false)))
+        return;
+      final original = _editor!;
+      final requestId = _loadUserRequestId;
+      _revalidating = true;
+      setState(() {});
+      try {
+        final fresh =
+            await PermissionsService().loadPermissionEditor(original.email);
+        final scope = fresh.readScope!;
+        scope.check();
+        if (!mounted ||
+            requestId != _loadUserRequestId ||
+            selectedUserId != original.email) return;
+        if (fresh.uid != original.uid ||
+            fresh.version != original.version ||
+            fresh.revision != original.revision) {
+          setState(() => _editorError =
+              'تغير نطاق الحساب أو سياسة الشركة. أعد التحميل قبل الحفظ');
+        } else {
+          setState(() {
+            _editor = fresh;
+            _editorScope = scope;
+          });
+        }
+      } catch (e) {
+        if (mounted && requestId == _loadUserRequestId)
+          setState(() => _editorError = 'تعذر التحقق من الصلاحيات الحالية: $e');
+      } finally {
+        _revalidating = false;
+        if (mounted) {
+          setState(() {});
+          if (_revalidateAgain) {
+            _revalidateAgain = false;
+            scheduleMicrotask(() => _actorScopeChanged(force: true));
+          }
+        }
+      }
+    });
   }
 
   Future<void> _loadCompanyCode() async {
-    final prefs = await SharedPreferences.getInstance();
-    final code = prefs.getString('company_code') ?? '';
-
-    if (mounted) {
-      setState(() {
-        currentCompanyCode = code;
-        _isLoading = false;
-
-        // ✅ NEW: بناء الـ stream مرة واحدة فقط — جوه setState
-        if (code.isNotEmpty) {
-          _usersStream = FirebaseFirestore.instance
-              .collection('users')
-              .where('company_code', isEqualTo: code)
-              .snapshots();
+    return CachePartitions.run(() async {
+      final request = ++_contextRequestId;
+      try {
+        final scope = await ReadAuthorizationSnapshot.capture();
+        final prefs = await SharedPreferences.getInstance();
+        scope.check();
+        if (!mounted || request != _contextRequestId) return;
+        setState(() {
+          _pageContext = scope;
+          currentCompanyCode = prefs.getString('company_code') ?? '';
+          _isLoading = false;
+        });
+        _refreshTargetDirectory(forceRefresh: true);
+        final email =
+            (prefs.getString('user_email') ?? '').trim().toLowerCase();
+        final job = prefs.getString('job_code') ?? '1';
+        scope.check();
+        if (email.isNotEmpty) {
+          setState(() {
+            selectedUserId = email;
+            selectedUserJobCode = job;
+          });
+          await _loadUserPermissions(email, job);
         }
-      });
-    }
-
-    await _loadCurrentUserPermissions();
+      } on ReadAuthorizationChanged {
+        if (mounted && request == _contextRequestId)
+          scheduleMicrotask(_loadCompanyCode);
+      }
+    });
   }
 
-  Future<void> _loadCurrentUserPermissions() async {
-    final prefs = await SharedPreferences.getInstance();
-
-    final userEmail =
-        prefs.getString('user_email') ?? '';
-
-    final jobCode =
-        prefs.getString('job_code') ?? '1';
-
-    if (userEmail.isNotEmpty) {
-      if (mounted) {
-        setState(() {
-          selectedUserId = userEmail;
-          selectedUserJobCode = jobCode;
-        });
+  Future<void> _confirmEditorReload() async {
+    return CachePartitions.run(() async {
+      if (selectedUserId == null || _saving) return;
+      if (_editor != null) {
+        final approved = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+                    title: const Text('إعادة تحميل الصلاحيات'),
+                    content: const Text(
+                        'ستُستبدل التعديلات غير المحفوظة ببيانات الخادم الحالية.'),
+                    actions: [
+                      TextButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          child: const Text('رجوع')),
+                      TextButton(
+                          onPressed: () => Navigator.pop(context, true),
+                          child: const Text('إعادة التحميل'))
+                    ]));
+        if (approved != true || !mounted) return;
       }
-
-      await _loadUserPermissions(
-        userEmail,
-        jobCode,
-      );
-    }
+      _refreshTargetDirectory(forceRefresh: true);
+      await _loadUserPermissions(selectedUserId!, selectedUserJobCode ?? '1');
+    });
   }
 
   Future<void> savePermissions() async {
-    if (selectedUserId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content:
-              Text('برجاء اختيار الموظف أولاً'),
-          backgroundColor: AppTheme.warningOrangeFor(context),
-        ),
-      );
-      return;
-    }
-
-    List<String> allowedBranches;
-
-    if (_allowAllBranches) {
-      allowedBranches = ['all'];
-    } else {
-      allowedBranches =
-          List<String>.from(_selectedBranchCodes);
-
-      if (allowedBranches.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'يرجى اختيار فرع واحد على الأقل أو "كل الفروع"',
-            ),
-            backgroundColor: AppTheme.warningOrangeFor(context),
-          ),
-        );
+    return CachePartitions.run(() async {
+      if (!_editorReady || selectedUserId == null) return;
+      final editor = _editor!;
+      final target = selectedUserId!;
+      final requestId = _loadUserRequestId;
+      final branches = _draftBranches;
+      final employees = _allowAllEmployees
+          ? <String>[]
+          : List<String>.from(_hrViewableEmployees ?? []);
+      if (branches.isEmpty || (!_allowAllEmployees && employees.isEmpty)) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: const Text('اختر نطاق الفروع والموظفين أولاً'),
+            backgroundColor: AppTheme.warningOrangeFor(context)));
         return;
       }
-    }
-
-        // ⭐ HR: تحضير قائمة الموظفين المرئيين
-    // ⚠️ نستخدم [] بدل null (Firestore بيتعامل مع null بشكل غير متوقع)
-    final List<String> viewableToSave;
-    final bool clearViewable;
-
-    if (_allowAllEmployees) {
-      viewableToSave = [];   // ⭐ [] = كل الموظفين
-      clearViewable = false; // ⭐ مش هنستخدم clear
-    } else {
-      final selected = _hrViewableEmployees ?? [];
-      if (selected.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'يرجى اختيار موظف واحد على الأقل أو "كل الموظفين"',
-            ),
-            backgroundColor: AppTheme.warningOrangeFor(context),
-          ),
-        );
-        return;
+      setState(() => _saving = true);
+      try {
+        await PermissionsService().savePermissions(PageVisibility.forSave(userPermissions, editor.permissions, _displayedPermissions),
+            targetEmail: target,
+            allowedBranches:
+                PermissionEditorSnapshot.sameSet(branches, editor.branches)
+                    ? null
+                    : branches,
+            hrViewableEmployees:
+                PermissionEditorSnapshot.sameSet(employees, editor.employees)
+                    ? null
+                    : employees,
+            expectedTargetUid: editor.uid,
+            expectedProfileVersion: editor.version,
+            expectedPolicyRevision: editor.revision,
+            startupBranchCode:
+                _startupBranch == editor.startup ? null : _startupBranch);
+        if (!mounted ||
+            requestId != _loadUserRequestId ||
+            selectedUserId != target) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: const Text('تم حفظ الصلاحيات على الخادم'),
+            backgroundColor: AppTheme.successStrongFor(context)));
+        await _loadUserPermissions(target, selectedUserJobCode ?? '1');
+      } catch (e) {
+        if (!mounted ||
+            requestId != _loadUserRequestId ||
+            selectedUserId != target) return;
+        setState(() => _editorError =
+            'لم يتم تأكيد الحفظ. أعد تحميل البيانات للتحقق قبل المحاولة مجدداً: $e');
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(_editorError!),
+            backgroundColor: AppTheme.warningOrangeFor(context)));
+      } finally {
+        if (mounted) {
+          setState(() => _saving = false);
+          if (_revalidateAgain) {
+            _revalidateAgain = false;
+            scheduleMicrotask(() => _actorScopeChanged(force: true));
+          }
+        }
       }
-      viewableToSave = selected;
-      clearViewable = false;
-    }
-
-    try {
-      await PermissionsService().savePermissions(
-        userPermissions,
-        targetEmail: selectedUserId,
-        allowedBranches: allowedBranches,
-        hrViewableEmployees: viewableToSave,
-        clearHrViewableEmployees: clearViewable,
-      );
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content:
-                Text('تم حفظ الصلاحيات بنجاح!'),
-            backgroundColor: AppTheme.successStrongFor(context),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'تم الحفظ محلياً (وضع عدم الاتصال)',
-            ),
-            backgroundColor:
-                AppTheme.warningOrangeSoftFor(context),
-          ),
-        );
-      }
-    }
+    });
   }
 
   Map<String, Map<String, bool>> _createDefaultPermissions(
     String jobCode,
   ) {
-    var allPermissions = {
-      'حركة الخزينة': {
-        'شاشات الارصدة': false,
-        'ادخال اذون': false,
-        'المعاينة': false,
-        'التعديل': false,
-        'الحذف': false,
-        'استيراد من اكسل': false,
-        'تصدير': false,
-        'فلترة': false,
-      },
-      'التكويد': {
-        'معاينة': false,
-        'اضافة صنف': false,
-        'سعر الشراء': false,
-        'اضافة فرع': false,
-        'اضافة خزينة': false,
-        'اضافة مورد': false,
-        'اضافة مخزن': false,
-        'اضافة عملاء': false,
-        'اضافة طرق دفع': false,
-        'اضافة بنك': false,
-        'اضافة موظف': false,
-      },
-      'حسابات الموردين': {
-        'اضافة': false,
-        'تعديل': false,
-        'حذف': false,
-        'معاينة': false,
-        'تصدير': false,
-      },
-      'تسويات الموردين': {
-        'إضافة': false,
-        'تعديل': false,
-        'حذف': false,
-        'معاينة': false,
-        'تصدير': false,
-      },
-      'حركة الجرد': {
-        'اضافة': false,
-        'تعديل': false,
-        'حذف': false,
-        'معاينة': false,
-        'استيراد': false,
-        'تصدير': false,
-      },
-      'التقارير': {
-        'تقرير المبيعات': false,
-        'تقرير فترة': false,
-        'مشاركة': false,
-        'تقرير التدفق النقدي': false,
-        'تحليل المصروفات بالنسبة للمبيعات': false, 
-  'تحليل هيكل المصروفات': false,
-  'الربحية الصافية لكل فرع': false,
-  'تحليل حجم الفاتورة': false,
-  'تحليل الخزائن النقدية': false,
-  'الأصناف بطيئة الحركة': false,
-  'تحليل دقة الجرد': false,
-  'تقييم المخزون و ABC': false,
-  'تحليل أداء الموردين': false,
-  'تحليل العوائد والخصومات': false,
-  'تحليل الاتجاهات الموسمية': false,
-  'تحليل هامش الربح الفعلي': false,
-  'تحليل تجميع المنتجات': false,
-  'التقرير الموسع (صافي الجرد)': false,
-      },
-      'رصيد المخزون': {
-        'معاينة': false,
-        'عرض سعر الجملة': false,
-        'تصدير': false,
-      },
-      'صلاحيات عامة': {
-        'تغيير الفرع(صفحة الهوم)': false,
-        'صفحة الصلاحيات(الاعدادات)': false,
-        'إظهار حركة الخزينة': false,
-        'إظهار التكويد': false,
-        'إظهار التقارير': false,
-        'إظهار حركة الموردين': false,
-        'إظهار حركة الجرد': false,
-        'إظهار الإشعارات': true, 
-        'إظهار البحث عن المنتجات': false,
-        'إظهار المستخدمين المتصلين': false,
-        'إظهار الموارد البشرية': false, 
-        
-      },
-              'الموارد البشرية': {
-        // ─── A. فتح الصفحات (3) ───
-        'canOpenAttendancePage': false,
-        'canOpenVacationsPage': false,
-        'canOpenReportPage': false,
-
-        // ─── B. عمليات الحضور (3) ───
-        'canAddAttendance': false,
-        'canEditAttendance': false,
-        'canDeleteAttendance': false,
-
-        // ─── C. عمليات الإجازات (3) ───
-        'canAddVacation': false,
-        'canEditVacation': false,
-        'canDeleteVacation': false,
-
-        // ─── D. التسويات (5) ───
-        'canViewAdjustments': false,
-        'canAddBonus': false,
-        'canAddLoan': false,
-        'canEditAdjustment': false,
-        'canDeleteAdjustment': false,
-
-        // ─── E. الإعدادات (3) ───
-        'canEditWeeklyDay': false,
-        'canEditWorkSchedule': false,
-        'canEditDelayRules': false,
-
-        // ─── F. الخصم والراتب (3) ───
-        'canAddDirectDiscount': false,
-        'canViewSalaryAmounts': false,
-        'canExportReport': false,
-      },
-    };
+    var allPermissions = emptyPermissionCatalog();
+    allPermissions['صلاحيات عامة']!['إظهار الإشعارات'] = true;
 
     if (jobCode == '99' || jobCode == '200') {
       allPermissions.forEach((category, perms) {
@@ -390,484 +345,318 @@ class _PermissionsPageState extends State<PermissionsPage> {
     return allPermissions;
   }
 
-  Future<void> _loadUserPermissions(
-    String userId,
-    String jobCode,
-  ) async {
-    // ✅ request ID: كل استدعاء بياخد رقم، والاستدعاء الأخير بس هو اللي بيفوز
-    final requestId = ++_loadUserRequestId;
-
-    // ⭐ حماية: مفيش حد يحمل صلاحيات السوبر أدمن غير السوبر أدمن
-    if (!PermissionsService().isSuperAdmin) {
+  Future<void> _loadUserPermissions(String userId, String jobCode) async {
+    return CachePartitions.run(() async {
+      final requestId = ++_loadUserRequestId;
+      if (mounted)
+        setState(() {
+          _editor = null;
+          _editorScope = null;
+          _editorError = null;
+          userPermissions = {};
+        });
       try {
-        final doc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(userId)
-            .get();
-        if (doc.exists) {
-          final data = doc.data() ?? {};
-          final role = (data['role'] ?? '').toString().toLowerCase().trim();
-          final jc = (data['job_code'] ?? '1').toString().trim();
-          if (role == 'super_admin' || jc == '99') {
-            debugPrint(
-              '🚫 محاولة تحميل صلاحيات السوبر أدمن مرفوضة: $userId',
-            );
-            return;
+        final editor = await PermissionsService().loadPermissionEditor(userId);
+        final scope = editor.readScope!;
+        scope.check();
+        if (!mounted ||
+            requestId != _loadUserRequestId ||
+            selectedUserId != userId) return;
+        final values = _createDefaultPermissions('1');
+        editor.permissions.forEach((category, perms) {
+          (values[category] ??= {}).addAll(perms);
+        });
+        for (final key in PageVisibility.keys) {
+          if (!(editor.permissions['صلاحيات عامة']?.containsKey(key) ?? false)) {
+            final label = key.substring('إظهار '.length);
+            var fallback = true;
+            final rights = editor.permissions;
+            if (label == 'رصيد المخزون') fallback = rights['صلاحيات عامة']?['إظهار حركة الجرد'] == true;
+            if (label == 'تحويلات الخزائن') fallback = ['إضافة','معاينة','تعديل'].any((k)=>rights['تحويلات الخزائن']?[k] == true);
+            if (label == 'المبيعات والعملاء') fallback = ['المبيعات','المرتجعات','حسابات العملاء','أرصدة خزائن المبيعات'].any((c)=>(rights[c] ?? {}).entries.any((e)=>e.value && ['إضافة','تعديل','معاينة','إضافة تحصيل','تعديل تحصيل','عرض الأرصدة'].contains(e.key)));
+            values['صلاحيات عامة']![key] = fallback;
           }
         }
-      } catch (_) {}
-    }
+        _displayedPermissions = values.map((c,v)=>MapEntry(c,Map<String,bool>.from(v)));
+        setState(() {
+          _editor = editor;
+          _editorScope = scope;
+          userPermissions = values;
+          _allowAllBranches = editor.branches.contains('all');
+          _selectedBranchCodes = _allowAllBranches ? [] : editor.branches;
+          _selectedUserIsActive = editor.data['is_active'] != false;
+          _hrViewableEmployees = editor.employees;
+          _allowAllEmployees =
+              editor.employees == null || editor.employees!.isEmpty;
+          _startupBranch = editor.startup;
+          _allBranches = editor.choices('branch_choices');
+          _allEmployees = editor.choices('employee_choices');
+        });
+      } catch (e) {
+        if (mounted &&
+            requestId == _loadUserRequestId &&
+            selectedUserId == userId) {
+          setState(() => _editorError = 'تعذر تحميل الصلاحيات الحالية: $e');
+        }
+      }
+    });
+  }
 
-    try {
-      // ============================================================
-      // default: كل القيم false (مش يعتمد على jobCode)
-      // عشان نبدأ من حالة "نضيفة" والقيم الحقيقية تيجي من Hive/Firestore
-      // ============================================================
-      final defaultPerms = _createDefaultPermissions('1');
+  Future<void> _handleRemoveFromPresence() async {
+    return CachePartitions.run(() async {
+      if (selectedUserId == null) return;
 
-      final Map<String, Map<String, bool>> newPermissions =
-          Map<String, Map<String, bool>>.from(
-        defaultPerms.map(
-          (k, v) => MapEntry(k, Map<String, bool>.from(v)),
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppTheme.dialogBackground(context),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          title: Text(
+            '⚠️ حذف من قائمة الحضور',
+            style: TextStyle(
+              color: AppTheme.textMainFor(context),
+              fontFamily: 'Cairo',
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          content: Text(
+            'سيتم إخفاء "$selectedUserId" من قائمة المستخدمين المتصلين.\n\n'
+            'لن يتم حذف حسابه من النظام. لو سجل دخول تاني، هيرجع للقائمة.',
+            style: TextStyle(
+              color: AppTheme.textMutedFor(context),
+              fontFamily: 'Cairo',
+              height: 1.5,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text('إلغاء',
+                  style: TextStyle(
+                    color: AppTheme.textMutedFor(context),
+                    fontFamily: 'Cairo',
+                  )),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text('حذف',
+                  style: TextStyle(
+                    color: AppTheme.dangerFor(context),
+                    fontFamily: 'Cairo',
+                    fontWeight: FontWeight.bold,
+                  )),
+            ),
+          ],
         ),
       );
 
-      bool allowAll = true;
-      List<String> selectedBranches = [];
-      bool isActive = true;
+      if (confirmed != true) return;
 
-      final localKey = 'permissions_$userId';
-      final branchesKey = 'allowed_branches_$userId';
-      final box = Hive.box('coding_box');
+      final ok =
+          await PresenceService.instance.removeUserByEmail(selectedUserId!);
 
-      // ============================================================
-      // 1) Hive — الصلاحيات
-      // ============================================================
-      if (box.containsKey(localKey)) {
-        final data = box.get(localKey);
-        if (data != null && data is Map) {
-          data.forEach((category, perms) {
-            if (perms is! Map) return;
-            if (!newPermissions.containsKey(category)) {
-              newPermissions[category] = {};
-            }
-            perms.forEach((key, value) {
-              newPermissions[category]![key.toString()] = value is bool
-                  ? value
-                  : value.toString().toLowerCase() == 'true';
-            });
-          });
-        }
-      }
-
-      // ============================================================
-      // 2) Hive — الفروع
-      // ============================================================
-      final savedBranches = box.get(branchesKey);
-      if (savedBranches is List) {
-        final list = savedBranches.map((e) => e.toString()).toList();
-        if (list.contains('all')) {
-          allowAll = true;
-          selectedBranches = [];
-        } else {
-          allowAll = false;
-          selectedBranches = list;
-        }
-      }
-
-      // ============================================================
-      // 3) Firestore — الصلاحيات + الفروع + is_active
-      // ============================================================
-      try {
-        final doc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(userId)
-            .get();
-
-        if (doc.exists) {
-          final data = doc.data();
-
-          if (data != null) {
-            // ─────────── is_active ───────────
-            isActive = data['is_active'] != false;
-
-            // ─────────── الصلاحيات ───────────
-            if (data.containsKey('permissions')) {
-              final firestorePerms = data['permissions'];
-              await box.put(localKey, firestorePerms);
-
-              if (firestorePerms is Map) {
-                firestorePerms.forEach((category, perms) {
-                  if (perms is! Map) return;
-                  if (!newPermissions.containsKey(category)) {
-                    newPermissions[category] = {};
-                  }
-                  perms.forEach((key, value) {
-                    newPermissions[category]![key.toString()] = value is bool
-                        ? value
-                        : value.toString().toLowerCase() == 'true';
-                  });
-                });
-              }
-            }
-
-            // ─────────── الفروع ───────────
-            List<String>? branches;
-            final rawBranches = data['allowed_branches'];
-
-            if (rawBranches is List) {
-              branches = rawBranches.map((e) => e.toString()).toList();
-            } else if (rawBranches is String &&
-                rawBranches.toLowerCase() == 'all') {
-              branches = ['all'];
-            }
-
-            if (branches != null && branches.isNotEmpty) {
-              await box.put(branchesKey, branches);
-              if (branches.contains('all')) {
-                allowAll = true;
-                selectedBranches = [];
-              } else {
-                allowAll = false;
-                selectedBranches = branches;
-              }
-            }
-          }
-        }
-      } catch (e) {
-        debugPrint('Offline mode: Using Hive permissions data.');
-      }
-
-      // ============================================================
-      // ✅ تحقق: هل ده لسه الاستدعاء الأخير؟
-      //    (المستخدم ممكن يكون اختار مستخدم تاني أثناء الـ await)
-      // ============================================================
       if (!mounted) return;
-      if (requestId != _loadUserRequestId) return;  // ← استدعاء أحدث، تجاهل ده
-      if (selectedUserId != userId) return;          // ← المستخدم اتغير
 
-      // ============================================================
-      // ✅ setState واحد
-      // ============================================================
-            // ⭐ HR: تحميل الموظفين المرئيين
-      final hrViewableKey = 'hr_viewable_employees_$userId';
-      final savedViewable = box.get(hrViewableKey);
-      List<String>? loadedViewable;
-      if (savedViewable is List) {
-        loadedViewable = savedViewable.map((e) => e.toString()).toList();
-        if (loadedViewable.isEmpty) loadedViewable = null;
-      }
-
-      setState(() {
-        userPermissions = newPermissions;
-        _allowAllBranches = allowAll;
-        _selectedBranchCodes = selectedBranches;
-        _selectedUserIsActive = isActive;
-
-        // ⭐ HR
-        _hrViewableEmployees = loadedViewable;
-        _allowAllEmployees = loadedViewable == null;
-      });
-
-      // ✅ NEW: ابدأ الاستماع اللحظي للمستخدم المختار
-      _listenToUser(userId);
-    } catch (e) {
-      debugPrint('_loadUserPermissions error: $e');
-    }
-  }
-
-  // ============================================================
-  // ✅ NEW: الاستماع اللحظي لمستند المستخدم المختار
-  //
-  // - كل تغيير في users/{userId} → snapshot
-  // - تحديث Hive + UI تلقائيًا
-  // ============================================================
-    void _listenToUser(String userId) {
-    _selectedUserSub?.cancel();
-    _selectedUserSub = FirebaseFirestore.instance
-        .collection('users')
-        .doc(userId)
-        .snapshots()
-        .listen(
-      (snap) async {
-        if (!snap.exists) return;
-        final data = snap.data();
-        if (data == null) return;
-
-        // تحقق: هل المستخدم لسه مختار؟
-        if (!mounted) return;
-        if (selectedUserId != userId) return;
-
-        final box = Hive.box('coding_box');
-        final localKey = 'permissions_$userId';
-        final branchesKey = 'allowed_branches_$userId';
-
-        // ✅ تحديث Hive
-        if (data['permissions'] is Map) {
-          await box.put(localKey, data['permissions']);
-        }
-        if (data['allowed_branches'] != null) {
-          await box.put(branchesKey, data['allowed_branches']);
-        }
-
-        // ⭐ HR: متابعة الموظفين المرئيين (Hive)
-        if (data.containsKey('hr_viewable_employees')) {
-          final rawViewable = data['hr_viewable_employees'];
-          if (rawViewable == null) {
-            await box.delete('hr_viewable_employees_$userId');
-          } else if (rawViewable is List) {
-            await box.put(
-              'hr_viewable_employees_$userId',
-              rawViewable.map((e) => e.toString()).toList(),
-            );
-          }
-        }
-
-        // ✅ تحديث UI
-        if (!mounted) return;
-        if (selectedUserId != userId) return;
-
-        setState(() {
-          // ─────────────────────────────────────────
-          // 1) الصلاحيات
-          // ─────────────────────────────────────────
-          if (data['permissions'] is Map) {
-            final perms = data['permissions'] as Map;
-            perms.forEach((category, subPerms) {
-              if (subPerms is! Map) return;
-              if (!userPermissions.containsKey(category)) {
-                userPermissions[category] = {};
-              }
-              subPerms.forEach((key, value) {
-                userPermissions[category]![key.toString()] = value is bool
-                    ? value
-                    : value.toString().toLowerCase() == 'true';
-              });
-            });
-          }
-
-          // ─────────────────────────────────────────
-          // 2) الفروع
-          // ─────────────────────────────────────────
-          final rawBranches = data['allowed_branches'];
-          if (rawBranches is List) {
-            final list = rawBranches.map((e) => e.toString()).toList();
-            if (list.contains('all')) {
-              _allowAllBranches = true;
-              _selectedBranchCodes = [];
-            } else {
-              _allowAllBranches = false;
-              _selectedBranchCodes = list;
-            }
-          } else if (rawBranches is String &&
-              rawBranches.toLowerCase() == 'all') {
-            _allowAllBranches = true;
-            _selectedBranchCodes = [];
-          }
-
-          // ─────────────────────────────────────────
-          // 3) is_active
-          // ─────────────────────────────────────────
-          _selectedUserIsActive = data['is_active'] != false;
-
-          // ─────────────────────────────────────────
-          // 4) ⭐ HR: الموظفين المرئيين (UI)
-          // ─────────────────────────────────────────
-          if (data.containsKey('hr_viewable_employees')) {
-            final rawViewable = data['hr_viewable_employees'];
-            if (rawViewable == null) {
-              _hrViewableEmployees = null;
-              _allowAllEmployees = true;
-            } else if (rawViewable is List) {
-              final list = rawViewable.map((e) => e.toString()).toList();
-              _hrViewableEmployees = list.isEmpty ? null : list;
-              _allowAllEmployees = list.isEmpty;
-            }
-          }
-        });
-      },
-      onError: (e) => debugPrint('⚠️ _listenToUser error: $e'),
-    );
-  }
-
-  // ============================================================
-  // ✅ NEW: حذف المستخدم من RTDB (قائمة الحضور)
-  // ============================================================
-  Future<void> _handleRemoveFromPresence() async {
-    if (selectedUserId == null) return;
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.dialogBackground(context),
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(15)),
-        title: Text(
-          '⚠️ حذف من قائمة الحضور',
-          style: TextStyle(
-            color: AppTheme.textMainFor(context),
-            fontFamily: 'Cairo',
-            fontWeight: FontWeight.bold,
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            ok ? 'تم الحذف من قائمة الحضور' : 'المستخدم مش موجود في القائمة',
+            style: const TextStyle(fontFamily: 'Cairo'),
           ),
+          backgroundColor: ok
+              ? AppTheme.successStrongFor(context)
+              : AppTheme.warningOrangeFor(context),
         ),
-        content: Text(
-          'سيتم إخفاء "$selectedUserId" من قائمة المستخدمين المتصلين.\n\n'
-          'لن يتم حذف حسابه من النظام. لو سجل دخول تاني، هيرجع للقائمة.',
-          style: TextStyle(
-            color: AppTheme.textMutedFor(context),
-            fontFamily: 'Cairo',
-            height: 1.5,
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text('إلغاء',
-                style: TextStyle(
-                  color: AppTheme.textMutedFor(context),
-                  fontFamily: 'Cairo',
-                )),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text('حذف',
-                style: TextStyle(
-                  color: AppTheme.dangerFor(context),
-                  fontFamily: 'Cairo',
-                  fontWeight: FontWeight.bold,
-                )),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true) return;
-
-    final ok = await PresenceService.instance
-        .removeUserByEmail(selectedUserId!);
-
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          ok
-              ? 'تم الحذف من قائمة الحضور'
-              : 'المستخدم مش موجود في القائمة',
-          style: const TextStyle(fontFamily: 'Cairo'),
-        ),
-        backgroundColor: ok
-            ? AppTheme.successStrongFor(context)
-            : AppTheme.warningOrangeFor(context),
-      ),
-    );
+      );
+    });
   }
 
   // ============================================================
   // ✅ NEW: حظر / إلغاء حظر المستخدم (is_active في Firestore)
   // ============================================================
   Future<void> _handleToggleBlock(bool newValue) async {
-    if (selectedUserId == null) return;
+    return CachePartitions.run(() async {
+      if (!_editorReady ||
+          _editor!.active ||
+          _rootSelfStatus ||
+          selectedUserId == null) return;
+      final editor = _editor!;
+      final target = selectedUserId!;
 
-    // newValue = true  → عايز يخليه نشط (يلغي الحظر)
-    // newValue = false → عايز يحظره
-    final willBlock = !newValue;
+      // newValue = true  → عايز يخليه نشط (يلغي الحظر)
+      // newValue = false → عايز يحظره
+      final willBlock = !newValue;
 
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.dialogBackground(context),
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(15)),
-        title: Text(
-          willBlock ? '🚫 حظر المستخدم' : '✅ إلغاء الحظر',
-          style: TextStyle(
-            color: AppTheme.textMainFor(context),
-            fontFamily: 'Cairo',
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        content: Text(
-          willBlock
-              ? 'سيتم منع "$selectedUserId" من تسجيل الدخول،\n'
-                'ولو كان داخل حاليًا، هيتم تسجيل خروجه تلقائيًا.'
-              : 'سيتم السماح لـ "$selectedUserId" بتسجيل الدخول مرة أخرى.',
-          style: TextStyle(
-            color: AppTheme.textMutedFor(context),
-            fontFamily: 'Cairo',
-            height: 1.5,
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text('إلغاء',
-                style: TextStyle(
-                  color: AppTheme.textMutedFor(context),
-                  fontFamily: 'Cairo',
-                )),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(
-              willBlock ? 'حظر' : 'إلغاء الحظر',
-              style: TextStyle(
-                color: willBlock
-                    ? AppTheme.dangerFor(context)
-                    : Colors.green,
-                fontFamily: 'Cairo',
-                fontWeight: FontWeight.bold,
-              ),
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppTheme.dialogBackground(context),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          title: Text(
+            willBlock ? '🚫 حظر المستخدم' : '✅ إلغاء الحظر',
+            style: TextStyle(
+              color: AppTheme.textMainFor(context),
+              fontFamily: 'Cairo',
+              fontWeight: FontWeight.bold,
             ),
           ),
-        ],
-      ),
-    );
-
-    // لو المستخدم لغى → الـ switch بيرجع لحالته الأصلية تلقائيًا (مفيش setState)
-    if (confirmed != true) return;
-
-    try {
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(selectedUserId!)
-          .update({'is_active': newValue});
-
-      if (!mounted) return;
-
-      setState(() {
-        _selectedUserIsActive = newValue;
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
           content: Text(
-            willBlock ? 'تم حظر المستخدم' : 'تم إلغاء الحظر',
-            style: const TextStyle(fontFamily: 'Cairo'),
+            willBlock
+                ? 'سيتم منع "$selectedUserId" من تسجيل الدخول،\n'
+                    'ولو كان داخل حاليًا، هيتم تسجيل خروجه تلقائيًا.'
+                : 'سيتم السماح لـ "$selectedUserId" بتسجيل الدخول مرة أخرى.',
+            style: TextStyle(
+              color: AppTheme.textMutedFor(context),
+              fontFamily: 'Cairo',
+              height: 1.5,
+            ),
           ),
-          backgroundColor: willBlock
-              ? AppTheme.warningOrangeFor(context)
-              : AppTheme.successStrongFor(context),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text('إلغاء',
+                  style: TextStyle(
+                    color: AppTheme.textMutedFor(context),
+                    fontFamily: 'Cairo',
+                  )),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(
+                willBlock ? 'حظر' : 'إلغاء الحظر',
+                style: TextStyle(
+                  color: willBlock ? AppTheme.dangerFor(context) : Colors.green,
+                  fontFamily: 'Cairo',
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
         ),
       );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('فشل: $e',
-              style: const TextStyle(fontFamily: 'Cairo')),
-          backgroundColor: AppTheme.dangerStrongFor(context),
-        ),
-      );
-      // ملاحظة: مش بنعمل setState → الـ switch هيرجع لحالته الأصلية تلقائيًا
-    }
+
+      // لو المستخدم لغى → الـ switch بيرجع لحالته الأصلية تلقائيًا (مفيش setState)
+      if (confirmed != true) return;
+
+      try {
+        if (!_editorReady ||
+            !identical(_editor, editor) ||
+            selectedUserId != target) return;
+        editor.readScope!.check();
+        setState(() => _saving = true);
+        await ApiService().setLegacyEditorStatus(
+            email: target,
+            uid: editor.uid,
+            version: editor.version,
+            isActive: newValue);
+        if (!mounted || selectedUserId != target) return;
+        await _loadUserPermissions(target, selectedUserJobCode ?? '1');
+        if (!mounted) return;
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              willBlock ? 'تم حظر المستخدم' : 'تم إلغاء الحظر',
+              style: const TextStyle(fontFamily: 'Cairo'),
+            ),
+            backgroundColor: willBlock
+                ? AppTheme.warningOrangeFor(context)
+                : AppTheme.successStrongFor(context),
+          ),
+        );
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content:
+                Text('فشل: $e', style: const TextStyle(fontFamily: 'Cairo')),
+            backgroundColor: AppTheme.dangerStrongFor(context),
+          ),
+        );
+      } finally {
+        if (mounted) setState(() => _saving = false);
+      }
+    });
   }
 
   @override
   void dispose() {
-    _selectedUserSub?.cancel();
+    PermissionsService().removeListener(_actorScopeChanged);
+    WebSocketSyncService.userDirectoryChanges.removeListener(_directoryHint);
     super.dispose();
   }
+
+  Widget _buildUserSelector() => FutureBuilder<List<Map<String, dynamic>>>(
+      future: _targetsFuture,
+      builder: (context, snapshot) {
+        final style = TextStyle(
+            color: AppTheme.textSoftFor(context), fontFamily: 'Cairo');
+        if (snapshot.hasError)
+          return Row(children: [
+            Expanded(
+                child: Text('تعذر تحميل المستخدمين الحاليين', style: style)),
+            IconButton(
+                tooltip: 'إعادة تحميل قائمة المستخدمين',
+                onPressed: () => _refreshTargetDirectory(forceRefresh: true),
+                icon: const Icon(Icons.refresh))
+          ]);
+        if (!snapshot.hasData || !(_directoryScope?.isCurrent ?? false))
+          return Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text('جارٍ تحميل المستخدمين...', style: style));
+        usersList = snapshot.data!;
+        if (usersList.isEmpty)
+          return Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text('لا يوجد مستخدمون متاحون', style: style));
+        final selected = usersList.any((row) => row['email'] == selectedUserId)
+            ? selectedUserId
+            : null;
+        return DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+                dropdownColor: AppTheme.dropdownBackground(context),
+                isExpanded: true,
+                hint: Text('اختر المستخدم', style: style),
+                value: selected,
+                icon: Icon(Icons.keyboard_arrow_down_rounded,
+                    color: AppTheme.accentFor(context)),
+                style: TextStyle(
+                    color: AppTheme.textMainFor(context),
+                    fontSize: 16,
+                    fontFamily: 'Cairo'),
+                items: usersList.map((user) {
+                  final name = user['name']?.toString() ?? 'بدون اسم';
+                  final title = (user['job_title'] ?? '').toString();
+                  final company =
+                      (user['company_name'] ?? user['company_code'] ?? '')
+                          .toString();
+                  final suffix =
+                      currentCompanyCode.isEmpty && company.isNotEmpty
+                          ? ' - $company'
+                          : (title.isEmpty ? '' : ' - $title');
+                  return DropdownMenuItem<String>(
+                      value: user['email'],
+                      child: Text('$name$suffix',
+                          overflow: TextOverflow.ellipsis));
+                }).toList(),
+                onChanged: _saving
+                    ? null
+                    : (value) {
+                        if (value == null ||
+                            !(_directoryScope?.isCurrent ?? false)) return;
+                        final user = usersList
+                            .firstWhere((row) => row['email'] == value);
+                        final job = (user['job_code'] ?? '1').toString();
+                        setState(() {
+                          selectedUserId = value;
+                          selectedUserJobCode = job;
+                          _selectedUserIsActive = user['is_active'] != false;
+                        });
+                        _loadUserPermissions(value, job);
+                      }));
+      });
 
   @override
   Widget build(BuildContext context) {
@@ -878,8 +667,8 @@ class _PermissionsPageState extends State<PermissionsPage> {
     return Directionality(
       textDirection: TextDirection.rtl,
       child: DefaultTabController(
-        // ✅ عدد التبويبات الفعلي = 9
-        length: 9,
+        // عدد التبويبات يجب أن يطابق TabBar و TabBarView.
+        length: 16,
         child: Scaffold(
           extendBodyBehindAppBar: true,
           body: Stack(
@@ -898,308 +687,77 @@ class _PermissionsPageState extends State<PermissionsPage> {
               SafeArea(
                 child: _isLoading
                     ? Center(
-                        child:
-                            CircularProgressIndicator(
-                          color:
-                              AppTheme.accentFor(context),
+                        child: CircularProgressIndicator(
+                          color: AppTheme.accentFor(context),
                         ),
                       )
                     : Column(
                         children: [
                           Padding(
-                            padding:
-                                const EdgeInsets.all(
+                            padding: const EdgeInsets.all(
                               16.0,
                             ),
                             child: Row(
                               children: [
                                 IconButton(
-                                  icon:
-                                      Icon(
-                                    Icons
-                                        .arrow_back_ios_new_rounded,
-                                    color:
-                                        AppTheme.textMainFor(context),
+                                  icon: Icon(
+                                    Icons.arrow_back_ios_new_rounded,
+                                    color: AppTheme.textMainFor(context),
                                   ),
-                                  onPressed: () =>
-                                      Navigator.pop(
+                                  onPressed: () => Navigator.pop(
                                     context,
                                   ),
                                 ),
                                 Expanded(
                                   child: Text(
                                     'إدارة الصلاحيات',
-                                    style:
-                                        TextStyle(
-                                      color:
-                                          AppTheme.textMainFor(context),
-                                      fontSize:
-                                          22,
-                                      fontWeight:
-                                          FontWeight.bold,
-                                      fontFamily:
-                                          'Cairo',
+                                    style: TextStyle(
+                                      color: AppTheme.textMainFor(context),
+                                      fontSize: 22,
+                                      fontWeight: FontWeight.bold,
+                                      fontFamily: 'Cairo',
                                     ),
-                                    textAlign:
-                                        TextAlign
-                                            .center,
+                                    textAlign: TextAlign.center,
                                   ),
                                 ),
                                 Container(
-                                  decoration:
-                                      BoxDecoration(
+                                  decoration: BoxDecoration(
                                     color: GlassStyle.fill10For(context),
-                                    borderRadius:
-                                        BorderRadius
-                                            .circular(
+                                    borderRadius: BorderRadius.circular(
                                       10,
                                     ),
                                   ),
-                                  child:
-                                      IconButton(
-                                    icon:
-                                        Icon(
-                                      Icons
-                                          .save_rounded,
-                                      color:
-                                          AppTheme.accentFor(context),
+                                  child: IconButton(
+                                    icon: Icon(
+                                      Icons.save_rounded,
+                                      color: AppTheme.accentFor(context),
                                     ),
                                     onPressed:
-                                        savePermissions,
+                                        _editorReady ? savePermissions : null,
                                   ),
                                 ),
                               ],
                             ),
                           ),
                           Padding(
-                            padding:
-                                const EdgeInsets
-                                    .symmetric(
+                            padding: const EdgeInsets.symmetric(
                               horizontal: 20.0,
                               vertical: 8.0,
                             ),
                             child: Container(
-                              padding:
-                                  const EdgeInsets
-                                      .symmetric(
+                              padding: const EdgeInsets.symmetric(
                                 horizontal: 16,
                               ),
-                              decoration:
-                                  BoxDecoration(
+                              decoration: BoxDecoration(
                                 color: GlassStyle.fill05For(context),
-                                borderRadius:
-                                    BorderRadius
-                                        .circular(
+                                borderRadius: BorderRadius.circular(
                                   15,
                                 ),
                                 border: Border.all(
                                   color: GlassStyle.line10For(context),
                                 ),
                               ),
-                              child:
-                                  StreamBuilder<
-                                      QuerySnapshot>(
-                                stream:
-                                    _usersStream,
-                                builder:
-                                    (
-                                  context,
-                                  snapshot,
-                                ) {
-                                  if (snapshot
-                                          .connectionState ==
-                                      ConnectionState
-                                          .waiting) {
-                                    return Padding(
-                                      padding:
-                                          EdgeInsets.all(
-                                        12.0,
-                                      ),
-                                      child: Text(
-                                        'جاري تحميل الموظفين...',
-                                        style:
-                                            TextStyle(
-                                          color:
-                                              AppTheme.textSoftFor(context),
-                                          fontFamily:
-                                              'Cairo',
-                                        ),
-                                      ),
-                                    );
-                                  }
-
-                                  if (!snapshot
-                                          .hasData ||
-                                      snapshot.data!
-                                          .docs.isEmpty) {
-                                    return Padding(
-                                      padding:
-                                          EdgeInsets.all(
-                                        12.0,
-                                      ),
-                                      child: Text(
-                                        'لا يوجد موظفين مسجلين',
-                                        style:
-                                            TextStyle(
-                                          color:
-                                              AppTheme.textSoftFor(context),
-                                          fontFamily:
-                                              'Cairo',
-                                        ),
-                                      ),
-                                    );
-                                  }
-
-                                  // ⭐ فلترة السوبر أدمن — يظهر فقط للسوبر أدمن
-                                  final isActorSuperAdmin =
-                                      PermissionsService().isSuperAdmin;
-                                  final allDocs = snapshot.data!.docs;
-
-                                  final visibleDocs = isActorSuperAdmin
-                                      ? allDocs
-                                      : allDocs.where((doc) {
-                                          final data = doc.data()
-                                              as Map<String, dynamic>? ?? {};
-                                          final role = (data['role'] ?? '')
-                                              .toString()
-                                              .trim()
-                                              .toLowerCase();
-                                          final jobCode = (data['job_code'] ?? '1')
-                                              .toString()
-                                              .trim();
-                                          // استبعد السوبر أدمن
-                                          return role != 'super_admin' &&
-                                              jobCode != '99';
-                                        }).toList();
-
-                                  if (visibleDocs.isEmpty) {
-                                    return Padding(
-                                      padding: const EdgeInsets.all(12.0),
-                                      child: Text(
-                                        'لا يوجد مستخدمون متاحون',
-                                        style: TextStyle(
-                                          color: AppTheme.textSoftFor(context),
-                                          fontFamily: 'Cairo',
-                                        ),
-                                      ),
-                                    );
-                                  }
-
-                                  usersList = visibleDocs;
-
-                                  return DropdownButtonHideUnderline(
-                                    child:
-                                        DropdownButton<
-                                            String>(
-                                      dropdownColor:
-                                          AppTheme.dropdownBackground(context),
-                                      isExpanded:
-                                          true,
-                                      hint:
-                                          Text(
-                                        'اختر الموظف',
-                                        style:
-                                            TextStyle(
-                                          color:
-                                              AppTheme.textSoftFor(context),
-                                          fontFamily:
-                                              'Cairo',
-                                        ),
-                                      ),
-                                      value:
-                                          selectedUserId,
-                                      icon:
-                                          Icon(
-                                        Icons
-                                            .keyboard_arrow_down_rounded,
-                                        color:
-                                            AppTheme.accentFor(context),
-                                      ),
-                                      style:
-                                          TextStyle(
-                                        color:
-                                            AppTheme.textMainFor(context),
-                                        fontSize:
-                                            16,
-                                        fontFamily:
-                                            'Cairo',
-                                      ),
-                                      items:
-                                          usersList
-                                              .map(
-                                        (user) {
-                                          final data =
-                                              user.data()
-                                                  as Map<String,
-                                                      dynamic>?;
-
-                                          final empName =
-                                              data?['name']
-                                                      ?.toString() ??
-                                                  'بدون اسم';
-
-                                          final empJob =
-                                              data?['job_title'] !=
-                                                      null
-                                                  ? ' - ${data!['job_title']}'
-                                                  : '';
-
-                                          return DropdownMenuItem<
-                                              String>(
-                                            value:
-                                                user.id,
-                                            child:
-                                                Text(
-                                              '$empName$empJob',
-                                            ),
-                                          );
-                                        },
-                                      ).toList(),
-                                      onChanged:
-                                          (value) {
-                                        if (value ==
-                                            null) {
-                                          return;
-                                        }
-
-                                        final selectedUser =
-                                            usersList
-                                                .firstWhere(
-                                          (u) =>
-                                              u.id ==
-                                              value,
-                                        );
-
-                                        final data =
-                                            selectedUser
-                                                    .data()
-                                                as Map<String,
-                                                    dynamic>?;
-
-                                        final jobCode =
-                                            data?['job_code']
-                                                    ?.toString() ??
-                                                '1';
-
-                                        setState(() {
-                                          selectedUserId =
-                                              value;
-                                          selectedUserJobCode =
-                                              jobCode;
-                                          // ✅ NEW: اقرأ is_active فورًا
-                                          _selectedUserIsActive =
-                                              data?['is_active'] != false;
-                                        });
-
-                                        _loadUserPermissions(
-                                          value,
-                                          jobCode,
-                                        );
-                                      },
-                                    ),
-                                  );
-                                },
-                              ),
+                              child: _buildUserSelector(),
                             ),
                           ),
 
@@ -1208,63 +766,74 @@ class _PermissionsPageState extends State<PermissionsPage> {
                           //    (جوه buildPermissionsTab)
                           // ============================================================
 
+                          if (_editor?.data['role'] == 'super_admin')
+                            const Padding(
+                                padding: EdgeInsets.all(12),
+                                child: Text(
+                                    'السوبر أدمن له وصول كامل بحكم دوره. هذه العلامات المحفوظة لا تقيد صلاحياته ولا تغير هويته.')),
+                          if (_editor?.active == true &&
+                              _editor?.data['role'] == 'admin')
+                            const Padding(
+                                padding: EdgeInsets.all(12),
+                                child: Text(
+                                    'الحفظ يعدل صلاحيات استخدام المدير المفعلة ضمن سقف الشركة والتفويض المتاح لك. لا يغير التفويض أو مسودة الشركة المحفوظة.')),
+                          PermissionEditorStatus(
+                              loading:
+                                  (_editor == null && _editorError == null) ||
+                                      _revalidating,
+                              saving: _saving,
+                              error: _editorError,
+                              onReload: selectedUserId == null || _saving
+                                  ? null
+                                  : _confirmEditorReload),
                           TabBar(
-                            isScrollable:
-                                true,
-                            indicatorColor:
-                                AppTheme.accentFor(context),
-                            labelColor:
-                                AppTheme.accentFor(context),
-                            unselectedLabelColor:
-                                AppTheme.textHintFor(context),
-                            labelStyle:
-                                TextStyle(
-                              fontFamily:
-                                  'Cairo',
-                              fontWeight:
-                                  FontWeight.bold,
+                            isScrollable: true,
+                            indicatorColor: AppTheme.accentFor(context),
+                            labelColor: AppTheme.accentFor(context),
+                            unselectedLabelColor: AppTheme.textHintFor(context),
+                            labelStyle: TextStyle(
+                              fontFamily: 'Cairo',
+                              fontWeight: FontWeight.bold,
                             ),
                             tabs: [
                               Tab(
-                                text:
-                                    'حركة الخزينة',
+                                text: 'حركة الخزينة',
                               ),
                               Tab(
-                                text:
-                                    'التكويد',
+                                text: 'التكويد',
                               ),
                               Tab(
-                                text:
-                                    'حسابات الموردين',
+                                text: 'حسابات الموردين',
                               ),
                               Tab(
-                                text:
-                                    'تسويات الموردين',
+                                text: 'تسويات الموردين',
                               ),
                               Tab(
-                                text:
-                                    'حركة الجرد',
+                                text: 'حركة الجرد',
+                              ),
+                              const Tab(text: 'المبيعات'),
+                              const Tab(text: 'المرتجعات'),
+                              const Tab(text: 'حسابات العملاء'),
+                              const Tab(text: 'التحويلات المخزنية'),
+                              const Tab(text: 'تحويلات الخزائن'),
+                              const Tab(text: 'أرصدة خزائن المبيعات'),
+                              Tab(
+                                text: 'التقارير',
                               ),
                               Tab(
-                                text:
-                                    'التقارير',
+                                text: 'رصيد المخزون',
                               ),
                               Tab(
-                                text:
-                                    'رصيد المخزون',
+                                text: 'صلاحيات عامة',
                               ),
                               Tab(
-                                text:
-                                    'صلاحيات عامة',
-                              ),
-                                                            Tab(
                                 text: 'الموارد البشرية',
                               ),
+                              Tab(text: 'إدارة المستخدمين'),
                             ],
                           ),
                           Expanded(
-                            child:
-                                TabBarView(
+                            child: TabBarView(
                               children: [
                                 buildPermissionsTab(
                                   'حركة الخزينة',
@@ -1281,6 +850,12 @@ class _PermissionsPageState extends State<PermissionsPage> {
                                 buildPermissionsTab(
                                   'حركة الجرد',
                                 ),
+                                buildPermissionsTab('المبيعات'),
+                                buildPermissionsTab('المرتجعات'),
+                                buildPermissionsTab('حسابات العملاء'),
+                                buildPermissionsTab('التحويلات المخزنية'),
+                                buildPermissionsTab('تحويلات الخزائن'),
+                                buildPermissionsTab('أرصدة خزائن المبيعات'),
                                 buildPermissionsTab(
                                   'التقارير',
                                 ),
@@ -1293,6 +868,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
                                 buildPermissionsTab(
                                   'الموارد البشرية',
                                 ),
+                                buildPermissionsTab('إدارة المستخدمين'),
                               ],
                             ),
                           ),
@@ -1306,18 +882,44 @@ class _PermissionsPageState extends State<PermissionsPage> {
     );
   }
 
-  
+  Widget _bulkActions(String category, Iterable<String> keys) {
+    final group = keys.toList();
+    Map<String, Map<String, bool>> plan(bool next) => bulkPermissionEdit(
+        userPermissions,
+        {category: group},
+        next,
+        (c, k, n, current) =>
+            _editorReady &&
+            _editor!.canToggle(c, k, n, current, _draftBranches));
+    bool changed(Map<String, Map<String, bool>> result) => group.any(
+        (key) => result[category]?[key] != userPermissions[category]?[key]);
+    final selected = plan(true), cleared = plan(false);
+    return PermissionBulkActions(
+        selected: group
+            .where((key) =>
+                PermissionHierarchy.allows(userPermissions, category, key))
+            .length,
+        total: group.length,
+        onSelect: changed(selected)
+            ? () => setState(() => userPermissions = selected)
+            : null,
+        onClear: changed(cleared)
+            ? () => setState(() => userPermissions = cleared)
+            : null);
+  }
+
   Widget buildPermissionsTab(String tabName) {
     var permissionsMap = userPermissions[tabName] ?? {};
 
     if (tabName == 'رصيد المخزون') {
-      permissionsMap.remove('عرض قيمة الجملة');
+      permissionsMap = Map.of(permissionsMap)..remove('عرض قيمة الجملة');
     }
 
     if (tabName == 'صلاحيات عامة') {
       return ListView(
         padding: const EdgeInsets.all(20),
         children: [
+          _bulkActions(tabName, permissionsMap.keys),
           ...permissionsMap.entries.map((entry) {
             return Container(
               margin: const EdgeInsets.only(bottom: 12),
@@ -1341,7 +943,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
                     ),
                   ),
                   value: entry.value,
-                  onChanged: selectedUserId == null
+                  onChanged: !_canToggle(tabName, entry.key, !entry.value)
                       ? null
                       : (newValue) {
                           setState(() {
@@ -1397,9 +999,11 @@ class _PermissionsPageState extends State<PermissionsPage> {
                   ),
                 ),
                 subtitle: Text(
-                  _selectedUserIsActive
-                      ? 'المستخدم يقدر يسجل دخول'
-                      : 'المستخدم ممنوع من الدخول',
+                  _rootSelfStatus
+                      ? 'لا يمكن حظر حسابك كصاحب البرنامج'
+                      : _selectedUserIsActive
+                          ? 'المستخدم يقدر يسجل دخول'
+                          : 'المستخدم ممنوع من الدخول',
                   style: TextStyle(
                     color: AppTheme.textMutedFor(context),
                     fontFamily: 'Cairo',
@@ -1407,7 +1011,10 @@ class _PermissionsPageState extends State<PermissionsPage> {
                   ),
                 ),
                 value: _selectedUserIsActive,
-                onChanged: _handleToggleBlock,
+                onChanged:
+                    _editorReady && _editor?.active != true && !_rootSelfStatus
+                        ? _handleToggleBlock
+                        : null,
               ),
             ),
 
@@ -1415,7 +1022,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
 
             // ✅ زر: حذف من قائمة الحضور
             OutlinedButton.icon(
-              onPressed: _handleRemoveFromPresence,
+              onPressed: _editorReady ? _handleRemoveFromPresence : null,
               icon: Icon(
                 Icons.delete_sweep_rounded,
                 color: AppTheme.dangerFor(context),
@@ -1475,7 +1082,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
                   ),
                 ),
                 value: _allowAllBranches,
-                onChanged: selectedUserId == null
+                onChanged: !_canEditBranch('all')
                     ? null
                     : (val) {
                         setState(() {
@@ -1490,8 +1097,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
           ),
           if (!_allowAllBranches)
             ..._allBranches.map((branch) {
-              final isSelected =
-                  _selectedBranchCodes.contains(branch['code']);
+              final isSelected = _selectedBranchCodes.contains(branch['code']);
 
               return Container(
                 margin: const EdgeInsets.only(bottom: 8),
@@ -1515,7 +1121,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
                       ),
                     ),
                     value: isSelected,
-                    onChanged: selectedUserId == null
+                    onChanged: !_canEditBranch(branch['code']!)
                         ? null
                         : (val) {
                             setState(() {
@@ -1530,6 +1136,12 @@ class _PermissionsPageState extends State<PermissionsPage> {
                 ),
               );
             }).toList(),
+          PermissionEditorStartup(
+              value: _startupBranch,
+              choices: _allBranches,
+              allowed: _draftBranches,
+              enabled: _editorReady,
+              onChanged: (value) => setState(() => _startupBranch = value)),
           if (!_allowAllBranches && _selectedBranchCodes.isEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 8),
@@ -1544,16 +1156,19 @@ class _PermissionsPageState extends State<PermissionsPage> {
         ],
       );
     }
-            if (tabName == 'الموارد البشرية') {
+    if (tabName == 'الموارد البشرية') {
       return _buildHrPermissionsTab();
     }
 
     return ListView.builder(
       padding: const EdgeInsets.all(20),
-      itemCount: permissionsMap.length,
+      itemCount: permissionsMap.length + 1,
       itemBuilder: (context, index) {
-        final key = permissionsMap.keys.elementAt(index);
-        final value = permissionsMap[key] ?? false;
+        if (index == 0) return _bulkActions(tabName, permissionsMap.keys);
+        final key = permissionsMap.keys.elementAt(index - 1);
+        final higher = PermissionHierarchy.addToEdit[tabName]?[key];
+        final included = higher != null && permissionsMap[higher] == true;
+        final value = permissionsMap[key] == true || included;
 
         return Container(
           margin: const EdgeInsets.only(bottom: 12),
@@ -1565,19 +1180,11 @@ class _PermissionsPageState extends State<PermissionsPage> {
           child: Material(
             color: Colors.transparent,
             borderRadius: BorderRadius.circular(15),
-            child: SwitchListTile(
-              activeThumbColor: AppTheme.accentFor(context),
-              inactiveTrackColor: GlassStyle.switchTrackOffFor(context),
-              title: Text(
-                key,
-                style: TextStyle(
-                  color: AppTheme.textMainFor(context),
-                  fontSize: 16,
-                  fontFamily: 'Cairo',
-                ),
-              ),
+            child: PermissionActionSwitch(
+              label: key,
               value: value,
-              onChanged: selectedUserId == null
+              included: included,
+              onChanged: !_canToggle(tabName, key, !value)
                   ? null
                   : (newValue) {
                       setState(() {
@@ -1591,7 +1198,6 @@ class _PermissionsPageState extends State<PermissionsPage> {
     );
   }
 
-
   // ============================================================
   // ⭐ HR: تبويب الموارد البشرية (6 مجموعات + فلترة)
   // ============================================================
@@ -1600,6 +1206,8 @@ class _PermissionsPageState extends State<PermissionsPage> {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
+        _bulkActions(
+            'الموارد البشرية', (userPermissions['الموارد البشرية'] ?? {}).keys),
         // ─── A. فتح الصفحات ───
         _buildHrSection(
           title: 'فتح الصفحات',
@@ -1662,7 +1270,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
           ],
         ),
 
-                // ─── F. الخصم المباشر والراتب ───
+        // ─── F. الخصم المباشر والراتب ───
         _buildHrSection(
           title: 'الخصم المباشر والراتب',
           icon: Icons.money_off_rounded,
@@ -1674,7 +1282,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
           ],
         ),
 
-                      // ─── G. إدارة الموظفين ───
+        // ─── G. إدارة الموظفين ───
         _buildHrSection(
           title: 'إدارة الموظفين',
           icon: Icons.badge_rounded,
@@ -1685,7 +1293,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
           ],
         ),
 
-                // ─── H. الموظف يشوف بياناته ───
+        // ─── H. الموظف يشوف بياناته ───
         _buildHrSection(
           title: 'بيانات الموظف الشخصية',
           icon: Icons.person_pin_rounded,
@@ -1710,7 +1318,6 @@ class _PermissionsPageState extends State<PermissionsPage> {
       ],
     );
   }
-
 
   // ──────────────────────────────────────────────────────────
   // قسم HR واحد (Header + Switch لكل صلاحية)
@@ -1754,9 +1361,12 @@ class _PermissionsPageState extends State<PermissionsPage> {
           ),
         ),
 
+        _bulkActions('الموارد البشرية', keys),
         // Switch لكل صلاحية
         ...keys.map((key) {
-          final value = hrPerms[key] == true;
+          final higher = PermissionHierarchy.addToEdit['الموارد البشرية']?[key];
+          final included = higher != null && hrPerms[higher] == true;
+          final value = hrPerms[key] == true || included;
           final label = _hrPermissionLabel(key);
 
           return Container(
@@ -1769,19 +1379,13 @@ class _PermissionsPageState extends State<PermissionsPage> {
             child: Material(
               color: Colors.transparent,
               borderRadius: BorderRadius.circular(12),
-              child: SwitchListTile(
-                activeThumbColor: color,
-                inactiveTrackColor: GlassStyle.switchTrackOffFor(context),
-                title: Text(
-                  label,
-                  style: TextStyle(
-                    color: AppTheme.textMainFor(context),
-                    fontSize: 14,
-                    fontFamily: 'Cairo',
-                  ),
-                ),
+              child: PermissionActionSwitch(
+                label: label,
                 value: value,
-                onChanged: selectedUserId == null
+                included: included,
+                activeColor: color,
+                fontSize: 14,
+                onChanged: !_canToggle('الموارد البشرية', key, !value)
                     ? null
                     : (newValue) {
                         setState(() {
@@ -1798,7 +1402,6 @@ class _PermissionsPageState extends State<PermissionsPage> {
       ],
     );
   }
-
 
   // ──────────────────────────────────────────────────────────
   // تسمية الصلاحية بالعربي
@@ -1829,20 +1432,19 @@ class _PermissionsPageState extends State<PermissionsPage> {
       'canEditWorkSchedule': 'تعديل مواعيد العمل',
       'canEditDelayRules': 'تعديل إعدادات التأخير',
       // F
-            'canAddDirectDiscount': 'إضافة خصم مباشر',
+      'canAddDirectDiscount': 'إضافة خصم مباشر',
       'canViewSalaryAmounts': 'إظهار المبالغ المالية',
       'canExportReport': 'تصدير تقرير الراتب',
-                  // G
+      // G
       'canViewEmployees': 'عرض الموظفين',
       'canManageEmployees': 'إدارة الموظفين (إضافة/تعديل/حذف)',
-            // H
+      // H
       'canViewOwnHRData': 'إظهار بيانات الموظف لنفسه (بروفايله + راتبه)',
       // I
       'canViewBranchSalaryReport': 'عرض تقرير إجمالي الرواتب لكل فرع',
     };
     return labels[key] ?? key;
   }
-
 
   // ──────────────────────────────────────────────────────────
   // قسم فلترة الموظفين
@@ -1905,7 +1507,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
                 ),
               ),
               value: _allowAllEmployees,
-              onChanged: selectedUserId == null
+              onChanged: !_canEditEmployees
                   ? null
                   : (val) {
                       setState(() {
@@ -1939,8 +1541,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
             ..._allEmployees.map((emp) {
               final code = emp['code'] ?? '';
               final name = emp['name'] ?? '';
-              final isSelected =
-                  _hrViewableEmployees?.contains(code) ?? false;
+              final isSelected = _hrViewableEmployees?.contains(code) ?? false;
 
               return Container(
                 margin: const EdgeInsets.only(bottom: 8),
@@ -1964,7 +1565,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
                       ),
                     ),
                     value: isSelected,
-                    onChanged: selectedUserId == null
+                    onChanged: !_canEditEmployees
                         ? null
                         : (val) {
                             setState(() {
@@ -2000,5 +1601,4 @@ class _PermissionsPageState extends State<PermissionsPage> {
       ],
     );
   }
-
 }

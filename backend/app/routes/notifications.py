@@ -6,8 +6,12 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.models import Notification, NotificationPreference, UserFcmToken
-from app.core.notification_events import _branch_allowed, _can_view_section
+from app.core.models import Notification, NotificationPreference, UserFcmToken, AuditLog
+from app.core.hr_audience import (
+    HR_SECTIONS, HRTarget, own_only, stored_target_code, target_allowed, targets_for_codes,
+)
+from app.core.notification_events import _branch_allowed, _can_view_section, recipient_allowed
+from app.core.permissions import has_section_permission
 from app.core.schemas import FcmDeviceModel
 from app.core.fcm_service import is_fcm_enabled
 
@@ -102,9 +106,32 @@ async def list_notifications(
 
     result = await db.execute(stmt)
     rows = result.scalars().all()
+    hr_events = {row.event_id for row in rows if row.section in HR_SECTIONS}
+    codes_by_event = {}
+    if hr_events:
+        audit_result = await db.execute(select(AuditLog.event_id, AuditLog.details).where(
+            AuditLog.company_code == str(profile["company_code"]),
+            AuditLog.event_id.in_(hr_events), AuditLog.section.in_(HR_SECTIONS),
+        ))
+        for event_id, details in audit_result.all():
+            codes_by_event.setdefault(event_id, set()).add(stored_target_code(details))
+    event_codes = {
+        event_id: next(iter(codes)) if len(codes) == 1 else ""
+        for event_id, codes in codes_by_event.items()
+    }
+    targets = (
+        await targets_for_codes(db, str(profile["company_code"]), event_codes.values())
+        if has_section_permission(profile,'الموارد البشرية','canViewOwnHRData') else {}
+    )
     items = []
     for item in rows:
-        if not _branch_allowed(profile, item.branch_code) or not _can_view_section(profile, item.section):
+        target = None
+        if item.section in HR_SECTIONS:
+            code = event_codes.get(item.event_id, "")
+            target = targets.get(code, HRTarget(code=code))
+            if not target_allowed(profile, target):
+                continue
+        if not recipient_allowed(profile,item.section,item.branch_code,target):
             continue
         items.append({
             "id": item.id,
@@ -120,6 +147,7 @@ async def list_notifications(
             "entity_id": item.entity_id,
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "read": bool(item.is_read),
+            **({"notification_scope": target.for_recipient(profile)} if target is not None else {}),
         })
 
     # المؤشر مبني على كل الصفوف التي تم فحصها، حتى لو استبعدتها صلاحيات الفرع/القسم.
@@ -190,6 +218,9 @@ async def save_notification_settings(
             (str(profile["uid"]), str(profile["company_code"])),
             None,
         )
+    from app.core.sync import manager
+    await manager.send_to_user(str(profile['company_code']), str(profile['email']), {
+        'type': 'notification_settings_changed', 'data': {}, 'suppress_notification': True})
     return {"status": "success", **_settings_json(pref)}
 
 
