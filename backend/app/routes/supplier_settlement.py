@@ -435,6 +435,47 @@ async def list_settlements(
 # 3. المزامنة التزايدية
 # ============================================================
 
+@router.get("/changes-v2/{company_code}")
+async def get_settlement_changes_v2(
+    request: Request,
+    company_code: str,
+    cursor: str = Query("0:0"),
+    limit: int = Query(200, ge=1, le=500),
+    scope: str = Query(""),
+    db: AsyncSession = Depends(get_db),
+):
+    """EXPERIMENT. Same permission and branch filter as /changes; needs migration 005."""
+    from app.core import feed_v2
+    from app.core.changes_v2 import feed_epoch, bootstrap_cursor, parse_cursor
+    from sqlalchemy import true
+    import hashlib, json
+    _profile = _require_any(request, ["معاينة", "إضافة"])
+    allowed = allowed_branches_for_profile(request.state.auth_user)
+    epoch = await feed_epoch(db, "settlement")
+    fp = hashlib.sha256(json.dumps({"co": company_code, "epoch": epoch,
+                                    "branches": sorted(allowed or [])}, sort_keys=True).encode()).hexdigest()[:16]
+    if cursor == "latest":
+        return {"invalid": False, "items": [], "has_more": False, "scope": fp, "epoch": epoch,
+                "next_cursor": await bootstrap_cursor(db)}
+    if scope and scope != fp:
+        return {"invalid": True, "reason": "scope", "items": [], "has_more": False,
+                "next_cursor": cursor, "scope": fp, "epoch": epoch}
+    try:
+        parse_cursor(cursor)
+    except Exception:
+        raise HTTPException(status_code=400, detail="bad cursor")
+    M = SupplierSettlementRecord
+    visibility = M.branch_code.in_(allowed) if allowed else true()
+    out = await feed_v2.fetch(
+        db, M, "supplier_settlements", company_code, cursor, limit, visibility, allowed,
+        lambda d: serialize_settlement(d, action=("delete" if d.is_deleted else "update")),
+        lambda d: {"doc_id": str(d.id), "company_code": d.company_code, "serial": d.serial, "action": "delete",
+                   "tombstone": True, "updated_at": d.updated_at.isoformat() if d.updated_at else None})
+    out["scope"] = fp
+    out["epoch"] = epoch
+    return out
+
+
 @router.get("/changes/{company_code}")
 async def get_settlement_changes(
     request: Request,

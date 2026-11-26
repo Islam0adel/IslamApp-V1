@@ -21,7 +21,7 @@ from app.core.models import Company, CompanyPermissionPolicy, Employee, Notifica
 from app.core.schemas import CompanyModel
 from app.core.fcm_service import send_push_to_user_bg
 from app.core.sync import manager as sync_manager
-from app.core.auth_middleware import invalidate_profile_cache
+from app.core.auth_middleware import invalidate_profile_cache, allowed_branches_for_profile
 from app.core.notification_events import invalidate_company_recipients, current_push_allowed
 from app.core.permission_directory import read_permission_targets
 from app.core.account_editor import read_account_editor, write_account_editor
@@ -1565,7 +1565,7 @@ async def complete_registration(
 # ⭐ 2.6.5. جلب مستخدمي الشركة
 # ==========================================
 @router.get("/session-profile")
-async def current_session_profile(request: Request):
+async def current_session_profile(request: Request, db: AsyncSession = Depends(get_db)):
     """Authenticated own effective scope, never another admin's policy map."""
     profile = getattr(request.state, "auth_user", {})
     if not profile.get("uid"):
@@ -1574,7 +1574,20 @@ async def current_session_profile(request: Request):
               "permissions", "allowed_branches", "hr_viewable_employees",
               "company_policy_active", "company_policy_revision",
               "company_permissions", "assigned_permissions", "delegable_permissions", "delegable_branches")
-    return {key: profile[key] for key in fields if key in profile}
+    out = {key: profile[key] for key in fields if key in profile}
+    # EXPERIMENT: the transactions v2-feed scope fingerprint, returned with the
+    # verified profile itself so the startup merge reuses this call instead of a
+    # separate changes-v2 request. Omitted when the account has no company or the
+    # feed is not applied on this database; clients fall back to changes-v2 then.
+    company = profile.get("company_code")
+    if company:
+        try:
+            from app.core import changes_v2
+            out["transactions_scope"] = await changes_v2.scope_fingerprint(
+                db, "transactions", company, allowed_branches_for_profile(profile))
+        except Exception:
+            pass
+    return out
 
 
 @router.get('/user-management-directory')

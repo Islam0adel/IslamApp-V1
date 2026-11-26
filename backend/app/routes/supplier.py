@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc
+from sqlalchemy import true, select, desc
 
 from app.core.auth_middleware import allowed_branches_for_profile
 from app.core.database import get_db
@@ -577,6 +577,46 @@ async def list_supplier_transactions(
 # مهم:
 # المحذوفات لا يتم استبعادها.
 # ============================================================
+
+@router.get("/changes-v2/{company_code}")
+async def get_supplier_changes_v2(
+    request: Request,
+    company_code: str,
+    cursor: str = Query("0:0"),
+    limit: int = Query(200, ge=1, le=500),
+    scope: str = Query(""),
+    db: AsyncSession = Depends(get_db),
+):
+    """EXPERIMENT. Same permission, branch filter and cost projection as /changes; needs migration 004."""
+    from app.core import feed_v2
+    from app.core.changes_v2 import feed_epoch, bootstrap_cursor, parse_cursor
+    import hashlib, json
+    _profile = _require_any(request, ["معاينة", "اضافة"])
+    allowed = allowed_branches_for_profile(request.state.auth_user)
+    costs = bool(_viewer_may_costs(request))
+    epoch = await feed_epoch(db, "supplier")
+    fp = hashlib.sha256(json.dumps({"co": company_code, "epoch": epoch, "costs": costs,
+                                    "branches": sorted(allowed or [])}, sort_keys=True).encode()).hexdigest()[:16]
+    if cursor == "latest":
+        return {"invalid": False, "items": [], "has_more": False, "scope": fp, "epoch": epoch,
+                "next_cursor": await bootstrap_cursor(db)}
+    if scope and scope != fp:
+        return {"invalid": True, "reason": "scope", "items": [], "has_more": False,
+                "next_cursor": cursor, "scope": fp, "epoch": epoch}
+    try:
+        parse_cursor(cursor)
+    except Exception:
+        raise HTTPException(status_code=400, detail="bad cursor")
+    visibility = SupplierRecord.branch_code.in_(allowed) if allowed else true()
+    out = await feed_v2.fetch(
+        db, SupplierRecord, "supplier_records", company_code, cursor, limit, visibility, allowed,
+        lambda d: serialize_supplier(d, include_costs=costs, action=("delete" if d.is_deleted else "update")),
+        lambda d: {"doc_id": str(d.id), "company_code": d.company_code, "serial": d.serial, "action": "delete",
+                   "tombstone": True, "updated_at": d.updated_at.isoformat() if d.updated_at else None})
+    out["scope"] = fp
+    out["epoch"] = epoch
+    return out
+
 
 @router.get("/changes/{company_code}")
 async def get_supplier_changes(

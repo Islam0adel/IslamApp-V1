@@ -731,6 +731,100 @@ async def get_attendance_changes(
         )
 
 
+async def _hr_feed_v2(Model, table, feed, serialize, request, company_code, cursor, limit, scope, db, *keys, fp_extra=None, company_wide=False, mask=None):
+    """EXPERIMENT. Commit-safe HR feed. HR visibility is not a row property: it also depends on the
+    viewer's visible/viewable/own employee code sets (employee branch moves, user links). Those sets
+    are hashed into the scope fingerprint, so any effective visibility change answers invalid:scope
+    and the client must run a replace-mode full sync. Needs migration 009+."""
+    import hashlib, json
+    from sqlalchemy import true, text as _text
+    from app.core import feed_v2
+    from app.core.changes_v2 import feed_epoch, parse_cursor
+    profile = _require_hr(request, *keys)
+    _check_tenant(profile, company_code)
+    allowed = allowed_branches_for_profile(profile)
+    viewable = _hr_viewable_codes(profile)
+    visible_codes = await _visible_employee_codes(db, company_code, profile) if allowed else None
+    # With a mask (amounts) the own set is always needed: own rows keep their amounts. Rows are already
+    # all visible when no branch/employee restriction applies, so this widens nothing.
+    own = (await own_employee_codes(db, company_code, profile)
+           if (allowed or viewable is not None or mask is not None) and _hr_has(profile, "canViewOwnHRData") else set())
+    epoch = await feed_epoch(db, feed)
+    basis = {
+        "co": company_code, "feed": feed, "branches": sorted(allowed or []),
+        "visible": None if visible_codes is None else sorted(visible_codes),
+        "viewable": None if viewable is None else sorted(viewable), "own": sorted(own),
+        "extra": fp_extra(profile) if fp_extra else None,
+    }
+    # access = who may read what; fp = access + feed epoch. A client can tell an access change from a
+    # feed re-apply (epoch only) by comparing "access".
+    access = hashlib.sha256(json.dumps(basis, sort_keys=True).encode()).hexdigest()[:16]
+    fp = hashlib.sha256(json.dumps({**basis, "epoch": epoch}, sort_keys=True).encode()).hexdigest()[:16]
+    if cursor == "latest":
+        xmin = int((await db.execute(_text("select pg_snapshot_xmin(pg_current_snapshot())::text"))).scalar())
+        from app.core.changes_v2 import MAX_ID
+        return {"invalid": False, "items": [], "has_more": False, "scope": fp, "epoch": epoch,
+                "access": access, "next_cursor": f"{xmin - 1}:{MAX_ID}"}
+    if scope and scope != fp:
+        return {"invalid": True, "reason": "scope", "items": [], "has_more": False,
+                "next_cursor": cursor, "scope": fp, "epoch": epoch, "access": access}
+    try:
+        parse_cursor(cursor)
+    except Exception:
+        raise HTTPException(status_code=400, detail="bad cursor")
+    if company_wide:
+        # Same as the existing /changes route for this table: no row filter beyond the HR right.
+        branch_ok = true()
+        allowed_for_fetch = None
+    elif allowed:
+        allowed_for_fetch = allowed
+        empty = or_(Model.branch_code.is_(None), Model.branch_code == "")
+        branch_ok = or_(Model.branch_code.in_(allowed),
+                        and_(empty, Model.employee_code.in_(sorted(visible_codes or []))))
+    else:
+        branch_ok = true()
+        allowed_for_fetch = None
+    if company_wide:
+        visibility = true()
+    else:
+        view_ok = true() if viewable is None else Model.employee_code.in_(sorted(viewable))
+        visibility = or_(Model.employee_code.in_(sorted(own)), and_(branch_ok, view_ok)) if own else and_(branch_ok, view_ok)
+
+    def _ser(d):
+        item = serialize(d, action="delete" if getattr(d, "is_deleted", False) else "update")
+        return mask(item, d, own, profile) if mask else item
+    out = await feed_v2.fetch(
+        db, Model, table, company_code, cursor, limit, visibility, allowed_for_fetch, _ser,
+        lambda d: {"id": d.id, "company_code": d.company_code, "action": "delete", "tombstone": True,
+                   "is_deleted": True, "updated_at": d.updated_at.isoformat() if d.updated_at else None})
+    out["scope"] = fp
+    out["epoch"] = epoch
+    out["access"] = access
+    return out
+
+
+@router.get("/attendance/changes-v2/{company_code}")
+async def get_attendance_changes_v2(
+    request: Request, company_code: str,
+    cursor: str = Query("0:0"), limit: int = Query(200, ge=1, le=500), scope: str = Query(""),
+    db: AsyncSession = Depends(get_db),
+):
+    return await _hr_feed_v2(HRAttendance, "hr_attendance", "hr_attendance", serialize_attendance,
+                             request, company_code, cursor, limit, scope, db,
+                             "canOpenAttendancePage", "canViewBranchSalaryReport")
+
+
+@router.get("/vacations/changes-v2/{company_code}")
+async def get_vacation_changes_v2(
+    request: Request, company_code: str,
+    cursor: str = Query("0:0"), limit: int = Query(200, ge=1, le=500), scope: str = Query(""),
+    db: AsyncSession = Depends(get_db),
+):
+    return await _hr_feed_v2(HRVacation, "hr_vacations", "hr_vacations", serialize_vacation,
+                             request, company_code, cursor, limit, scope, db,
+                             "canOpenVacationsPage", "canViewBranchSalaryReport")
+
+
 # ============================================================
 # ================ 2. VACATIONS (الإجازات) ====================
 # ============================================================
@@ -1176,6 +1270,19 @@ def serialize_employee_settings(
 # لما HR Admin يعدل delay_rules لموظف من جهاز A،
 # جهاز B لازم يعرف التغيير ده تلقائيًا.
 # ------------------------------------------------------------
+
+@router.get("/employee-settings/changes-v2/{company_code}")
+async def get_employee_settings_changes_v2(
+    request: Request, company_code: str,
+    cursor: str = Query("0:0"), limit: int = Query(200, ge=1, le=500), scope: str = Query(""),
+    db: AsyncSession = Depends(get_db),
+):
+    # Same audience as the existing /employee-settings/changes route (HR right only, company wide).
+    return await _hr_feed_v2(HREmployeeSettings, "hr_employee_settings", "hr_employee_settings",
+                             serialize_employee_settings, request, company_code, cursor, limit, scope, db,
+                             "canEditWeeklyDay", "canEditWorkSchedule", "canEditDelayRules", "canOpenAttendancePage",
+                             company_wide=True)
+
 
 @router.get("/employee-settings/changes/{company_code}")
 async def get_employee_settings_changes(
@@ -1711,6 +1818,31 @@ async def delete_adjustment(
 # ------------------------------------------------------------
 # 4.5 المزامنة التزايدية للتسويات
 # ------------------------------------------------------------
+
+def _adjustment_fp_extra(profile):
+    # Amounts are masked per viewer: the effective salary-amount privilege (which already folds in the
+    # company policy for non-bypass roles) and the policy flag itself are part of the fingerprint.
+    return {"amounts": bool(_hr_has(profile, "canViewSalaryAmounts")),
+            "policy": profile.get("company_policy_active") is True}
+
+
+def _adjustment_mask(item, doc, own, profile):
+    if not (_hr_has(profile, "canViewSalaryAmounts") or str(doc.employee_code) in own):
+        item["amount"] = None
+    return item
+
+
+@router.get("/adjustments/changes-v2/{company_code}")
+async def get_adjustment_changes_v2(
+    request: Request, company_code: str,
+    cursor: str = Query("0:0"), limit: int = Query(200, ge=1, le=500), scope: str = Query(""),
+    db: AsyncSession = Depends(get_db),
+):
+    return await _hr_feed_v2(HRAdjustment, "hr_adjustments", "hr_adjustments", serialize_adjustment,
+                             request, company_code, cursor, limit, scope, db,
+                             "canViewAdjustments", "canViewBranchSalaryReport",
+                             fp_extra=_adjustment_fp_extra, mask=_adjustment_mask)
+
 
 @router.get("/adjustments/changes/{company_code}")
 async def get_adjustment_changes(

@@ -5,7 +5,7 @@ class ApiConstants {
   // static const String baseUrl = "http://127.0.0.1:8000";
 
   // رابط Hugging Face (الرابط ده هو اللي هيكون شغال لما ترفع على Vercel)
-  static const String baseUrl = "https://islamadel-islam-app-api.hf.space";
+  static const String baseUrl = String.fromEnvironment('API_BASE', defaultValue: "https://islamadel-islam-app-api.hf.space");
 
     /// ⭐ VAPID Key من Firebase Console → Project Settings
   /// → Cloud Messaging → Web Push certificates

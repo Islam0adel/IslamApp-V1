@@ -1,6 +1,7 @@
 import 'services/sync_read_access.dart';
 import 'services/work_pool.dart';
 import 'services/cache_partitions.dart';
+import 'services/staged_inbox.dart';
 import 'services/scoped_sync_queue.dart';
 import 'services/read_authorization_snapshot.dart';
 import 'services/scope_sync_plan.dart';
@@ -10,12 +11,14 @@ import 'core/constants.dart';
 import 'services/permissions_service.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'services/employee_service.dart';
 import 'services/fcm_service.dart';
+import 'services/startup_push_state.dart';
 import 'core/theme.dart';
 import 'services/hr_service.dart';
 import 'views/auth/login_screen.dart';
@@ -58,6 +61,22 @@ StreamSubscription? supplierSyncSubscription;
 // ============================================================
 
 bool _isSyncing = false;
+bool _deviceHadNoCacheAtStart = false;
+// Web only: closed-app push cannot have prepared data (permission not granted or device not registered).
+bool _pushUnavailableAtStart = false;
+// Set when the startup merge could not apply staged changes (error or permission
+// verification failed): the open-time sync wait below then covers them (case 4).
+bool _startupMergeFailed = false;
+// Startup mode: default = verify + merge staged changes behind the loading page, then open and sync.
+// `?startup=bg` (measurement only) = open at once, merge in the background.
+final String _startupMergeMode = Uri.base.queryParameters['startup'] ?? 'merge';
+// Completes when the startup merge block is over; scoped resyncs wait for it.
+Future<void>? _startupMergeGate;
+// Measurement only: slows the permissions reconciliation to test the scoped resync under a slow reload.
+final int _permDelayMs =
+    int.tryParse(Uri.base.queryParameters['permDelay'] ?? '') ?? const int.fromEnvironment('PERM_DELAY_MS');
+// Measurement only: rebuilds the old behaviour (always wait) to compare against the new one.
+const bool _forceLegacyWait = bool.fromEnvironment('FORCE_WAIT');
 
 // ⭐ يخلص لما أول مزامنة تخلص (نجحت أو فشلت)
 final Completer<void> _initialSyncCompleter = Completer<void>();
@@ -129,12 +148,44 @@ final _scopeSyncQueue = ScopedSyncQueue(
   },
   reconcile: _forceScopeResync,
 );
+/// Set only while a scoped resync runs: modules outside it were already synced by the open-time pass.
+Set<String>? _resyncOnly;
 Future<bool>? _dataSyncWork;
 String? _dataSyncOwner;
 String? _dataSyncCompany;
 String? _dataReadyOwner;
 String? _dataReadyCompany;
 int? _dataReadyEpoch;
+
+/// Sets [_pushUnavailableAtStart] and shows the approved note on the loading page.
+/// Granted permission + registered device (alerts muted or not) is the normal path and shows nothing.
+Future<void> _detectPushUnavailable() async {
+  if (!kIsWeb) return;
+  try {
+    bool supported = false;
+    String? raw;
+    try {
+      supported = html.Notification.supported;
+      raw = html.Notification.permission;
+    } catch (_) {}
+    final registered = await FcmService.instance.isSystemNotificationsEnabled();
+    _pushUnavailableAtStart = pushUnavailableAtStart(
+      permission: parseBrowserPushPermission(raw, supported: supported),
+      registrationEnabled: registered,
+    );
+    print('🔔 push at start: permission=$raw supported=$supported registered=$registered '
+        '-> unavailable=$_pushUnavailableAtStart');
+    if (_pushUnavailableAtStart) {
+      final el = html.document.getElementById('loading-note');
+      if (el != null) {
+        el.text = pushUnavailableLoadingNote;
+        el.style.display = 'block';
+      }
+    }
+  } catch (e) {
+    print('⚠️ push state check failed: $e');
+  }
+}
 
 void _scheduleScopeResync(String code) {
   final modules = PermissionsService().takeScopeSyncModules();
@@ -145,6 +196,22 @@ void _scheduleScopeResync(String code) {
 }
 
 Future<void> _forceScopeResync(String companyCode, Set<String> modules) async {
+  // A resync must not run beside the startup merge (it moves the authorization epoch under it).
+  final startupGate = _startupMergeGate;
+  if (startupGate != null) {
+    try {
+      await startupGate.timeout(const Duration(seconds: 15));
+    } catch (_) {}
+  }
+  // Order: let the connection's permission reconciliation finish first. Starting earlier makes the
+  // pass read while the authorization epoch moves, so it is aborted and its requests repeated.
+  final waitStart = DateTime.now();
+  while (!_syncService.authorizationReady &&
+      !_wsConnectionFailedCompleter.isCompleted &&
+      DateTime.now().difference(waitStart) < const Duration(seconds: 4)) {
+    await Future.delayed(const Duration(milliseconds: 100));
+  }
+  print('🧭 scoped resync starts after ${DateTime.now().difference(waitStart).inMilliseconds}ms wait, authorizationReady=${_syncService.authorizationReady}');
   return CachePartitions.run(() async {
     final scope = await ReadAuthorizationSnapshot.capture();
     final prefs = await CachePartitions.preferences();
@@ -157,7 +224,23 @@ Future<void> _forceScopeResync(String companyCode, Set<String> modules) async {
     }
     if (!scope.sameContext) return;
     print('🔄 scoped resync: ${modules.join(', ')} (${keys.length} cursors)');
-    await syncAllDataIfNeeded(companyCode);
+    _resyncOnly = modules;
+    try {
+      // The permissions reload can move the authorization epoch while this pass reads. The pass then
+      // fails ("access changed during this read") and its cursors stay reset. Do not depend on some
+      // later pass: retry here until a pass completes at the current epoch (bounded).
+      for (var attempt = 0; attempt < 4; attempt++) {
+        await syncAllDataIfNeeded(companyCode);
+        if (_dataReadyCompany == companyCode &&
+            _dataReadyEpoch == ReadAuthorizationEpoch.value) break;
+        if (!scope.sameContext) break;
+        print('🔁 scoped resync not completed at the current epoch, retry ${attempt + 1}');
+        await Future.delayed(Duration(milliseconds: 500 * (attempt + 1)));
+        if (!scope.sameContext) break;
+      }
+    } finally {
+      _resyncOnly = null;
+    }
   });
 }
 
@@ -227,6 +310,15 @@ Future<bool> _runDataSync(String companyCode) async {
         try {
           runScope.check();
           if (!SyncReadAccess.allows(module)) return;
+          final only = _resyncOnly;
+          if (only != null && !only.contains(module)) return;
+          if (module == 'daily') {
+            // Ordering only: let in-flight permission refreshes finish so the
+            // merge does not start just before they invalidate its scope.
+            await PermissionsService().whenRefreshesIdle();
+            runScope.check();
+            await StagedInbox.mergeDaily(companyCode);
+          }
           final lastSync = prefs.getString(lastSyncKey);
           if (lastSync == null) {
             await full();
@@ -235,6 +327,7 @@ Future<bool> _runDataSync(String companyCode) async {
           } else {
             await incremental(lastSync);
           }
+          if (module == 'daily') await StagedInbox.publishAfterSync(companyCode);
           print("  ✅ $name");
         } catch (e) {
           succeeded = false;
@@ -246,9 +339,12 @@ Future<bool> _runDataSync(String companyCode) async {
       Future<void> syncOneCustom({
         required String name,
         required Future<void> Function() runner,
+        String? module,
       }) async {
         try {
           runScope.check();
+          final only = _resyncOnly;
+          if (only != null && module != null && !only.contains(module)) return;
           await runner();
           runScope.check();
           print("  ✅ $name");
@@ -289,6 +385,7 @@ Future<bool> _runDataSync(String companyCode) async {
       final tasks = <Future<void>>[
         modules.run(() => (() => syncOneCustom(
             name: 'تحويلات الخزائن',
+            module: 'transfers',
             runner: () => TreasuryTransferService().sync(companyCode)))()),
         modules.run(() => (() => syncOneWithLastSync(
               name: 'اليوميات',
@@ -343,6 +440,7 @@ Future<bool> _runDataSync(String companyCode) async {
               runScope.check();
               await syncOneCustom(
                 name: 'HR',
+                module: 'hr',
                 runner: () async {
                   final results = await HRService().syncAll(companyCode);
                   if (results.values.any((v) => v != 'ok' && v != 'skipped'))
@@ -474,8 +572,12 @@ void initializeGlobalListener(String companyCode) {
 
   _syncService.onPermissionsChanged ??= ({required bool resync}) async {
     print("🔐 معالجة permissions_changed (resync=$resync)");
+    if (_permDelayMs > 0) await Future.delayed(Duration(milliseconds: _permDelayMs));
     try {
-      await PermissionsService().verifyCurrentEffectiveProfile();
+      // resync=false means the server signalled no narrowing: re-verify without
+      // hiding the current scope, so the dashboard cards stay put. resync=true
+      // keeps the fail-closed hold until the narrowed scope is applied.
+      await PermissionsService().verifyCurrentEffectiveProfile(restrictWhileLoading: resync);
     } catch (e) {
       print("⚠️ فشل تحديث الصلاحيات: $e");
       rethrow;
@@ -529,6 +631,13 @@ void disposeGlobalListener() {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Open-timing measurement (log only): main() start -> first rendered frame.
+  // Flutter engine startup before main() is not measurable from Dart.
+  final Stopwatch appStartWatch = Stopwatch()..start();
+  int mergeMs = 0;    // startup merge block duration (applying staged changes)
+  int syncWaitMs = 0; // open-time sync wait duration
+  // Checkpoint hooks must exist before the first sync of this run, not only once a merge has run.
+  StagedInbox.installHooks();
 
   // ==========================================================
   // Firebase
@@ -538,7 +647,14 @@ Future<void> main() async {
         options: DefaultFirebaseOptions.currentPlatform,
       ))();
 
-  await (() => FcmService.instance.initialize())();
+  if (const bool.fromEnvironment('EMU')) {
+    // LOCAL EXPERIMENT ONLY: emulators, and no FCM registration with the real project.
+    await FirebaseAuth.instance.useAuthEmulator('localhost', 9099);
+    FirebaseFirestore.instance.useFirestoreEmulator('localhost', 8081);
+    FirebaseDatabase.instance.useDatabaseEmulator('localhost', 9000);
+  } else {
+    await (() => FcmService.instance.initialize())();
+  }
   PermissionsService().onOwnAccountDeleted = () {
     disposeGlobalListener();
     appNavigatorKey.currentState
@@ -558,6 +674,25 @@ Future<void> main() async {
   if (startupUid != null &&
       startupCompany != null &&
       startupCompany.isNotEmpty) {
+    // Decided BEFORE activate() creates the boxes: no cache box for this user+company on this
+    // device means first use, the only case that still waits for the first full sync.
+    _deviceHadNoCacheAtStart = !(await Hive.boxExists(
+        CachePartitions.physicalName('cache_metadata_box', startupUid, startupCompany)));
+    print('🧭 first use on this device (no Hive boxes at start): $_deviceHadNoCacheAtStart');
+    if (!_deviceHadNoCacheAtStart) {
+      // Early freshness probe: when something is staged, the daily feed's
+      // server check starts NOW, overlapping the box opening below instead of
+      // waiting for it. No extra calls: it fires only when batches are staged,
+      // and not at all once the backend returns the scope fingerprint with the
+      // verified profile (remembered in plain SharedPreferences).
+      unawaited(StagedInbox.peekStagedCountFor(startupUid, startupCompany)
+          .then((staged) {
+        if (staged > 0 &&
+            startupPrefs.getString('profile_scope_fp_v1') != '1') {
+          StagedInbox.startEarlyDailyProbe(startupCompany);
+        }
+      }));
+    }
     await (() => CachePartitions.activate(startupUid, startupCompany))();
   }
 
@@ -592,10 +727,100 @@ Future<void> main() async {
       print("🔐 نطاق الصلاحيات اتغير أثناء بدء التشغيل: resync");
       _scheduleScopeResync(companyCode);
     };
-    await (() => PermissionsService().loadPermissions())();
+    // Listener deferred: it starts after the startup merge block below, so
+    // its first snapshot and refresh neither gate the merge nor move the
+    // authorization epoch under it.
+    await (() => PermissionsService().loadPermissions(deferListener: true))();
 
     unawaited(FcmService.instance.restoreRegistrationIfEnabled());
     DeepLinkService.instance.initialize();
+    await _detectPushUnavailable();
+
+    // Startup order (loading page stays up until runApp): open -> verify -> merge the changes the
+    // service worker staged while the app was closed. No WebSocket and no old sync run yet; the
+    // listener (WebSocket + incremental sync) starts after this block, in its original order.
+    // Bounded by the old 10s sync wait. On timeout the merge keeps going and the sync joins it.
+    // `?startup=bg` restores the previous mode (merge in the background, home right away).
+    if (_startupMergeMode == 'bg') {
+      unawaited(StagedInbox.mergeDaily(companyCode, eagerVerify: false).then((_) => StagedInbox.mergeTreasury(companyCode)).then((_) => StagedInbox.mergeCoding(companyCode)).then((_) => StagedInbox.mergeEmployees(companyCode)).then((_) => StagedInbox.mergeSupplier(companyCode)).then((_) => StagedInbox.mergeSettlement(companyCode)).then((_) => StagedInbox.mergeInventory(companyCode)).then((_) => StagedInbox.mergeAllCommercial(companyCode)));
+    } else {
+      bool online = true;
+      if (kIsWeb) {
+        try {
+          online = html.window.navigator.onLine ?? true;
+        } catch (_) {}
+      }
+      final gate = Completer<void>();
+      _startupMergeGate = gate.future;
+      final Stopwatch swStartMerge = Stopwatch()..start();
+      String reason;
+      try {
+        if (!online) {
+          reason = 'skipped: offline';
+        } else if (_deviceHadNoCacheAtStart) {
+          reason = 'skipped: first use on this device (nothing can be staged)';
+        } else {
+          // Prefetch result from the page: nothing staged = open at once, no loading wait.
+          final staged = await StagedInbox.peekStagedCount()
+              .timeout(const Duration(milliseconds: 1500), onTimeout: () => -1);
+          if (staged == 0) {
+            reason = 'skipped: nothing staged';
+          } else {
+            bool gateExpired = false;
+            try {
+              // One 10 s budget for: verify permissions, let the listener's first snapshot and any
+              // refresh it starts settle (they move the authorization epoch), then merge.
+              bool verified = true;
+              await (() async {
+                try {
+                  await PermissionsService().verifyCurrentEffectiveProfile();
+                } catch (_) {
+                  verified = false;
+                }
+                if (!verified) return;
+                final fs = PermissionsService().firstSnapshotHandled;
+                if (fs != null) {
+                  try { await fs; } catch (_) {}
+                }
+                // Every server refresh the listener's snapshot started must be finished first.
+                await PermissionsService().whenRefreshesIdle();
+                // Gate expired while waiting for permissions: do not start the merge beside the sync.
+                if (gateExpired) return;
+                await StagedInbox.mergeDaily(companyCode, eagerVerify: false);
+                if (gateExpired) return;
+                await StagedInbox.mergeTreasury(companyCode);
+                if (gateExpired) return;
+                await StagedInbox.mergeCoding(companyCode);
+                if (gateExpired) return;
+                await StagedInbox.mergeEmployees(companyCode);
+                await StagedInbox.mergeSupplier(companyCode);
+                await StagedInbox.mergeSettlement(companyCode);
+                await StagedInbox.mergeInventory(companyCode);
+                await StagedInbox.mergeAllCommercial(companyCode);
+              })()
+                  .timeout(const Duration(seconds: 10));
+              reason = verified
+                  ? 'merge finished (${staged < 0 ? 'staged count unknown' : '$staged batch(es) staged'})'
+                  : 'permission verification not completed: nothing merged, data left staged';
+              if (!verified) _startupMergeFailed = true;
+            } on TimeoutException {
+              gateExpired = true;
+              reason = 'TIMEOUT after 10s: opening; staged data is left to the still-running merge or the normal sync';
+            }
+          }
+        }
+      } catch (e) {
+        reason = 'error: $e';
+        _startupMergeFailed = true;
+      } finally {
+        gate.complete();
+      }
+      mergeMs = swStartMerge.elapsedMilliseconds;
+      print('🧭 startup merge: $reason | result: ${StagedInbox.lastOutcome} | waited ${swStartMerge.elapsedMilliseconds}ms before the first screen');
+    }
+    // Deferred above: the listener starts now on every path (merge done,
+    // skipped, or running in background), so no permission change is missed.
+    PermissionsService().ensurePermissionListenerStarted();
 
     // --------------------------------------------------------
     // فحص التحقق من الإيميل
@@ -652,19 +877,39 @@ Future<void> main() async {
       //  • Online → استنى: (المزامنة تخلص) أو (WebSocket يفشل) أو (10s)
       //  • Offline → افتح فوراً
       // --------------------------------------------------------
-      if (isOnline) {
-        print("⏳ ننتظر المزامنة (max 10s)...");
-        try {
-          await Future.any([
-            _initialSyncCompleter.future,
-            _wsConnectionFailedCompleter.future,
-          ]).timeout(const Duration(seconds: 10));
-          print("✅ المزامنة اكتملت أو الاتصال فشل — فتح التطبيق");
-        } on TimeoutException {
-          print("⏱️ 10s عدّت — فتح التطبيق بالبيانات الحالية");
-        } catch (e) {
-          print("⚠️ خطأ أثناء الانتظار: $e — فتح التطبيق");
+      // Open-time wait happens only when there is nothing local to show (first use)
+      // or the startup merge failed and the open-time sync must cover it (case 4).
+      // Push availability never gates opening: a device with cached boxes opens
+      // instantly and syncs in the background, with or without push.
+      if (isOnline && (_deviceHadNoCacheAtStart || _forceLegacyWait || _startupMergeFailed)) {
+        // One 10s budget across the startup merge and this wait: a late merge
+        // failure waits only for what is left, never a second 10s.
+        final remainingMs =
+            _startupMergeFailed ? (10000 - mergeMs).clamp(0, 10000) : 10000;
+        if (remainingMs <= 0) {
+          print('⏳ open-sync wait skipped: the merge already used the 10s budget; '
+              'opening now, sync continues in background');
+        } else {
+          final swWait = Stopwatch()..start();
+          print('⏳ open-sync wait: noBoxes=$_deviceHadNoCacheAtStart mergeFailed=$_startupMergeFailed budget=${remainingMs}ms');
+          print(_startupMergeFailed
+              ? "⏳ فشل الدمج: ننتظر المزامنة (max ${(remainingMs / 1000).toStringAsFixed(0)}s)..."
+              : "⏳ أول استخدام: ننتظر الجلب الأولي (max ${(remainingMs / 1000).toStringAsFixed(0)}s)...");
+          try {
+            await Future.any([
+              _initialSyncCompleter.future,
+              _wsConnectionFailedCompleter.future,
+            ]).timeout(Duration(milliseconds: remainingMs));
+            print("✅ المزامنة اكتملت أو الاتصال فشل — فتح التطبيق");
+          } on TimeoutException {
+            print("⏱️ المهلة عدّت — فتح التطبيق بالبيانات الحالية");
+          } catch (e) {
+            print("⚠️ خطأ أثناء الانتظار: $e — فتح التطبيق");
+          }
+          syncWaitMs = swWait.elapsedMilliseconds;
         }
+      } else if (isOnline) {
+        print("⚡ جهاز عنده بيانات محفوظة — فتح فوري والمزامنة في الخلفية");
       } else {
         print("📵 مفيش نت — فتح فوري");
       }
@@ -686,6 +931,7 @@ Future<void> main() async {
   if (FirebaseAuth.instance.currentUser == null || !CachePartitions.isReady) {
     initialScreen = const LoginScreen();
   }
+  final preRunAppMs = appStartWatch.elapsedMilliseconds;
   runApp(
     IslamApp(
       initialScreen: initialScreen,
@@ -693,6 +939,12 @@ Future<void> main() async {
           savedTheme == 'light' ? ThemeMode.light : ThemeMode.dark,
     ),
   );
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    print('⏱️ open timing: total=${appStartWatch.elapsedMilliseconds}ms '
+        '| init=${preRunAppMs - mergeMs - syncWaitMs}ms '
+        '| merge=${mergeMs}ms | syncWait=${syncWaitMs}ms '
+        '| firstFrame=+${appStartWatch.elapsedMilliseconds - preRunAppMs}ms');
+  });
 }
 
 // ============================================================

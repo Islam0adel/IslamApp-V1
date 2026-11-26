@@ -12,7 +12,8 @@ import 'employee_identity.dart';
 import 'treasury_cache_scope.dart';
 // lib/services/permissions_service.dart
 
-import 'dart:async';                                   // ← NEW
+import 'dart:async';
+import 'refresh_barrier.dart';                                   // ← NEW
 import 'package:flutter/foundation.dart';              // ← NEW: ChangeNotifier
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -57,7 +58,36 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
   String? _defaultBranchCode;
   String? _currentRole;   // ⭐ جديد
   bool _companyPolicyActive = false;
+
+  /// Everything that decides which rows this viewer may hold and how each is shaped, EXCEPT the
+  /// linked employee code (which a write of the viewer's own employee row legitimately moves).
+  /// Staged applies compare it before and after an awaited write: any real change of rights,
+  /// branches, viewable-employee list, role, policy or account means old scoped rows must not survive.
+  String effectiveScopeSignature() {
+    String enc(dynamic v) {
+      if (v is Map) {
+        final keys = v.keys.map((e) => e.toString()).toList()..sort();
+        return '{${keys.map((k) => '$k:${enc(v[k])}').join(',')}}';
+      }
+      if (v is List) {
+        final l = v.map(enc).toList()..sort();
+        return '[${l.join(',')}]';
+      }
+      return '$v';
+    }
+    return enc({
+      'p': _permissions, 'b': _allowedBranchCodes, 'v': _hrViewableEmployees, 'r': _currentRole,
+      'c': _companyPolicyActive, 'u': _identityProfileUid, 'pending': _scopeVerificationPending,
+    });
+  }
   bool _scopeVerificationPending = false;
+
+  /// بصمة نطاق خلاصة اليومية (transactions v2) من آخر تحديث ناجح من السيرفر،
+  /// لو الباكند بيرجعها في ملف الصلاحيات. الدمج يعيد استخدامها بدل طلب منفصل.
+  /// null للباكند القديم أو طالما النطاق الحالي مش مؤكد.
+  String? _transactionsScopeFingerprint;
+  String? get transactionsScopeFingerprint =>
+      (_loaded && !_scopeVerificationPending) ? _transactionsScopeFingerprint : null;
   Map<String, dynamic> _delegablePermissions = {};
   List<String> _delegableBranchCodes = [];
   List<String> get delegableBranchCodes =>
@@ -67,6 +97,10 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
       (canBypassPermissions || (isAdmin && _companyPolicyActive &&
         (_delegableBranchCodes.contains('all') || _delegableBranchCodes.contains(branchCode))));
   Future<void>? _serverRefresh;
+  Future<void>? get pendingServerRefresh => _serverRefresh;
+  Completer<void>? _firstSnapshotHandled;
+  /// Completes once the permissions listener has handled its first snapshot (null if no listener started).
+  Future<void>? get firstSnapshotHandled => _firstSnapshotHandled?.future;
   int _serverScopeGeneration = 0;
   final Set<String> _pendingSyncModules = {};
   Set<String> takeScopeSyncModules() {
@@ -84,9 +118,12 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
   Future<void> verifyCurrentEffectiveProfile({bool restrictWhileLoading = true}) async {
 return CachePartitions.run(() async {
 
-    final context = await ReadAuthorizationSnapshot.capture();
     for (var attempt=0; attempt<4; attempt++) {
       try {
+        // Capture inside the retry: a context that is inconsistent AT capture
+        // (e.g. cache session or account identity mid-transition) gets the same
+        // re-anchor-and-retry treatment as one that moves mid-read.
+        final context = await ReadAuthorizationSnapshot.capture();
         final pending = _serverRefresh;
         if(pending != null) { await pending; } else {
           await refreshEffectiveProfile(restrictWhileLoading:restrictWhileLoading);
@@ -96,7 +133,9 @@ return CachePartitions.run(() async {
         if(_scopeVerificationPending || !_loaded) throw const ReadAuthorizationChanged();
         return;
       } on ReadAuthorizationChanged {
-        if(!context.sameContext || attempt==3) rethrow;
+        // A concurrent purge/scope change moving under the read is a reason to
+        // re-verify the CURRENT state, not to give up: re-anchor and retry.
+        if(attempt==3) rethrow;
       }
     }
     throw const ReadAuthorizationChanged();
@@ -143,6 +182,12 @@ return CachePartitions.run(() async {
 
   /// الدور الحالي (super_admin / admin / employee)
   String? get currentRole => _currentRole;
+
+  /// Stable text of the effective permissions; part of the staged-sync scope key.
+  String get stagedPermissionSignature => jsonEncode(_sortedForSignature(_permissions));
+  static dynamic _sortedForSignature(dynamic v) => v is Map
+      ? {for (final k in (v.keys.map((e) => e.toString()).toList()..sort())) k: _sortedForSignature(v[k])}
+      : v;
 
   /// السوبر أدمن (صاحب البرنامج) — كل شيء مفتوح
   bool get isSuperAdmin => !_scopeVerificationPending && _currentRole == 'super_admin';
@@ -277,6 +322,7 @@ return CachePartitions.run(() async {
     _firestoreSub = null;
     _listenedEmail = email;
 
+    _firstSnapshotHandled = Completer<void>();
     print('🎧 بدء الاستماع لصلاحيات $email');
     Map<String, dynamic>? lastObservedScope;
 
@@ -288,6 +334,7 @@ return CachePartitions.run(() async {
         .snapshots()
         .listen(
       (snapshot) async {
+        try { await (() async {
         if (!CachePartitions.boundWorkIsCurrent) return;
         if (await handleOwnDocumentAbsence(
             exists: snapshot.exists,
@@ -427,6 +474,7 @@ return CachePartitions.run(() async {
             }));
           }
         }
+        })(); } finally { final c = _firstSnapshotHandled; if (c != null && !c.isCompleted) c.complete(); }
       },
       onError: (e) => print('⚠️ خطأ في listener الصلاحيات: $e'),
     );
@@ -614,16 +662,80 @@ return CachePartitions.run(() async {
   // 2) ثم نحدث من Firestore + نبدأ snapshot listener
   // ============================================================
 
-  Future<void> loadPermissions() {
-    return _loadFuture ??= _doLoadPermissions();
+  /// deferListener: startup only. The permissions Firestore listener then
+  /// starts on ensurePermissionListenerStarted() (after the startup merge), so
+  /// its first snapshot and refresh cannot gate or move the merge.
+  Future<void> loadPermissions({bool deferListener = false}) {
+    return _loadFuture ??= _doLoadPermissions(deferListener: deferListener);
   }
+
+  /// Starts the listener deferred by loadPermissions(deferListener: true).
+  /// No-op when nothing was deferred or the listener already started.
+  void ensurePermissionListenerStarted() {
+    final email = _deferredListenerEmail;
+    if (email == null || email.isEmpty) return;
+    _deferredListenerEmail = null;
+    _startFirestoreListener(email);
+  }
+
+  String? _deferredListenerEmail;
 
   /// Refresh current own scope from the authenticated server. Known scope
   /// changes stay held if verification fails; startup can retain offline scope.
   Future<void> refreshEffectiveProfile({bool restrictWhileLoading = true}) async {
+    // Join an in-flight refresh instead of starting a competing read; the joiner
+    // starts no independent read, so it cannot be poisoned by an entry hold.
+    if (!restrictWhileLoading && _serverRefresh != null) {
+      return _refreshBarrier.run(() =>
+          _refreshEffectiveProfileInner(restrictWhileLoading: restrictWhileLoading));
+    }
+    // One independent refresh at a time, in arrival order. A restricting entry
+    // (which invalidates the read epoch and holds the scope) can only begin after
+    // the previous refresh fully applied, so no refresh's in-flight read is ever
+    // poisoned by another refresh's entry. This removes the conflict itself; the
+    // retry in verifyCurrentEffectiveProfile stays only as a safety net for
+    // invalidators outside this path (listener applies, account transitions).
+    final previous = _refreshEntryChain;
+    final release = Completer<void>();
+    _refreshEntryChain = previous.then((_) => release.future);
+    await previous;
+    try {
+      // Counted from the first synchronous line, before any await, so a refresh that has been
+      // called but has not yet registered _serverRefresh is still seen by whenRefreshesIdle().
+      return await _refreshBarrier.run(() =>
+          _refreshEffectiveProfileInner(restrictWhileLoading: restrictWhileLoading));
+    } finally {
+      release.complete();
+    }
+  }
+
+  /// Records the feed scope fingerprint from a verified server profile, and
+  /// remembers whether this backend returns it at all (plain SharedPreferences,
+  /// so startup can read it before the cache boxes open: a backend that returns
+  /// it needs no early freshness probe).
+  void _setTransactionsScopeFingerprint(dynamic raw) {
+    _transactionsScopeFingerprint = raw?.toString();
+    final prefs = _cachedPrefs;
+    if (prefs == null) return;
+    if (raw != null) {
+      unawaited(prefs.setString('profile_scope_fp_v1', '1'));
+    } else {
+      unawaited(prefs.remove('profile_scope_fp_v1'));
+    }
+  }
+
+  /// FIFO turn-taking between independent refreshes; see refreshEffectiveProfile.
+  Future<void> _refreshEntryChain = Future<void>.value();
+
+  final RefreshBarrier _refreshBarrier = RefreshBarrier();
+  /// Completes when no server scope refresh is running (counts every call, not only the newest).
+  Future<void> whenRefreshesIdle() => _refreshBarrier.whenIdle();
+
+  Future<void> _refreshEffectiveProfileInner({bool restrictWhileLoading = true}) async {
 return CachePartitions.run(() async {
 
     if (_serverRefresh != null && !restrictWhileLoading) return _serverRefresh!;
+    final wasLoaded = _loaded;
     if (restrictWhileLoading) {
       _scopeVerificationPending = true;
       _loaded = false;
@@ -656,12 +768,64 @@ return CachePartitions.run(() async {
       request.check();
       final profile = EffectiveProfileSnapshot.parse(raw, uid: uid, email: email, company: company);
       final box = CachePartitions.box('coding_box');
+      request.check();
+      if (generation != _serverScopeGeneration) throw const ReadAuthorizationChanged();
+      // Compute the next scope before touching live state.
+      final next = _convertToPermissionsMap(profile.permissions);
+      if (!profile.active) {
+        final defaults = _createDefaultPermissions(profile.data['job_code']?.toString() ?? '1', forVerifiedProfile: true);
+        defaults.forEach((category, entries) {
+          next.putIfAbsent(category, () => {});
+          entries.forEach((key, value) => next[category]!.putIfAbsent(key, () => value));
+        });
+      }
+      final nextBranches = (profile.data['allowed_branches'] as List).cast<String>().toList();
+      final nextViewable = (profile.data['hr_viewable_employees'] as List?)?.cast<String>().toList();
+      final nextDelegablePermissions = Map<String, dynamic>.from(profile.data['delegable_permissions'] ?? {});
+      final nextDelegableBranches = List<String>.from(profile.data['delegable_branches'] ?? []);
+      final unchanged = wasLoaded && _permissions != null &&
+          const DeepEq().equals(_permissions, next) &&
+          const DeepEq().equals(_allowedBranchCodes, nextBranches) &&
+          const DeepEq().equals(_hrViewableEmployees, nextViewable) &&
+          const DeepEq().equals(_delegablePermissions, nextDelegablePermissions) &&
+          const DeepEq().equals(_delegableBranchCodes, nextDelegableBranches) &&
+          _currentRole == profile.role && _companyPolicyActive == profile.active;
+      if (unchanged) {
+        // A re-verification that confirms the exact scope already applied is not an
+        // authorization change: refresh the stored snapshot and keep serving the
+        // current profile — no epoch invalidation, so routine checks never flicker
+        // the dashboard. Undo the entry hold when this caller took it.
+        // A stale hold (persisted pending marker from an interrupted refresh)
+        // is resolved by ANY completed server verification, not only a
+        // restricting one: the hold existed because verification never finished,
+        // and now it did. Notify only when a hold was actually up, so routine
+        // re-checks still never flicker the dashboard.
+        _setTransactionsScopeFingerprint(profile.data['transactions_scope']);
+        if (restrictWhileLoading || _scopeVerificationPending) {
+          _scopeVerificationPending = false;
+          _loaded = true;
+          notifyListeners();
+        }
+        final appliedSnap = await ReadAuthorizationSnapshot.capture();
+        await box.putAll({
+          EffectiveProfileSnapshot.cacheKey(uid, company): {...profile.data, '_verification_token': token},
+          pendingKey: token,
+          'permissions_applied_$email': next,
+          'branches_applied_$email': nextBranches,
+          'viewable_applied_$email': nextViewable ?? <String>[],
+        });
+        // Same guard as the full apply path: if the context or generation moved
+        // mid-write, this snapshot must not stand — mark it invalid and bail out.
+        if (!(appliedSnap.isCurrent && generation == _serverScopeGeneration)) {
+          if (box.get(pendingKey) == token) await box.put(pendingKey, 'invalid:$token');
+          throw const ReadAuthorizationChanged();
+        }
+        return;
+      }
       _scopeVerificationPending = true;
       _loaded = false;
       notifyListeners();
       if (!restrictWhileLoading) await box.put(pendingKey, token);
-      request.check();
-      if (generation != _serverScopeGeneration) throw const ReadAuthorizationChanged();
       EffectiveProfileSnapshot? prior;
       if(_permissions==null) {
         try { prior=EffectiveProfileSnapshot.parse(box.get(EffectiveProfileSnapshot.cacheKey(uid,company)),uid:uid,email:email,company:company); }
@@ -681,19 +845,11 @@ return CachePartitions.run(() async {
       final oldViewable = _hrViewableEmployees == null ? (prior?.data['hr_viewable_employees'] as List?)?.cast<String>() : List<String>.from(_hrViewableEmployees!);
       _companyPolicyActive = profile.active;
       _currentRole = profile.role;
-      _delegablePermissions = Map<String, dynamic>.from(profile.data['delegable_permissions'] ?? {});
-      _delegableBranchCodes = List<String>.from(profile.data['delegable_branches'] ?? []);
-      final next = _convertToPermissionsMap(profile.permissions);
-      if (!profile.active) {
-        final defaults = _createDefaultPermissions(profile.data['job_code']?.toString() ?? '1', forVerifiedProfile: true);
-        defaults.forEach((category, entries) {
-          next.putIfAbsent(category, () => {});
-          entries.forEach((key, value) => next[category]!.putIfAbsent(key, () => value));
-        });
-      }
+      _delegablePermissions = nextDelegablePermissions;
+      _delegableBranchCodes = nextDelegableBranches;
       _permissions = next;
-      _allowedBranchCodes = (profile.data['allowed_branches'] as List).cast<String>().toList();
-      _hrViewableEmployees = (profile.data['hr_viewable_employees'] as List?)?.cast<String>().toList();
+      _allowedBranchCodes = nextBranches;
+      _hrViewableEmployees = nextViewable;
       _cachedPrefs = prefs;
       _identityCompany = company;
       _identityProfileUid = uid;
@@ -722,6 +878,7 @@ return CachePartitions.run(() async {
         'viewable_applied_$email': _hrViewableEmployees ?? <String>[],
       });
       if (!appliedCurrent()) await invalidateApplied();
+      _setTransactionsScopeFingerprint(profile.data['transactions_scope']);
       _scopeVerificationPending = false;
       _loaded = true;
       notifyListeners();
@@ -746,6 +903,7 @@ return CachePartitions.run(() async {
     void reset() {
     _resetState();
     _stopFirestoreListener();
+    _refreshEntryChain = Future<void>.value();
     _cachedUid = null;
     _currentUserEmail = null;   // ⭐
     _cachedPrefs = null;        // ⭐
@@ -756,10 +914,11 @@ return CachePartitions.run(() async {
   // التنفيذ الفعلي للتحميل (private)
   // ============================================================
 
-  Future<void> _doLoadPermissions() async {
+  Future<void> _doLoadPermissions({bool deferListener = false}) async {
 return CachePartitions.run(() async {
 
     ReadAuthorizationEpoch.invalidate();
+    _transactionsScopeFingerprint = null;
     final identityUid = FirebaseAuth.instance.currentUser?.uid;
     try {
       final prefs = await CachePartitions.preferences();
@@ -966,7 +1125,11 @@ return CachePartitions.run(() async {
       //   permissionsKey,
       //   branchesKey,
       // );
-      _startFirestoreListener(email);
+      if (deferListener) {
+        _deferredListenerEmail = email;
+      } else {
+        _startFirestoreListener(email);
+      }
 
       // ⭐ الاستماع لتغييرات Hive لإعادة حساب employee_code
       // (لأن employees ممكن تتحمل بعد loadPermissions)

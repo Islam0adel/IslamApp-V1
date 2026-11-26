@@ -775,6 +775,13 @@ class WebSocketSyncService {
         if (action == 'delete') {
           await JournalCache.delete(_dailyBox,
               company: _companyCode!, branch: branchCode, serial: serial);
+          final stamp = payload['updated_at']?.toString();
+          if (stamp != null && stamp.isNotEmpty) {
+            final prefs = await CachePartitions.preferences();
+            final lk = JournalCache.ledgerKey(_companyCode!);
+            await prefs.setString(lk,
+                JournalCache.writeLedger(JournalCache.readLedger(prefs.getString(lk)), id, stamp));
+          }
 
           print(
             "🗑️ تم حذف اليومية [$id] من Hive",

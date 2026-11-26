@@ -521,6 +521,48 @@ async def list_inventory(
 # الجهاز Offline لازم يعرف أن السجل اتحذف.
 # ============================================================
 
+@router.get("/changes-v2/{company_code}")
+async def get_inventory_changes_v2(
+    request: Request,
+    company_code: str,
+    cursor: str = Query("0:0"),
+    limit: int = Query(200, ge=1, le=500),
+    scope: str = Query(""),
+    db: AsyncSession = Depends(get_db),
+):
+    """EXPERIMENT. Same permission, branch filter and cost projection as /changes; needs migration 006."""
+    from app.core import feed_v2
+    from app.core.changes_v2 import feed_epoch, bootstrap_cursor, parse_cursor
+    from sqlalchemy import true
+    import hashlib, json
+    _profile = _require_any(request, ["معاينة", "اضافة"])
+    allowed = allowed_branches_for_profile(request.state.auth_user)
+    costs = bool(_viewer_may_costs(request))
+    epoch = await feed_epoch(db, "inventory")
+    fp = hashlib.sha256(json.dumps({"co": company_code, "epoch": epoch, "costs": costs,
+                                    "branches": sorted(allowed or [])}, sort_keys=True).encode()).hexdigest()[:16]
+    if cursor == "latest":
+        return {"invalid": False, "items": [], "has_more": False, "scope": fp, "epoch": epoch,
+                "next_cursor": await bootstrap_cursor(db)}
+    if scope and scope != fp:
+        return {"invalid": True, "reason": "scope", "items": [], "has_more": False,
+                "next_cursor": cursor, "scope": fp, "epoch": epoch}
+    try:
+        parse_cursor(cursor)
+    except Exception:
+        raise HTTPException(status_code=400, detail="bad cursor")
+    M = InventoryRecord
+    visibility = M.branch_code.in_(allowed) if allowed else true()
+    out = await feed_v2.fetch(
+        db, M, "inventory_records", company_code, cursor, limit, visibility, allowed,
+        lambda d: serialize_inventory(d, include_costs=costs, action=("delete" if d.is_deleted else "update")),
+        lambda d: {"doc_id": str(d.id), "company_code": d.company_code, "serial": d.serial, "action": "delete",
+                   "tombstone": True, "updated_at": d.updated_at.isoformat() if d.updated_at else None})
+    out["scope"] = fp
+    out["epoch"] = epoch
+    return out
+
+
 @router.get("/changes/{company_code}")
 async def get_inventory_changes(
     request: Request,

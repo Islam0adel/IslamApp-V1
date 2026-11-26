@@ -1,5 +1,6 @@
 import '../widgets/visibility_page_shell.dart';
 import '../../services/cache_partitions.dart';
+import '../../services/staged_inbox.dart';
 import 'treasury_transfers_page.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -49,10 +50,6 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage>
     with TickerProviderStateMixin, WidgetsBindingObserver {
-  late Timer _timer;
-  int _secondsElapsed = 0;
-  String _currentTime = "";
-  String _currentDate = "";
   late AnimationController _mainController;
 
   final CodingService _codingService = CodingService();
@@ -84,16 +81,6 @@ class _HomePageState extends State<HomePage>
       vsync: this,
       duration: const Duration(milliseconds: 800),
     )..forward();
-
-    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (mounted) {
-        setState(() {
-          _secondsElapsed++;
-          _currentTime = DateFormat('hh:mm a').format(DateTime.now());
-          _currentDate = DateFormat('yyyy-MM-dd').format(DateTime.now());
-        });
-      }
-    });
 
 
     // ⭐ Deep Link: استمع للإشعارات المعلقة القادمة من SW
@@ -401,11 +388,6 @@ return CachePartitions.run(() async {
     });
   }
 
-  String _formatDuration(int seconds) {
-    int minutes = seconds ~/ 60;
-    int remainingSeconds = seconds % 60;
-    return '${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
-  }
   Future<void> _showNotificationsPreview() async {
 return CachePartitions.run(() async {
 
@@ -1037,7 +1019,7 @@ return CachePartitions.run(() async {
                     Icon(Icons.timer, color: AppTheme.dangerFor(context), size: 16),
                     const SizedBox(width: 5),
                     Text("وقت النشاط: ", style: TextStyle(color: AppTheme.textSoftFor(context), fontSize: 13, fontFamily: 'Cairo')),
-                    Text(_formatDuration(_secondsElapsed), style: TextStyle(color: AppTheme.dangerFor(context), fontSize: 14, fontWeight: FontWeight.bold, fontFamily: 'monospace')),
+                    _ActivityDurationText(style: TextStyle(color: AppTheme.dangerFor(context), fontSize: 14, fontWeight: FontWeight.bold, fontFamily: 'monospace')),
                   ],
                 ),
                 const SizedBox(height: 15),
@@ -1046,8 +1028,8 @@ return CachePartitions.run(() async {
                   runSpacing: 10,
                   alignment: WrapAlignment.center,
                   children: [
-                    _buildSmallInfo("الوقت", _currentTime, Icons.access_time, AppTheme.warningFor(context)),
-                    _buildSmallInfo("التاريخ", _currentDate, Icons.calendar_today, AppTheme.infoSoftFor(context)),
+                    _LiveClockChip(label: "الوقت", icon: Icons.access_time, color: AppTheme.warningFor(context), isTime: true),
+                    _LiveClockChip(label: "التاريخ", icon: Icons.calendar_today, color: AppTheme.infoSoftFor(context), isTime: false),
                     _buildSmallInfo("الفرع النشط", _selectedBranchName, Icons.storefront, AppTheme.successFor(context)),
                   ],
                 ),
@@ -1585,7 +1567,6 @@ return CachePartitions.run(() async {
     if (_loggingOut) return;
     setState(() => _loggingOut = true);
     _permissionsDebounce?.cancel();
-    _timer.cancel();
     PermissionsService().removeListener(_onPermissionsChanged);
     _deepLinkSub?.cancel();
 
@@ -1616,6 +1597,7 @@ return CachePartitions.run(() async {
     await prefs.remove('user_email');
 
     // 4) signOut
+    await StagedInbox.clear();
     await FirebaseAuth.instance.signOut();
 
     disposeGlobalListener();
@@ -1648,8 +1630,123 @@ return CachePartitions.run(() async {
     // عشان لو المستخدم عمل logout، already handled
     // لو التطبيق بيتقفل، RTDB onDisconnect بيتولى الأمر تلقائيًا
 
-    _timer.cancel();
     _mainController.dispose();
     super.dispose();
+  }
+}
+
+// ============================================================
+// ويدجتز الساعة الحية: مؤقتها الخاص بيحدّث نصها بس كل ثانية،
+// بدل ما الصفحة كلها تتعاد بنيتها (والكروت الزجاج تترسم من جديد).
+// ============================================================
+class _ActivityDurationText extends StatefulWidget {
+  final TextStyle style;
+  const _ActivityDurationText({required this.style});
+
+  @override
+  State<_ActivityDurationText> createState() => _ActivityDurationTextState();
+}
+
+class _ActivityDurationTextState extends State<_ActivityDurationText> {
+  late final Timer _timer;
+  int _secondsElapsed = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (mounted) setState(() => _secondsElapsed++);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final minutes = _secondsElapsed ~/ 60;
+    final remainingSeconds = _secondsElapsed % 60;
+    final text =
+        '${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
+    return Text(text, style: widget.style);
+  }
+}
+
+class _LiveClockChip extends StatefulWidget {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final bool isTime; // true: الساعة، false: التاريخ
+  const _LiveClockChip({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.isTime,
+  });
+
+  @override
+  State<_LiveClockChip> createState() => _LiveClockChipState();
+}
+
+class _LiveClockChipState extends State<_LiveClockChip> {
+  late final Timer _timer;
+  String _value = "";
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) return;
+      final now = DateTime.now();
+      final v = widget.isTime
+          ? DateFormat('hh:mm a').format(now)
+          : DateFormat('yyyy-MM-dd').format(now);
+      if (v != _value) setState(() => _value = v);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: GlassStyle.fill05For(context),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: GlassStyle.line10For(context)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(widget.icon, color: widget.color, size: 16),
+          const SizedBox(width: 6),
+          Text(
+            "${widget.label}: ",
+            style: TextStyle(
+              color: AppTheme.textSoftFor(context),
+              fontSize: 11,
+              fontFamily: 'Cairo',
+            ),
+          ),
+          Text(
+            _value,
+            style: TextStyle(
+              color: AppTheme.textMainFor(context),
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              fontFamily: 'Cairo',
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

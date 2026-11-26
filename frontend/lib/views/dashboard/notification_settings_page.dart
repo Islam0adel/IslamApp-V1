@@ -9,6 +9,43 @@ import '../../services/fcm_service.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../services/permissions_service.dart';
 
+/// Explains how the browser permission, the mute switch and background
+/// updates relate. Kept separate so it can be tested on its own.
+class SystemPushExplanation extends StatelessWidget {
+  const SystemPushExplanation({super.key});
+
+  // Wording approved by the user (WhatsApp, 19:33 thumbs-up on the preview).
+  static const text =
+      'السماح بإشعارات النظام بيساعد على تحديث البيانات والبرنامج مقفول. '
+      'تقدر تكتم الصوت والاهتزاز مع استمرار التحديثات. لو الإذن مقفول، '
+      'البيانات بتتحدّث عند فتح البرنامج.';
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.sync_rounded, size: 14, color: AppTheme.infoFor(context)),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                color: AppTheme.textMutedFor(context),
+                fontFamily: 'Cairo',
+                fontSize: 11,
+                height: 1.5,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class NotificationSettingsPage extends StatefulWidget {
   final String companyCode;
   const NotificationSettingsPage({super.key, required this.companyCode});
@@ -76,7 +113,9 @@ return CachePartitions.run(() async {
 return CachePartitions.run(() async {
 
     final enabled = await _fcm.isSystemNotificationsEnabled();
-    if (mounted) setState(() => _systemPushEnabled = enabled);
+    final muted = await _fcm.isAlertsMuted();
+    // The switch means "alerts with sound". Muted keeps the registration.
+    if (mounted) setState(() => _systemPushEnabled = enabled && !muted);
 });
 }
 
@@ -89,9 +128,16 @@ return CachePartitions.run(() async {
     Map<String, dynamic> result;
     try {
       if (value) {
-        result = await _fcm.enableSystemNotifications();
+        // Already registered and only muted: just unmute, keep the token.
+        result = await _fcm.isSystemNotificationsEnabled()
+            ? await _fcm.setAlertsMuted(false)
+            : await _fcm.enableSystemNotifications();
       } else {
-        result = await _fcm.disableSystemNotifications();
+        // Alerts off = mute (no sound/vibration). Background updates continue.
+        result = await _fcm.setAlertsMuted(true);
+        if (result['error'] == 'not_registered') {
+          result = {'success': true};
+        }
       }
     } catch (e) {
       result = {'success': false, 'error': e.toString()};
@@ -108,7 +154,7 @@ return CachePartitions.run(() async {
           content: Text(
             value
                 ? 'تم تفعيل إشعارات النظام ✅'
-                : 'تم إيقاف إشعارات النظام',
+                : 'تم كتم الإشعارات (بدون صوت أو اهتزاز). التحديثات تستمر في الخلفية',
             textAlign: TextAlign.center,
             style: const TextStyle(fontFamily: 'Cairo'),
           ),
@@ -250,6 +296,7 @@ return CachePartitions.run(() async {
                         AppTheme.accentFor(context).withValues(alpha: 0.15),
                   ),
                 ),
+              const SystemPushExplanation(),
               // تلميح iOS
               Padding(
                 padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),

@@ -2,6 +2,7 @@
 
 importScripts("https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js");
 importScripts("https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js");
+importScripts("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js");
 
 firebase.initializeApp({
   apiKey: "AIzaSyDpBqnzHBdY_uti60LB2UQ0K1-XFgbNhAo",
@@ -12,6 +13,8 @@ firebase.initializeApp({
   storageBucket: "islam-app-d6139.firebasestorage.app",
   databaseURL: "https://islam-app-d6139-default-rtdb.europe-west1.firebasedatabase.app/",
 });
+
+importScripts("staged-sync-sw.js");
 
 const messaging = firebase.messaging();
 
@@ -43,6 +46,21 @@ async function getBadgeCount() {
     });
   } catch (_) {
     return 0;
+  }
+}
+
+// App-level "alerts muted" preference (written by the page, see index.html).
+async function getAlertsMuted() {
+  try {
+    const db = await openBadgeDb();
+    return await new Promise((resolve) => {
+      const tx = db.transaction("badge", "readonly");
+      const req = tx.objectStore("badge").get("muted");
+      req.onsuccess = () => resolve(req.result === true);
+      req.onerror = () => resolve(false);
+    });
+  } catch (_) {
+    return false;
   }
 }
 
@@ -101,8 +119,17 @@ messaging.onBackgroundMessage(async (payload) => {
     },
   };
 
+  // Quiet data-update push (the user's alert preference for this section is off): one generic
+  // notice that replaces the previous one, always silent, not counted on the icon badge because
+  // no inbox item exists for it.
+  const quiet = data.quiet === "1";
+  if (quiet) {
+    notificationOptions.tag = "data-sync";
+    notificationOptions.silent = true;
+  }
+
   // ⭐ زيادة العدد على الأيقونة (فتح بقراءة العدد من IndexedDB، +1، حفظ، تحديث)
-  try {
+  if (!quiet) try {
     const oldCount = await getBadgeCount();
     const newCount = oldCount + 1;
     await putBadgeCount(newCount);
@@ -111,7 +138,17 @@ messaging.onBackgroundMessage(async (payload) => {
     console.warn("[SW] Badge increment failed:", e);
   }
 
-  self.registration.showNotification(title, notificationOptions);
+  // Muted: still a normal visible notification (the platform requires one for
+  // every push), only without sound or vibration. Never auto-closed.
+  if (await getAlertsMuted()) {
+    notificationOptions.silent = true;
+  }
+  const shown = self.registration.showNotification(title, notificationOptions);
+  // Pre-download the daily changes. Failure only means the app syncs at open.
+  let staged = Promise.resolve();
+  try { staged = stagedSyncOnMessage(data).catch(() => {}); } catch (_) {}
+  // Staging must finish even if showing fails (e.g. permission revoked).
+  await Promise.allSettled([shown, staged]);
 });
 
 // ============================================================

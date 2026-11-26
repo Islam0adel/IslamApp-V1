@@ -6,3 +6,6 @@
 Future<void> jsSyncAppBadge(int count) async {
   // No-op: App Badge is web-only
 }
+Future<void> jsSetAlertsMuted(bool muted) async {
+  // No-op: web only
+}

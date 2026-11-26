@@ -888,7 +888,9 @@ return CachePartitions.run(() async {
           ),
         ),
         content: Text(
-          'سيتم حذف "${adj.typeLabel}" بقيمة ${adj.amount.toStringAsFixed(2)} ج.م.',
+          PermissionsService().canViewSalaryAmounts
+              ? 'سيتم حذف "${adj.typeLabel}" بقيمة ${adj.amount.toStringAsFixed(2)} ج.م.'
+              : 'سيتم حذف "${adj.typeLabel}".',
           style: TextStyle(
             color: AppTheme.textMutedFor(context),
             fontFamily: 'Cairo',
