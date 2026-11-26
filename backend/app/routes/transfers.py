@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.routes.commercial import changes_kind, delete_kind, list_kind, save_kind
+from app.routes.commercial import changed_records_v2, changes_kind, delete_kind, list_kind, save_kind
 
 router = APIRouter()
 
@@ -36,3 +36,13 @@ async def changed_transfers(company_code: str, request: Request, since: str, db:
 @router.post("/transfers/delete/{company_code}/{record_id}")
 async def delete_transfer(company_code: str, record_id: str, request: Request, db: AsyncSession = Depends(get_db)):
     return await delete_kind("transfers", company_code, record_id, request, db)
+
+
+@router.get("/transfers/changes-v2/{company_code}")
+async def changed_transfers_v2(
+    company_code: str, request: Request,
+    cursor: str = Query("0:"), limit: int = Query(200, ge=1, le=500), scope: str = Query(""),
+    db: AsyncSession = Depends(get_db),
+):
+    """EXPERIMENT. Needs migration 008."""
+    return await changed_records_v2("transfers", company_code, request, cursor, limit, scope, db)

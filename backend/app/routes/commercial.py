@@ -341,6 +341,65 @@ async def list_kind(
     return [_serialize(record) for record in result.scalars().all()]
 
 
+_V2_TABLE = {"sales": ("sales", "sale"), "returns": ("sale_returns", "sale_return"),
+             "customer-payments": ("customer_payments", "customer_payment"),
+             "transfers": ("stock_transfers", "stock_transfer")}
+
+
+@router.get("/{kind}/changes-v2/{company_code}")
+async def changed_records_v2_route(kind: str, company_code: str, request: Request,
+    cursor: str = Query("0:"), limit: int = Query(200, ge=1, le=500), scope: str = Query(""),
+    db: AsyncSession = Depends(get_db)):
+    if kind not in _ROUTE_KINDS:
+        raise HTTPException(status_code=404, detail="نوع حركة غير معروف")
+    return await changed_records_v2(kind, company_code, request, cursor, limit, scope, db)
+
+
+async def changed_records_v2(
+    kind: str, company_code: str, request: Request,
+    cursor: str = Query("0:"), limit: int = Query(200, ge=1, le=500), scope: str = Query(""),
+    db: AsyncSession = Depends(get_db),
+):
+    """EXPERIMENT. Same permission and branch filter as /changes; needs migration 007."""
+    if kind not in _V2_TABLE:
+        raise HTTPException(status_code=404, detail="نوع حركة غير معروف")
+    from app.core import feed_v2
+    from app.core.changes_v2 import feed_epoch
+    from app.core.feed_v2 import parse_cursor_str, STR_DONE
+    from sqlalchemy import true, text as _text
+    import hashlib, json
+    profile = _check_permission(request, kind, "view")
+    allowed = allowed_branches_for_profile(profile)
+    table, feed = _V2_TABLE[kind]
+    epoch = await feed_epoch(db, feed)
+    fp = hashlib.sha256(json.dumps({"co": company_code, "kind": kind, "epoch": epoch,
+                                    "branches": sorted(allowed or [])}, sort_keys=True).encode()).hexdigest()[:16]
+    if cursor == "latest":
+        return {"invalid": False, "items": [], "has_more": False, "scope": fp, "epoch": epoch,
+                "next_cursor": f"{int((await db.execute(_text('select pg_snapshot_xmin(pg_current_snapshot())::text'))).scalar()) - 1}:{STR_DONE}"}
+    if scope and scope != fp:
+        return {"invalid": True, "reason": "scope", "items": [], "has_more": False,
+                "next_cursor": cursor, "scope": fp, "epoch": epoch}
+    try:
+        parse_cursor_str(cursor)
+    except Exception:
+        raise HTTPException(status_code=400, detail="bad cursor")
+    M = CONFIG[kind][0]
+    if kind == "transfers":
+        visibility = (M.from_branch_code.in_(allowed) | M.to_branch_code.in_(allowed)) if allowed else true()
+    else:
+        visibility = M.branch_code.in_(allowed) if allowed else true()
+    out = await feed_v2.fetch(
+        db, M, table, company_code, cursor, limit, visibility, allowed,
+        lambda d: _serialize(d, "delete" if d.is_deleted else "update"),
+        lambda d: {"id": d.id, "company_code": d.company_code, "serial": d.serial, "action": "delete",
+                   "tombstone": True, "is_deleted": True,
+                   "updated_at": d.updated_at.isoformat() if d.updated_at else None}, str_id=True)
+    out["scope"] = fp
+    out["epoch"] = epoch
+    return out
+
+
 @router.get("/{kind}/changes/{company_code}")
 async def changed_records(kind: str, company_code: str, request: Request, since: str, db: AsyncSession = Depends(get_db)):
     if kind not in _ROUTE_KINDS:

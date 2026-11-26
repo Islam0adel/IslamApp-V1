@@ -273,81 +273,18 @@ class TreasuryTransferService {
             completer.complete(records);
             return;
           }
-          if (decoded is! Map ||
-              decoded['protocol'] != 2 ||
-              decoded['mode'] != mode ||
-              decoded['company_code'] != company ||
-              decoded['cursor'] is! int ||
-              decoded['scope'] is! String ||
-              decoded['reset'] is! bool ||
-              decoded['items'] is! List ||
-              decoded['cursor'] < 0 ||
-              (decoded['scope'] as String).isEmpty ||
-              (valid &&
-                  decoded['reset'] != true &&
-                  (decoded['scope'] != old['server_scope'] ||
-                      decoded['cursor'] < old['cursor']))) {
-            throw const FormatException('استجابة مزامنة تحويلات غير صالحة');
-          }
-          final current = box.get(key);
-          // A socket may have updated rows during this HTTP request. Merge its
-          // newer per-ID revisions, but never advance the contiguous HTTP cursor
-          // from a socket event alone.
-          final entries = <String, Map<String, dynamic>>{};
-          if (decoded['reset'] != true && valid && current is Map) {
-            for (final raw in (current['entries'] as List? ?? [])) {
-              if (raw is Map)
-                entries[raw['id'].toString()] = Map<String, dynamic>.from(raw);
-            }
-          }
-          for (final raw in decoded['items'] as List) {
-            if (raw is! Map ||
-                raw['id'] is! String ||
-                raw['revision'] is! int ||
-                raw['company_code'] != company ||
-                raw['branch_code'] is! String ||
-                raw['is_deleted'] is! bool ||
-                raw['revision'] <= 0 ||
-                raw['revision'] > decoded['cursor'])
-              throw const FormatException('Invalid treasury entry');
-            if (!_permissions.canAccessBranch(raw['branch_code'])) continue;
-            final row = _projectEntry(raw, boxName);
-            final previous = entries[row['id']];
-            if (previous == null ||
-                (previous['revision'] as int) <= (row['revision'] as int)) {
-              entries[row['id']] = row;
-            }
-          }
-          if (current is Map &&
-              current['protocol'] == 2 &&
-              current['read_scope'] == readScope &&
-              current['server_scope'] == decoded['scope']) {
-            for (final raw in (current['entries'] as List? ?? [])) {
-              if (raw is Map &&
-                  raw['revision'] is int &&
-                  raw['revision'] > decoded['cursor']) {
-                // On server reset, preserve only an event that actually arrived
-                // during this request, not old ahead-of-server restored data.
-                final before =
-                    old is Map ? (old['entries'] as List? ?? []) : [];
-                final wasPresent = before.whereType<Map>().any((e) =>
-                    e['id'] == raw['id'] && e['revision'] == raw['revision']);
-                if (decoded['reset'] == true && wasPresent) continue;
-                entries[raw['id'].toString()] = Map<String, dynamic>.from(raw);
-              }
-            }
-          }
-          final records = _records(entries.values.toList(), boxName, company);
-          await box.put(key, {
-            'protocol': 2,
-            'owner_uid': uid,
-            'company_code': company,
-            'entries': entries.values.toList(),
-            'records': records,
-            'read_scope': readScope,
-            'cursor': decoded['cursor'],
-            'server_scope': decoded['scope']
-          });
+          final records = await _applyRecordsResponse(
+            decoded: decoded,
+            old: old,
+            valid: valid,
+            box: box,
+            key: key,
+            uid: uid,
+            company: company,
+            readScope: readScope,
+            boxName: boxName,
+            mode: mode,
+          );
           completer.complete(records);
         } catch (error, stack) {
           completer.completeError(error, stack);
@@ -359,6 +296,198 @@ class TreasuryTransferService {
       }));
       return completer.future;
     });
+  }
+
+  /// Set by StagedInbox so the worker learns the new treasury checkpoint after each applied
+  /// response (live or staged). Failures never affect the refresh.
+  static void Function(String company)? onCheckpointChanged;
+
+  /// Validates a /changes/records response against the stored envelope and writes the merged
+  /// result. Used by the live refresh and (later) by staged responses, so both go through the same
+  /// protocol, scope, cursor and per-ID revision rules. Moved out of _refresh unchanged.
+  Future<List<Map<String, dynamic>>> _applyRecordsResponse({
+    required dynamic decoded,
+    required dynamic old,
+    required bool valid,
+    required dynamic box,
+    required dynamic key,
+    required String uid,
+    required String company,
+    required dynamic readScope,
+    required String boxName,
+    required String mode,
+  }) async {
+    if (decoded is! Map ||
+        decoded['protocol'] != 2 ||
+        decoded['mode'] != mode ||
+        decoded['company_code'] != company ||
+        decoded['cursor'] is! int ||
+        decoded['scope'] is! String ||
+        decoded['reset'] is! bool ||
+        decoded['items'] is! List ||
+        decoded['cursor'] < 0 ||
+        (decoded['scope'] as String).isEmpty ||
+        (valid &&
+            decoded['reset'] != true &&
+            (decoded['scope'] != old['server_scope'] ||
+                decoded['cursor'] < old['cursor']))) {
+      throw const FormatException('استجابة مزامنة تحويلات غير صالحة');
+    }
+    final current = box.get(key);
+    // A socket may have updated rows during this HTTP request. Merge its
+    // newer per-ID revisions, but never advance the contiguous HTTP cursor
+    // from a socket event alone.
+    final entries = <String, Map<String, dynamic>>{};
+    if (decoded['reset'] != true && valid && current is Map) {
+      for (final raw in (current['entries'] as List? ?? [])) {
+        if (raw is Map)
+          entries[raw['id'].toString()] = Map<String, dynamic>.from(raw);
+      }
+    }
+    for (final raw in decoded['items'] as List) {
+      if (raw is! Map ||
+          raw['id'] is! String ||
+          raw['revision'] is! int ||
+          raw['company_code'] != company ||
+          raw['branch_code'] is! String ||
+          raw['is_deleted'] is! bool ||
+          raw['revision'] <= 0 ||
+          raw['revision'] > decoded['cursor'])
+        throw const FormatException('Invalid treasury entry');
+      if (!_permissions.canAccessBranch(raw['branch_code'])) continue;
+      final row = _projectEntry(raw, boxName);
+      final previous = entries[row['id']];
+      if (previous == null ||
+          (previous['revision'] as int) <= (row['revision'] as int)) {
+        entries[row['id']] = row;
+      }
+    }
+    if (current is Map &&
+        current['protocol'] == 2 &&
+        current['read_scope'] == readScope &&
+        current['server_scope'] == decoded['scope']) {
+      for (final raw in (current['entries'] as List? ?? [])) {
+        if (raw is Map &&
+            raw['revision'] is int &&
+            raw['revision'] > decoded['cursor']) {
+          // On server reset, preserve only an event that actually arrived
+          // during this request, not old ahead-of-server restored data.
+          final before =
+              old is Map ? (old['entries'] as List? ?? []) : [];
+          final wasPresent = before.whereType<Map>().any((e) =>
+              e['id'] == raw['id'] && e['revision'] == raw['revision']);
+          if (decoded['reset'] == true && wasPresent) continue;
+          entries[raw['id'].toString()] = Map<String, dynamic>.from(raw);
+        }
+      }
+    }
+    final records = _records(entries.values.toList(), boxName, company);
+    await box.put(key, {
+      'protocol': 2,
+      'owner_uid': uid,
+      'company_code': company,
+      'entries': entries.values.toList(),
+      'records': records,
+      'read_scope': readScope,
+      'cursor': decoded['cursor'],
+      'server_scope': decoded['scope']
+    });
+    try { onCheckpointChanged?.call(company); } catch (_) {}
+    return records;
+  }
+
+  /// Cursor and server scope of this owner's current valid records snapshot, for the worker to
+  /// continue from. Null when there is no valid snapshot or read access is not held now.
+  ({int cursor, String scope})? stagedCheckpoint(String company) {
+    try {
+      final uid = _uid;
+      if (uid == null || !_allowed(recordsBox) || !CachePartitions.isBoxOpen(recordsBox)) return null;
+      final old = CachePartitions.box(recordsBox).get(_key(uid, company));
+      if (old is Map &&
+          old['protocol'] == 2 &&
+          old['read_scope'] == _readScope(recordsBox) &&
+          old['owner_uid'] == uid &&
+          old['company_code'] == company &&
+          old['cursor'] is int &&
+          (old['server_scope'] ?? '').toString().isNotEmpty) {
+        return (cursor: old['cursor'] as int, scope: old['server_scope'].toString());
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// Applies a /changes/records response that the service worker fetched while the app was
+  /// closed. Same validation as the live refresh (_applyRecordsResponse), run against the CURRENT
+  /// permission, owner and read scope, not the ones at staging time. The response is applied
+  /// only when it continues exactly from the stored cursor and server scope (the cursor-in the
+  /// worker used); otherwise it is dropped and the normal refresh covers the gap.
+  /// Returns true when applied. Throws nothing for stale or unusable input.
+  Future<bool> applyStagedRecords(String company, dynamic decoded,
+      {required int fromCursor, required String fromScope}) async {
+    try {
+      return await CachePartitions.run(() async {
+        final epoch = ReadAuthorizationEpoch.value;
+        final readScope = _readScope(recordsBox);
+        final uid = _uid;
+        if (uid == null) return false;
+        if (!_allowed(recordsBox)) {
+          if (CachePartitions.isBoxOpen(recordsBox))
+            await CachePartitions.box(recordsBox).delete(_key(uid, company));
+          return false;
+        }
+        if (!CachePartitions.isBoxOpen(recordsBox))
+          await CachePartitions.openBox(recordsBox);
+        final box = CachePartitions.box(recordsBox);
+        final key = _key(uid, company);
+        final lockKey = '$recordsBox:$key';
+        final previous = _reads[lockKey] ?? Future<void>.value();
+        final completer = Completer<bool>();
+        final work = previous.then((_) async {
+          try {
+            if (_uid != uid || !_allowed(recordsBox) ||
+                epoch != ReadAuthorizationEpoch.value ||
+                readScope != _readScope(recordsBox)) {
+              completer.complete(false);
+              return;
+            }
+            final old = box.get(key);
+            final valid = old is Map &&
+                old['protocol'] == 2 &&
+                old['read_scope'] == readScope &&
+                old['owner_uid'] == uid &&
+                old['company_code'] == company;
+            final curCursor = valid ? (old['cursor'] as int? ?? 0) : 0;
+            final curScope = valid ? (old['server_scope'] ?? '').toString() : '';
+            if (curCursor != fromCursor || curScope != fromScope) {
+              completer.complete(false);
+              return;
+            }
+            await _applyRecordsResponse(
+              decoded: decoded,
+              old: old,
+              valid: valid,
+              box: box,
+              key: key,
+              uid: uid,
+              company: company,
+              readScope: readScope,
+              boxName: recordsBox,
+              mode: 'records',
+            );
+            completer.complete(true);
+          } catch (_) {
+            completer.complete(false);
+          }
+        });
+        _reads[lockKey] = work;
+        unawaited(work.whenComplete(() {
+          if (identical(_reads[lockKey], work)) _reads.remove(lockKey);
+        }));
+        return completer.future;
+      });
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<List<Map<String, dynamic>>> refreshRecords(String company) =>

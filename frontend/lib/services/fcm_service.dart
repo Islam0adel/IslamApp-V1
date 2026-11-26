@@ -22,6 +22,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/constants.dart';
+import 'app_badge.dart';
 import 'auth_http.dart';
 
 /// معالج الرسائل في الخلفية.
@@ -39,6 +40,9 @@ class FcmService {
   // مفاتيح SharedPreferences
   static const _prefsKeyEnabled = 'fcm_system_enabled';
   static const _prefsKeyToken = 'fcm_last_token';
+  // App-level preference: show pushes without sound/vibration. Separate from
+  // the push registration and the browser permission.
+  static const _prefsKeyMuted = 'fcm_alerts_muted';
 
   bool _initialized = false;
   String? _currentToken;
@@ -103,6 +107,26 @@ class FcmService {
     return prefs.getBool(_prefsKeyEnabled) ?? false;
   }
 
+  /// Alerts muted: pushes still arrive (and feed background sync), but the
+  /// service worker shows them without sound or vibration.
+  Future<bool> isAlertsMuted() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_prefsKeyMuted) ?? false;
+  }
+
+  /// Turn the app-level alerts off/on WITHOUT touching the token, the server
+  /// registration or the browser permission. If push was never enabled there
+  /// is nothing to keep: returns not_registered so the caller can say so.
+  Future<Map<String, dynamic>> setAlertsMuted(bool muted) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool(_prefsKeyEnabled) != true) {
+      return {'success': false, 'error': 'not_registered'};
+    }
+    await prefs.setBool(_prefsKeyMuted, muted);
+    await jsSetAlertsMuted(muted);
+    return {'success': true, 'muted': muted};
+  }
+
   /// ⭐ تفعيل إشعارات النظام:
   ///   1. طلب إذن
   ///   2. الحصول على token
@@ -147,6 +171,8 @@ class FcmService {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_prefsKeyEnabled, true);
       await prefs.setString(_prefsKeyToken, token);
+      await prefs.setBool(_prefsKeyMuted, false);
+      await jsSetAlertsMuted(false);
 
       return {'success': true, 'token': token};
     } catch (e) {
@@ -178,6 +204,8 @@ class FcmService {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_prefsKeyEnabled, false);
       await prefs.remove(_prefsKeyToken);
+      await prefs.remove(_prefsKeyMuted);
+      await jsSetAlertsMuted(false);
 
       return {'success': true};
     } catch (e) {
@@ -193,6 +221,8 @@ class FcmService {
     try {
       final prefs = await SharedPreferences.getInstance();
       if (prefs.getBool(_prefsKeyEnabled) != true) return;
+      // Keep the service worker's copy of the preference in step.
+      await jsSetAlertsMuted(prefs.getBool(_prefsKeyMuted) ?? false);
 
       final settings =
           await FirebaseMessaging.instance.getNotificationSettings();

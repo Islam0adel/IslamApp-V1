@@ -1,6 +1,9 @@
 # backend/app/main.py
+import asyncio
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from app.routes import auth, transactions, coding, inventory, supplier, supplier_settlement
 from app.routes import sync, notifications, product_lookup
 from app.routes import employees
@@ -9,6 +12,8 @@ from app.routes import treasury_transfers
 from app.routes import transfers  # ⭐ التحويلات المخزنية (وحدة مستقلة)
 from app.routes import hr  # ← NEW (ملف واحد لكل HR)
 from app.core.auth_middleware import authenticate_http_request
+from app.core.changes_v2 import FeedNotApplied
+from app.core import feed_migrator
 from app.core.database import create_tables, AsyncSessionLocal
 from app.core.models import Company
 from sqlalchemy import select
@@ -47,6 +52,31 @@ async def startup():
     await create_tables()
     await create_default_company()
     print("✅ تم التحقق من الجداول والشركة الافتراضية في قاعدة البيانات (PostgreSQL)")
+    applied = await feed_migrator.applied_feed_count()
+    if applied >= feed_migrator.EXPECTED_FEEDS:
+        print(f"✅ v2 feed migrations already applied ({applied}/{feed_migrator.EXPECTED_FEEDS})")
+    else:
+        print(f"ℹ️ v2 feed migrations pending ({max(applied, 0)}/{feed_migrator.EXPECTED_FEEDS}); "
+              "applying in background, old sync keeps working")
+        asyncio.create_task(feed_migrator.run_background())
+
+
+@app.exception_handler(FeedNotApplied)
+async def feed_not_applied_handler(request, exc):
+    # The v2 feed migration is missing or failed on this database: never a 500.
+    # cursor=latest gets a non-200 so the app captures nothing and stays on the old sync;
+    # paged requests get a clean "disabled" so the client clears its cursor and falls back
+    # to a full sync in place.
+    if request.query_params.get("cursor") == "latest":
+        return JSONResponse({"detail": "v2 feed disabled"}, status_code=503)
+    return JSONResponse({
+        "invalid": True,
+        "reason": "disabled",
+        "items": [],
+        "has_more": False,
+        "next_cursor": request.query_params.get("cursor", ""),
+        "scope": "",
+    })
 
 # ========== ربط المسارات (Routes) ==========
 app.include_router(auth.router, prefix="/auth", tags=["Authentication"])

@@ -146,8 +146,14 @@ async def _effective_company_recipients(session, company_code: str) -> list[dict
     return result
 
 
+def _quiet_push_allowed_for(recipient_email: str) -> bool:
+    """Quiet data-update pushes are on for everyone (decided by the owner, no env var needed)."""
+    return True
+
+
 async def current_push_allowed(tokens: list[str], *, user_uid: str, company_code: str, recipient_email: str,
-        section: str, action: str, branch_code: str = '', hr_target=None, require_active_policy: bool = False) -> bool:
+        section: str, action: str, branch_code: str = '', hr_target=None, require_active_policy: bool = False,
+        quiet: bool = False) -> bool:
     """Execution-time check, called after token lookup, not at queue creation.
 
     SQL state/preferences/HR identity and the exact source account are checked.
@@ -173,7 +179,10 @@ async def current_push_allowed(tokens: list[str], *, user_uid: str, company_code
                 targets = await targets_for_codes(session, str(company_code), [hr_target.code])
                 if targets.get(hr_target.code) != hr_target:
                     return False
-        if not preference_allowed or firebase_db is None:
+        # quiet=True: a data-update push for a recipient whose notification preference is off. The
+        # preference only controls the visible alert, not whether staged data may be prepared; every
+        # other check below (account, company, rights, branch, policy) still applies.
+        if not (preference_allowed or quiet) or firebase_db is None:
             return False
         email = str(recipient_email).strip().lower()
         document = firebase_db.collection('users').document(email).get()
@@ -509,6 +518,29 @@ async def prepare_and_persist_event(
                         continue
                     pref = preferences.get(recipient_uid)
                     if not _preference_enabled(pref, section, action):
+                        # Alert preference is off: no inbox row and no normal alert, but the closed-app
+                        # data update still needs a push. It is sent as a generic, collapsed, silent
+                        # notice (the service worker mutes it). The viewer still passed recipient_allowed.
+                        # Gated: default off so old clients see no change; testers or everyone via env.
+                        if recipient_uid != actor_uid and _quiet_push_allowed_for(recipient_email):
+                            push_targets.append({
+                                "user_uid": recipient_uid,
+                                "company_code": str(company_code),
+                                "title": "تحديث بيانات",
+                                "body": "بيانات جديدة جاهزة في البرنامج",
+                                "authorization_check": partial(current_push_allowed, user_uid=recipient_uid,
+                                    company_code=str(company_code), recipient_email=recipient_email,
+                                    section=section, action=action, branch_code=branch_code, hr_target=hr_target,
+                                    require_active_policy=profile.get('company_policy_active') is True,
+                                    quiet=True),
+                                "data": {
+                                    "type": event_type,
+                                    "section": section,
+                                    "action": action,
+                                    "event_id": event_id,
+                                    "quiet": "1",
+                                },
+                            })
                         continue
 
                     session.add(Notification(

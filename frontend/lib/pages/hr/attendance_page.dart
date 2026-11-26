@@ -2192,8 +2192,10 @@ return CachePartitions.run(() async {
           ),
         ),
         content: Text(
-          'سيتم حذف "${discount.reason}" '
-          'بقيمة ${discount.amount.toStringAsFixed(2)} ج.م.',
+          PermissionsService().canViewSalaryAmounts
+              ? 'سيتم حذف "${discount.reason}" '
+                  'بقيمة ${discount.amount.toStringAsFixed(2)} ج.م.'
+              : 'سيتم حذف "${discount.reason}".',
           style: TextStyle(
             color: AppTheme.textMutedFor(context),
             fontFamily: 'Cairo',

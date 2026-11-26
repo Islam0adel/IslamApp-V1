@@ -18,6 +18,9 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+
   <meta name="description" content="A new Flutter project.">
 
   <!-- iOS meta tags & icons -->
@@ -39,6 +42,7 @@
     html, body {
       overflow: hidden;
       -webkit-tap-highlight-color: transparent;
+      background: #0a0e27;
     }
 
     .loading-container {
@@ -99,6 +103,26 @@
 
     @keyframes logoFadeIn {
       to { opacity: 1; transform: scale(1); }
+    }
+
+    .loading-note {
+      display: none;
+      max-width: 300px;
+      margin: 18px auto 0;
+      padding: 0 16px;
+      text-align: center;
+      direction: rtl;
+      font-size: 12px;
+      line-height: 1.6;
+      color: rgba(255, 255, 255, 0.72);
+      opacity: 0;
+      animation: noteIn 0.6s ease 2s forwards;
+    }
+
+    @keyframes noteIn { to { opacity: 1; } }
+
+    @media (prefers-reduced-motion: reduce) {
+      .loading-note { animation: none; opacity: 1; }
     }
 
     .loading-text {
@@ -228,9 +252,11 @@
         <span class="dot"></span>
         <span class="dot"></span>
       </div>
+      <div class="loading-note" id="loading-note"></div>
     </div>
   </div>
 
+  <script src="staged-sync-page.js"></script>
   <!-- ⭐ ========== App Badge Helper ========== -->
   <script>
     window.appBadge = (function () {
@@ -284,6 +310,11 @@
           } catch (e) {
             console.warn("[Badge-Web] error:", e);
           }
+        },
+        // App-level "mute alerts" preference. Stored where the service worker
+        // can read it. It never touches the push registration.
+        setMuted: async function (muted) {
+          await put("muted", !!muted);
         },
         clear: async function () {
           await put("count", 0);

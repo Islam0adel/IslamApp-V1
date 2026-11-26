@@ -1,6 +1,9 @@
 import 'cache_partitions.dart';
 import 'hr_cache_scope.dart';
 import 'journal_cache.dart';
+import 'staged_inbox.dart';
+import 'hr_service.dart';
+import 'sync_read_access.dart';
 import 'notifications_service.dart';
 import 'permission_hierarchy.dart';
 import 'treasury_cache_scope.dart';
@@ -102,6 +105,14 @@ class RevocationService {
     final raw = perms[section];
     if (raw is! Map) return false;
     return raw.values.any((v) => v == true);
+  }
+
+  /// True when daily read access (same OR rule as the sync) is gone in [newPerms] and was held,
+  /// or was unknown, before. Unknown new permissions never count as lost.
+  static bool dailyReadLost(Map<String, dynamic>? oldPerms, Map<String, dynamic>? newPerms) {
+    bool read(Map<String, dynamic>? p) =>
+        SyncReadAccess.checks['daily']!.any((c) => PermissionHierarchy.allows(p, c[0], c[1]));
+    return newPerms != null && !read(newPerms) && (oldPerms == null || read(oldPerms));
   }
 
   bool _hasRight(Map<String, dynamic>? perms, String section, String key) =>
@@ -466,6 +477,103 @@ return CachePartitions.run(() async {
       'التكويد',
       'الموارد البشرية',
     };
+
+    // Staged (not yet merged) daily changes live outside Hive. When read access to the
+    // daily journal is actually lost, drop them. clearAll also stops staging until a later
+    // authorized sync publishes a new scope, and a publish issued before this clear is refused.
+    if (dailyReadLost(oldPerms, newPerms)) {
+      await StagedInbox.clear();
+    } else if (!newKnown && ownerUid != null) {
+      // Confirmed absence of the account (newPerms null is only passed by the server-confirmed
+      // deletion path): drop this owner's staged bytes, never another account's.
+      await StagedInbox.clearFor(ownerUid, companyCode);
+    }
+
+    // Staged treasury responses: drop them when the treasury read right is gone or unknown-new.
+    // (Confirmed account absence is handled by the owner-scoped clearFor below.)
+    if (newKnown &&
+        ownerUid != null &&
+        _hasRight(oldPerms, 'تحويلات الخزائن', 'معاينة') &&
+        !_hasRight(newPerms, 'تحويلات الخزائن', 'معاينة')) {
+      await StagedInbox.clearTreasury(ownerUid, companyCode);
+    }
+
+    // Staged coding catalog batches carry cost fields only for holders of the cost right and are
+    // read only with a coding read right: drop them when either right is lost.
+    if (newKnown &&
+        ownerUid != null &&
+        ((SyncReadAccess.checks['coding'] ?? const <List<String>>[])
+                .any((g) => _hasRight(oldPerms, g[0], g[1])) &&
+            !(SyncReadAccess.checks['coding'] ?? const <List<String>>[])
+                .any((g) => _hasRight(newPerms, g[0], g[1])) ||
+            _costRightNowWith(oldPerms) && !_costRightNowWith(newPerms))) {
+      await StagedInbox.clearCoding(ownerUid, companyCode);
+    }
+
+    // Staged supplier batches carry pricing only for cost-right holders and need a supplier read
+    // right: drop them when either is lost.
+    if (newKnown && ownerUid != null) {
+      final supChecks = SyncReadAccess.checks['supplier'] ?? const <List<String>>[];
+      if ((supChecks.any((g) => _hasRight(oldPerms, g[0], g[1])) &&
+              !supChecks.any((g) => _hasRight(newPerms, g[0], g[1]))) ||
+          (_costRightNowWith(oldPerms) && !_costRightNowWith(newPerms))) {
+        await StagedInbox.clearSupplier(ownerUid, companyCode);
+      }
+    }
+
+    // Staged inventory batches carry wholesale values only for cost-right holders and need an
+    // inventory read right: drop them when either is lost.
+    if (newKnown && ownerUid != null) {
+      final invChecks = SyncReadAccess.checks['inventory'] ?? const <List<String>>[];
+      if ((invChecks.any((g) => _hasRight(oldPerms, g[0], g[1])) &&
+              !invChecks.any((g) => _hasRight(newPerms, g[0], g[1]))) ||
+          (_costRightNowWith(oldPerms) && !_costRightNowWith(newPerms))) {
+        await StagedInbox.clearInventory(ownerUid, companyCode);
+      }
+    }
+
+    // Staged commercial batches (sales, returns, customer payments, transfers) need that module's
+    // read right: drop that module's batches when it is lost.
+    if (newKnown && ownerUid != null) {
+      for (final kind in StagedInbox.commercialPrefix.keys) {
+        final checks = SyncReadAccess.checks[kind.startsWith('hr-') ? HRService.accessKeyFor(kind) : kind] ?? const <List<String>>[];
+        if (checks.any((g) => _hasRight(oldPerms, g[0], g[1])) &&
+            !checks.any((g) => _hasRight(newPerms, g[0], g[1]))) {
+          await StagedInbox.clearCommercial(ownerUid, companyCode, kind);
+        }
+      }
+    }
+
+    // Staged settlement batches need a settlement read right: drop them when it is lost.
+    if (newKnown && ownerUid != null) {
+      final setChecks = SyncReadAccess.checks['settlement'] ?? const <List<String>>[];
+      if (setChecks.any((g) => _hasRight(oldPerms, g[0], g[1])) &&
+          !setChecks.any((g) => _hasRight(newPerms, g[0], g[1]))) {
+        await StagedInbox.clearSettlement(ownerUid, companyCode);
+      }
+    }
+
+    // Staged employee batches carry HR data shaped by the viewer's rights: drop them when the
+    // employees read right, the HR view right or the salary right is lost.
+    if (newKnown && ownerUid != null) {
+      bool any(Map<String, dynamic>? perms, List<List<String>> g) => g.any((x) => _hasRight(perms, x[0], x[1]));
+      final empChecks = SyncReadAccess.checks['employees'] ?? const <List<String>>[];
+      const salary = [['الموارد البشرية', 'canViewSalaryAmounts']];
+      const hr = [
+        ['الموارد البشرية', 'canViewEmployees'],
+        ['الموارد البشرية', 'canManageEmployees'],
+        ['الموارد البشرية', 'canOpenAttendancePage'],
+        ['الموارد البشرية', 'canOpenVacationsPage'],
+        ['الموارد البشرية', 'canViewAdjustments'],
+        ['الموارد البشرية', 'canViewBranchSalaryReport'],
+        ['الموارد البشرية', 'canViewOwnHRData'],
+      ];
+      if ((any(oldPerms, empChecks) && !any(newPerms, empChecks)) ||
+          (any(oldPerms, hr) && !any(newPerms, hr)) ||
+          (any(oldPerms, salary) && !any(newPerms, salary))) {
+        await StagedInbox.clearEmployees(ownerUid, companyCode);
+      }
+    }
 
     for (final section in sections) {
       final was = !prevKnown || _sectionAllowed(oldPerms, section);

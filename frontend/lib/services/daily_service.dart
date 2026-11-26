@@ -5,6 +5,7 @@ import 'journal_save_client.dart';
 import 'journal_save_intent.dart';
 import 'permissions_service.dart';
 import 'journal_cache.dart';
+import 'v2_cursor_bootstrap.dart';
 import 'treasury_transfer_service.dart';
 import 'dart:convert';
 
@@ -365,6 +366,18 @@ return CachePartitions.run(() async {
   // تحديث Hive
   // ============================================================
 
+  Future<String?> _fetchLatestCursor(String companyCode) async {
+    try {
+      final r = await AuthHttp.get(Uri.parse(
+          '${ApiConstants.baseUrl}/transactions/changes-v2/$companyCode?cursor=latest'));
+      if (r.statusCode != 200) return null;
+      final m = jsonDecode(r.body) as Map<String, dynamic>;
+      return '${m['next_cursor']}|${m['scope'] ?? ''}';
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> syncChangesFromServer(
     String companyCode, [
     String? lastSync,
@@ -395,8 +408,12 @@ return CachePartitions.run(() async {
         'جاري التحميل الكامل...',
       );
 
-      await syncAllTransactions(
-        companyCode,
+      final v2store = V2CursorStore(prefs.getString, (k, v) async { await prefs.setString(k, v); },
+          (k) async { await prefs.remove(k); }, lastSyncKey);
+      await V2Bootstrap.run(
+        store: v2store,
+        fetchLatest: () => _fetchLatestCursor(companyCode),
+        fullSync: () => syncAllTransactions(companyCode),
       );
 
       await prefs.setString(
@@ -448,35 +465,74 @@ final String effectiveSince =
       // Request
       // --------------------------------------------------------
 
-      final response = await AuthHttp.get(
-        Uri.parse(
-          '$baseUrl/transactions/changes/'
-          '$companyCode?since=$effectiveSince',
-        ),
-      );
+      final String v2Key = '${lastSyncKey}_v2';
+      final String? v2Cursor = prefs.getString(v2Key);
+      String? v2Next;
+      String? v2Bootstrap;
+      final List<dynamic> changes = <dynamic>[];
 
-
-      if (response.statusCode != 200) {
-        throw Exception(
-          'فشل مزامنة اليوميات. '
-          'HTTP ${response.statusCode}: '
-          '${response.body}',
+      final Stopwatch swFetch = Stopwatch()..start();
+      if (v2Cursor != null) {
+        // Commit-safe feed: (transaction id, row id) cursor, paged.
+        var cur = v2Cursor;
+        var guard = 0;
+        while (true) {
+          final r = await AuthHttp.get(Uri.parse(
+              '$baseUrl/transactions/changes-v2/$companyCode?cursor=$cur&limit=200&scope=${prefs.getString('${lastSyncKey}_v2scope') ?? ''}'));
+          if (r.statusCode != 200) {
+            throw Exception('فشل مزامنة اليوميات (v2). HTTP ${r.statusCode}');
+          }
+          final body = jsonDecode(r.body) as Map<String, dynamic>;
+          if (body['invalid'] == true) {
+            // Cursor no longer valid (server restored/copied, or this user's allowed
+            // branches changed). Take a fresh cursor first, then do a full sync in place.
+            print('⚠️ v2 invalid (${body['reason'] ?? 'cursor'}) → full sync');
+            final v2store = V2CursorStore(prefs.getString, (k, v) async { await prefs.setString(k, v); },
+                (k) async { await prefs.remove(k); }, lastSyncKey);
+            await V2Bootstrap.clear(v2store);
+            await V2Bootstrap.run(
+              store: v2store,
+              fetchLatest: () => _fetchLatestCursor(companyCode),
+              fullSync: () => syncAllTransactions(companyCode),
+            );
+            await prefs.setString(lastSyncKey, DateTime.now().toUtc().toIso8601String());
+            return;
+          }
+          changes.addAll(body['items'] as List);
+          cur = body['next_cursor'].toString();
+          if (body['has_more'] != true) break;
+          if (++guard > 500) throw Exception('v2 paging guard');
+        }
+        v2Next = cur;
+        print('📡 اليوميات v2: ${changes.length} تغيير حتى $cur');
+      } else {
+        // First run on this device with the new feed: take the cursor before the
+        // old time-based fetch, which then covers everything up to now.
+        v2Bootstrap = await _fetchLatestCursor(companyCode);
+        final response = await AuthHttp.get(
+          Uri.parse(
+            '$baseUrl/transactions/changes/'
+            '$companyCode?since=$effectiveSince',
+          ),
         );
+        if (response.statusCode != 200) {
+          throw Exception(
+            'فشل مزامنة اليوميات. '
+            'HTTP ${response.statusCode}: '
+            '${response.body}',
+          );
+        }
+        changes.addAll(jsonDecode(response.body) as List);
       }
-
-
-      // --------------------------------------------------------
-      // Decode
-      // --------------------------------------------------------
-
-      final List<dynamic> changes =
-          jsonDecode(response.body);
 
 
       // --------------------------------------------------------
       // تطبيق التغييرات
       // --------------------------------------------------------
 
+      swFetch.stop();
+      final Stopwatch swApply = Stopwatch()..start();
+      int legacyApplied = 0, legacySkippedSame = 0, legacySkippedStale = 0;
       for (final rawItem in changes) {
         if (rawItem is! Map) {
           continue;
@@ -546,8 +602,18 @@ final String effectiveSince =
         map['is_deleted'] = false;
 
 
-        await JournalCache.put(_transactionBox, map, expectedCompany: companyCode);
-
+        // Same version already stored (for example merged from the staged batch a moment ago):
+        // do not write it again. Newer or different versions are still written as before.
+        final outcome = await JournalCache.putIfNotOlder(_transactionBox, map, expectedCompany: companyCode);
+        if (outcome == 'same') {
+          legacySkippedSame++;
+          continue;
+        }
+        if (outcome == 'stale') {
+          legacySkippedStale++;
+          continue;
+        }
+        legacyApplied++;
 
         print(
           '✅ تم تحديث اليومية [$key] في Hive',
@@ -559,6 +625,8 @@ final String effectiveSince =
       // تحديث الأرصدة
       // --------------------------------------------------------
 
+      swApply.stop();
+      print('⏱ daily open-sync timing: fetch=${swFetch.elapsedMilliseconds}ms apply=${swApply.elapsedMilliseconds}ms items=${changes.length} v2=${v2Cursor != null} applied=$legacyApplied skippedSame=$legacySkippedSame skippedStale=$legacySkippedStale');
       await getDailySummaryLocal(
   companyCode,
   branchCode: null,
@@ -574,6 +642,14 @@ final String effectiveSince =
         syncStartedAt
             .toIso8601String(),
       );
+
+      if (v2Next != null) {
+        await prefs.setString(v2Key, v2Next);
+      } else if (v2Bootstrap != null) {
+        final bp = v2Bootstrap.split('|');
+        await prefs.setString(v2Key, bp[0]);
+        await prefs.setString('${lastSyncKey}_v2scope', bp.length > 1 ? bp[1] : '');
+      }
 
 
       print(

@@ -9,6 +9,10 @@ import 'package:hive_flutter/hive_flutter.dart';
 import '../models/employee_model.dart';
 import '../core/constants.dart';
 import 'auth_http.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'staged_changes.dart';
+import 'sync_read_access.dart';
+import 'permissions_service.dart';
 
 class EmployeeService {
   // ============================================================
@@ -144,6 +148,7 @@ return CachePartitions.run(() async {
 
     final readScope = await ReadAuthorizationSnapshot.capture();
     print("📥 الموظفين: بدء FULL SYNC للشركة $companyCode");
+    final v2Candidate = await _captureV2(companyCode);
 
     try {
       readScope.check();
@@ -188,6 +193,7 @@ return CachePartitions.run(() async {
 
       print("✅ FULL SYNC: [employees] (${list.length})");
       print("✅ اكتمل FULL SYNC للموظفين للشركة $companyCode");
+      await _commitV2(companyCode, v2Candidate);
     } catch (e) {
       print("❌ فشل FULL SYNC للموظفين: $e");
       rethrow;
@@ -239,6 +245,19 @@ return CachePartitions.run(() async {
     print("📡 الموظفين: INCREMENTAL SYNC منذ $lastSyncValue");
 
     try {
+      final v2Candidate = await _captureV2(companyCode);
+      // The server feed was re-applied since this device last reconciled: one full reconcile that
+      // REPLACES the cached list (rows gone from the server or hidden from this viewer disappear).
+      final String? storedEpoch = prefs.getString(v2EpochKey(companyCode));
+      if (v2Candidate != null && storedEpoch != null && storedEpoch != v2Candidate.epoch) {
+        print("📥 الموظفين: feed epoch changed → FULL SYNC");
+        final startedAt = DateTime.now().toUtc();
+        await fetchAllEmployees(companyCode);
+        readScope.check();
+        await prefs.setString(lastSyncKey, startedAt.toIso8601String());
+        return;
+      }
+
       final DateTime syncStartedAt = DateTime.now().toUtc();
 
       final DateTime sinceDt = DateTime.parse(lastSyncValue).toUtc();
@@ -278,100 +297,12 @@ return CachePartitions.run(() async {
           syncStartedAt.toIso8601String(),
         );
         readScope.check();
+        await _commitV2(companyCode, v2Candidate);
         return;
       }
 
-      final String localKey = _localKey(companyCode);
-
-      // ------------------------------------------------------
-      // قراءة القائمة المحلية
-      // ------------------------------------------------------
-
-      List<Map<String, dynamic>> currentList = [];
-
-      if (_codingBox.containsKey(localKey)) {
-        final dynamic raw = _codingBox.get(localKey);
-
-        if (raw is List) {
-          currentList = raw
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .where((e) => e['is_deleted'] != true)
-              .toList();
-        }
-      }
-
-      // ------------------------------------------------------
-      // تطبيق التغييرات
-      // ------------------------------------------------------
-
-      for (final item in changes) {
-        if (item is! Map) continue;
-
-        final Map<String, dynamic> map = Map<String, dynamic>.from(item);
-
-        final String action = map['action']?.toString() ??
-            (map['is_deleted'] == true ? 'delete' : 'update');
-
-        final String? code = map['code']?.toString();
-
-        if (code == null || code.isEmpty) {
-          print("⚠️ تحديث موظف بدون code");
-          continue;
-        }
-
-        // إزالة النسخة القديمة
-        currentList.removeWhere(
-          (e) => e['code']?.toString() == code,
-        );
-
-        // DELETE
-        if (action == 'delete' || map['is_deleted'] == true) {
-          print("🗑️ حذف موظف [$code]");
-          continue;
-        }
-
-        // INSERT / UPDATE
-        map.remove('action');
-        map['is_deleted'] = false;
-        currentList.add(map);
-
-        print("✅ تحديث موظف [$code]");
-      }
-
-      // ------------------------------------------------------
-      // إزالة أي تكرارات + ترتيب
-      // ------------------------------------------------------
-
-      final Map<String, Map<String, dynamic>> uniqueItems = {};
-
-      for (final item in currentList) {
-        final code = item['code']?.toString() ?? '';
-        if (code.isNotEmpty) {
-          uniqueItems[code] = item;
-        }
-      }
-
-      currentList = uniqueItems.values.toList();
-
-      currentList.sort((a, b) {
-        final int aCode = int.tryParse(a['code']?.toString() ?? '0') ?? 0;
-        final int bCode = int.tryParse(b['code']?.toString() ?? '0') ?? 0;
-        return aCode.compareTo(bCode);
-      });
-
-      // ------------------------------------------------------
-      // حفظ
-      // ------------------------------------------------------
-
-      if (currentList.isEmpty) {
-        await _codingBox.delete(localKey);
-        readScope.check();
-      } else {
-        readScope.check();
-        await _codingBox.put(localKey, currentList);
-        readScope.check();
-      }
+      readScope.check();
+      await _applyChanges(companyCode, changes, readScope.check);
 
       // ------------------------------------------------------
       // حفظ lastSync (فقط بعد النجاح)
@@ -384,6 +315,8 @@ return CachePartitions.run(() async {
       );
       readScope.check();
 
+      await _commitV2(companyCode, v2Candidate);
+
       print(
         "✅ تم تحديث الموظفين "
         "(${changes.length} تغيير)",
@@ -394,6 +327,248 @@ return CachePartitions.run(() async {
     }
 });
 }
+
+
+  /// Applies a list of employee changes (insert/update/delete/tombstone) to the cached list.
+  /// Shared by the live incremental sync and by staged batches. `check` is the caller's
+  /// authorization-epoch check, run before each write.
+  Future<void> _applyChanges(String companyCode, List<dynamic> changes, void Function() check) async {
+    final String localKey = _localKey(companyCode);
+      // ------------------------------------------------------
+    // قراءة القائمة المحلية
+    // ------------------------------------------------------
+
+    List<Map<String, dynamic>> currentList = [];
+
+    if (_codingBox.containsKey(localKey)) {
+      final dynamic raw = _codingBox.get(localKey);
+
+      if (raw is List) {
+        currentList = raw
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .where((e) => e['is_deleted'] != true)
+            .toList();
+      }
+    }
+
+    // ------------------------------------------------------
+    // تطبيق التغييرات
+    // ------------------------------------------------------
+
+    for (final item in changes) {
+      if (item is! Map) continue;
+
+      final Map<String, dynamic> map = Map<String, dynamic>.from(item);
+
+      final String action = map['action']?.toString() ??
+          (map['is_deleted'] == true ? 'delete' : 'update');
+
+      final String? code = map['code']?.toString();
+
+      if (code == null || code.isEmpty) {
+        print("⚠️ تحديث موظف بدون code");
+        continue;
+      }
+
+      // إزالة النسخة القديمة
+      currentList.removeWhere(
+        (e) => e['code']?.toString() == code,
+      );
+
+      // DELETE
+      if (action == 'delete' || map['is_deleted'] == true) {
+        print("🗑️ حذف موظف [$code]");
+        continue;
+      }
+
+      // INSERT / UPDATE
+      map.remove('action');
+      map['is_deleted'] = false;
+      currentList.add(map);
+
+      print("✅ تحديث موظف [$code]");
+    }
+
+    // ------------------------------------------------------
+    // إزالة أي تكرارات + ترتيب
+    // ------------------------------------------------------
+
+    final Map<String, Map<String, dynamic>> uniqueItems = {};
+
+    for (final item in currentList) {
+      final code = item['code']?.toString() ?? '';
+      if (code.isNotEmpty) {
+        uniqueItems[code] = item;
+      }
+    }
+
+    currentList = uniqueItems.values.toList();
+
+    currentList.sort((a, b) {
+      final int aCode = int.tryParse(a['code']?.toString() ?? '0') ?? 0;
+      final int bCode = int.tryParse(b['code']?.toString() ?? '0') ?? 0;
+      return aCode.compareTo(bCode);
+    });
+
+    // ------------------------------------------------------
+    // حفظ
+    // ------------------------------------------------------
+
+    if (currentList.isEmpty) {
+      await _codingBox.delete(localKey);
+      check();
+    } else {
+      check();
+      await _codingBox.put(localKey, currentList);
+      check();
+    }
+
+  }
+
+
+  // ============================================================
+  // Closed-app staging: commit-safe feed /employees/changes-v2 (checkpoint, apply)
+  // ============================================================
+
+  /// Set by StagedInbox so the worker learns the new employees checkpoint.
+  static void Function(String company)? onCheckpointChanged;
+
+  static String v2CursorKey(String company) => '${ApiConstants.LAST_SYNC_CODING}_employees_${company}_v2';
+  static String v2ScopeKey(String company) => '${ApiConstants.LAST_SYNC_CODING}_employees_${company}_v2scope';
+  static String v2EpochKey(String company) => '${ApiConstants.LAST_SYNC_CODING}_employees_${company}_v2epoch';
+
+  Future<({String cursor, String scope, String epoch})?> _captureV2(String company) async {
+    try {
+      final r = await AuthHttp.get(Uri.parse('$baseUrl/employees/changes-v2/$company?cursor=latest'))
+          .timeout(const Duration(seconds: 5));
+      if (r.statusCode != 200) return null;
+      final m = jsonDecode(r.body);
+      if (m is! Map ||
+          m['invalid'] == true ||
+          m['next_cursor'] is! String ||
+          m['scope'] is! String ||
+          (m['next_cursor'] as String).isEmpty ||
+          (m['scope'] as String).isEmpty) return null;
+      return (cursor: m['next_cursor'] as String, scope: m['scope'] as String, epoch: (m['epoch'] ?? '').toString());
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _commitV2(String company, ({String cursor, String scope, String epoch})? cand) async {
+    if (cand == null) return;
+    try {
+      final prefs = await CachePartitions.preferences();
+      await prefs.setString(v2CursorKey(company), cand.cursor);
+      await prefs.setString(v2ScopeKey(company), cand.scope);
+      await prefs.setString(v2EpochKey(company), cand.epoch);
+      try {
+        onCheckpointChanged?.call(company);
+      } catch (_) {}
+    } catch (_) {}
+  }
+
+  Future<({String cursor, String scope})?> stagedCheckpoint(String company) async {
+    try {
+      if (!SyncReadAccess.allows('employees')) return null;
+      final prefs = await CachePartitions.preferences();
+      final c = prefs.getString(v2CursorKey(company));
+      final s = prefs.getString(v2ScopeKey(company));
+      if (c == null || c.isEmpty || s == null || s.isEmpty) return null;
+      return (cursor: c, scope: s);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  bool _maySeeSalary() {
+    final p = PermissionsService();
+    return p.canBypassPermissions || p.hasPermission('الموارد البشرية', 'canViewSalaryAmounts');
+  }
+
+  /// Applies one /employees/changes-v2 response fetched by the service worker while the app was
+  /// closed. Applied only when it continues exactly from the stored cursor and scope, under the
+  /// employees read right held NOW. An item (or removal) older than the cached row is skipped, so a
+  /// removal can never delete a row the live sync brought back later. Returns true when applied.
+  Future<bool> applyStagedBatch(String company, dynamic decoded,
+      {required String fromCursor, required String fromScope}) async {
+    try {
+      return await CachePartitions.run(() async {
+        final epoch = ReadAuthorizationEpoch.value;
+        if (!SyncReadAccess.allows('employees')) return false;
+        final prefs = await CachePartitions.preferences();
+        if (prefs.getString(v2CursorKey(company)) != fromCursor ||
+            prefs.getString(v2ScopeKey(company)) != fromScope) return false;
+        if (decoded is! Map ||
+            decoded['invalid'] == true ||
+            decoded['scope'] != fromScope ||
+            decoded['next_cursor'] is! String ||
+            (decoded['next_cursor'] as String).isEmpty ||
+            decoded['items'] is! List) return false;
+        final stored = _codingBox.get(_localKey(company));
+        final localStamp = <String, DateTime?>{};
+        if (stored is List) {
+          for (final r in stored) {
+            if (r is Map) {
+              localStamp[r['code']?.toString() ?? ''] = StagedChanges.stamp(r['updated_at']);
+            }
+          }
+        }
+        final uid = FirebaseAuth.instance.currentUser?.uid;
+        final scopeBefore = PermissionsService().effectiveScopeSignature();
+        final fresh = <Map<String, dynamic>>[];
+        for (final raw in decoded['items'] as List) {
+          if (raw is! Map) return false;
+          final m = Map<String, dynamic>.from(raw);
+          if (m['company_code'] != company) return false;
+          final l = localStamp[m['code']?.toString() ?? ''];
+          final i = StagedChanges.stamp(m['updated_at']);
+          if (l != null && i != null && l.isAfter(i)) continue;
+          // Defense in depth: never store a salary the client has no right to now (the viewer's own
+          // record is the only exception, as on the server).
+          if (m['tombstone'] != true && m.containsKey('salary') && !_maySeeSalary() &&
+              !(uid != null && m['user_uid'] == uid)) {
+            m['salary'] = null;
+          }
+          m.remove('tombstone');
+          fresh.add(m);
+        }
+        if (fresh.isNotEmpty) {
+          if (!SyncReadAccess.allows('employees') ||
+              epoch != ReadAuthorizationEpoch.value) return false;
+          await _applyChanges(company, fresh, () {});
+          // Writing the viewer's own employee row can itself refresh the account link and move the
+          // authorization epoch, so after the write compare the FULL effective scope (rights,
+          // branches, viewable list, role, policy, account) instead of the epoch.
+        }
+        if (!SyncReadAccess.allows('employees') ||
+            PermissionsService().effectiveScopeSignature() != scopeBefore) {
+          // The viewer's scope changed while the write was in flight. The revocation may already have
+          // purged before this write landed, so take back every row this batch just wrote: they were
+          // fetched under the old scope and must not outlive it. (Removals stay removed.)
+          final written = {for (final m in fresh) if (m['action'] != 'delete') m['code']?.toString()};
+          final raw = _codingBox.get(_localKey(company));
+          if (raw is List && written.isNotEmpty) {
+            final keep = raw.where((e) => !(e is Map && written.contains(e['code']?.toString()))).toList();
+            if (keep.isEmpty) {
+              await _codingBox.delete(_localKey(company));
+            } else {
+              await _codingBox.put(_localKey(company), keep);
+            }
+          }
+          return false;
+        }
+        await prefs.setString(v2CursorKey(company), decoded['next_cursor'] as String);
+        try {
+          onCheckpointChanged?.call(company);
+        } catch (_) {}
+        return true;
+      });
+    } catch (_) {
+      return false;
+    }
+  }
 
   // ============================================================
   // 4. حفظ موظف (إضافة أو تحديث)

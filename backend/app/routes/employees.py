@@ -1073,3 +1073,51 @@ async def get_employee_changes(
             status_code=500,
             detail=str(e),
         )
+
+@router.get("/changes-v2/{company_code}")
+async def get_employee_changes_v2(
+    company_code: str,
+    request: Request,
+    cursor: str = Query("0:0"),
+    limit: int = Query(200, ge=1, le=500),
+    scope: str = Query(""),
+    db: AsyncSession = Depends(get_db),
+):
+    """EXPERIMENT. Same checks, row visibility and payload shaping as /changes; needs migration 003."""
+    from app.core import employees_changes_v2 as v2
+    from app.core.changes_v2 import feed_epoch, bootstrap_cursor
+    import hashlib, json
+    _profile = require_any_section_permission(request, _EMPLOYEES_VIEW_CHECKS)
+    _check_tenant(_profile, company_code)
+    _can_hr = _can_view_hr(_profile)
+    _can_salary = has_section_permission(_profile, _HR_SECTION, "canViewSalaryAmounts")
+    allowed = allowed_branches_for_profile(_profile)
+    viewable = _hr_viewable_codes(_profile)
+    epoch = await feed_epoch(db, "employees")
+    # Everything that decides which rows this caller sees and how each row is shaped.
+    fp = hashlib.sha256(json.dumps({
+        "co": company_code, "epoch": epoch, "hr": _can_hr, "sal": _can_salary,
+        "own_only": _is_own_only_viewer(_profile),
+        "own_hr": has_section_permission(_profile, _HR_SECTION, "canViewOwnHRData"),
+        "branches": sorted(allowed or []), "viewable": sorted(viewable) if viewable else None,
+        "uid": str(_profile.get("uid", "") or ""),
+        "email": str(_profile.get("email", "") or "").strip().lower(),
+    }, sort_keys=True).encode()).hexdigest()[:16]
+    if cursor == "latest":
+        return {"invalid": False, "items": [], "has_more": False, "scope": fp, "epoch": epoch,
+                "next_cursor": await bootstrap_cursor(db)}
+    if scope and scope != fp:
+        return {"invalid": True, "reason": "scope", "items": [], "has_more": False,
+                "next_cursor": cursor, "scope": fp, "epoch": epoch}
+    try:
+        v2.parse_cursor(cursor)
+    except Exception:
+        raise HTTPException(status_code=400, detail="bad cursor")
+    out = await v2.fetch(
+        db, company_code, cursor, limit, _employee_visibility_clause(_profile), allowed,
+        [x for x in ("uid:" + str(_profile.get("uid", "") or ""), "email:" + str(_profile.get("email", "") or "").strip().lower()) if x not in ("uid:", "email:")],
+        lambda d: _employee_payload(d, viewer_can_hr=_can_hr, viewer_can_salary=_can_salary,
+                                    action=("delete" if d.is_deleted else "update"), viewer_profile=_profile))
+    out["scope"] = fp
+    out["epoch"] = epoch
+    return out

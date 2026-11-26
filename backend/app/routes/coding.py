@@ -814,6 +814,42 @@ async def delete_code(
 # لأن الجهاز Offline يحتاج يعرف أن السجل تم حذفه.
 # ============================================================
 
+@router.get("/changes-v2/{company_code}")
+async def get_coding_changes_v2(
+    request: Request,
+    company_code: str,
+    cursor: str = Query("0:0"),
+    limit: int = Query(200, ge=1, le=500),
+    scope: str = Query(""),
+    db: AsyncSession = Depends(get_db),
+):
+    """EXPERIMENT. Same view check and cost projection as /changes; needs migration 002."""
+    from app.core import coding_changes_v2 as v2
+    require_any_section_permission(request, _CODING_VIEW_CHECKS)
+    include_costs = _may_view_costs(request.state.auth_user)
+    import zlib
+    # What this caller may read: company + whether cost fields are included. A cursor made under
+    # another fingerprint (for example the cost right was lost) says nothing about the new view.
+    from app.core.changes_v2 import feed_epoch
+    epoch = await feed_epoch(db, "coding")
+    fp = str(zlib.crc32((company_code + "|costs=" + ("1" if include_costs else "0") + "|epoch=" + epoch).encode()))
+    if cursor == "latest":
+        return {"invalid": False, "items": [], "has_more": False, "scope": fp, "epoch": epoch,
+                "next_cursor": await v2.bootstrap_cursor(db)}
+    if scope and scope != fp:
+        return {"invalid": True, "reason": "scope", "items": [], "has_more": False,
+                "next_cursor": cursor, "scope": fp, "epoch": epoch}
+    try:
+        v2.parse_cursor(cursor)
+    except Exception:
+        raise HTTPException(status_code=400, detail="bad cursor")
+    out = await v2.fetch(db, company_code, cursor, limit,
+                         lambda d: serialize_coding(d, action=("delete" if d.is_deleted else "update"),
+                                                    include_costs=include_costs))
+    out["scope"] = fp
+    return out
+
+
 @router.get("/changes/{company_code}")
 async def get_coding_changes(
     company_code: str,

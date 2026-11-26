@@ -5,6 +5,10 @@ import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../core/constants.dart';
 import 'auth_http.dart';
+import 'permissions_service.dart';
+import 'read_authorization_snapshot.dart';
+import 'staged_changes.dart';
+import 'sync_read_access.dart';
 
 /// Sales, customer account and stock movement data are kept apart from the
 /// legacy daily journal. Payment allocations still affect this module's own
@@ -730,6 +734,7 @@ return CachePartitions.run(() async {
     print('📥 [Commercial/$kind] بدء FULL SYNC...');
 
     try {
+      final v2Candidate = await _captureV2(kind, companyCode);
       final uri = Uri.parse('$_baseUrl/commercial/$kind/list/$companyCode');
       final response =
           await AuthHttp.get(uri).timeout(const Duration(seconds: 15));
@@ -747,6 +752,7 @@ return CachePartitions.run(() async {
           .toList();
 
       await _mergeServerRecords(kind, companyCode, records);
+      await _commitV2(kind, companyCode, v2Candidate);
       print('FULL SYNC [$kind]: ${records.length} server records merged');
     } catch (e) {
       print('❌ فشل FULL SYNC [$kind]: $e');
@@ -781,6 +787,15 @@ return CachePartitions.run(() async {
     print('📡 [$kind] INCREMENTAL SYNC منذ $lastSyncValue');
 
     try {
+      final v2Candidate = await _captureV2(kind, companyCode);
+      final storedEpoch = prefs.getString(v2EpochKey(kind, companyCode));
+      if (v2Candidate != null && storedEpoch != null && storedEpoch != v2Candidate.epoch) {
+        print('📥 [$kind] feed epoch changed → FULL SYNC');
+        final startedAt = DateTime.now().toUtc();
+        await fetchAll(kind, companyCode);
+        await prefs.setString(lastSyncKey, startedAt.toIso8601String());
+        return;
+      }
       final syncStartedAt = DateTime.now().toUtc();
       final sinceDt = DateTime.parse(lastSyncValue).toUtc();
       final effectiveSince = sinceDt.toIso8601String();
@@ -806,6 +821,7 @@ return CachePartitions.run(() async {
       if (changes.isEmpty) {
         print('⏭️ [$kind] لا يوجد تغييرات');
         await prefs.setString(lastSyncKey, syncStartedAt.toIso8601String());
+        await _commitV2(kind, companyCode, v2Candidate);
         return;
       }
 
@@ -813,6 +829,7 @@ return CachePartitions.run(() async {
 
       // ⭐ حفظ last_sync بعد النجاح
       await prefs.setString(lastSyncKey, syncStartedAt.toIso8601String());
+      await _commitV2(kind, companyCode, v2Candidate);
 
       print(
           'INCREMENTAL SYNC [$kind]: ${changes.length} server changes merged');
@@ -869,6 +886,158 @@ return CachePartitions.run(() async {
   static double _num(dynamic value) => value is num
       ? value.toDouble()
       : double.tryParse(value?.toString() ?? '') ?? 0;
+  // ============================================================
+  // EXPERIMENT: commit-safe staged feed (migration 007, /commercial/{kind}/changes-v2)
+  // ============================================================
+  static void Function(String kind, String company)? onCheckpointChanged;
+  static const _v2Sections = {
+    'sales': 'sales',
+    'returns': 'returns',
+    'customer-payments': 'customer-payments',
+    'transfers': 'transfers',
+  };
+  static String v2CursorKey(String kind, String c) => '${_staticLastSyncKey(kind)}${c}_v2';
+  static String v2ScopeKey(String kind, String c) => '${_staticLastSyncKey(kind)}${c}_v2scope';
+  static String v2EpochKey(String kind, String c) => '${_staticLastSyncKey(kind)}${c}_v2epoch';
+  static String _staticLastSyncKey(String kind) {
+    switch (kind) {
+      case 'sales':
+        return ApiConstants.LAST_SYNC_SALES;
+      case 'returns':
+        return ApiConstants.LAST_SYNC_RETURNS;
+      case 'customer-payments':
+        return ApiConstants.LAST_SYNC_CUSTOMER_PAYMENTS;
+      case 'transfers':
+        return ApiConstants.LAST_SYNC_TRANSFERS;
+      default:
+        return 'last_sync_${kind}_';
+    }
+  }
+
+  Future<({String cursor, String scope, String epoch})?> _captureV2(String kind, String company) async {
+    try {
+      final r = await AuthHttp.get(Uri.parse('$_baseUrl/commercial/$kind/changes-v2/$company?cursor=latest'))
+          .timeout(const Duration(seconds: 5));
+      if (r.statusCode != 200) return null;
+      final m = jsonDecode(r.body);
+      if (m is! Map ||
+          m['invalid'] == true ||
+          m['next_cursor'] is! String ||
+          m['scope'] is! String ||
+          (m['scope'] as String).isEmpty) return null;
+      return (cursor: m['next_cursor'] as String, scope: m['scope'] as String, epoch: (m['epoch'] ?? '').toString());
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _commitV2(String kind, String company, ({String cursor, String scope, String epoch})? cand) async {
+    if (cand == null) return;
+    try {
+      final prefs = await CachePartitions.preferences();
+      await prefs.setString(v2CursorKey(kind, company), cand.cursor);
+      await prefs.setString(v2ScopeKey(kind, company), cand.scope);
+      await prefs.setString(v2EpochKey(kind, company), cand.epoch);
+      try {
+        onCheckpointChanged?.call(kind, company);
+      } catch (_) {}
+    } catch (_) {}
+  }
+
+  Future<({String cursor, String scope})?> stagedCheckpoint(String kind, String company) async {
+    try {
+      if (!SyncReadAccess.allows(_v2Sections[kind] ?? kind)) return null;
+      final prefs = await CachePartitions.preferences();
+      final c = prefs.getString(v2CursorKey(kind, company));
+      final s = prefs.getString(v2ScopeKey(kind, company));
+      if (c == null || s == null || s.isEmpty) return null;
+      return (cursor: c, scope: s);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Applies one changes-v2 response fetched by the service worker while the app was closed.
+  /// Only when it continues exactly from the stored cursor and scope, under the read right held
+  /// NOW. Rows queued or pending locally stay protected by _mergeServerRecords. Returns true when applied.
+  Future<bool> applyStagedBatch(String kind, String company, dynamic decoded,
+      {required String fromCursor, required String fromScope}) async {
+    final section = _v2Sections[kind];
+    if (section == null) return false;
+    try {
+      return await CachePartitions.run(() async {
+        final epoch = ReadAuthorizationEpoch.value;
+        if (!SyncReadAccess.allows(section)) return false;
+        final prefs = await CachePartitions.preferences();
+        if (prefs.getString(v2CursorKey(kind, company)) != fromCursor ||
+            prefs.getString(v2ScopeKey(kind, company)) != fromScope) return false;
+        if (decoded is! Map ||
+            decoded['invalid'] == true ||
+            decoded['scope'] != fromScope ||
+            decoded['next_cursor'] is! String ||
+            (decoded['next_cursor'] as String).isEmpty ||
+            decoded['items'] is! List) return false;
+        final box = CachePartitions.box(_boxes[kind]!);
+        final localStamp = <String, DateTime?>{};
+        for (final key in box.keys) {
+          final raw = box.get(key);
+          if (raw is! List) continue;
+          for (final v in raw) {
+            if (v is Map) localStamp[v['id']?.toString() ?? ''] = StagedChanges.stamp(v['updated_at']);
+          }
+        }
+        final scopeBefore = PermissionsService().effectiveScopeSignature();
+        final fresh = <Map<String, dynamic>>[];
+        for (final raw in decoded['items'] as List) {
+          if (raw is! Map) return false;
+          final m = Map<String, dynamic>.from(raw.map((k, x) => MapEntry(k.toString(), x)));
+          if (m['company_code']?.toString() != company) return false;
+          final id = m['id']?.toString() ?? '';
+          if (id.isEmpty) return false;
+          final l = localStamp[id];
+          final i = StagedChanges.stamp(m['updated_at']);
+          if (l != null && i != null && l.isAfter(i)) continue;
+          m.remove('tombstone');
+          fresh.add(m);
+        }
+        if (fresh.isNotEmpty) {
+          if (!SyncReadAccess.allows(section) || epoch != ReadAuthorizationEpoch.value) return false;
+          await _mergeServerRecords(kind, company, fresh, snapshot: false);
+        }
+        if (!SyncReadAccess.allows(section) ||
+            PermissionsService().effectiveScopeSignature() != scopeBefore) {
+          // Scope (rights, branches, role, policy) moved while writing: take back this batch's synced rows.
+          for (final m in fresh) {
+            if (m['action'] == 'delete' || m['is_deleted'] == true) continue;
+            final id = m['id'].toString();
+            final cur = _localRecordById(kind, id);
+            if (cur != null && cur['sync_status'] == 'synced') await _removeLocalById(kind, id);
+          }
+          return false;
+        }
+        await prefs.setString(v2CursorKey(kind, company), decoded['next_cursor'] as String);
+        try {
+          onCheckpointChanged?.call(kind, company);
+        } catch (_) {}
+        return true;
+      });
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Map<String, dynamic>? _localRecordById(String kind, String id) {
+    final box = CachePartitions.box(_boxes[kind]!);
+    for (final key in box.keys) {
+      final raw = box.get(key);
+      if (raw is! List) continue;
+      for (final v in raw) {
+        if (v is Map && v['id']?.toString() == id) return Map<String, dynamic>.from(v);
+      }
+    }
+    return null;
+  }
+
   // ============================================================
   // ⭐ Helper: last_sync key لكل kind
   // ============================================================

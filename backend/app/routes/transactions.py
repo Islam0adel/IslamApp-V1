@@ -585,6 +585,43 @@ async def get_transactions(
 # وبكده الجهاز Offline لما يرجع يعرف إن السجل اتحذف.
 # ==========================================================
 
+@router.get("/changes-v2/{company_code}")
+async def get_transactions_changes_v2(
+    request: Request,
+    company_code: str,
+    cursor: str = Query("0:0"),
+    limit: int = Query(200, ge=1, le=500),
+    scope: str = Query(""),
+    db: AsyncSession = Depends(get_db),
+):
+    """EXPERIMENT. Same authority checks as /changes; branch scope read from the caller on every page."""
+    from app.core import changes_v2
+    _require_any(request, ["المعاينة", "ادخال اذون"])
+    _allowed = allowed_branches_for_profile(request.state.auth_user)
+    # Fingerprint of what this caller may read (company + branch list). A cursor made
+    # under another fingerprint says nothing about rows in newly allowed branches.
+    fp = await changes_v2.scope_fingerprint(db, "transactions", company_code, _allowed)
+    if cursor == "latest":
+        return {"invalid": False, "items": [], "has_more": False, "scope": fp,
+                "next_cursor": await changes_v2.bootstrap_cursor(db)}
+    if scope and scope != fp:
+        return {"invalid": True, "reason": "scope", "items": [], "has_more": False,
+                "next_cursor": cursor, "scope": fp}
+    try:
+        changes_v2.parse_cursor(cursor)
+    except Exception:
+        raise HTTPException(status_code=400, detail="bad cursor")
+    allowed = allowed_branches_for_profile(request.state.auth_user)
+    def ser(r):
+        j = dict(r["row_json"])
+        j.pop("touched", None); j.pop("tx", None)
+        j["action"] = "delete" if j.get("is_deleted") else "update"
+        return j
+    out = await changes_v2.fetch(db, company_code, allowed, cursor, limit, ser)
+    out['scope'] = fp
+    return out
+
+
 @router.get("/changes/{company_code}")
 async def get_transactions_changes(
     request: Request,

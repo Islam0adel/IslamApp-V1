@@ -9,6 +9,9 @@ import '../models/supplier_transaction_model.dart';
 import '../core/constants.dart';
 import 'auth_http.dart';
 import 'permissions_service.dart';
+import 'read_authorization_snapshot.dart';
+import 'staged_changes.dart';
+import 'sync_read_access.dart';
 
 class SupplierService {
   final String baseUrl = ApiConstants.baseUrl;
@@ -1033,9 +1036,12 @@ return CachePartitions.run(() async {
   // ============================================================
 
   Future<void> fetchAllSupplier(
-    String companyCode,
-  ) async {
+    String companyCode, {
+    bool replace = false,
+  }) async {
 return CachePartitions.run(() async {
+
+    final v2Candidate = await _captureV2(companyCode);
 
     print(
       '📥 الموردين: بدء FULL SYNC '
@@ -1062,6 +1068,7 @@ return CachePartitions.run(() async {
       final List<dynamic> data =
           jsonDecode(response.body);
 
+      final Set<String> replacedKeys = {};
       for (final item in data) {
         final map =
             _toMapString(item);
@@ -1087,7 +1094,9 @@ return CachePartitions.run(() async {
         final raw =
             _supplierBox.get(key);
 
-        if (raw is List) {
+        if (replace && replacedKeys.add(key)) {
+          // epoch reconcile: start this list from the server copy only
+        } else if (raw is List) {
           currentList = raw
               .whereType<Map>()
               .map(_toMapString)
@@ -1116,10 +1125,20 @@ return CachePartitions.run(() async {
         );
       }
 
+      if (replace) {
+        final prefix = '${companyCode}_';
+        for (final k in _supplierBox.keys.toList()) {
+          if (k.toString().startsWith(prefix) && !replacedKeys.contains(k.toString())) {
+            await _supplierBox.delete(k);
+          }
+        }
+      }
+
       print(
         '✅ تم FULL SYNC للموردين '
         '(${data.length} حركة)',
       );
+      await _commitV2(companyCode, v2Candidate);
     } catch (e) {
       print(
         '❌ فشل FULL SYNC للموردين: $e',
@@ -1131,57 +1150,173 @@ return CachePartitions.run(() async {
 }
 
   // ============================================================
+  // Staged feed (/supplier/changes-v2) checkpoint + merge
+  // ============================================================
+
+  static void Function(String company)? onCheckpointChanged;
+  static String v2CursorKey(String c) => '${ApiConstants.LAST_SYNC_SUPPLIER}${c}_v2';
+  static String v2ScopeKey(String c) => '${ApiConstants.LAST_SYNC_SUPPLIER}${c}_v2scope';
+  static String v2EpochKey(String c) => '${ApiConstants.LAST_SYNC_SUPPLIER}${c}_v2epoch';
+
+  Future<({String cursor, String scope, String epoch})?> _captureV2(String company) async {
+    try {
+      final r = await AuthHttp.get(Uri.parse('$baseUrl/supplier/changes-v2/$company?cursor=latest'))
+          .timeout(const Duration(seconds: 5));
+      if (r.statusCode != 200) return null;
+      final m = jsonDecode(r.body);
+      if (m is! Map ||
+          m['invalid'] == true ||
+          m['next_cursor'] is! String ||
+          m['scope'] is! String ||
+          (m['next_cursor'] as String).isEmpty ||
+          (m['scope'] as String).isEmpty) return null;
+      return (cursor: m['next_cursor'] as String, scope: m['scope'] as String, epoch: (m['epoch'] ?? '').toString());
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _commitV2(String company, ({String cursor, String scope, String epoch})? cand) async {
+    if (cand == null) return;
+    try {
+      final prefs = await CachePartitions.preferences();
+      await prefs.setString(v2CursorKey(company), cand.cursor);
+      await prefs.setString(v2ScopeKey(company), cand.scope);
+      await prefs.setString(v2EpochKey(company), cand.epoch);
+      try {
+        onCheckpointChanged?.call(company);
+      } catch (_) {}
+    } catch (_) {}
+  }
+
+  Future<({String cursor, String scope})?> stagedCheckpoint(String company) async {
+    try {
+      final allowed = SyncReadAccess.allows('supplier');
+      final prefs = await CachePartitions.preferences();
+      final c = prefs.getString(v2CursorKey(company));
+      final s = prefs.getString(v2ScopeKey(company));
+      if (!allowed) return null;
+      if (c == null || c.isEmpty || s == null || s.isEmpty) return null;
+      return (cursor: c, scope: s);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  bool _mayCosts() {
+    final p = PermissionsService();
+    return p.canBypassPermissions ||
+        p.hasPermission('التكويد', 'سعر الشراء') ||
+        p.hasPermission('المبيعات', 'عرض سعر الجملة') ||
+        p.hasPermission('رصيد المخزون', 'عرض سعر الجملة');
+  }
+
+  static const _costKeys = ['total_amount', 'totalAmount', 'discountAmount', 'discountRate'];
+  static const _itemCostKeys = ['price', 'total', 'discountAmount', 'discountRate'];
+
+  /// Removes the pricing the viewer may not hold: invoice total and every item price/total.
+  void _stripCosts(Map<String, dynamic> m) {
+    for (final k in _costKeys) {
+      m.remove(k);
+    }
+    final items = m['items'];
+    if (items is List) {
+      m['items'] = [
+        for (final it in items)
+          if (it is Map)
+            {for (final e in it.entries) if (!_itemCostKeys.contains(e.key.toString())) e.key.toString(): e.value}
+          else
+            it
+      ];
+    }
+  }
+
+  /// Applies one /supplier/changes-v2 response fetched by the service worker while the app was
+  /// closed. Applied only when it continues exactly from the stored cursor and scope, under the
+  /// supplier read right held NOW. Pricing is removed again at merge time when the cost right is
+  /// gone. Returns true when applied.
+  Future<bool> applyStagedBatch(String company, dynamic decoded,
+      {required String fromCursor, required String fromScope}) async {
+    try {
+      return await CachePartitions.run(() async {
+        final epoch = ReadAuthorizationEpoch.value;
+        if (!SyncReadAccess.allows('supplier')) return false;
+        final prefs = await CachePartitions.preferences();
+        if (prefs.getString(v2CursorKey(company)) != fromCursor ||
+            prefs.getString(v2ScopeKey(company)) != fromScope) return false;
+        if (decoded is! Map ||
+            decoded['invalid'] == true ||
+            decoded['scope'] != fromScope ||
+            decoded['next_cursor'] is! String ||
+            (decoded['next_cursor'] as String).isEmpty ||
+            decoded['items'] is! List) return false;
+        final localStamp = <String, DateTime?>{};
+        for (final key in _supplierBox.keys) {
+          final raw = _supplierBox.get(key);
+          if (raw is! List) continue;
+          for (final v in raw) {
+            if (v is Map) localStamp[v['doc_id']?.toString() ?? ''] = StagedChanges.stamp(v['updated_at']);
+          }
+        }
+        final scopeBefore = PermissionsService().effectiveScopeSignature();
+        final mayCosts = _mayCosts();
+        final fresh = <Map<String, dynamic>>[];
+        for (final raw in decoded['items'] as List) {
+          if (raw is! Map) return false;
+          final m = _toMapString(raw);
+          if (m['company_code']?.toString() != company) return false;
+          final id = m['doc_id']?.toString() ?? '';
+          if (id.isEmpty) return false;
+          final l = localStamp[id];
+          final i = StagedChanges.stamp(m['updated_at']);
+          if (l != null && i != null && l.isAfter(i)) continue;
+          if (m['tombstone'] != true && !mayCosts) _stripCosts(m);
+          m.remove('tombstone');
+          fresh.add(m);
+        }
+        if (fresh.isNotEmpty) {
+          if (!SyncReadAccess.allows('supplier') || epoch != ReadAuthorizationEpoch.value) return false;
+          await _applyChanges(company, fresh);
+        }
+        if (!SyncReadAccess.allows('supplier') ||
+            PermissionsService().effectiveScopeSignature() != scopeBefore) {
+          // Scope (rights, branches, role, policy) moved while writing: take back this batch's rows.
+          final written = {for (final m in fresh) if (m['action'] != 'delete') m['doc_id']?.toString()};
+          if (written.isNotEmpty) {
+            for (final key in _supplierBox.keys.toList()) {
+              final raw = _supplierBox.get(key);
+              if (raw is! List) continue;
+              final keep = raw.where((e) => !(e is Map && written.contains(e['doc_id']?.toString()))).toList();
+              if (keep.length == raw.length) continue;
+              if (keep.isEmpty) {
+                await _supplierBox.delete(key);
+              } else {
+                await _supplierBox.put(key, keep);
+              }
+            }
+          }
+          return false;
+        }
+        await prefs.setString(v2CursorKey(company), decoded['next_cursor'] as String);
+        try {
+          onCheckpointChanged?.call(company);
+        } catch (_) {}
+        return true;
+      });
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // ============================================================
   // 11. Incremental Sync
   // ============================================================
 
   // lib/services/supplier_service.dart
 
-Future<void> syncChangesFromServer(
-  String companyCode, [
-  String? lastSync,
-]) async {
-return CachePartitions.run(() async {
-
-  final prefs = await CachePartitions.preferences();
-  final String lastSyncKey =
-      '${ApiConstants.LAST_SYNC_SUPPLIER}$companyCode';
-  final String? lastSyncValue =
-      lastSync ?? prefs.getString(lastSyncKey);
-
-  // ==========================================================
-  // لا يوجد lastSync → Full Sync
-  // ==========================================================
-
-  if (lastSyncValue == null || lastSyncValue.isEmpty) {
-    print('📥 الموردين: لا يوجد lastSync → FULL SYNC');
-    await fetchAllSupplier(companyCode);
-    await prefs.setString(
-      lastSyncKey,
-      DateTime.now().toUtc().toIso8601String(),
-    );
-    return;
-  }
-
-  try {
-    final DateTime syncStartedAt = DateTime.now().toUtc();
-    DateTime since = DateTime.parse(lastSyncValue).toUtc();
-    since = since.subtract(const Duration(minutes: 1));
-
-    final response = await AuthHttp.get(
-      Uri.parse(
-        '$baseUrl/supplier/changes/$companyCode'
-        '?since=${since.toIso8601String()}',
-      ),
-    );
-
-    if (response.statusCode != 200) {
-      throw Exception(
-        'HTTP ${response.statusCode}: ${response.body}',
-      );
-    }
-
-    final List<dynamic> changes = jsonDecode(response.body);
-
+  /// Applies a list of supplier changes (update/delete/tombstone) to the cached lists. Shared by the
+  /// live incremental sync and by staged batches.
+  Future<void> _applyChanges(String companyCode, List<dynamic> changes) async {
     for (final item in changes) {
       if (item is! Map) continue;
 
@@ -1287,6 +1422,65 @@ return CachePartitions.run(() async {
       print('✅ تم تحديث حركة المورد [$docId] في المفتاح [$newKey]');
     }
 
+  }
+
+Future<void> syncChangesFromServer(
+  String companyCode, [
+  String? lastSync,
+]) async {
+return CachePartitions.run(() async {
+
+  final prefs = await CachePartitions.preferences();
+  final String lastSyncKey =
+      '${ApiConstants.LAST_SYNC_SUPPLIER}$companyCode';
+  final String? lastSyncValue =
+      lastSync ?? prefs.getString(lastSyncKey);
+
+  // ==========================================================
+  // لا يوجد lastSync → Full Sync
+  // ==========================================================
+
+  if (lastSyncValue == null || lastSyncValue.isEmpty) {
+    print('📥 الموردين: لا يوجد lastSync → FULL SYNC');
+    await fetchAllSupplier(companyCode);
+    await prefs.setString(
+      lastSyncKey,
+      DateTime.now().toUtc().toIso8601String(),
+    );
+    return;
+  }
+
+  try {
+    final v2Candidate = await _captureV2(companyCode);
+    final String? storedEpoch = prefs.getString(v2EpochKey(companyCode));
+    if (v2Candidate != null && storedEpoch != null && storedEpoch != v2Candidate.epoch) {
+      print('📥 الموردين: feed epoch changed → FULL SYNC');
+      final startedAt = DateTime.now().toUtc();
+      await fetchAllSupplier(companyCode, replace: true);
+      await prefs.setString(lastSyncKey, startedAt.toIso8601String());
+      return;
+    }
+    final DateTime syncStartedAt = DateTime.now().toUtc();
+    DateTime since = DateTime.parse(lastSyncValue).toUtc();
+    since = since.subtract(const Duration(minutes: 1));
+
+    final response = await AuthHttp.get(
+      Uri.parse(
+        '$baseUrl/supplier/changes/$companyCode'
+        '?since=${since.toIso8601String()}',
+      ),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'HTTP ${response.statusCode}: ${response.body}',
+      );
+    }
+
+    final List<dynamic> changes = jsonDecode(response.body);
+
+    await _applyChanges(companyCode, changes);
+
     // ========================================================
     // تحديث lastSync فقط بعد نجاح الكل
     // ========================================================
@@ -1295,6 +1489,7 @@ return CachePartitions.run(() async {
       lastSyncKey,
       syncStartedAt.toIso8601String(),
     );
+    await _commitV2(companyCode, v2Candidate);
 
     print(
       '✅ تمت مزامنة ${changes.length} تحديث للموردين (Incremental Sync)',

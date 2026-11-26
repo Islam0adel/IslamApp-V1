@@ -29,6 +29,9 @@ class SyncReadAccess {
     'customer-payments': [
       ['حسابات العملاء', 'معاينة']
     ],
+    'treasury_transfers': [
+      ['تحويلات الخزائن', 'معاينة']
+    ],
     'transfers': [
       ['التحويلات المخزنية', 'معاينة']
     ],
