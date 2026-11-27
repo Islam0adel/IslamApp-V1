@@ -1,3 +1,5 @@
+// frontend/lib/models/supplier_settlement_model.dart
+// نموذج تسوية المورد
 class SupplierSettlementModel {
   String companyCode;
   String branchCode;
@@ -38,6 +40,7 @@ class SupplierSettlementModel {
     this.isDeleted = false,
   }) : updatedAt = updatedAt ?? DateTime.now();
 
+  // يحوّل الكائن إلى خريطة (Map) جاهزة للتخزين أو الإرسال
   Map<String, dynamic> toMap() => {
         'company_code': companyCode,
         'branch_code': branchCode,
@@ -57,6 +60,7 @@ class SupplierSettlementModel {
         if (linkId != null) 'link_id': linkId,
       };
 
+  // ينشئ كائنًا من خريطة بيانات قادمة من الخادم أو التخزين المحلي
   factory SupplierSettlementModel.fromMap(
     Map<String, dynamic> map,
   ) {
@@ -83,13 +87,15 @@ class SupplierSettlementModel {
       employee: map['employee']?.toString() ?? 'غير محدد',
       docId: map['doc_id']?.toString(),
       linkId: map['link_id']?.toString(),
-      addToDaily: map['link_id'] != null && map['link_id'].toString().isNotEmpty,
+      addToDaily:
+          map['link_id'] != null && map['link_id'].toString().isNotEmpty,
       updatedAt: updated,
       isDeleted: _toBool(map['is_deleted']),
     );
   }
 }
 
+// يحوّل قيمة ديناميكية إلى عدد عشري بأمان
 double _toDouble(dynamic value) {
   if (value is num) return value.toDouble();
 
@@ -99,6 +105,7 @@ double _toDouble(dynamic value) {
       0.0;
 }
 
+// يحوّل قيمة ديناميكية إلى عدد صحيح بأمان
 int _toInt(dynamic value) {
   if (value is int) return value;
   if (value is num) return value.toInt();
@@ -109,12 +116,12 @@ int _toInt(dynamic value) {
       0;
 }
 
+// يحوّل قيمة ديناميكية إلى قيمة منطقية بأمان
 bool _toBool(dynamic value) {
   if (value is bool) return value;
 
   if (value is String) {
-    return value.toLowerCase() == 'true' ||
-        value == '1';
+    return value.toLowerCase() == 'true' || value == '1';
   }
 
   if (value is num) return value != 0;

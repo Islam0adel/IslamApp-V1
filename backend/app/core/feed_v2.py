@@ -1,3 +1,4 @@
+# backend/app/core/feed_v2.py
 """EXPERIMENT (isolated copy only): generic commit-safe feed for a table that has tx xid8 and
 left_branches text[] (migration 00N). Same cursor/watermark rule as transactions/coding/employees.
 Rows are filtered with the caller's visibility clause; a row that LEFT the caller's branches comes
@@ -6,10 +7,11 @@ from sqlalchemy import select, text, or_, bindparam, String, Text, cast, literal
 from sqlalchemy.dialects.postgresql import ARRAY
 from app.core.changes_v2 import parse_cursor, MAX_ID
 
-
+# علامة نهاية المؤشر النصي (المعاملة اتسلّمت كلها)
 STR_DONE = ""  # string-id cursor "tx:" = every row with tx <= that value was delivered (no id bound)
 
 
+# يحلّل المؤشر النصي (معاملة أو معاملة مع آخر معرّف) ويتحقق منه
 def parse_cursor_str(c):
     """String-id cursor: "tx:" (whole tx done) or "tx:i<id>" (resume after that id; any id text, even empty or '~')."""
     a, b = (c or "0:").split(":", 1)
@@ -18,6 +20,7 @@ def parse_cursor_str(c):
     return int(a), (None if b == "" else b[1:])
 
 
+# يجيب تغييرات الفيد العام بعد المؤشر مع دعم المعرفات النصية والفروع والحذف
 async def fetch(db, Model, table, company, cursor, limit, visibility, allowed_branches, serialize, tomb, str_id=False):
     """str_id=True: String primary key (sales, returns, customer payments); ids compare under COLLATE "C"."""
     ctx, cid = parse_cursor_str(cursor) if str_id else parse_cursor(cursor)

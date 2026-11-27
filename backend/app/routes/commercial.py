@@ -1,3 +1,4 @@
+# backend/app/routes/commercial.py
 from app.core.auth_middleware import can_bypass_permissions
 """Sales, customer receipts, returns and stock transfers.
 
@@ -19,6 +20,7 @@ from app.core.sync import manager
 from app.core.save_locks import lock_save
 from app.core.commercial_receipts import request_fingerprint, unchanged_creation, remember_creation
 
+# راوتر العمليات التجارية (مبيعات ومرتجعات ودفعات عملاء وتحويلات)
 router = APIRouter()
 
 CONFIG = {
@@ -33,10 +35,12 @@ CONFIG = {
 _ROUTE_KINDS = ("sales", "returns", "customer-payments")
 
 
+# يرجّع دور المستخدم
 def _role(profile: dict[str, Any]) -> str:
     return str(profile.get("role") or "employee")
 
 
+# يفحص صلاحية المستخدم على نوع العملية والإجراء
 def _check_permission(request: Request, kind: str, action: str) -> dict:
     profile = request.state.auth_user
     if can_bypass_permissions(profile):
@@ -55,12 +59,14 @@ def _check_permission(request: Request, kind: str, action: str) -> dict:
     return profile
 
 
+# يتحقق إن الفروع مسموحة للمستخدم
 def _check_branches(profile: dict, branches: list[str]) -> None:
     allowed = allowed_branches_for_profile(profile)
     if allowed and any(str(branch) not in allowed for branch in branches if branch):
         raise HTTPException(status_code=403, detail="غير مسموح بالوصول إلى هذا الفرع")
 
 
+# يحوّل السجل إلى JSON مع الإجراء
 def _serialize(record: Any, action: str | None = None) -> dict:
     result = {column.name: getattr(record, column.name) for column in record.__table__.columns}
     if result.get("updated_at"):
@@ -71,11 +77,13 @@ def _serialize(record: Any, action: str | None = None) -> dict:
     return result
 
 
+# يبني استعلام السجلات للشركة حسب نوع العملية
 def _query(kind: str, company_code: str):
     model = CONFIG[kind][0]
     return select(model).where(model.company_code == company_code, model.is_deleted.is_(False))
 
 
+# يحوّل القيمة لوقت زمني أو None
 def _timestamp(value: datetime | str | None) -> datetime | None:
     if value is None:
         return None
@@ -85,6 +93,7 @@ def _timestamp(value: datetime | str | None) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+# مسار حفظ سجل تجاري حسب نوعه
 @router.post("/{kind}/save")
 async def save_record(kind: str, request: Request, db: AsyncSession = Depends(get_db)):
     if kind not in _ROUTE_KINDS:
@@ -92,6 +101,7 @@ async def save_record(kind: str, request: Request, db: AsyncSession = Depends(ge
     return await save_kind(kind, request, db)
 
 
+# المنطق المشترك لحفظ سجل تجاري مع فحص الصلاحيات والتكرار
 async def save_kind(kind: str, request: Request, db: AsyncSession):
     if kind not in CONFIG:
         raise HTTPException(status_code=404, detail="نوع حركة غير معروف")
@@ -296,6 +306,7 @@ async def save_kind(kind: str, request: Request, db: AsyncSession):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+# مسار قائمة السجلات التجارية حسب النوع
 @router.get("/{kind}/list/{company_code}")
 async def list_records(
     kind: str, company_code: str, request: Request,
@@ -308,6 +319,7 @@ async def list_records(
     return await list_kind(kind, company_code, request, branch_code, from_date, to_date, db)
 
 
+# المنطق المشترك لقائمة السجلات التجارية
 async def list_kind(
     kind: str, company_code: str, request: Request,
     branch_code: str | None, from_date: str | None, to_date: str | None,
@@ -341,11 +353,13 @@ async def list_kind(
     return [_serialize(record) for record in result.scalars().all()]
 
 
+# ربط أنواع العمليات بجداول فيد v2
 _V2_TABLE = {"sales": ("sales", "sale"), "returns": ("sale_returns", "sale_return"),
              "customer-payments": ("customer_payments", "customer_payment"),
              "transfers": ("stock_transfers", "stock_transfer")}
 
 
+# مسار فيد v2 للعمليات التجارية
 @router.get("/{kind}/changes-v2/{company_code}")
 async def changed_records_v2_route(kind: str, company_code: str, request: Request,
     cursor: str = Query("0:"), limit: int = Query(200, ge=1, le=500), scope: str = Query(""),
@@ -355,6 +369,7 @@ async def changed_records_v2_route(kind: str, company_code: str, request: Reques
     return await changed_records_v2(kind, company_code, request, cursor, limit, scope, db)
 
 
+# المنطق المشترك لفيد v2 (تجريبي)
 async def changed_records_v2(
     kind: str, company_code: str, request: Request,
     cursor: str = Query("0:"), limit: int = Query(200, ge=1, le=500), scope: str = Query(""),
@@ -400,6 +415,7 @@ async def changed_records_v2(
     return out
 
 
+# مسار التغييرات منذ آخر مزامنة للعمليات التجارية
 @router.get("/{kind}/changes/{company_code}")
 async def changed_records(kind: str, company_code: str, request: Request, since: str, db: AsyncSession = Depends(get_db)):
     if kind not in _ROUTE_KINDS:
@@ -407,6 +423,7 @@ async def changed_records(kind: str, company_code: str, request: Request, since:
     return await changes_kind(kind, company_code, request, since, db)
 
 
+# المنطق المشترك للتغييرات منذ آخر مزامنة
 async def changes_kind(kind: str, company_code: str, request: Request, since: str, db: AsyncSession):
     if kind not in CONFIG:
         raise HTTPException(status_code=404, detail="نوع حركة غير معروف")
@@ -427,6 +444,7 @@ async def changes_kind(kind: str, company_code: str, request: Request, since: st
     return [_serialize(record, "delete" if record.is_deleted else "update") for record in result.scalars().all()]
 
 
+# مسار حذف سجل تجاري
 @router.post("/{kind}/delete/{company_code}/{record_id}")
 async def delete_record(kind: str, company_code: str, record_id: str, request: Request, db: AsyncSession = Depends(get_db)):
     if kind not in _ROUTE_KINDS:
@@ -434,6 +452,7 @@ async def delete_record(kind: str, company_code: str, record_id: str, request: R
     return await delete_kind(kind, company_code, record_id, request, db)
 
 
+# المنطق المشترك لحذف سجل تجاري
 async def delete_kind(kind: str, company_code: str, record_id: str, request: Request, db: AsyncSession):
     if kind not in CONFIG:
         raise HTTPException(status_code=404, detail="نوع حركة غير معروف")
@@ -458,6 +477,7 @@ async def delete_kind(kind: str, company_code: str, record_id: str, request: Req
     return {"status": "success", "id": record_id}
 
 
+# يفحص صلاحية إضافية لتصنيف ومفتاح معين
 def _check_extra_permission(request: Request, category: str, key: str) -> dict:
     profile = request.state.auth_user
     if can_bypass_permissions(profile):
@@ -469,6 +489,7 @@ def _check_extra_permission(request: Request, category: str, key: str) -> dict:
     return profile
 
 
+# مسار المبيعات القابلة للمرتجع لفاتورة معينة
 @router.get("/returnable/{company_code}/{sale_id}")
 async def returnable_sale(company_code: str, sale_id: str, request: Request, to_date: str | None = Query(default=None), exclude_return_id: str | None = Query(default=None), db: AsyncSession = Depends(get_db)):
     profile = request.state.auth_user
@@ -507,6 +528,7 @@ async def returnable_sale(company_code: str, sale_id: str, request: Request, to_
     return {"remaining_quantities": remaining, "customer_balance": customer_balance}
 
 
+# مسار أرصدة العملاء
 @router.get("/customer-balances/{company_code}")
 async def customer_balances(company_code: str, request: Request, branch_code: str | None = Query(default=None), to_date: str | None = Query(default=None), db: AsyncSession = Depends(get_db)):
     profile = _check_extra_permission(request, "حسابات العملاء", "عرض الأرصدة")
@@ -544,6 +566,7 @@ async def customer_balances(company_code: str, request: Request, branch_code: st
     return [dict(item, balance=max(0.0, round(item["balance"], 2))) for item in result.values() if item["balance"] > 0.005]
 
 
+# مسار أرصدة النقدية
 @router.get("/cash-balances/{company_code}")
 async def cash_balances(company_code: str, request: Request, branch_code: str | None = Query(default=None), to_date: str | None = Query(default=None), db: AsyncSession = Depends(get_db)):
     profile = _check_extra_permission(request, "أرصدة خزائن المبيعات", "معاينة")
@@ -572,6 +595,7 @@ async def cash_balances(company_code: str, request: Request, branch_code: str | 
     return [{"treasury": key, "balance": round(value, 2)} for key, value in result.items()]
 
 
+# مسار أحداث حركة المخزون من العمليات التجارية
 @router.get("/stock-events/{company_code}")
 async def stock_events(company_code: str, request: Request, db: AsyncSession = Depends(get_db)):
     profile = request.state.auth_user

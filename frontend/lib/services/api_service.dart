@@ -1,5 +1,5 @@
+// frontend/lib/services/api_service.dart
 import 'cache_partitions.dart';
-// lib/services/api_service.dart
 
 import 'dart:convert';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -8,13 +8,18 @@ import 'package:hive_flutter/hive_flutter.dart';
 import '../core/constants.dart';
 import 'auth_http.dart';
 
+// خدمة الاتصال بواجهة الخادم للمصادقة والمستخدمين والشركات والصلاحيات
 class ApiService {
   final String baseUrl = ApiConstants.baseUrl;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
+  // يجلب الملف الفعلي للمستخدم (الصلاحيات والنطاق)
   Future<Map<String, dynamic>> getEffectiveProfile() async {
-    final response = await AuthHttp.get(Uri.parse('$baseUrl/auth/session-profile'));
-    if (response.statusCode != 200) throw StateError('Effective profile unavailable (${response.statusCode})');
+    final response =
+        await AuthHttp.get(Uri.parse('$baseUrl/auth/session-profile'));
+    if (response.statusCode != 200)
+      throw StateError(
+          'Effective profile unavailable (${response.statusCode})');
     final body = jsonDecode(response.body);
     if (body is! Map) throw const FormatException('Invalid effective profile');
     return Map<String, dynamic>.from(body);
@@ -24,6 +29,7 @@ class ApiService {
   // 1. تسجيل الدخول (إيميل / موبايل / يوزرنيم)
   // ============================================================
 
+  // يسجّل دخول المستخدم بالمعرّف وكلمة المرور
   Future<Map<String, dynamic>> login(String identifier, String password) async {
     try {
       // 1) Resolve identifier → email
@@ -73,6 +79,7 @@ class ApiService {
   // 2. استعادة كلمة المرور (Legacy — verify-reset)
   // ============================================================
 
+  // يتحقق من البيانات ويجلب رابط إعادة تعيين كلمة المرور
   Future<Map<String, dynamic>> verifyAndGetResetLink({
     required String email,
     required String companyCode,
@@ -95,6 +102,7 @@ class ApiService {
   // 3. التسجيل الجديد (Phone → Email → Verification)
   // ============================================================
 
+  // يحوّل المعرّف (بريد أو هاتف أو كود) إلى البريد المسجل
   /// يترجم (إيميل / موبايل / يوزرنيم) إلى إيميل
   Future<Map<String, dynamic>> resolveIdentifier(String identifier) async {
     final response = await AuthHttp.post(
@@ -109,6 +117,7 @@ class ApiService {
     throw jsonDecode(response.body)['detail'] ?? 'فشل التحقق';
   }
 
+  // يتحقق من تسجيل رقم الهاتف
   /// يتحقق إن الرقم مسجل من الأدمن
   Future<Map<String, dynamic>> checkPhone(String phone) async {
     final response = await AuthHttp.post(
@@ -120,6 +129,7 @@ class ApiService {
     throw jsonDecode(response.body)['detail'] ?? 'فشل التحقق من الرقم';
   }
 
+  // يكمل تسجيل المستخدم وينشئ حسابه
   /// إكمال التسجيل (إنشاء Firebase Auth + ربط + إرسال verification)
   ///
   /// - [phoneNumber] اختياري (للسوبر أدمن مش مطلوب)
@@ -138,11 +148,11 @@ class ApiService {
       UserCredential userCredential;
       try {
         userCredential = await _auth.createUserWithEmailAndPassword(
-          email: email.trim().toLowerCase(), password: password);
+            email: email.trim().toLowerCase(), password: password);
       } on FirebaseAuthException catch (error) {
         if (error.code != 'email-already-in-use') rethrow;
         userCredential = await _auth.signInWithEmailAndPassword(
-          email: email.trim().toLowerCase(), password: password);
+            email: email.trim().toLowerCase(), password: password);
       }
 
       // 2) Send verification email (best-effort)
@@ -167,8 +177,7 @@ class ApiService {
           'uid': userCredential.user!.uid,
           if (username != null && username.trim().isNotEmpty)
             'username': username.trim(),
-          if (name != null && name.trim().isNotEmpty)
-            'name': name.trim(),
+          if (name != null && name.trim().isNotEmpty) 'name': name.trim(),
           if (employeeCode != null && employeeCode.trim().isNotEmpty)
             'employee_code': employeeCode.trim(),
         }),
@@ -177,7 +186,8 @@ class ApiService {
       // A failed response can follow a committed source binding. Keep the
       // Firebase identity so retry/login can recover it; never delete it here.
       if (response.statusCode != 200) {
-        throw jsonDecode(response.body)['detail'] ?? 'فشل إكمال التسجيل؛ أعد المحاولة بنفس الحساب';
+        throw jsonDecode(response.body)['detail'] ??
+            'فشل إكمال التسجيل؛ أعد المحاولة بنفس الحساب';
       }
 
       return jsonDecode(response.body);
@@ -186,6 +196,7 @@ class ApiService {
     }
   }
 
+  // يتحقق من المستخدم ويجلب بياناته بعد الدخول
   /// جلب بيانات المستخدم بعد التحقق (يستخدم Firebase ID token)
   Future<Map<String, dynamic>> verifyUser() async {
     final user = _auth.currentUser;
@@ -203,6 +214,7 @@ class ApiService {
     throw jsonDecode(response.body)['detail'] ?? 'فشل التحقق';
   }
 
+  // يتحقق من توثيق البريد الإلكتروني بعد إعادة التحميل
   /// فحص إن الإيميل اتحقق (مع reload)
   Future<bool> checkEmailVerified() async {
     final user = _auth.currentUser;
@@ -213,6 +225,7 @@ class ApiService {
     return _auth.currentUser?.emailVerified ?? false;
   }
 
+  // يعيد إرسال رابط توثيق البريد الإلكتروني
   /// إعادة إرسال رابط التحقق
   Future<void> resendEmailVerification() async {
     final user = _auth.currentUser;
@@ -224,6 +237,7 @@ class ApiService {
   // 3.5. إدارة مستخدمي الشركة (Admin)
   // ============================================================
 
+  // يجلب مستخدمي الشركة
   /// جلب مستخدمي الشركة (حسب صلاحية الأدمن)
   Future<List<dynamic>> getCompanyUsers({String? companyCode}) async {
     final uri = Uri.parse('$baseUrl/auth/company-users').replace(
@@ -241,6 +255,7 @@ class ApiService {
     throw jsonDecode(response.body)['detail'] ?? 'فشل جلب المستخدمين';
   }
 
+  // يضيف مستخدمًا جديدًا من حساب المدير
   /// إضافة مستخدم جديد (من الأدمن)
   Future<Map<String, dynamic>> adminAddUser({
     required String name,
@@ -271,16 +286,21 @@ class ApiService {
     throw jsonDecode(response.body)['detail'] ?? 'فشل إضافة المستخدم';
   }
 
+  // يجلب بيانات محرر الحساب للمستند المحدد
   Future<Map<String, dynamic>> getAccountEditor(String documentId) async {
-    final response = await AuthHttp.get(Uri.parse('$baseUrl/auth/user-editor/${Uri.encodeComponent(documentId.trim().toLowerCase())}'));
+    final response = await AuthHttp.get(Uri.parse(
+        '$baseUrl/auth/user-editor/${Uri.encodeComponent(documentId.trim().toLowerCase())}'));
     if (response.statusCode != 200) {
-      throw jsonDecode(response.body)['detail'] ?? 'تعذر تحميل بيانات الحساب الحالية';
+      throw jsonDecode(response.body)['detail'] ??
+          'تعذر تحميل بيانات الحساب الحالية';
     }
     final value = jsonDecode(response.body);
-    if (value is! Map) throw const FormatException('Invalid account editor response');
+    if (value is! Map)
+      throw const FormatException('Invalid account editor response');
     return Map<String, dynamic>.from(value);
   }
 
+  // يعدّل بيانات مستخدم من حساب المدير
   /// تعديل مستخدم
   Future<Map<String, dynamic>> adminEditUser({
     required String email,
@@ -302,7 +322,8 @@ class ApiService {
       body: jsonEncode({
         'email': email.trim().toLowerCase(),
         if (name != null) 'name': name.trim(),
-        if (invitationEmail != null) 'invitation_email': invitationEmail.trim().toLowerCase(),
+        if (invitationEmail != null)
+          'invitation_email': invitationEmail.trim().toLowerCase(),
         if (phoneNumber != null) 'phone_number': phoneNumber.trim(),
         if (branchCode != null) 'branch_code': branchCode.trim(),
         if (role != null) 'role': role,
@@ -310,14 +331,17 @@ class ApiService {
         if (status != null) 'status': status,
         if (isActive != null) 'is_active': isActive,
         if (expectedTargetUid != null) 'expected_target_uid': expectedTargetUid,
-        if (expectedProfileVersion != null) 'expected_profile_version': expectedProfileVersion,
-        if (expectedPolicyRevision != null) 'expected_policy_revision': expectedPolicyRevision,
+        if (expectedProfileVersion != null)
+          'expected_profile_version': expectedProfileVersion,
+        if (expectedPolicyRevision != null)
+          'expected_policy_revision': expectedPolicyRevision,
       }),
     );
     if (response.statusCode == 200) return jsonDecode(response.body);
     throw jsonDecode(response.body)['detail'] ?? 'فشل تعديل المستخدم';
   }
 
+  // يحذف مستخدمًا من حساب المدير
   /// حذف مستخدم
   Future<Map<String, dynamic>> adminDeleteUser({
     required String email,
@@ -329,6 +353,7 @@ class ApiService {
     throw jsonDecode(response.body)['detail'] ?? 'فشل حذف المستخدم';
   }
 
+  // يعيد تعيين مستخدم معلق من حساب المدير
   /// إعادة تعيين مستخدم معلق
   Future<Map<String, dynamic>> adminResetPendingUser({
     required String email,
@@ -340,7 +365,8 @@ class ApiService {
     throw jsonDecode(response.body)['detail'] ?? 'فشل إعادة التعيين';
   }
 
-    /// ⭐ إلغاء التسجيل (من شاشة تحقق الإيميل)
+  // يلغي طلب التسجيل الحالي
+  /// ⭐ إلغاء التسجيل (من شاشة تحقق الإيميل)
   Future<Map<String, dynamic>> cancelRegistration() async {
     final user = _auth.currentUser;
     if (user == null) throw 'لا يوجد مستخدم';
@@ -358,16 +384,17 @@ class ApiService {
     throw jsonDecode(response.body)['detail'] ?? 'فشل إلغاء التسجيل';
   }
 
-    // ============================================================
+  // ============================================================
   // طلبات الانضمام
   // ============================================================
 
+  // يرسل طلب انضمام المستخدم إلى شركة
   /// المستخدم يطلب الانضمام لشركة (بدون تحديد الشركة — الأدمن يحددها)
   Future<Map<String, dynamic>> requestRegistration({
     required String name,
     String? phoneNumber,
     String? email,
-    String? companyCode,  // ⭐ اختياري
+    String? companyCode, // ⭐ اختياري
     String? branchCode,
     String? note,
   }) async {
@@ -384,14 +411,14 @@ class ApiService {
           'company_code': companyCode.trim(),
         if (branchCode != null && branchCode.trim().isNotEmpty)
           'branch_code': branchCode.trim(),
-        if (note != null && note.trim().isNotEmpty)
-          'note': note.trim(),
+        if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
       }),
     );
     if (response.statusCode == 200) return jsonDecode(response.body);
     throw jsonDecode(response.body)['detail'] ?? 'فشل إرسال الطلب';
   }
 
+  // يجلب طلبات الانضمام للمدير
   /// جلب طلبات الانضمام (للأدمن)
   Future<List<dynamic>> getRegistrationRequests({
     String status = 'pending',
@@ -407,12 +434,13 @@ class ApiService {
     throw jsonDecode(response.body)['detail'] ?? 'فشل جلب الطلبات';
   }
 
+  // يوافق على طلب انضمام
   /// الموافقة على طلب
   Future<Map<String, dynamic>> approveRegistrationRequest({
     required String requestId,
     required String role,
     String? branchCode,
-    String? companyCode,  // ⭐ للسوبر أدمن (لو الطلب مش محدد شركة)
+    String? companyCode, // ⭐ للسوبر أدمن (لو الطلب مش محدد شركة)
   }) async {
     final response = await AuthHttp.post(
       Uri.parse('$baseUrl/auth/admin/registration-requests/$requestId/approve'),
@@ -429,6 +457,7 @@ class ApiService {
     throw jsonDecode(response.body)['detail'] ?? 'فشل الموافقة';
   }
 
+  // يرفض طلب انضمام
   /// رفض طلب
   Future<Map<String, dynamic>> rejectRegistrationRequest({
     required String requestId,
@@ -441,58 +470,58 @@ class ApiService {
     throw jsonDecode(response.body)['detail'] ?? 'فشل الرفض';
   }
 
-
   // ============================================================
   // 4. الفروع
   // ============================================================
 
+  // يجلب قائمة فروع الشركة
   /// جلب قائمة الفروع (Hive أولاً، ثم السيرفر)
   Future<List<String>> getBranchesList(String companyCode) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      try {
+        final Box codingBox = CachePartitions.box('coding_box');
+        final String localKey = "${companyCode}_branches";
 
-    try {
-      final Box codingBox = CachePartitions.box('coding_box');
-      final String localKey = "${companyCode}_branches";
+        if (codingBox.containsKey(localKey)) {
+          final dynamic rawData = codingBox.get(localKey);
+          if (rawData is List) {
+            List<String> fetchedBranches = ["كل الفروع"];
+            for (var item in rawData) {
+              if (item is Map && item['name'] != null) {
+                fetchedBranches.add(item['name'].toString());
+              }
+            }
+            return fetchedBranches;
+          }
+        }
 
-      if (codingBox.containsKey(localKey)) {
-        final dynamic rawData = codingBox.get(localKey);
-        if (rawData is List) {
+        final response = await AuthHttp.get(
+          Uri.parse('$baseUrl/coding/list/$companyCode/branches'),
+          headers: {'Content-Type': 'application/json'},
+        ).timeout(const Duration(seconds: 3));
+
+        if (response.statusCode == 200) {
+          List<dynamic> data = jsonDecode(response.body);
           List<String> fetchedBranches = ["كل الفروع"];
-          for (var item in rawData) {
-            if (item is Map && item['name'] != null) {
+          for (var item in data) {
+            if (item['name'] != null) {
               fetchedBranches.add(item['name'].toString());
             }
           }
           return fetchedBranches;
         }
+        return ["كل الفروع"];
+      } catch (e) {
+        return ["كل الفروع"];
       }
-
-      final response = await AuthHttp.get(
-        Uri.parse('$baseUrl/coding/list/$companyCode/branches'),
-        headers: {'Content-Type': 'application/json'},
-      ).timeout(const Duration(seconds: 3));
-
-      if (response.statusCode == 200) {
-        List<dynamic> data = jsonDecode(response.body);
-        List<String> fetchedBranches = ["كل الفروع"];
-        for (var item in data) {
-          if (item['name'] != null) {
-            fetchedBranches.add(item['name'].toString());
-          }
-        }
-        return fetchedBranches;
-      }
-      return ["كل الفروع"];
-    } catch (e) {
-      return ["كل الفروع"];
-    }
-});
-}
+    });
+  }
 
   // ============================================================
   // 5. الصلاحيات
   // ============================================================
 
+  // يجلب أهداف الصلاحيات المتاحة للشركة
   Future<Map<String, dynamic>> getPermissionTargets(String companyCode) async {
     final uri = Uri.parse('$baseUrl/auth/permission-editor-targets')
         .replace(queryParameters: {'company_code': companyCode});
@@ -505,6 +534,7 @@ return CachePartitions.run(() async {
     return Map<String, dynamic>.from(value);
   }
 
+  // يضبط حالة المحرر القديم للصلاحيات
   Future<void> setLegacyEditorStatus(
       {required String email,
       required String uid,
@@ -524,16 +554,20 @@ return CachePartitions.run(() async {
     }
   }
 
+  // يجلب محرر صلاحيات المستخدم بالبريد
   Future<Map<String, dynamic>> getPermissionEditor(String email) async {
-    final response = await AuthHttp.get(Uri.parse('$baseUrl/auth/permission-editor/${Uri.encodeComponent(email.trim().toLowerCase())}'));
+    final response = await AuthHttp.get(Uri.parse(
+        '$baseUrl/auth/permission-editor/${Uri.encodeComponent(email.trim().toLowerCase())}'));
     if (response.statusCode != 200) {
       throw jsonDecode(response.body)['detail'] ?? 'تعذر تحميل نطاق الصلاحيات';
     }
-    final value=jsonDecode(response.body);
-    if(value is! Map) throw const FormatException('Invalid permission editor response');
-    return Map<String,dynamic>.from(value);
+    final value = jsonDecode(response.body);
+    if (value is! Map)
+      throw const FormatException('Invalid permission editor response');
+    return Map<String, dynamic>.from(value);
   }
 
+  // يحدّث صلاحيات المستخدم والفروع المسموح بها
   Future<void> updatePermissions(
     String email,
     Map<String, dynamic> permissions, {
@@ -551,10 +585,14 @@ return CachePartitions.run(() async {
         'permissions': permissions,
       };
 
-      if (expectedTargetUid != null) body['expected_target_uid']=expectedTargetUid;
-      if (expectedProfileVersion != null) body['expected_profile_version']=expectedProfileVersion;
-      if (expectedPolicyRevision != null) body['expected_policy_revision']=expectedPolicyRevision;
-      if (startupBranchCode != null) body['startup_branch_code']=startupBranchCode;
+      if (expectedTargetUid != null)
+        body['expected_target_uid'] = expectedTargetUid;
+      if (expectedProfileVersion != null)
+        body['expected_profile_version'] = expectedProfileVersion;
+      if (expectedPolicyRevision != null)
+        body['expected_policy_revision'] = expectedPolicyRevision;
+      if (startupBranchCode != null)
+        body['startup_branch_code'] = startupBranchCode;
       if (allowedBranches != null) {
         body['allowed_branches'] = allowedBranches;
       }
@@ -584,6 +622,7 @@ return CachePartitions.run(() async {
   // 6. إدارة الشركات (لصاحب البرنامج فقط)
   // ============================================================
 
+  // يجلب كل الشركات للمدير العام
   Future<List<dynamic>> getAllCompanies(String adminJobCode) async {
     final response = await AuthHttp.get(
       Uri.parse('$baseUrl/auth/companies/all?admin_job_code=$adminJobCode'),
@@ -594,6 +633,7 @@ return CachePartitions.run(() async {
     throw 'فشل جلب الشركات: ${response.body}';
   }
 
+  // يضيف شركة جديدة
   Future<void> addCompany(String code, String name, String adminJobCode) async {
     final response = await AuthHttp.post(
       Uri.parse('$baseUrl/auth/companies/add?admin_job_code=$adminJobCode'),
@@ -605,6 +645,7 @@ return CachePartitions.run(() async {
     }
   }
 
+  // يبدّل حالة تفعيل الشركة
   Future<void> toggleCompanyStatus(
     String code,
     bool isActive,
@@ -624,6 +665,7 @@ return CachePartitions.run(() async {
     }
   }
 
+  // يعدّل بيانات شركة
   Future<void> updateCompany({
     required String oldCode,
     required String newCode,
@@ -653,6 +695,7 @@ return CachePartitions.run(() async {
     }
   }
 
+  // يحذف شركة
   Future<void> deleteCompany(String code, String adminJobCode) async {
     final response = await AuthHttp.delete(
       Uri.parse(
@@ -668,6 +711,7 @@ return CachePartitions.run(() async {
   // 7. Helpers
   // ============================================================
 
+  // يحوّل رمز خطأ المصادقة إلى رسالة للمستخدم
   String _handleAuthError(String code) {
     switch (code) {
       case 'user-not-found':

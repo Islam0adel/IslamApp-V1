@@ -1,3 +1,4 @@
+// frontend/lib/services/cache_partitions.dart
 import 'work_pool.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -7,6 +8,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+// فئة عزل الذاكرة المؤقتة لكل حساب وشركة
 /// Application-account isolation, not encryption. Original Hive boxes are a
 /// read-only legacy archive, never attributed to whoever first opens the app.
 class CachePartitions {
@@ -38,19 +40,30 @@ class CachePartitions {
   static _CacheSession? _active;
   static Future<void> _tail = Future<void>.value();
   static int _generation = 0;
+
+  // يحدد هل عزل الأقسام مفعّل
   static bool get enabled => _enabled;
+
+  // يعيد رقم جيل الجلسة الحالية
   static int get generation => _generation;
+
+  // يعيد معرّف مالك الجلسة النشطة
   static String? get ownerUid => _active?.uid;
+
+  // يعيد رمز الشركة للجلسة النشطة
   static String? get companyCode => _active?.company;
 
+  // يحسب الاسم الفعلي للصندوق لكل مستخدم وشركة
   static String physicalName(String name, String uid, String company) =>
       'p2_${sha256.convert(utf8.encode(jsonEncode([uid, company])))}_$name';
 
+  // يفعّل عزل الأقسام قبل إنشاء أي خدمة
   /// Must run before any application service is constructed.
   static void enable() {
     _enabled = true;
   }
 
+  // يعيد معرّف المستخدم الحالي
   static String? _uid() {
     try {
       return FirebaseAuth.instance.currentUser?.uid;
@@ -59,12 +72,14 @@ class CachePartitions {
     }
   }
 
+  // يعلّق الجلسة النشطة ويغلق نافذة العمل
   /// Synchronous invalidation also closes the window before signOut completes.
   static void suspend() {
     _active = null;
     _generation++;
   }
 
+  // يحدد هل الجلسة جاهزة
   static bool get isReady {
     final scope = _active;
     return !_enabled ||
@@ -73,6 +88,7 @@ class CachePartitions {
             scope.company == scope.preferences.getString('company_code'));
   }
 
+  // يتحقق من صلاحية الجلسة المعطاة
   static void _check(_CacheSession? scope) {
     if (!_enabled) return;
     if (scope == null || !identical(scope, _active) || !isReady) {
@@ -81,9 +97,11 @@ class CachePartitions {
     }
   }
 
+  // يعيد جلسة النطاق الحالي
   static _CacheSession? get _scope =>
       Zone.current[_zoneKey] as _CacheSession? ?? _active;
 
+  // يشغّل العمل ضمن جلسة الذاكرة المنشئة له
   /// Every async service entry retains its originating cache, even after await
   /// or queued callbacks. It never resolves a late response into a new cache.
   static T run<T>(T Function() work) {
@@ -93,7 +111,10 @@ class CachePartitions {
     return runZoned(work, zoneValues: {_zoneKey: scope});
   }
 
+  // يتحقق من صلاحية الجلسة الحالية
   static void checkCurrent() => _check(_scope);
+
+  // يحدد هل العمل المرتبط ما زال صالحًا
   static bool get boundWorkIsCurrent {
     try {
       checkBoundWork();
@@ -103,10 +124,12 @@ class CachePartitions {
     }
   }
 
+  // يتحقق من العمل المرتبط بالجلسة
   static void checkBoundWork() {
     if (_enabled && Zone.current[_zoneKey] != null) _check(_scope);
   }
 
+  // يفعّل جلسة جديدة للمستخدم والشركة
   static Future<void> activate(String uid, String company) {
     final result = _tail.then((_) async {
       if (!_enabled) return;
@@ -143,6 +166,7 @@ class CachePartitions {
     return result;
   }
 
+  // ينقل السجلات المعلقة المملوكة إلى الجلسة الجديدة
   /// Copy only explicit immutable ownership. A completed migration marker is
   /// stored in the destination AFTER all copies; interruptions safely retry.
   /// Source entries are never deleted. Unknown ownership stays in the archive.
@@ -220,6 +244,7 @@ class CachePartitions {
     await metadata.put('legacy_pending_copied_v2', true);
   }
 
+  // يزيل صفوف الترحيل المحجوزة ويصلح المساحة المنشأة
   /// Also repairs an already-created v2 space from the preceding patch.
   /// Only exact payload-derived pending copies of the current owner's held or
   /// discarded operations are removed from display lists. A same-ID row with
@@ -285,6 +310,8 @@ class CachePartitions {
   /// Stable identity for a live physical cache, unlike disposable Box wrappers.
   /// Does not expose the raw Box or permit bypassing its scope checks.
   static final _boxIdentities = Expando<Object>();
+
+  // يعيد هوية الصندوق المفتوح
   static Object boxIdentity(String name) {
     if (!_enabled) {
       final raw = Hive.box(name);
@@ -298,6 +325,7 @@ class CachePartitions {
         .identity; // Token only, never the session or its physical Boxes.
   }
 
+  // يعيد الصندوق المعزول بالاسم
   static Box<E> box<E>(String name) {
     if (!_enabled) return Hive.box<E>(name);
     final scope = _scope;
@@ -307,6 +335,7 @@ class CachePartitions {
     return _PartitionBox<E>(scope, raw as Box<E>);
   }
 
+  // يحدد هل الصندوق مفتوح
   static bool isBoxOpen(String name) {
     if (!_enabled) return Hive.isBoxOpen(name);
     try {
@@ -317,15 +346,18 @@ class CachePartitions {
     }
   }
 
+  // يفتح الصندوق المعزول بالاسم
   static Future<Box<E>> openBox<E>(String name) async {
     if (!_enabled) return Hive.openBox<E>(name);
     return box<E>(name);
   }
 
+  // يعيد تفضيلات الذاكرة المؤقتة للجلسة
   static Future<CachePreferences> preferences() async => CachePreferences(
       await SharedPreferences.getInstance(), _enabled ? _scope : null);
 }
 
+// جلسة ذاكرة مؤقتة لمستخدم وشركة
 class _CacheSession {
   _CacheSession(this.uid, this.company, this.preferences, this.opened);
   final String uid, company;
@@ -334,22 +366,32 @@ class _CacheSession {
   final Object identity = Object();
 }
 
+// تفضيلات الذاكرة المؤقتة ضمن القسم نفسه
 /// Cursor reads/writes are in the same partition as their cached records.
 /// Login credentials, user choices and appearance preferences are untouched.
 class CachePreferences {
   CachePreferences(this.raw, this.scope);
   final SharedPreferences raw;
   final _CacheSession? scope;
+
+  // يحدد هل المفتاح خاص بمؤشر المزامنة
   bool _cursor(String key) => key.startsWith('last_sync_');
+
+  // يعيد صندوق البيانات الوصفية
   Box get _metadata {
     CachePartitions._check(scope);
     return scope!.opened['cache_metadata_box']!;
   }
 
+  // يقرأ نصًا من التفضيلات
   String? getString(String key) => CachePartitions.enabled && _cursor(key)
       ? _metadata.get(key) as String?
       : raw.getString(key);
+
+  // يقرأ قيمة منطقية من التفضيلات
   bool? getBool(String key) => raw.getBool(key);
+
+  // يحفظ نصًا في التفضيلات
   Future<bool> setString(String key, String value) async {
     if (CachePartitions.enabled && _cursor(key)) {
       await _metadata.put(key, value);
@@ -358,7 +400,10 @@ class CachePreferences {
     return raw.setString(key, value);
   }
 
+  // يحفظ قيمة منطقية في التفضيلات
   Future<bool> setBool(String key, bool value) => raw.setBool(key, value);
+
+  // يحذف مفتاحًا من التفضيلات
   Future<bool> remove(String key) async {
     if (CachePartitions.enabled && _cursor(key)) {
       await _metadata.delete(key);
@@ -368,19 +413,25 @@ class CachePreferences {
   }
 }
 
+// صندوق معزول يغلّف الصندوق الأصلي ويتحقق من الجلسة
 /// A retained Box cannot be reused across logout/company changes. Watchers
 /// stop delivering immediately when their original session is no longer live.
 class _PartitionBox<E> implements Box<E> {
   _PartitionBox(this.scope, this.raw);
   final _CacheSession scope;
   final Box<E> raw;
+
+  // يعيد الصندوق الأصلي بعد التحقق من الجلسة
   Box<E> get _box {
     CachePartitions._check(scope);
     return raw;
   }
 
+  // يعيد اسم الصندوق
   @override
   String get name => raw.name;
+
+  // يحدد هل الصندوق مفتوح
   @override
   bool get isOpen {
     try {
@@ -390,34 +441,61 @@ class _PartitionBox<E> implements Box<E> {
     }
   }
 
+  // يعيد مسار الصندوق
   @override
   String? get path => raw.path;
+
+  // يحدد هل الصندوق كسول
   @override
   bool get lazy => false;
+
+  // يعيد مفاتيح الصندوق
   @override
   Iterable<dynamic> get keys => _box.keys.toList();
+
+  // يعيد قيم الصندوق
   @override
   Iterable<E> get values => _box.values.toList();
+
+  // يعيد عدد عناصر الصندوق
   @override
   int get length => _box.length;
+
+  // يحدد هل الصندوق فارغ
   @override
   bool get isEmpty => _box.isEmpty;
+
+  // يحدد هل الصندوق غير فارغ
   @override
   bool get isNotEmpty => _box.isNotEmpty;
+
+  // يعيد المفتاح عند الموضع المحدد
   @override
   dynamic keyAt(int index) => _box.keyAt(index);
+
+  // يحدد هل المفتاح موجود
   @override
   bool containsKey(dynamic key) => _box.containsKey(key);
+
+  // يقرأ القيمة بالمفتاح
   @override
   E? get(dynamic key, {E? defaultValue}) =>
       _box.get(key, defaultValue: defaultValue);
+
+  // يقرأ القيمة عند الموضع المحدد
   @override
   E? getAt(int index) => _box.getAt(index);
+
+  // يحوّل الصندوق إلى خريطة
   @override
   Map<dynamic, E> toMap() => _box.toMap();
+
+  // يعيد القيم بين مفتاحين
   @override
   Iterable<E> valuesBetween({dynamic startKey, dynamic endKey}) =>
       _box.valuesBetween(startKey: startKey, endKey: endKey).toList();
+
+  // يراقب تغيّرات الصندوق ضمن الجلسة الحالية
   @override
   Stream<BoxEvent> watch({dynamic key}) => _box.watch(key: key).where((_) {
         try {
@@ -427,31 +505,57 @@ class _PartitionBox<E> implements Box<E> {
           return false;
         }
       });
+
+  // يحفظ قيمة بمفتاح
   @override
   Future<void> put(dynamic key, E value) => _box.put(key, value);
+
+  // يحفظ قيمة عند موضع محدد
   @override
   Future<void> putAt(int index, E value) => _box.putAt(index, value);
+
+  // يحفظ مجموعة قيم
   @override
   Future<void> putAll(Map<dynamic, E> entries) => _box.putAll(entries);
+
+  // يضيف قيمة
   @override
   Future<int> add(E value) => _box.add(value);
+
+  // يضيف مجموعة قيم
   @override
   Future<Iterable<int>> addAll(Iterable<E> values) => _box.addAll(values);
+
+  // يحذف مفتاحًا
   @override
   Future<void> delete(dynamic key) => _box.delete(key);
+
+  // يحذف العنصر عند موضع محدد
   @override
   Future<void> deleteAt(int index) => _box.deleteAt(index);
+
+  // يحذف مجموعة مفاتيح
   @override
   Future<void> deleteAll(Iterable<dynamic> keys) => _box.deleteAll(keys);
+
+  // يضغط الصندوق
   @override
   Future<void> compact() => _box.compact();
+
+  // يفرّغ الصندوق
   @override
   Future<int> clear() => _box.clear();
+
+  // يفرغ البيانات إلى القرص
   @override
   Future<void> flush() => _box.flush();
+
+  // يغلق الصندوق (غير مسموح)
   @override
   Future<void> close() =>
       throw StateError('Account cache lifecycle is centrally managed');
+
+  // يحذف الصندوق من القرص (غير مسموح)
   @override
   Future<void> deleteFromDisk() =>
       throw StateError('Account caches cannot be deleted implicitly');

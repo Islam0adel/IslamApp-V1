@@ -1,3 +1,4 @@
+// frontend/lib/services/permissions_service.dart
 import 'page_visibility.dart';
 import 'cache_partitions.dart';
 import 'admin_cache_events.dart';
@@ -13,8 +14,8 @@ import 'treasury_cache_scope.dart';
 // lib/services/permissions_service.dart
 
 import 'dart:async';
-import 'refresh_barrier.dart';                                   // ← NEW
-import 'package:flutter/foundation.dart';              // ← NEW: ChangeNotifier
+import 'refresh_barrier.dart'; // ← NEW
+import 'package:flutter/foundation.dart'; // ← NEW: ChangeNotifier
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'revocation_service.dart';
@@ -22,10 +23,12 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../services/api_service.dart';
 
-class PermissionsService extends ChangeNotifier {      // ← extends ChangeNotifier
-  static final PermissionsService _instance =
-      PermissionsService._internal();
+// خدمة الصلاحيات: تحمّل صلاحيات المستخدم ودوره وفروعه وتعلن عن تغيّرها
+class PermissionsService extends ChangeNotifier {
+  // ← extends ChangeNotifier
+  static final PermissionsService _instance = PermissionsService._internal();
 
+  // يعيد النسخة الوحيدة من الخدمة
   factory PermissionsService() => _instance;
 
   // ============================================================
@@ -39,11 +42,10 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
   // أي تغيير → reset تلقائي للصلاحيات + إيقاف Firestore listener
   // ============================================================
 
+  // منشئ داخلي يهيّئ الخدمة ويراقب حالة المصادقة
   PermissionsService._internal() {
     try {
-      FirebaseAuth.instance
-          .authStateChanges()
-          .listen(_onAuthStateChanged);
+      FirebaseAuth.instance.authStateChanges().listen(_onAuthStateChanged);
     } catch (e) {
       print('⚠️ فشل تسجيل auth listener: $e');
     }
@@ -56,9 +58,10 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
   Map<String, Map<String, bool>>? _permissions;
   List<String>? _allowedBranchCodes;
   String? _defaultBranchCode;
-  String? _currentRole;   // ⭐ جديد
+  String? _currentRole; // ⭐ جديد
   bool _companyPolicyActive = false;
 
+  // يحسب توقيعًا لكل ما يحدد الصفوف التي يراها المستخدم
   /// Everything that decides which rows this viewer may hold and how each is shaped, EXCEPT the
   /// linked employee code (which a write of the viewer's own employee row legitimately moves).
   /// Staged applies compare it before and after an awaited write: any real change of rights,
@@ -75,77 +78,128 @@ class PermissionsService extends ChangeNotifier {      // ← extends ChangeNoti
       }
       return '$v';
     }
+
     return enc({
-      'p': _permissions, 'b': _allowedBranchCodes, 'v': _hrViewableEmployees, 'r': _currentRole,
-      'c': _companyPolicyActive, 'u': _identityProfileUid, 'pending': _scopeVerificationPending,
+      'p': _permissions,
+      'b': _allowedBranchCodes,
+      'v': _hrViewableEmployees,
+      'r': _currentRole,
+      'c': _companyPolicyActive,
+      'u': _identityProfileUid,
+      'pending': _scopeVerificationPending,
     });
   }
+
   bool _scopeVerificationPending = false;
 
   /// بصمة نطاق خلاصة اليومية (transactions v2) من آخر تحديث ناجح من السيرفر،
   /// لو الباكند بيرجعها في ملف الصلاحيات. الدمج يعيد استخدامها بدل طلب منفصل.
   /// null للباكند القديم أو طالما النطاق الحالي مش مؤكد.
   String? _transactionsScopeFingerprint;
+
+  // يعيد بصمة نطاق الحركات عند اكتمال التحقق
   String? get transactionsScopeFingerprint =>
-      (_loaded && !_scopeVerificationPending) ? _transactionsScopeFingerprint : null;
+      (_loaded && !_scopeVerificationPending)
+          ? _transactionsScopeFingerprint
+          : null;
   Map<String, dynamic> _delegablePermissions = {};
   List<String> _delegableBranchCodes = [];
+
+  // يعيد أكواد الفروع القابلة للتفويض
   List<String> get delegableBranchCodes =>
       !_scopeVerificationPending && _companyPolicyActive && isAdmin
-          ? List<String>.unmodifiable(_delegableBranchCodes) : const [];
-  bool canDelegateBranch(String branchCode) => !_scopeVerificationPending &&
-      (canBypassPermissions || (isAdmin && _companyPolicyActive &&
-        (_delegableBranchCodes.contains('all') || _delegableBranchCodes.contains(branchCode))));
+          ? List<String>.unmodifiable(_delegableBranchCodes)
+          : const [];
+
+  // يحدد هل يمكن تفويض الفرع المحدد
+  bool canDelegateBranch(String branchCode) =>
+      !_scopeVerificationPending &&
+      (canBypassPermissions ||
+          (isAdmin &&
+              _companyPolicyActive &&
+              (_delegableBranchCodes.contains('all') ||
+                  _delegableBranchCodes.contains(branchCode))));
   Future<void>? _serverRefresh;
+
+  // يعيد عملية التحديث الجارية من الخادم
   Future<void>? get pendingServerRefresh => _serverRefresh;
   Completer<void>? _firstSnapshotHandled;
+
+  // يعيد عملية معالجة أول لقطة للصلاحيات
   /// Completes once the permissions listener has handled its first snapshot (null if no listener started).
   Future<void>? get firstSnapshotHandled => _firstSnapshotHandled?.future;
   int _serverScopeGeneration = 0;
   final Set<String> _pendingSyncModules = {};
+
+  // يعيد الوحدات التي تحتاج مزامنة بعد تغيّر النطاق ويفرغها
   Set<String> takeScopeSyncModules() {
     final result = Set<String>.from(_pendingSyncModules);
     _pendingSyncModules.clear();
     return result;
   }
-  void _recordScopeSync(Map<String,dynamic>? before, Map<String,dynamic>? after,
-      List<String>? oldBranches,List<String>? branches,List<String>? oldEmployees,List<String>? employees) {
-    _pendingSyncModules.addAll(ScopeSyncPlan.between(before:before,after:after,
-      oldBranches:oldBranches,branches:branches,oldEmployees:oldEmployees,employees:employees));
+
+  // يسجّل الوحدات المتأثرة بتغيّر النطاق
+  void _recordScopeSync(
+      Map<String, dynamic>? before,
+      Map<String, dynamic>? after,
+      List<String>? oldBranches,
+      List<String>? branches,
+      List<String>? oldEmployees,
+      List<String>? employees) {
+    _pendingSyncModules.addAll(ScopeSyncPlan.between(
+        before: before,
+        after: after,
+        oldBranches: oldBranches,
+        branches: branches,
+        oldEmployees: oldEmployees,
+        employees: employees));
   }
+
+  // يتحقق من الملف الفعلي الحالي للمستخدم من الخادم
   /// Superseded reads stay rejected. The caller joins a NEW current check,
   /// never treats an old response as approved for the new generation.
-  Future<void> verifyCurrentEffectiveProfile({bool restrictWhileLoading = true}) async {
-return CachePartitions.run(() async {
-
-    for (var attempt=0; attempt<4; attempt++) {
-      try {
-        // Capture inside the retry: a context that is inconsistent AT capture
-        // (e.g. cache session or account identity mid-transition) gets the same
-        // re-anchor-and-retry treatment as one that moves mid-read.
-        final context = await ReadAuthorizationSnapshot.capture();
-        final pending = _serverRefresh;
-        if(pending != null) { await pending; } else {
-          await refreshEffectiveProfile(restrictWhileLoading:restrictWhileLoading);
+  Future<void> verifyCurrentEffectiveProfile(
+      {bool restrictWhileLoading = true}) async {
+    return CachePartitions.run(() async {
+      for (var attempt = 0; attempt < 4; attempt++) {
+        try {
+          // Capture inside the retry: a context that is inconsistent AT capture
+          // (e.g. cache session or account identity mid-transition) gets the same
+          // re-anchor-and-retry treatment as one that moves mid-read.
+          final context = await ReadAuthorizationSnapshot.capture();
+          final pending = _serverRefresh;
+          if (pending != null) {
+            await pending;
+          } else {
+            await refreshEffectiveProfile(
+                restrictWhileLoading: restrictWhileLoading);
+          }
+          if (!context.sameContext) throw const ReadAuthorizationChanged();
+          if (_serverRefresh != null && !identical(_serverRefresh, pending))
+            continue;
+          if (_scopeVerificationPending || !_loaded)
+            throw const ReadAuthorizationChanged();
+          return;
+        } on ReadAuthorizationChanged {
+          // A concurrent purge/scope change moving under the read is a reason to
+          // re-verify the CURRENT state, not to give up: re-anchor and retry.
+          if (attempt == 3) rethrow;
         }
-        if(!context.sameContext) throw const ReadAuthorizationChanged();
-        if(_serverRefresh != null && !identical(_serverRefresh,pending)) continue;
-        if(_scopeVerificationPending || !_loaded) throw const ReadAuthorizationChanged();
-        return;
-      } on ReadAuthorizationChanged {
-        // A concurrent purge/scope change moving under the read is a reason to
-        // re-verify the CURRENT state, not to give up: re-anchor and retry.
-        if(attempt==3) rethrow;
       }
-    }
-    throw const ReadAuthorizationChanged();
-});
-}
-  bool get companyPolicyActive => _companyPolicyActive;
-  bool get canBypassPermissions => !_scopeVerificationPending && (isSuperAdmin || (isAdmin && !_companyPolicyActive));
-    List<String>? _hrViewableEmployees;
+      throw const ReadAuthorizationChanged();
+    });
+  }
 
-    /// ⭐ كود الموظف الحالي (لو مربوط بحساب Firebase)
+  // يحدد هل سياسة صلاحيات الشركة مفعّلة
+  bool get companyPolicyActive => _companyPolicyActive;
+
+  // يحدد هل يتجاوز المستخدم فحص الصلاحيات (مدير)
+  bool get canBypassPermissions =>
+      !_scopeVerificationPending &&
+      (isSuperAdmin || (isAdmin && !_companyPolicyActive));
+  List<String>? _hrViewableEmployees;
+
+  /// ⭐ كود الموظف الحالي (لو مربوط بحساب Firebase)
   String? _currentEmployeeCode;
   String? _identityProfileUid;
   String? _identityCompany;
@@ -166,13 +220,14 @@ return CachePartitions.run(() async {
   /// آخر UID محفوظ — يستخدمه الـ listener لكشف تغيير المستخدم
   String? _cachedUid;
 
-    // ✅ NEW: Firestore snapshot listener
+  // ✅ NEW: Firestore snapshot listener
   StreamSubscription<DocumentSnapshot>? _firestoreSub;
   String? _listenedEmail;
 
   /// ⭐ Hive listener — لإعادة حساب _currentEmployeeCode لما employees تتحمل
   StreamSubscription<BoxEvent>? _employeesHiveSub;
 
+  // يحدد هل تم تحميل الصلاحيات
   /// هل الصلاحيات محملة وجاهزة للاستخدام؟
   bool get isLoaded => _loaded;
 
@@ -180,52 +235,87 @@ return CachePartitions.run(() async {
   // ⭐ Role Getters
   // ============================================================
 
+  // يعيد الدور الحالي للمستخدم
   /// الدور الحالي (super_admin / admin / employee)
   String? get currentRole => _currentRole;
 
+  // يعيد توقيع الصلاحيات للدمج المرحلي
   /// Stable text of the effective permissions; part of the staged-sync scope key.
-  String get stagedPermissionSignature => jsonEncode(_sortedForSignature(_permissions));
+  String get stagedPermissionSignature =>
+      jsonEncode(_sortedForSignature(_permissions));
+
+  // يرتب مفاتيح الخريطة لإنتاج توقيع ثابت
   static dynamic _sortedForSignature(dynamic v) => v is Map
-      ? {for (final k in (v.keys.map((e) => e.toString()).toList()..sort())) k: _sortedForSignature(v[k])}
+      ? {
+          for (final k in (v.keys.map((e) => e.toString()).toList()..sort()))
+            k: _sortedForSignature(v[k])
+        }
       : v;
 
+  // يحدد هل المستخدم مدير عام
   /// السوبر أدمن (صاحب البرنامج) — كل شيء مفتوح
-  bool get isSuperAdmin => !_scopeVerificationPending && _currentRole == 'super_admin';
+  bool get isSuperAdmin =>
+      !_scopeVerificationPending && _currentRole == 'super_admin';
 
+  // يحدد هل المستخدم مدير شركة
   /// مدير الشركة — كل شيء مفتوح ما عدا إدارة الشركات
   bool get isAdmin =>
-      !_scopeVerificationPending && (_currentRole == 'admin' || _currentRole == 'super_admin');
+      !_scopeVerificationPending &&
+      (_currentRole == 'admin' || _currentRole == 'super_admin');
 
+  // يحدد هل المستخدم موظف عادي
   /// موظف عادي — Sandbox
-  bool get isEmployee =>
-      _currentRole == 'employee' || _currentRole == null;
+  bool get isEmployee => _currentRole == 'employee' || _currentRole == null;
 
+  // يحدد هل يملك المستخدم صلاحية إدارة الشركات
   /// إدارة الشركات (super_admin فقط)
   bool get canManageCompanies => !_scopeVerificationPending && isSuperAdmin;
 
+  // يحدد هل يملك المستخدم صلاحية إدارة المستخدمين
   /// Legacy role gate used by pending-operation ownership, not user actions.
   bool get canManageUsers => !_scopeVerificationPending && isAdmin;
 
   static const userManagementActions = <String>[
-    'معاينة', 'إضافة', 'تعديل', 'حذف', 'تغيير حالة الحساب',
-    'إعادة تهيئة حساب', 'الموافقة على طلب', 'رفض طلب',
+    'معاينة',
+    'إضافة',
+    'تعديل',
+    'حذف',
+    'تغيير حالة الحساب',
+    'إعادة تهيئة حساب',
+    'الموافقة على طلب',
+    'رفض طلب',
   ];
 
+  // يحدد هل يملك المستخدم إجراء إدارة مستخدمين محددًا
   bool canUserManagementAction(String action) {
-    if (_scopeVerificationPending || !userManagementActions.contains(action)) return false;
+    if (_scopeVerificationPending || !userManagementActions.contains(action))
+      return false;
     if (isSuperAdmin) return true;
     if (!_companyPolicyActive) return isAdmin;
     return hasPermission('إدارة المستخدمين', action);
   }
 
+  // يحدد هل يمكن فتح شاشة إدارة المستخدمين
   bool get canOpenUserManagement =>
       userManagementActions.any(canUserManagementAction);
-  bool get canReviewUserRequests => canUserManagementAction('الموافقة على طلب') ||
+
+  // يحدد هل يملك المستخدم صلاحية مراجعة طلبات الانضمام
+  bool get canReviewUserRequests =>
+      canUserManagementAction('الموافقة على طلب') ||
       canUserManagementAction('رفض طلب');
 
+  // يحدد هل يملك المستخدم صلاحية إدارة الصلاحيات
   /// إدارة الصلاحيات (admin + super_admin)
-  bool get canManagePermissions => !_scopeVerificationPending && (canBypassPermissions || (isAdmin && _companyPolicyActive && (CompanyPermissionPolicy.grants(_delegablePermissions).isNotEmpty || _delegableBranchCodes.isNotEmpty)));
+  bool get canManagePermissions =>
+      !_scopeVerificationPending &&
+      (canBypassPermissions ||
+          (isAdmin &&
+              _companyPolicyActive &&
+              (CompanyPermissionPolicy.grants(_delegablePermissions)
+                      .isNotEmpty ||
+                  _delegableBranchCodes.isNotEmpty)));
 
+  // يضبط دور المستخدم يدويًا
   /// تحديث الدور يدوياً (بعد تسجيل دخول أو عند تغييره)
   void setRole(String? role) {
     final normalized = (role ?? '').trim();
@@ -235,6 +325,7 @@ return CachePartitions.run(() async {
     notifyListeners();
   }
 
+  // يضبط الفروع المسموح بها
   /// ⭐ تحديث الفروع المسموحة فوراً (بعد login — قبل Firestore listener)
   void setAllowedBranches(List<String>? branches) {
     List<String> effective;
@@ -248,14 +339,16 @@ return CachePartitions.run(() async {
       if (effective.isEmpty) effective = ['all'];
     }
 
-    if (!const DeepEq().equals(_allowedBranchCodes, effective)) ReadAuthorizationEpoch.invalidate();
+    if (!const DeepEq().equals(_allowedBranchCodes, effective))
+      ReadAuthorizationEpoch.invalidate();
     _allowedBranchCodes = effective;
 
     // حفظ في Hive (للمرات القادمة)
     final email = _currentUserEmail;
     if (email != null && email.isNotEmpty) {
       try {
-        CachePartitions.box('coding_box').put('allowed_branches_$email', effective);
+        CachePartitions.box('coding_box')
+            .put('allowed_branches_$email', effective);
       } catch (e) {
         print('⚠️ save allowed_branches to Hive: $e');
       }
@@ -274,11 +367,13 @@ return CachePartitions.run(() async {
   // لو الـ UID اتغير → reset تلقائي + إيقاف Firestore listener
   // ============================================================
 
+  // يعيد ضبط الحالة عند تغيير قسم الذاكرة المؤقتة
   void resetForCachePartition() {
     _resetState();
     _stopFirestoreListener();
   }
 
+  // يستجيب لتغيّر حالة المصادقة
   void _onAuthStateChanged(User? user) {
     final newUid = user?.uid ?? '';
 
@@ -296,10 +391,11 @@ return CachePartitions.run(() async {
     // المستخدم اتغير → reset
     print('🔄 تغيير المستخدم: $_cachedUid → $newUid');
     _cachedUid = newUid;
-    if (CachePartitions.enabled && CachePartitions.ownerUid != newUid) CachePartitions.suspend();
+    if (CachePartitions.enabled && CachePartitions.ownerUid != newUid)
+      CachePartitions.suspend();
     _resetState();
-    _stopFirestoreListener();                          // ← NEW
-    notifyListeners();                                 // ← NEW
+    _stopFirestoreListener(); // ← NEW
+    notifyListeners(); // ← NEW
   }
 
   // ============================================================
@@ -315,6 +411,7 @@ return CachePartitions.run(() async {
   /// (تعينه main.dart على _forceFullResync).
   void Function()? onScopeNarrowed;
 
+  // يبدأ الاستماع لمستند صلاحيات المستخدم
   void _startFirestoreListener(String email) {
     if (_listenedEmail == email && _firestoreSub != null) return;
 
@@ -334,114 +431,134 @@ return CachePartitions.run(() async {
         .snapshots()
         .listen(
       (snapshot) async {
-        try { await (() async {
-        if (!CachePartitions.boundWorkIsCurrent) return;
-        if (await handleOwnDocumentAbsence(
-            exists: snapshot.exists,
-            fromCache: snapshot.metadata.isFromCache,
-            uid: listenerUid,
-            email: email,
-            generation: listenerGeneration)) return;
-        if (!snapshot.exists) return;
-        final data = snapshot.data();
-        if (data == null) return;
+        try {
+          await (() async {
+            if (!CachePartitions.boundWorkIsCurrent) return;
+            if (await handleOwnDocumentAbsence(
+                exists: snapshot.exists,
+                fromCache: snapshot.metadata.isFromCache,
+                uid: listenerUid,
+                email: email,
+                generation: listenerGeneration)) return;
+            if (!snapshot.exists) return;
+            final data = snapshot.data();
+            if (data == null) return;
 
-        // لقطة سابقة لمقارنة النطاق بعد التطبيق (دورة حياة السحب)
-        final prevPerms = _permissions == null
-            ? null
-            : Map<String, dynamic>.from(_permissions!);
-        final prevBranches = _allowedBranchCodes == null
-            ? null
-            : List<String>.from(_allowedBranchCodes!);
-        final prevViewable = _hrViewableEmployees == null
-            ? null
-            : List<String>.from(_hrViewableEmployees!);
+            // لقطة سابقة لمقارنة النطاق بعد التطبيق (دورة حياة السحب)
+            final prevPerms = _permissions == null
+                ? null
+                : Map<String, dynamic>.from(_permissions!);
+            final prevBranches = _allowedBranchCodes == null
+                ? null
+                : List<String>.from(_allowedBranchCodes!);
+            final prevViewable = _hrViewableEmployees == null
+                ? null
+                : List<String>.from(_hrViewableEmployees!);
 
-        // ============================================================
-        // ✅ NEW: فحص is_active — لو محظور، نسجله خروج فورًا
-        //
-        // بيحصل لما:
-        // - الأدمن يحظر المستخدم وهو داخل
-        // - المستخدم يفتح التطبيق بعد ما اتحظر
-        //
-        // الحماية في login() بتمنع الدخول الجديد،
-        // ودي بتمنع الاستمرار لو محظور أثناء الاستخدام.
-        // ============================================================
-        if (data['is_active'] == false) {
-          ReadAuthorizationEpoch.invalidate();
-          print('🚫 تم إيقاف حساب $email من الإدارة — جاري تسجيل الخروج');
-          _stopFirestoreListener();
-          FirebaseAuth.instance.signOut();
-          return;
-        }
+            // ============================================================
+            // ✅ NEW: فحص is_active — لو محظور، نسجله خروج فورًا
+            //
+            // بيحصل لما:
+            // - الأدمن يحظر المستخدم وهو داخل
+            // - المستخدم يفتح التطبيق بعد ما اتحظر
+            //
+            // الحماية في login() بتمنع الدخول الجديد،
+            // ودي بتمنع الاستمرار لو محظور أثناء الاستخدام.
+            // ============================================================
+            if (data['is_active'] == false) {
+              ReadAuthorizationEpoch.invalidate();
+              print('🚫 تم إيقاف حساب $email من الإدارة — جاري تسجيل الخروج');
+              _stopFirestoreListener();
+              FirebaseAuth.instance.signOut();
+              return;
+            }
 
-        if (_scopeVerificationPending || _companyPolicyActive || CachePartitions.box('coding_box').containsKey(
-            EffectiveProfileSnapshot.cacheKey(FirebaseAuth.instance.currentUser?.uid ?? '', _cachedPrefs?.getString('company_code') ?? ''))) {
-          final observedScope = <String, dynamic>{
-            for (final key in ['role', 'job_code', 'company_code', 'permissions', 'allowed_branches', 'hr_viewable_employees'])
-              key: data[key],
-          };
-          final knownChange = lastObservedScope != null && !const DeepEq().equals(lastObservedScope, observedScope);
-          lastObservedScope = Map<String, dynamic>.from(jsonDecode(jsonEncode(observedScope)));
-          // A cached startup event is not a newly confirmed revocation. Do not
-          // turn ordinary offline opening into an unresolved permission hold.
-          if (snapshot.metadata.isFromCache) return;
-          unawaited(refreshEffectiveProfile(restrictWhileLoading: knownChange).catchError((Object error) {
-            print('⚠️ Effective profile refresh failed: $error');
-          }));
-          return;
-        }
-        bool changed = false;
+            if (_scopeVerificationPending ||
+                _companyPolicyActive ||
+                CachePartitions.box('coding_box').containsKey(
+                    EffectiveProfileSnapshot.cacheKey(
+                        FirebaseAuth.instance.currentUser?.uid ?? '',
+                        _cachedPrefs?.getString('company_code') ?? ''))) {
+              final observedScope = <String, dynamic>{
+                for (final key in [
+                  'role',
+                  'job_code',
+                  'company_code',
+                  'permissions',
+                  'allowed_branches',
+                  'hr_viewable_employees'
+                ])
+                  key: data[key],
+              };
+              final knownChange = lastObservedScope != null &&
+                  !const DeepEq().equals(lastObservedScope, observedScope);
+              lastObservedScope = Map<String, dynamic>.from(
+                  jsonDecode(jsonEncode(observedScope)));
+              // A cached startup event is not a newly confirmed revocation. Do not
+              // turn ordinary offline opening into an unresolved permission hold.
+              if (snapshot.metadata.isFromCache) return;
+              unawaited(
+                  refreshEffectiveProfile(restrictWhileLoading: knownChange)
+                      .catchError((Object error) {
+                print('⚠️ Effective profile refresh failed: $error');
+              }));
+              return;
+            }
+            bool changed = false;
 
-        final permissionsData = data['permissions'];
-        if (permissionsData is Map) {
-          final newPerms = _convertToPermissionsMap(permissionsData);
-          if (!const DeepEq().equals(_permissions, newPerms)) ReadAuthorizationEpoch.invalidate();
-          _permissions = newPerms;
-          CachePartitions.box('coding_box').put('permissions_$email', newPerms);
-          changed = true;
-        }
+            final permissionsData = data['permissions'];
+            if (permissionsData is Map) {
+              final newPerms = _convertToPermissionsMap(permissionsData);
+              if (!const DeepEq().equals(_permissions, newPerms))
+                ReadAuthorizationEpoch.invalidate();
+              _permissions = newPerms;
+              CachePartitions.box('coding_box')
+                  .put('permissions_$email', newPerms);
+              changed = true;
+            }
 
-                final branchesData = data['allowed_branches'];
-        if (branchesData != null) {
-          final newBranches = _parseBranchList(branchesData) ?? ['all'];
-          if (!const DeepEq().equals(_allowedBranchCodes, newBranches)) ReadAuthorizationEpoch.invalidate();
-          _allowedBranchCodes = newBranches;
-          CachePartitions.box('coding_box').put('allowed_branches_$email', newBranches);
-          changed = true;
-        }
+            final branchesData = data['allowed_branches'];
+            if (branchesData != null) {
+              final newBranches = _parseBranchList(branchesData) ?? ['all'];
+              if (!const DeepEq().equals(_allowedBranchCodes, newBranches))
+                ReadAuthorizationEpoch.invalidate();
+              _allowedBranchCodes = newBranches;
+              CachePartitions.box('coding_box')
+                  .put('allowed_branches_$email', newBranches);
+              changed = true;
+            }
 
-        // ⭐ جديد: متابعة قائمة الموظفين المرئيين في HR
-        if (data.containsKey('hr_viewable_employees')) {
-          final rawViewable = data['hr_viewable_employees'];
-          List<String>? newViewable;
-          if (rawViewable == null) {
-            newViewable = null;
-          } else if (rawViewable is List) {
-            newViewable = rawViewable.map((e) => e.toString()).toList();
-          }
+            // ⭐ جديد: متابعة قائمة الموظفين المرئيين في HR
+            if (data.containsKey('hr_viewable_employees')) {
+              final rawViewable = data['hr_viewable_employees'];
+              List<String>? newViewable;
+              if (rawViewable == null) {
+                newViewable = null;
+              } else if (rawViewable is List) {
+                newViewable = rawViewable.map((e) => e.toString()).toList();
+              }
 
-          if (!const DeepEq().equals(_hrViewableEmployees, newViewable)) ReadAuthorizationEpoch.invalidate();
-          _hrViewableEmployees = newViewable;
-          final box = CachePartitions.box('coding_box');
-          if (newViewable == null) {
-            await box.delete('hr_viewable_employees_$email');
-          } else {
-            await box.put('hr_viewable_employees_$email', newViewable);
-          }
-          changed = true;
-        }
+              if (!const DeepEq().equals(_hrViewableEmployees, newViewable))
+                ReadAuthorizationEpoch.invalidate();
+              _hrViewableEmployees = newViewable;
+              final box = CachePartitions.box('coding_box');
+              if (newViewable == null) {
+                await box.delete('hr_viewable_employees_$email');
+              } else {
+                await box.put('hr_viewable_employees_$email', newViewable);
+              }
+              changed = true;
+            }
 
-        if (changed) {
-          print('⚡ صلاحيات $email اتحدثت لحظيًا من Firestore');
-          notifyListeners();
+            if (changed) {
+              print('⚡ صلاحيات $email اتحدثت لحظيًا من Firestore');
+              notifyListeners();
 
-          // دورة حياة السحب: عزل/استعادة scoped بلا حذف
-          final companyCode =
-              _cachedPrefs?.getString('company_code') ?? '';
-          if (companyCode.isNotEmpty) {
-            unawaited(RevocationService.instance
-                .applyTransition(
+              // دورة حياة السحب: عزل/استعادة scoped بلا حذف
+              final companyCode = _cachedPrefs?.getString('company_code') ?? '';
+              if (companyCode.isNotEmpty) {
+                unawaited(RevocationService.instance
+                    .applyTransition(
                   email: email,
                   companyCode: companyCode,
                   oldPerms: prevPerms,
@@ -458,28 +575,34 @@ return CachePartitions.run(() async {
                       : List<String>.from(_hrViewableEmployees!),
                   ownerUid: FirebaseAuth.instance.currentUser?.uid,
                 )
-                .then((needsResync) async {
-              // احفظ اللقطة المطبقة كأساس لمسار التحميل من Hive
-              final box = CachePartitions.box('coding_box');
-              await box.put(
-                'permissions_applied_$email',
-                _permissions ?? <String, dynamic>{},
-              );
-              await box.put('branches_applied_$email',
-                  _allowedBranchCodes ?? <String>[]);
-              await box.put('viewable_applied_$email',
-                  _hrViewableEmployees ?? <String>[]);
-              _recordScopeSync(prevPerms,_permissions,prevBranches,_allowedBranchCodes,prevViewable,_hrViewableEmployees);
-      if (_pendingSyncModules.isNotEmpty) onScopeNarrowed?.call();
-            }));
-          }
+                    .then((needsResync) async {
+                  // احفظ اللقطة المطبقة كأساس لمسار التحميل من Hive
+                  final box = CachePartitions.box('coding_box');
+                  await box.put(
+                    'permissions_applied_$email',
+                    _permissions ?? <String, dynamic>{},
+                  );
+                  await box.put('branches_applied_$email',
+                      _allowedBranchCodes ?? <String>[]);
+                  await box.put('viewable_applied_$email',
+                      _hrViewableEmployees ?? <String>[]);
+                  _recordScopeSync(prevPerms, _permissions, prevBranches,
+                      _allowedBranchCodes, prevViewable, _hrViewableEmployees);
+                  if (_pendingSyncModules.isNotEmpty) onScopeNarrowed?.call();
+                }));
+              }
+            }
+          })();
+        } finally {
+          final c = _firstSnapshotHandled;
+          if (c != null && !c.isCompleted) c.complete();
         }
-        })(); } finally { final c = _firstSnapshotHandled; if (c != null && !c.isCompleted) c.complete(); }
       },
       onError: (e) => print('⚠️ خطأ في listener الصلاحيات: $e'),
     );
   }
 
+  // يعالج غياب مستند المستخدم بعد تأكيد حذفه من الخادم
   /// Confirmed server deletion only. Cache misses/offline uncertainty are not
   /// deletion proof. Every continuation stays bound to the original account.
   Future<bool> handleOwnDocumentAbsence(
@@ -522,9 +645,11 @@ return CachePartitions.run(() async {
       // Forget disposable display and permission snapshots, not unsent work.
       // Partition proxies reject every late write after an account switch.
       for (final name in CachePartitions.boxes.where((name) => !const {
-        'commercial_pending_box', 'hr_pending_box',
-        'journal_save_intents_box', 'journal_import_batches_box'
-      }.contains(name))) {
+            'commercial_pending_box',
+            'hr_pending_box',
+            'journal_save_intents_box',
+            'journal_import_batches_box'
+          }.contains(name))) {
         if (!current()) return true;
         if (CachePartitions.isBoxOpen(name)) {
           await CachePartitions.box(name).clear();
@@ -560,6 +685,7 @@ return CachePartitions.run(() async {
 
   void Function()? onOwnAccountDeleted;
 
+  // يوقف الاستماع لمستند الصلاحيات
   void _stopFirestoreListener() {
     _firestoreSub?.cancel();
     _firestoreSub = null;
@@ -577,13 +703,13 @@ return CachePartitions.run(() async {
   // فبنعيد الحساب تلقائياً.
   // ============================================================
 
+  // يبدأ الاستماع لتغيّرات صندوق الموظفين المحلي
   void _startEmployeesHiveListener() {
     if (_employeesHiveSub != null) return;
 
     try {
-      _employeesHiveSub = CachePartitions.box('coding_box')
-          .watch()
-          .listen((event) {
+      _employeesHiveSub =
+          CachePartitions.box('coding_box').watch().listen((event) {
         final key = event.key?.toString() ?? '';
 
         // نستمع فقط لتغييرات employees
@@ -592,7 +718,7 @@ return CachePartitions.run(() async {
         print('📦 [Hive] employees تحدثت → إعادة حساب employee_code');
 
         final previousCode = _currentEmployeeCode;
-        _currentEmployeeCode = null;  // ⭐ نعيد الحساب من الأول
+        _currentEmployeeCode = null; // ⭐ نعيد الحساب من الأول
         _tryComputeCurrentEmployeeCode();
 
         // لو حصل ربط جديد، أعلم المستمعين
@@ -602,13 +728,24 @@ return CachePartitions.run(() async {
           notifyListeners();
           final company = _cachedPrefs?.getString('company_code') ?? '';
           final uid = FirebaseAuth.instance.currentUser?.uid;
-          if (company.isNotEmpty && company == _identityCompany && uid == _identityProfileUid) {
-            unawaited(RevocationService.instance.applyTransition(
-              email: _currentUserEmail ?? '', companyCode: company, ownerUid: uid,
-              oldPerms: _permissions, newPerms: _permissions,
-              oldBranches: _allowedBranchCodes, newBranches: _allowedBranchCodes,
-              oldViewable: _hrViewableEmployees, newViewable: _hrViewableEmployees,
-            ).then((changed) { if (changed) onScopeNarrowed?.call(); }).catchError((Object error) {
+          if (company.isNotEmpty &&
+              company == _identityCompany &&
+              uid == _identityProfileUid) {
+            unawaited(RevocationService.instance
+                .applyTransition(
+              email: _currentUserEmail ?? '',
+              companyCode: company,
+              ownerUid: uid,
+              oldPerms: _permissions,
+              newPerms: _permissions,
+              oldBranches: _allowedBranchCodes,
+              newBranches: _allowedBranchCodes,
+              oldViewable: _hrViewableEmployees,
+              newViewable: _hrViewableEmployees,
+            )
+                .then((changed) {
+              if (changed) onScopeNarrowed?.call();
+            }).catchError((Object error) {
               print('⚠️ HR identity cache cleanup failed: $error');
             }));
           }
@@ -619,6 +756,7 @@ return CachePartitions.run(() async {
     }
   }
 
+  // يوقف الاستماع لتغيّرات صندوق الموظفين المحلي
   void _stopEmployeesHiveListener() {
     _employeesHiveSub?.cancel();
     _employeesHiveSub = null;
@@ -627,6 +765,7 @@ return CachePartitions.run(() async {
   // تصفير الحالة الداخلية (بدون لمس _cachedUid)
   // ============================================================
 
+  // يعيد ضبط حالة الخدمة بالكامل
   void _resetState() {
     _targetCache.clear();
     ReadAuthorizationEpoch.invalidate();
@@ -641,7 +780,7 @@ return CachePartitions.run(() async {
     _identityCompany = null;
     _currentUserEmail = null;
     _cachedPrefs = null;
-    _currentRole = null;   // ⭐
+    _currentRole = null; // ⭐
     _companyPolicyActive = false;
     _scopeVerificationPending = false;
     _delegablePermissions = {};
@@ -662,6 +801,7 @@ return CachePartitions.run(() async {
   // 2) ثم نحدث من Firestore + نبدأ snapshot listener
   // ============================================================
 
+  // يحمّل الصلاحيات ويؤجل المستمع عند الطلب
   /// deferListener: startup only. The permissions Firestore listener then
   /// starts on ensurePermissionListenerStarted() (after the startup merge), so
   /// its first snapshot and refresh cannot gate or move the merge.
@@ -669,6 +809,7 @@ return CachePartitions.run(() async {
     return _loadFuture ??= _doLoadPermissions(deferListener: deferListener);
   }
 
+  // يبدأ مستمع الصلاحيات المؤجل
   /// Starts the listener deferred by loadPermissions(deferListener: true).
   /// No-op when nothing was deferred or the listener already started.
   void ensurePermissionListenerStarted() {
@@ -680,14 +821,16 @@ return CachePartitions.run(() async {
 
   String? _deferredListenerEmail;
 
+  // يحدّث الملف الفعلي للمستخدم
   /// Refresh current own scope from the authenticated server. Known scope
   /// changes stay held if verification fails; startup can retain offline scope.
-  Future<void> refreshEffectiveProfile({bool restrictWhileLoading = true}) async {
+  Future<void> refreshEffectiveProfile(
+      {bool restrictWhileLoading = true}) async {
     // Join an in-flight refresh instead of starting a competing read; the joiner
     // starts no independent read, so it cannot be poisoned by an entry hold.
     if (!restrictWhileLoading && _serverRefresh != null) {
-      return _refreshBarrier.run(() =>
-          _refreshEffectiveProfileInner(restrictWhileLoading: restrictWhileLoading));
+      return _refreshBarrier.run(() => _refreshEffectiveProfileInner(
+          restrictWhileLoading: restrictWhileLoading));
     }
     // One independent refresh at a time, in arrival order. A restricting entry
     // (which invalidates the read epoch and holds the scope) can only begin after
@@ -702,13 +845,14 @@ return CachePartitions.run(() async {
     try {
       // Counted from the first synchronous line, before any await, so a refresh that has been
       // called but has not yet registered _serverRefresh is still seen by whenRefreshesIdle().
-      return await _refreshBarrier.run(() =>
-          _refreshEffectiveProfileInner(restrictWhileLoading: restrictWhileLoading));
+      return await _refreshBarrier.run(() => _refreshEffectiveProfileInner(
+          restrictWhileLoading: restrictWhileLoading));
     } finally {
       release.complete();
     }
   }
 
+  // يسجّل بصمة نطاق الحركات
   /// Records the feed scope fingerprint from a verified server profile, and
   /// remembers whether this backend returns it at all (plain SharedPreferences,
   /// so startup can read it before the cache boxes open: a backend that returns
@@ -728,170 +872,229 @@ return CachePartitions.run(() async {
   Future<void> _refreshEntryChain = Future<void>.value();
 
   final RefreshBarrier _refreshBarrier = RefreshBarrier();
+
+  // ينتظر حتى تنتهي كل عمليات التحديث
   /// Completes when no server scope refresh is running (counts every call, not only the newest).
   Future<void> whenRefreshesIdle() => _refreshBarrier.whenIdle();
 
-  Future<void> _refreshEffectiveProfileInner({bool restrictWhileLoading = true}) async {
-return CachePartitions.run(() async {
-
-    if (_serverRefresh != null && !restrictWhileLoading) return _serverRefresh!;
-    final wasLoaded = _loaded;
-    if (restrictWhileLoading) {
-      _scopeVerificationPending = true;
-      _loaded = false;
-      _serverScopeGeneration++;
-      ReadAuthorizationEpoch.invalidate();
-      notifyListeners();
-    }
-    final generation = _serverScopeGeneration;
-    final token = '${DateTime.now().microsecondsSinceEpoch}:$generation';
-    final requested = await ReadAuthorizationSnapshot.capture();
-    final initialPrefs = await CachePartitions.preferences();
-    requested.check();
-    final initialUid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    final initialCompany = initialPrefs.getString('company_code') ?? '';
-    final pendingKey = EffectiveProfileSnapshot.pendingKey(initialUid, initialCompany);
-    if (restrictWhileLoading) {
-      await CachePartitions.box('coding_box').put(pendingKey, token);
+  // ينفذ تحديث الملف الفعلي الداخلي
+  Future<void> _refreshEffectiveProfileInner(
+      {bool restrictWhileLoading = true}) async {
+    return CachePartitions.run(() async {
+      if (_serverRefresh != null && !restrictWhileLoading)
+        return _serverRefresh!;
+      final wasLoaded = _loaded;
+      if (restrictWhileLoading) {
+        _scopeVerificationPending = true;
+        _loaded = false;
+        _serverScopeGeneration++;
+        ReadAuthorizationEpoch.invalidate();
+        notifyListeners();
+      }
+      final generation = _serverScopeGeneration;
+      final token = '${DateTime.now().microsecondsSinceEpoch}:$generation';
+      final requested = await ReadAuthorizationSnapshot.capture();
+      final initialPrefs = await CachePartitions.preferences();
       requested.check();
-    }
-    final previous = _serverRefresh;
-    final work = () async {
-      try { await previous; } catch (_) {}
-      if (!requested.sameContext || generation != _serverScopeGeneration) throw const ReadAuthorizationChanged();
-      final prefs = await CachePartitions.preferences();
-      final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
-      final email = (prefs.getString('user_email') ?? '').trim().toLowerCase();
-      final company = prefs.getString('company_code') ?? '';
-      final request = await ReadAuthorizationSnapshot.capture();
-      final raw = await ApiService().getEffectiveProfile();
-      request.check();
-      final profile = EffectiveProfileSnapshot.parse(raw, uid: uid, email: email, company: company);
-      final box = CachePartitions.box('coding_box');
-      request.check();
-      if (generation != _serverScopeGeneration) throw const ReadAuthorizationChanged();
-      // Compute the next scope before touching live state.
-      final next = _convertToPermissionsMap(profile.permissions);
-      if (!profile.active) {
-        final defaults = _createDefaultPermissions(profile.data['job_code']?.toString() ?? '1', forVerifiedProfile: true);
-        defaults.forEach((category, entries) {
-          next.putIfAbsent(category, () => {});
-          entries.forEach((key, value) => next[category]!.putIfAbsent(key, () => value));
-        });
+      final initialUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+      final initialCompany = initialPrefs.getString('company_code') ?? '';
+      final pendingKey =
+          EffectiveProfileSnapshot.pendingKey(initialUid, initialCompany);
+      if (restrictWhileLoading) {
+        await CachePartitions.box('coding_box').put(pendingKey, token);
+        requested.check();
       }
-      final nextBranches = (profile.data['allowed_branches'] as List).cast<String>().toList();
-      final nextViewable = (profile.data['hr_viewable_employees'] as List?)?.cast<String>().toList();
-      final nextDelegablePermissions = Map<String, dynamic>.from(profile.data['delegable_permissions'] ?? {});
-      final nextDelegableBranches = List<String>.from(profile.data['delegable_branches'] ?? []);
-      final unchanged = wasLoaded && _permissions != null &&
-          const DeepEq().equals(_permissions, next) &&
-          const DeepEq().equals(_allowedBranchCodes, nextBranches) &&
-          const DeepEq().equals(_hrViewableEmployees, nextViewable) &&
-          const DeepEq().equals(_delegablePermissions, nextDelegablePermissions) &&
-          const DeepEq().equals(_delegableBranchCodes, nextDelegableBranches) &&
-          _currentRole == profile.role && _companyPolicyActive == profile.active;
-      if (unchanged) {
-        // A re-verification that confirms the exact scope already applied is not an
-        // authorization change: refresh the stored snapshot and keep serving the
-        // current profile — no epoch invalidation, so routine checks never flicker
-        // the dashboard. Undo the entry hold when this caller took it.
-        // A stale hold (persisted pending marker from an interrupted refresh)
-        // is resolved by ANY completed server verification, not only a
-        // restricting one: the hold existed because verification never finished,
-        // and now it did. Notify only when a hold was actually up, so routine
-        // re-checks still never flicker the dashboard.
-        _setTransactionsScopeFingerprint(profile.data['transactions_scope']);
-        if (restrictWhileLoading || _scopeVerificationPending) {
-          _scopeVerificationPending = false;
-          _loaded = true;
-          notifyListeners();
-        }
-        final appliedSnap = await ReadAuthorizationSnapshot.capture();
-        await box.putAll({
-          EffectiveProfileSnapshot.cacheKey(uid, company): {...profile.data, '_verification_token': token},
-          pendingKey: token,
-          'permissions_applied_$email': next,
-          'branches_applied_$email': nextBranches,
-          'viewable_applied_$email': nextViewable ?? <String>[],
-        });
-        // Same guard as the full apply path: if the context or generation moved
-        // mid-write, this snapshot must not stand — mark it invalid and bail out.
-        if (!(appliedSnap.isCurrent && generation == _serverScopeGeneration)) {
-          if (box.get(pendingKey) == token) await box.put(pendingKey, 'invalid:$token');
+      final previous = _serverRefresh;
+      final work = () async {
+        try {
+          await previous;
+        } catch (_) {}
+        if (!requested.sameContext || generation != _serverScopeGeneration)
           throw const ReadAuthorizationChanged();
+        final prefs = await CachePartitions.preferences();
+        final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+        final email =
+            (prefs.getString('user_email') ?? '').trim().toLowerCase();
+        final company = prefs.getString('company_code') ?? '';
+        final request = await ReadAuthorizationSnapshot.capture();
+        final raw = await ApiService().getEffectiveProfile();
+        request.check();
+        final profile = EffectiveProfileSnapshot.parse(raw,
+            uid: uid, email: email, company: company);
+        final box = CachePartitions.box('coding_box');
+        request.check();
+        if (generation != _serverScopeGeneration)
+          throw const ReadAuthorizationChanged();
+        // Compute the next scope before touching live state.
+        final next = _convertToPermissionsMap(profile.permissions);
+        if (!profile.active) {
+          final defaults = _createDefaultPermissions(
+              profile.data['job_code']?.toString() ?? '1',
+              forVerifiedProfile: true);
+          defaults.forEach((category, entries) {
+            next.putIfAbsent(category, () => {});
+            entries.forEach(
+                (key, value) => next[category]!.putIfAbsent(key, () => value));
+          });
         }
-        return;
-      }
-      _scopeVerificationPending = true;
-      _loaded = false;
-      notifyListeners();
-      if (!restrictWhileLoading) await box.put(pendingKey, token);
-      EffectiveProfileSnapshot? prior;
-      if(_permissions==null) {
-        try { prior=EffectiveProfileSnapshot.parse(box.get(EffectiveProfileSnapshot.cacheKey(uid,company)),uid:uid,email:email,company:company); }
-        catch(_) { /* Unknown identity/scope is not borrowed from another user. */ }
-      }
-      Map<String,dynamic>? priorPermissions=prior?.permissions;
-      if(prior!=null && !prior.active){
-        priorPermissions=_convertToPermissionsMap(prior.permissions);
-        final defaults=_createDefaultPermissions(prior.data['job_code']?.toString() ?? '1',forVerifiedProfile:true);
-        defaults.forEach((category,entries){
-          priorPermissions!.putIfAbsent(category,()=> <String,bool>{});
-          entries.forEach((key,value)=>(priorPermissions![category] as Map).putIfAbsent(key,()=>value));
+        final nextBranches =
+            (profile.data['allowed_branches'] as List).cast<String>().toList();
+        final nextViewable = (profile.data['hr_viewable_employees'] as List?)
+            ?.cast<String>()
+            .toList();
+        final nextDelegablePermissions = Map<String, dynamic>.from(
+            profile.data['delegable_permissions'] ?? {});
+        final nextDelegableBranches =
+            List<String>.from(profile.data['delegable_branches'] ?? []);
+        final unchanged = wasLoaded &&
+            _permissions != null &&
+            const DeepEq().equals(_permissions, next) &&
+            const DeepEq().equals(_allowedBranchCodes, nextBranches) &&
+            const DeepEq().equals(_hrViewableEmployees, nextViewable) &&
+            const DeepEq()
+                .equals(_delegablePermissions, nextDelegablePermissions) &&
+            const DeepEq()
+                .equals(_delegableBranchCodes, nextDelegableBranches) &&
+            _currentRole == profile.role &&
+            _companyPolicyActive == profile.active;
+        if (unchanged) {
+          // A re-verification that confirms the exact scope already applied is not an
+          // authorization change: refresh the stored snapshot and keep serving the
+          // current profile — no epoch invalidation, so routine checks never flicker
+          // the dashboard. Undo the entry hold when this caller took it.
+          // A stale hold (persisted pending marker from an interrupted refresh)
+          // is resolved by ANY completed server verification, not only a
+          // restricting one: the hold existed because verification never finished,
+          // and now it did. Notify only when a hold was actually up, so routine
+          // re-checks still never flicker the dashboard.
+          _setTransactionsScopeFingerprint(profile.data['transactions_scope']);
+          if (restrictWhileLoading || _scopeVerificationPending) {
+            _scopeVerificationPending = false;
+            _loaded = true;
+            notifyListeners();
+          }
+          final appliedSnap = await ReadAuthorizationSnapshot.capture();
+          await box.putAll({
+            EffectiveProfileSnapshot.cacheKey(uid, company): {
+              ...profile.data,
+              '_verification_token': token
+            },
+            pendingKey: token,
+            'permissions_applied_$email': next,
+            'branches_applied_$email': nextBranches,
+            'viewable_applied_$email': nextViewable ?? <String>[],
+          });
+          // Same guard as the full apply path: if the context or generation moved
+          // mid-write, this snapshot must not stand — mark it invalid and bail out.
+          if (!(appliedSnap.isCurrent &&
+              generation == _serverScopeGeneration)) {
+            if (box.get(pendingKey) == token)
+              await box.put(pendingKey, 'invalid:$token');
+            throw const ReadAuthorizationChanged();
+          }
+          return;
+        }
+        _scopeVerificationPending = true;
+        _loaded = false;
+        notifyListeners();
+        if (!restrictWhileLoading) await box.put(pendingKey, token);
+        EffectiveProfileSnapshot? prior;
+        if (_permissions == null) {
+          try {
+            prior = EffectiveProfileSnapshot.parse(
+                box.get(EffectiveProfileSnapshot.cacheKey(uid, company)),
+                uid: uid,
+                email: email,
+                company: company);
+          } catch (_) {
+            /* Unknown identity/scope is not borrowed from another user. */
+          }
+        }
+        Map<String, dynamic>? priorPermissions = prior?.permissions;
+        if (prior != null && !prior.active) {
+          priorPermissions = _convertToPermissionsMap(prior.permissions);
+          final defaults = _createDefaultPermissions(
+              prior.data['job_code']?.toString() ?? '1',
+              forVerifiedProfile: true);
+          defaults.forEach((category, entries) {
+            priorPermissions!.putIfAbsent(category, () => <String, bool>{});
+            entries.forEach((key, value) => (priorPermissions![category] as Map)
+                .putIfAbsent(key, () => value));
+          });
+        }
+        final oldPerms = _permissions == null
+            ? priorPermissions
+            : Map<String, dynamic>.from(_permissions!);
+        final oldBranches = _allowedBranchCodes == null
+            ? (prior?.data['allowed_branches'] as List?)?.cast<String>()
+            : List<String>.from(_allowedBranchCodes!);
+        final oldViewable = _hrViewableEmployees == null
+            ? (prior?.data['hr_viewable_employees'] as List?)?.cast<String>()
+            : List<String>.from(_hrViewableEmployees!);
+        _companyPolicyActive = profile.active;
+        _currentRole = profile.role;
+        _delegablePermissions = nextDelegablePermissions;
+        _delegableBranchCodes = nextDelegableBranches;
+        _permissions = next;
+        _allowedBranchCodes = nextBranches;
+        _hrViewableEmployees = nextViewable;
+        _cachedPrefs = prefs;
+        _identityCompany = company;
+        _identityProfileUid = uid;
+        _currentUserEmail = email;
+        _tryComputeCurrentEmployeeCode();
+        ReadAuthorizationEpoch.invalidate();
+        final applied = await ReadAuthorizationSnapshot.capture();
+        bool appliedCurrent() =>
+            applied.isCurrent && generation == _serverScopeGeneration;
+        Future<Never> invalidateApplied() async {
+          return CachePartitions.run(() async {
+            if (box.get(pendingKey) == token)
+              await box.put(pendingKey, 'invalid:$token');
+            throw const ReadAuthorizationChanged();
+          });
+        }
+
+        await RevocationService.instance.applyTransition(
+          email: email,
+          companyCode: company,
+          oldPerms: oldPerms,
+          newPerms: next,
+          oldBranches: oldBranches,
+          newBranches: _allowedBranchCodes,
+          oldViewable: oldViewable,
+          newViewable: _hrViewableEmployees,
+          ownerUid: uid,
+        );
+        if (!appliedCurrent()) await invalidateApplied();
+        await box.putAll({
+          EffectiveProfileSnapshot.cacheKey(uid, company): {
+            ...profile.data,
+            '_verification_token': token
+          },
+          'permissions_applied_$email': next,
+          'branches_applied_$email': _allowedBranchCodes ?? <String>[],
+          'viewable_applied_$email': _hrViewableEmployees ?? <String>[],
         });
+        if (!appliedCurrent()) await invalidateApplied();
+        _setTransactionsScopeFingerprint(profile.data['transactions_scope']);
+        _scopeVerificationPending = false;
+        _loaded = true;
+        notifyListeners();
+        _recordScopeSync(oldPerms, next, oldBranches, _allowedBranchCodes,
+            oldViewable, _hrViewableEmployees);
+        if (_pendingSyncModules.isNotEmpty) onScopeNarrowed?.call();
+      }();
+      _serverRefresh = work;
+      try {
+        await work;
+      } finally {
+        if (identical(_serverRefresh, work)) _serverRefresh = null;
       }
-      final oldPerms = _permissions == null ? priorPermissions : Map<String, dynamic>.from(_permissions!);
-      final oldBranches = _allowedBranchCodes == null ? (prior?.data['allowed_branches'] as List?)?.cast<String>() : List<String>.from(_allowedBranchCodes!);
-      final oldViewable = _hrViewableEmployees == null ? (prior?.data['hr_viewable_employees'] as List?)?.cast<String>() : List<String>.from(_hrViewableEmployees!);
-      _companyPolicyActive = profile.active;
-      _currentRole = profile.role;
-      _delegablePermissions = nextDelegablePermissions;
-      _delegableBranchCodes = nextDelegableBranches;
-      _permissions = next;
-      _allowedBranchCodes = nextBranches;
-      _hrViewableEmployees = nextViewable;
-      _cachedPrefs = prefs;
-      _identityCompany = company;
-      _identityProfileUid = uid;
-      _currentUserEmail = email;
-      _tryComputeCurrentEmployeeCode();
-      ReadAuthorizationEpoch.invalidate();
-      final applied = await ReadAuthorizationSnapshot.capture();
-      bool appliedCurrent() => applied.isCurrent && generation == _serverScopeGeneration;
-      Future<Never> invalidateApplied() async {
-return CachePartitions.run(() async {
+    });
+  }
 
-        if (box.get(pendingKey) == token) await box.put(pendingKey, 'invalid:$token');
-        throw const ReadAuthorizationChanged();
-});
-}
-      await RevocationService.instance.applyTransition(
-        email: email, companyCode: company, oldPerms: oldPerms, newPerms: next,
-        oldBranches: oldBranches, newBranches: _allowedBranchCodes,
-        oldViewable: oldViewable, newViewable: _hrViewableEmployees, ownerUid: uid,
-      );
-      if (!appliedCurrent()) await invalidateApplied();
-      await box.putAll({
-        EffectiveProfileSnapshot.cacheKey(uid, company): {...profile.data, '_verification_token': token},
-        'permissions_applied_$email': next,
-        'branches_applied_$email': _allowedBranchCodes ?? <String>[],
-        'viewable_applied_$email': _hrViewableEmployees ?? <String>[],
-      });
-      if (!appliedCurrent()) await invalidateApplied();
-      _setTransactionsScopeFingerprint(profile.data['transactions_scope']);
-      _scopeVerificationPending = false;
-      _loaded = true;
-      notifyListeners();
-      _recordScopeSync(oldPerms,next,oldBranches,_allowedBranchCodes,oldViewable,_hrViewableEmployees);
-      if (_pendingSyncModules.isNotEmpty) onScopeNarrowed?.call();
-    }();
-    _serverRefresh = work;
-    try { await work; } finally {
-      if (identical(_serverRefresh, work)) _serverRefresh = null;
-    }
-});
-}
-
+  // يعيد تحميل الصلاحيات
   /// إعادة تحميل الصلاحيات
   Future<void> refresh() {
     _loadFuture = null;
@@ -899,14 +1102,15 @@ return CachePartitions.run(() async {
     return loadPermissions();
   }
 
+  // يعيد ضبط الحالة يدويًا
   /// إعادة تعيين الحالة يدويًا (اختياري — الـ listener بيعملها تلقائيًا)
-    void reset() {
+  void reset() {
     _resetState();
     _stopFirestoreListener();
     _refreshEntryChain = Future<void>.value();
     _cachedUid = null;
-    _currentUserEmail = null;   // ⭐
-    _cachedPrefs = null;        // ⭐
+    _currentUserEmail = null; // ⭐
+    _cachedPrefs = null; // ⭐
     notifyListeners();
   }
 
@@ -914,265 +1118,258 @@ return CachePartitions.run(() async {
   // التنفيذ الفعلي للتحميل (private)
   // ============================================================
 
+  // ينفذ تحميل الصلاحيات الفعلي
   Future<void> _doLoadPermissions({bool deferListener = false}) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      ReadAuthorizationEpoch.invalidate();
+      _transactionsScopeFingerprint = null;
+      final identityUid = FirebaseAuth.instance.currentUser?.uid;
+      try {
+        final prefs = await CachePartitions.preferences();
 
-    ReadAuthorizationEpoch.invalidate();
-    _transactionsScopeFingerprint = null;
-    final identityUid = FirebaseAuth.instance.currentUser?.uid;
-    try {
-      final prefs = await CachePartitions.preferences();
+        final email = prefs.getString('user_email') ?? '';
 
-      final email =
-          prefs.getString('user_email') ?? '';
+        final jobCode = prefs.getString('job_code') ?? '1';
 
-      final jobCode =
-          prefs.getString('job_code') ?? '1';
+        // ⭐ اقرأ role من prefs (بيتحفظ وقت login)
+        final role = prefs.getString('role');
+        _currentRole = (role != null && role.isNotEmpty) ? role : null;
 
-      // ⭐ اقرأ role من prefs (بيتحفظ وقت login)
-      final role = prefs.getString('role');
-      _currentRole = (role != null && role.isNotEmpty) ? role : null;
-
-      if (email.isEmpty) {
-        print(
-          '⚠️ PermissionsService: user_email غير موجود',
-        );
-        _loaded = true;
-        notifyListeners();                             // ← NEW
-        return;
-      }
-
-      final box =
-          CachePartitions.box('coding_box');
-
-      EffectiveProfileSnapshot? cachedEffective;
-      final effectiveKey = EffectiveProfileSnapshot.cacheKey(identityUid ?? '', prefs.getString('company_code') ?? '');
-      final effectiveRaw = box.get(effectiveKey);
-      final pendingToken = box.get(EffectiveProfileSnapshot.pendingKey(identityUid ?? '', prefs.getString('company_code') ?? ''));
-      _scopeVerificationPending = pendingToken != null &&
-          (effectiveRaw is! Map || effectiveRaw['_verification_token'] != pendingToken);
-      if (effectiveRaw != null) {
-        try {
-          cachedEffective = EffectiveProfileSnapshot.parse(effectiveRaw,
-            uid: identityUid ?? '', email: email, company: prefs.getString('company_code') ?? '');
-          _companyPolicyActive = cachedEffective.active;
-          _currentRole = cachedEffective.role;
-          _delegablePermissions = Map<String, dynamic>.from(cachedEffective.data['delegable_permissions'] ?? {});
-          _delegableBranchCodes = List<String>.from(cachedEffective.data['delegable_branches'] ?? []);
-        } catch (_) {
-          _scopeVerificationPending = true;
-          _permissions = {};
+        if (email.isEmpty) {
+          print(
+            '⚠️ PermissionsService: user_email غير موجود',
+          );
+          _loaded = true;
+          notifyListeners(); // ← NEW
+          return;
         }
-      }
-      final permissionsKey =
-          'permissions_$email';
 
-      final branchesKey =
-          'allowed_branches_$email';
+        final box = CachePartitions.box('coding_box');
 
-      // ----------------------------------------------------------
-      // الصلاحيات المحلية
-      // ----------------------------------------------------------
-
-            final localPermissions = cachedEffective?.data['permissions'] ?? box.get(permissionsKey);
-
-      if (localPermissions is Map) {
-        // ⭐ دمج: قيم Hive + القيم الافتراضية للمفاتيح الناقصة
-        final fromHive = _convertToPermissionsMap(localPermissions);
-        final defaults = _createDefaultPermissions(jobCode);
-
-        defaults.forEach((category, perms) {
-          fromHive.putIfAbsent(category, () => {});
-          perms.forEach((key, defaultValue) {
-            fromHive[category]!.putIfAbsent(key, () => defaultValue);
-          });
-        });
-
-        _permissions = fromHive;
-      } else {
-        _permissions =
-            _createDefaultPermissions(
-          jobCode,
-        );
-      }
-
-      // ⭐ لو مفيش role محفوظ، احسبه من jobCode
-      if (_currentRole == null || _currentRole!.isEmpty) {
-        if (jobCode == '99') {
-          _currentRole = 'super_admin';
-        } else if (jobCode == '201') {
-          _currentRole = 'admin';
-        } else {
-          _currentRole = 'employee';
-        }
-      }
-
-            // ----------------------------------------------------------
-      // الفروع المحلية
-      // ----------------------------------------------------------
-
-      final localBranches = cachedEffective?.data['allowed_branches'] ?? box.get(branchesKey);
-
-      if (localBranches is List) {
-        _allowedBranchCodes =
-            localBranches
-                .map((e) => e.toString())
-                .toList();
-      } else {
-        _allowedBranchCodes = ['all'];
-      }
-
-            // ----------------------------------------------------------
-      // ⭐ جديد: الموظفين المرئيين في HR
-      // ----------------------------------------------------------
-
-      final localViewableEmps =
-          cachedEffective != null ? cachedEffective.data['hr_viewable_employees'] : box.get('hr_viewable_employees_$email');
-
-      if (localViewableEmps is List) {
-        _hrViewableEmployees = localViewableEmps
-            .map((e) => e.toString())
-            .toList();
-      } else {
-        _hrViewableEmployees = null;  // كل الموظفين
-      }
-
-            // ----------------------------------------------------------
-      // ⭐ جديد: كود الموظف الحالي (لو مربوط بحساب Firebase)
-      // ----------------------------------------------------------
-      _currentUserEmail = email;
-      _identityProfileUid = identityUid;
-      _identityCompany = prefs.getString('company_code') ?? '';
-      _cachedPrefs = prefs;
-      _currentEmployeeCode = null;
-
-      _tryComputeCurrentEmployeeCode();
-
-      print(
-        '⚡ تم تحميل الصلاحيات والفروع والموظفين المرئيين من Hive',
-      );
-      if (_currentEmployeeCode != null) {
-        print('👤 الموظف المرتبط بالحساب: $_currentEmployeeCode');
-      } else {
-        print('⚠️ الحساب مش مربوط بموظف (user_email: $email)');
-      }
-
-      // ✅ الصلاحيات جاهزة من Hive
-      _loaded = true;
-      notifyListeners();                               // ← NEW
-
-      // دورة حياة السحب من مسار التحميل أيضاً (يغطي تحديث
-      // الـ WS الذي يقرأ من Hive حتى لو listener معطل).
-      // prev = آخر لقطة مطبقة محفوظة، والحالية = المحمّلة الآن.
-      {
-        final transitionCompany =
-            _cachedPrefs?.getString('company_code') ?? '';
-        if (transitionCompany.isNotEmpty) {
-          final prevSnapshot = CachePartitions.box('coding_box')
-              .get('permissions_applied_$email');
-          final prevPerms = prevSnapshot is Map
-              ? Map<String, dynamic>.from(prevSnapshot)
-              : null;
-          final prevBranchesRaw =
-              CachePartitions.box('coding_box').get('branches_applied_$email');
-          final prevBranches = prevBranchesRaw is List
-              ? prevBranchesRaw.map((e) => e.toString()).toList()
-              : null;
-          final prevViewableRaw = CachePartitions.box('coding_box')
-              .get('viewable_applied_$email');
-          final prevViewable = prevViewableRaw is List
-              ? prevViewableRaw.map((e) => e.toString()).toList()
-              : null;
-          final nowPerms = _permissions == null
-              ? null
-              : Map<String, dynamic>.from(_permissions!);
-          unawaited(RevocationService.instance
-              .applyTransition(
+        EffectiveProfileSnapshot? cachedEffective;
+        final effectiveKey = EffectiveProfileSnapshot.cacheKey(
+            identityUid ?? '', prefs.getString('company_code') ?? '');
+        final effectiveRaw = box.get(effectiveKey);
+        final pendingToken = box.get(EffectiveProfileSnapshot.pendingKey(
+            identityUid ?? '', prefs.getString('company_code') ?? ''));
+        _scopeVerificationPending = pendingToken != null &&
+            (effectiveRaw is! Map ||
+                effectiveRaw['_verification_token'] != pendingToken);
+        if (effectiveRaw != null) {
+          try {
+            cachedEffective = EffectiveProfileSnapshot.parse(effectiveRaw,
+                uid: identityUid ?? '',
                 email: email,
-                companyCode: transitionCompany,
-                oldPerms: prevPerms,
-                newPerms: nowPerms,
-                oldBranches: prevBranches,
-                newBranches: _allowedBranchCodes == null
-                    ? null
-                    : List<String>.from(_allowedBranchCodes!),
-                oldViewable: prevViewable,
-                newViewable: _hrViewableEmployees == null
-                    ? null
-                    : List<String>.from(_hrViewableEmployees!),
-                ownerUid: FirebaseAuth.instance.currentUser?.uid,
-              )
-              .then((needsResync) async {
-            final box = CachePartitions.box('coding_box');
-            await box.put(
-                'permissions_applied_$email', nowPerms ?? {});
-            await box.put('branches_applied_$email',
-                _allowedBranchCodes ?? <String>[]);
-            await box.put('viewable_applied_$email',
-                _hrViewableEmployees ?? <String>[]);
-            _recordScopeSync(prevPerms,nowPerms,prevBranches,_allowedBranchCodes,prevViewable,_hrViewableEmployees);
-            if (_pendingSyncModules.isNotEmpty) onScopeNarrowed?.call();
-          }));
+                company: prefs.getString('company_code') ?? '');
+            _companyPolicyActive = cachedEffective.active;
+            _currentRole = cachedEffective.role;
+            _delegablePermissions = Map<String, dynamic>.from(
+                cachedEffective.data['delegable_permissions'] ?? {});
+            _delegableBranchCodes = List<String>.from(
+                cachedEffective.data['delegable_branches'] ?? []);
+          } catch (_) {
+            _scopeVerificationPending = true;
+            _permissions = {};
+          }
         }
-      }
+        final permissionsKey = 'permissions_$email';
 
-      // ----------------------------------------------------------
-      // تحديث Firestore في الخلفية + بدء snapshot listener
-      // ----------------------------------------------------------
+        final branchesKey = 'allowed_branches_$email';
 
-            // _refreshFromFirestore(
-      //   email,
-      //   permissionsKey,
-      //   branchesKey,
-      // );
-      if (deferListener) {
-        _deferredListenerEmail = email;
-      } else {
-        _startFirestoreListener(email);
-      }
+        // ----------------------------------------------------------
+        // الصلاحيات المحلية
+        // ----------------------------------------------------------
 
-      // ⭐ الاستماع لتغييرات Hive لإعادة حساب employee_code
-      // (لأن employees ممكن تتحمل بعد loadPermissions)
-      _startEmployeesHiveListener();
+        final localPermissions =
+            cachedEffective?.data['permissions'] ?? box.get(permissionsKey);
 
-    } catch (e) {
-      if (!CachePartitions.boundWorkIsCurrent) rethrow;
-      print(
-        '❌ خطأ في loadPermissions: $e',
-      );
+        if (localPermissions is Map) {
+          // ⭐ دمج: قيم Hive + القيم الافتراضية للمفاتيح الناقصة
+          final fromHive = _convertToPermissionsMap(localPermissions);
+          final defaults = _createDefaultPermissions(jobCode);
 
-      if (_permissions == null) {
-        final prefs =
-            await SharedPreferences
-                .getInstance();
+          defaults.forEach((category, perms) {
+            fromHive.putIfAbsent(category, () => {});
+            perms.forEach((key, defaultValue) {
+              fromHive[category]!.putIfAbsent(key, () => defaultValue);
+            });
+          });
 
-        CachePartitions.checkBoundWork();
-        final jobCode =
-            prefs.getString('job_code') ?? '1';
+          _permissions = fromHive;
+        } else {
+          _permissions = _createDefaultPermissions(
+            jobCode,
+          );
+        }
 
-        _permissions =
-            _createDefaultPermissions(
-          jobCode,
+        // ⭐ لو مفيش role محفوظ، احسبه من jobCode
+        if (_currentRole == null || _currentRole!.isEmpty) {
+          if (jobCode == '99') {
+            _currentRole = 'super_admin';
+          } else if (jobCode == '201') {
+            _currentRole = 'admin';
+          } else {
+            _currentRole = 'employee';
+          }
+        }
+
+        // ----------------------------------------------------------
+        // الفروع المحلية
+        // ----------------------------------------------------------
+
+        final localBranches =
+            cachedEffective?.data['allowed_branches'] ?? box.get(branchesKey);
+
+        if (localBranches is List) {
+          _allowedBranchCodes = localBranches.map((e) => e.toString()).toList();
+        } else {
+          _allowedBranchCodes = ['all'];
+        }
+
+        // ----------------------------------------------------------
+        // ⭐ جديد: الموظفين المرئيين في HR
+        // ----------------------------------------------------------
+
+        final localViewableEmps = cachedEffective != null
+            ? cachedEffective.data['hr_viewable_employees']
+            : box.get('hr_viewable_employees_$email');
+
+        if (localViewableEmps is List) {
+          _hrViewableEmployees =
+              localViewableEmps.map((e) => e.toString()).toList();
+        } else {
+          _hrViewableEmployees = null; // كل الموظفين
+        }
+
+        // ----------------------------------------------------------
+        // ⭐ جديد: كود الموظف الحالي (لو مربوط بحساب Firebase)
+        // ----------------------------------------------------------
+        _currentUserEmail = email;
+        _identityProfileUid = identityUid;
+        _identityCompany = prefs.getString('company_code') ?? '';
+        _cachedPrefs = prefs;
+        _currentEmployeeCode = null;
+
+        _tryComputeCurrentEmployeeCode();
+
+        print(
+          '⚡ تم تحميل الصلاحيات والفروع والموظفين المرئيين من Hive',
+        );
+        if (_currentEmployeeCode != null) {
+          print('👤 الموظف المرتبط بالحساب: $_currentEmployeeCode');
+        } else {
+          print('⚠️ الحساب مش مربوط بموظف (user_email: $email)');
+        }
+
+        // ✅ الصلاحيات جاهزة من Hive
+        _loaded = true;
+        notifyListeners(); // ← NEW
+
+        // دورة حياة السحب من مسار التحميل أيضاً (يغطي تحديث
+        // الـ WS الذي يقرأ من Hive حتى لو listener معطل).
+        // prev = آخر لقطة مطبقة محفوظة، والحالية = المحمّلة الآن.
+        {
+          final transitionCompany =
+              _cachedPrefs?.getString('company_code') ?? '';
+          if (transitionCompany.isNotEmpty) {
+            final prevSnapshot = CachePartitions.box('coding_box')
+                .get('permissions_applied_$email');
+            final prevPerms = prevSnapshot is Map
+                ? Map<String, dynamic>.from(prevSnapshot)
+                : null;
+            final prevBranchesRaw = CachePartitions.box('coding_box')
+                .get('branches_applied_$email');
+            final prevBranches = prevBranchesRaw is List
+                ? prevBranchesRaw.map((e) => e.toString()).toList()
+                : null;
+            final prevViewableRaw = CachePartitions.box('coding_box')
+                .get('viewable_applied_$email');
+            final prevViewable = prevViewableRaw is List
+                ? prevViewableRaw.map((e) => e.toString()).toList()
+                : null;
+            final nowPerms = _permissions == null
+                ? null
+                : Map<String, dynamic>.from(_permissions!);
+            unawaited(RevocationService.instance
+                .applyTransition(
+              email: email,
+              companyCode: transitionCompany,
+              oldPerms: prevPerms,
+              newPerms: nowPerms,
+              oldBranches: prevBranches,
+              newBranches: _allowedBranchCodes == null
+                  ? null
+                  : List<String>.from(_allowedBranchCodes!),
+              oldViewable: prevViewable,
+              newViewable: _hrViewableEmployees == null
+                  ? null
+                  : List<String>.from(_hrViewableEmployees!),
+              ownerUid: FirebaseAuth.instance.currentUser?.uid,
+            )
+                .then((needsResync) async {
+              final box = CachePartitions.box('coding_box');
+              await box.put('permissions_applied_$email', nowPerms ?? {});
+              await box.put(
+                  'branches_applied_$email', _allowedBranchCodes ?? <String>[]);
+              await box.put('viewable_applied_$email',
+                  _hrViewableEmployees ?? <String>[]);
+              _recordScopeSync(prevPerms, nowPerms, prevBranches,
+                  _allowedBranchCodes, prevViewable, _hrViewableEmployees);
+              if (_pendingSyncModules.isNotEmpty) onScopeNarrowed?.call();
+            }));
+          }
+        }
+
+        // ----------------------------------------------------------
+        // تحديث Firestore في الخلفية + بدء snapshot listener
+        // ----------------------------------------------------------
+
+        // _refreshFromFirestore(
+        //   email,
+        //   permissionsKey,
+        //   branchesKey,
+        // );
+        if (deferListener) {
+          _deferredListenerEmail = email;
+        } else {
+          _startFirestoreListener(email);
+        }
+
+        // ⭐ الاستماع لتغييرات Hive لإعادة حساب employee_code
+        // (لأن employees ممكن تتحمل بعد loadPermissions)
+        _startEmployeesHiveListener();
+      } catch (e) {
+        if (!CachePartitions.boundWorkIsCurrent) rethrow;
+        print(
+          '❌ خطأ في loadPermissions: $e',
         );
 
-        _allowedBranchCodes = ['all'];
+        if (_permissions == null) {
+          final prefs = await SharedPreferences.getInstance();
+
+          CachePartitions.checkBoundWork();
+          final jobCode = prefs.getString('job_code') ?? '1';
+
+          _permissions = _createDefaultPermissions(
+            jobCode,
+          );
+
+          _allowedBranchCodes = ['all'];
+        }
+
+        // ✅ حتى في حالة الخطأ، نعتبرها محملة (بالـ defaults)
+        _loaded = true;
+        notifyListeners(); // ← NEW
       }
+    });
+  }
 
-      // ✅ حتى في حالة الخطأ، نعتبرها محملة (بالـ defaults)
-      _loaded = true;
-      notifyListeners();                               // ← NEW
-    }
-});
-}
-
-    // ============================================================
+  // ============================================================
   // ⭐ Helper: تطبيع الكود (trim + إزالة المسافات)
   // ============================================================
 
+  // ينظّف كود الوظيفة من الفراغات
   String _normalizeCode(String code) => code.trim();
-
-
-
 
   // ============================================================
   // ⭐ Helper: محاولة حساب _currentEmployeeCode من Hive
@@ -1186,9 +1383,13 @@ return CachePartitions.run(() async {
   // - لو user_email اتحط بعد التطبيق ما اشتغل، هيتحسب عند أول check
   // ============================================================
 
+  // يحسب كود الموظف الحالي
   void _tryComputeCurrentEmployeeCode() {
     final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null || uid.isEmpty || uid != _identityProfileUid || _cachedPrefs == null) {
+    if (uid == null ||
+        uid.isEmpty ||
+        uid != _identityProfileUid ||
+        _cachedPrefs == null) {
       _currentEmployeeCode = null;
       return;
     }
@@ -1197,15 +1398,19 @@ return CachePartitions.run(() async {
       _currentEmployeeCode = null;
       return;
     }
-    if (_currentEmployeeCode != null || company.isEmpty || !CachePartitions.isBoxOpen('coding_box')) return;
+    if (_currentEmployeeCode != null ||
+        company.isEmpty ||
+        !CachePartitions.isBoxOpen('coding_box')) return;
     final rows = CachePartitions.box('coding_box').get('${company}_employees');
     if (rows is! List) return;
-    _currentEmployeeCode = EmployeeIdentity.resolveCode(rows, uid: uid,
-        email: FirebaseAuth.instance.currentUser?.email ?? '');
+    _currentEmployeeCode = EmployeeIdentity.resolveCode(rows,
+        uid: uid, email: FirebaseAuth.instance.currentUser?.email ?? '');
   }
 
+  // يضبط هوية المستخدم للاختبارات فقط
   @visibleForTesting
-  void debugSetIdentityForTest({required String email, required SharedPreferences prefs}) {
+  void debugSetIdentityForTest(
+      {required String email, required SharedPreferences prefs}) {
     _identityProfileUid = FirebaseAuth.instance.currentUser?.uid;
     _currentUserEmail = email;
     _cachedPrefs = CachePreferences(prefs, null);
@@ -1213,7 +1418,6 @@ return CachePartitions.run(() async {
     _identityCompany = prefs.getString('company_code') ?? '';
     _startEmployeesHiveListener();
   }
-
 
   // ============================================================
   // تحديث أولي من Firestore (بيتنفذ مرة واحدة مع التحميل)
@@ -1304,6 +1508,7 @@ return CachePartitions.run(() async {
   // تحليل قائمة الفروع
   // ============================================================
 
+  // يحلل قائمة الفروع من البيانات
   List<String>? _parseBranchList(
     dynamic data,
   ) {
@@ -1311,15 +1516,12 @@ return CachePartitions.run(() async {
       return null;
     }
 
-    if (data is String &&
-        data.toLowerCase() == 'all') {
+    if (data is String && data.toLowerCase() == 'all') {
       return ['all'];
     }
 
     if (data is List) {
-      return data
-          .map((e) => e.toString())
-          .toList();
+      return data.map((e) => e.toString()).toList();
     }
 
     return null;
@@ -1329,12 +1531,13 @@ return CachePartitions.run(() async {
   // Getters - الفروع
   // ============================================================
 
-  List<String>? get allowedBranches =>
-      _allowedBranchCodes;
+  // يعيد الفروع المسموح بها
+  List<String>? get allowedBranches => _allowedBranchCodes;
 
-  String? get defaultBranch =>
-      _defaultBranchCode;
+  // يعيد الفرع الافتراضي
+  String? get defaultBranch => _defaultBranchCode;
 
+  // يحدد هل للمستخدم فرع واحد فقط
   bool hasSingleBranch() {
     if (_allowedBranchCodes == null) {
       return false;
@@ -1347,6 +1550,7 @@ return CachePartitions.run(() async {
     return _allowedBranchCodes!.length == 1;
   }
 
+  // يحدد هل يمكن للمستخدم الوصول للفرع
   bool canAccessBranch(
     String branchCode,
   ) {
@@ -1368,67 +1572,76 @@ return CachePartitions.run(() async {
   // حفظ الصلاحيات
   // ============================================================
 
-  final Map<String, ({PermissionTargetDirectory data, int revision})> _targetCache = {};
-  Future<PermissionTargetDirectory> loadPermissionTargets(
-      String companyCode, {bool forceRefresh = false}) async {
-return CachePartitions.run(() async {
+  // ذاكرة مؤقتة لأهداف الصلاحيات حسب الشركة
+  final Map<String, ({PermissionTargetDirectory data, int revision})>
+      _targetCache = {};
 
-    final cached = _targetCache[companyCode];
-    final revision = AdminCacheEvents.users.value.revision;
-    if (!forceRefresh && cached != null && cached.revision == revision && cached.data.readScope.isCurrent) return cached.data;
-    final scope = await ReadAuthorizationSnapshot.capture();
-    final value = await ApiService().getPermissionTargets(companyCode);
-    scope.check();
-    if (value['company_code'] != companyCode || value['users'] is! List)
-      throw const FormatException('Invalid permission target scope');
-    const fields = {
-      'email',
-      'uid',
-      'name',
-      'company_code',
-      'company_name',
-      'job_code',
-      'job_title',
-      'role',
-      'status',
-      'is_active'
-    };
-    final users = <Map<String, dynamic>>[];
-    for (final raw in value['users']) {
-      if (raw is! Map ||
-          raw['email'] is! String ||
-          (raw['email'] as String).isEmpty ||
-          raw['uid'] is! String ||
-          raw['name'] is! String ||
-          raw['role'] is! String ||
-          (companyCode.isNotEmpty && raw['company_code'] != companyCode)) {
-        throw const FormatException('Invalid permission target record');
+  // يحمّل أهداف الصلاحيات المتاحة
+  Future<PermissionTargetDirectory> loadPermissionTargets(String companyCode,
+      {bool forceRefresh = false}) async {
+    return CachePartitions.run(() async {
+      final cached = _targetCache[companyCode];
+      final revision = AdminCacheEvents.users.value.revision;
+      if (!forceRefresh &&
+          cached != null &&
+          cached.revision == revision &&
+          cached.data.readScope.isCurrent) return cached.data;
+      final scope = await ReadAuthorizationSnapshot.capture();
+      final value = await ApiService().getPermissionTargets(companyCode);
+      scope.check();
+      if (value['company_code'] != companyCode || value['users'] is! List)
+        throw const FormatException('Invalid permission target scope');
+      const fields = {
+        'email',
+        'uid',
+        'name',
+        'company_code',
+        'company_name',
+        'job_code',
+        'job_title',
+        'role',
+        'status',
+        'is_active'
+      };
+      final users = <Map<String, dynamic>>[];
+      for (final raw in value['users']) {
+        if (raw is! Map ||
+            raw['email'] is! String ||
+            (raw['email'] as String).isEmpty ||
+            raw['uid'] is! String ||
+            raw['name'] is! String ||
+            raw['role'] is! String ||
+            (companyCode.isNotEmpty && raw['company_code'] != companyCode)) {
+          throw const FormatException('Invalid permission target record');
+        }
+        users.add({
+          for (final key in fields)
+            if (raw.containsKey(key)) key: raw[key]
+        });
       }
-      users.add({
-        for (final key in fields)
-          if (raw.containsKey(key)) key: raw[key]
-      });
-    }
-    scope.check();
-    if (revision != AdminCacheEvents.users.value.revision) throw const ReadAuthorizationChanged();
-    final result = PermissionTargetDirectory(companyCode, users, scope);
-    _targetCache[companyCode] = (data: result, revision: revision);
-    return result;
-});
-}
+      scope.check();
+      if (revision != AdminCacheEvents.users.value.revision)
+        throw const ReadAuthorizationChanged();
+      final result = PermissionTargetDirectory(companyCode, users, scope);
+      _targetCache[companyCode] = (data: result, revision: revision);
+      return result;
+    });
+  }
 
+  // يحمّل محرر صلاحيات مستخدم بالبريد
   Future<PermissionEditorSnapshot> loadPermissionEditor(String email) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      final scope = await ReadAuthorizationSnapshot.capture();
+      final value = await ApiService().getPermissionEditor(email);
+      scope.check();
+      final result = PermissionEditorSnapshot.fromJson(value);
+      if (result.email != email.trim().toLowerCase())
+        throw const FormatException('Permission editor identity mismatch');
+      return result.withReadScope(scope);
+    });
+  }
 
-    final scope=await ReadAuthorizationSnapshot.capture();
-    final value=await ApiService().getPermissionEditor(email);
-    scope.check();
-    final result=PermissionEditorSnapshot.fromJson(value);
-    if(result.email!=email.trim().toLowerCase()) throw const FormatException('Permission editor identity mismatch');
-    return result.withReadScope(scope);
-});
-}
-
+  // يحفظ صلاحيات المستخدم
   Future<void> savePermissions(
     Map<String, Map<String, bool>> permissions, {
     String? targetEmail,
@@ -1440,71 +1653,78 @@ return CachePartitions.run(() async {
     int? expectedPolicyRevision,
     String? startupBranchCode,
   }) async {
-return CachePartitions.run(() async {
-
-    final scope = await ReadAuthorizationSnapshot.capture();
-    final prefs = await CachePartitions.preferences();
-    final email = (targetEmail ?? prefs.getString('user_email') ?? '').trim().toLowerCase();
-    if (email.isEmpty) throw StateError('No target account for permission save');
-    final submitted = permissions.map((category, values) => MapEntry(category, Map<String, bool>.from(values)));
-    final branches = allowedBranches == null ? null : List<String>.from(allowedBranches);
-    final employees = hrViewableEmployees == null ? null : List<String>.from(hrViewableEmployees);
-    try {
-      scope.check();
-      await ApiService().updatePermissions(
-        email, submitted, allowedBranches: branches,
-        hrViewableEmployees: employees,
-        clearHrViewableEmployees: clearHrViewableEmployees,
-        expectedTargetUid: expectedTargetUid,
-        expectedProfileVersion: expectedProfileVersion,
-        expectedPolicyRevision: expectedPolicyRevision,
-        startupBranchCode: startupBranchCode,
-      );
-      // The server has acknowledged a commit. A changed account/scope must
-      // not receive its stale clean-cache state, or a false failed-save result.
-      if (!scope.isCurrent) return;
-      final box = CachePartitions.box('coding_box');
-      await box.put('permissions_$email', submitted);
-      if (!scope.isCurrent) return;
-      if (branches != null) {
-        await box.put('allowed_branches_$email', branches);
+    return CachePartitions.run(() async {
+      final scope = await ReadAuthorizationSnapshot.capture();
+      final prefs = await CachePartitions.preferences();
+      final email = (targetEmail ?? prefs.getString('user_email') ?? '')
+          .trim()
+          .toLowerCase();
+      if (email.isEmpty)
+        throw StateError('No target account for permission save');
+      final submitted = permissions.map((category, values) =>
+          MapEntry(category, Map<String, bool>.from(values)));
+      final branches =
+          allowedBranches == null ? null : List<String>.from(allowedBranches);
+      final employees = hrViewableEmployees == null
+          ? null
+          : List<String>.from(hrViewableEmployees);
+      try {
+        scope.check();
+        await ApiService().updatePermissions(
+          email,
+          submitted,
+          allowedBranches: branches,
+          hrViewableEmployees: employees,
+          clearHrViewableEmployees: clearHrViewableEmployees,
+          expectedTargetUid: expectedTargetUid,
+          expectedProfileVersion: expectedProfileVersion,
+          expectedPolicyRevision: expectedPolicyRevision,
+          startupBranchCode: startupBranchCode,
+        );
+        // The server has acknowledged a commit. A changed account/scope must
+        // not receive its stale clean-cache state, or a false failed-save result.
         if (!scope.isCurrent) return;
-      }
-      if (clearHrViewableEmployees) {
-        await box.delete('hr_viewable_employees_$email');
+        final box = CachePartitions.box('coding_box');
+        await box.put('permissions_$email', submitted);
         if (!scope.isCurrent) return;
-      } else if (employees != null) {
-        await box.put('hr_viewable_employees_$email', employees);
-        if (!scope.isCurrent) return;
-      }
-      if (email == prefs.getString('user_email')?.trim().toLowerCase()) {
-        ReadAuthorizationEpoch.invalidate();
-        _permissions = submitted;
-        if (branches != null) _allowedBranchCodes = branches;
-        if (clearHrViewableEmployees) {
-          _hrViewableEmployees = null;
-        } else if (employees != null) {
-          _hrViewableEmployees = employees;
+        if (branches != null) {
+          await box.put('allowed_branches_$email', branches);
+          if (!scope.isCurrent) return;
         }
-        notifyListeners();
+        if (clearHrViewableEmployees) {
+          await box.delete('hr_viewable_employees_$email');
+          if (!scope.isCurrent) return;
+        } else if (employees != null) {
+          await box.put('hr_viewable_employees_$email', employees);
+          if (!scope.isCurrent) return;
+        }
+        if (email == prefs.getString('user_email')?.trim().toLowerCase()) {
+          ReadAuthorizationEpoch.invalidate();
+          _permissions = submitted;
+          if (branches != null) _allowedBranchCodes = branches;
+          if (clearHrViewableEmployees) {
+            _hrViewableEmployees = null;
+          } else if (employees != null) {
+            _hrViewableEmployees = employees;
+          }
+          notifyListeners();
+        }
+      } catch (e) {
+        print('⚠️ فشل حفظ الصلاحيات: $e');
+        rethrow;
       }
-    } catch (e) {
-      print('⚠️ فشل حفظ الصلاحيات: $e');
-      rethrow;
-    }
-});
-}
+    });
+  }
 
   // ============================================================
   // تحويل Map الصلاحيات
   // ============================================================
 
-  Map<String, Map<String, bool>>
-      _convertToPermissionsMap(
+  // يحوّل البيانات إلى خريطة صلاحيات
+  Map<String, Map<String, bool>> _convertToPermissionsMap(
     dynamic data,
   ) {
-    final Map<String, Map<String, bool>>
-        converted = {};
+    final Map<String, Map<String, bool>> converted = {};
 
     if (data is! Map) {
       return converted;
@@ -1516,8 +1736,7 @@ return CachePartitions.run(() async {
           return;
         }
 
-        final Map<String, bool>
-            subMap = {};
+        final Map<String, bool> subMap = {};
 
         categoryValue.forEach(
           (permKey, permValue) {
@@ -1526,20 +1745,16 @@ return CachePartitions.run(() async {
             if (permValue is bool) {
               value = permValue;
             } else if (permValue is String) {
-              value =
-                  permValue.toLowerCase() ==
-                      'true';
+              value = permValue.toLowerCase() == 'true';
             } else if (permValue is num) {
               value = permValue == 1;
             }
 
-            subMap[
-                permKey.toString()] = value;
+            subMap[permKey.toString()] = value;
           },
         );
 
-        converted[
-            categoryKey.toString()] = subMap;
+        converted[categoryKey.toString()] = subMap;
       },
     );
 
@@ -1550,16 +1765,18 @@ return CachePartitions.run(() async {
   // الصلاحيات الافتراضية
   // ============================================================
 
-  Map<String, Map<String, bool>>
-      _createDefaultPermissions(
-    String jobCode, {bool forVerifiedProfile = false}
-  ) {
+  // ينشئ صلاحيات افتراضية بحسب كود الوظيفة
+  Map<String, Map<String, bool>> _createDefaultPermissions(String jobCode,
+      {bool forVerifiedProfile = false}) {
     // ⭐ لو عندنا role محدث، نستخدمه
     final effectiveRole = _currentRole ??
-        (jobCode == '99' ? 'super_admin' : jobCode == '201' ? 'admin' : 'employee');
+        (jobCode == '99'
+            ? 'super_admin'
+            : jobCode == '201'
+                ? 'admin'
+                : 'employee');
 
-    final Map<String, Map<String, bool>>
-        allPermissions = {
+    final Map<String, Map<String, bool>> allPermissions = {
       // ========================================================
       // حركة الخزينة
       // ========================================================
@@ -1683,20 +1900,20 @@ return CachePartitions.run(() async {
         'مشاركة': false,
 
         'تقرير التدفق النقدي': false,
-  'تحليل هيكل المصروفات': false,
-  'تحليل المصروفات بالنسبة للمبيعات': false,
-  'الربحية الصافية لكل فرع': false,
-  'تحليل حجم الفاتورة': false,
-  'تحليل الخزائن النقدية': false,
-  'الأصناف بطيئة الحركة': false,
-  'تحليل دقة الجرد': false,
-  'تقييم المخزون و ABC': false,
-  'تحليل أداء الموردين': false,
-  'تحليل العوائد والخصومات': false,
-  'تحليل الاتجاهات الموسمية': false,
-  'تحليل هامش الربح الفعلي': false,
-  'تحليل تجميع المنتجات': false,
-  'التقرير الموسع (صافي الجرد)': false,  // <--- هذا للتقرير الموسع
+        'تحليل هيكل المصروفات': false,
+        'تحليل المصروفات بالنسبة للمبيعات': false,
+        'الربحية الصافية لكل فرع': false,
+        'تحليل حجم الفاتورة': false,
+        'تحليل الخزائن النقدية': false,
+        'الأصناف بطيئة الحركة': false,
+        'تحليل دقة الجرد': false,
+        'تقييم المخزون و ABC': false,
+        'تحليل أداء الموردين': false,
+        'تحليل العوائد والخصومات': false,
+        'تحليل الاتجاهات الموسمية': false,
+        'تحليل هامش الربح الفعلي': false,
+        'تحليل تجميع المنتجات': false,
+        'التقرير الموسع (صافي الجرد)': false, // <--- هذا للتقرير الموسع
       },
 
       // ========================================================
@@ -1727,7 +1944,7 @@ return CachePartitions.run(() async {
         'إظهار الموارد البشرية': false,
       },
 
-           // ========================================================
+      // ========================================================
       // الموارد البشرية (HR) — نظام جديد (21 صلاحية)
       // ========================================================
       'الموارد البشرية': {
@@ -1758,16 +1975,16 @@ return CachePartitions.run(() async {
         'canEditWorkSchedule': false,
         'canEditDelayRules': false,
 
-                // ─── F. الخصم والراتب (3) ───
+        // ─── F. الخصم والراتب (3) ───
         'canAddDirectDiscount': false,
         'canViewSalaryAmounts': false,
         'canExportReport': false,
 
-                // ─── G. إدارة الموظفين (2) ───
+        // ─── G. إدارة الموظفين (2) ───
         'canViewEmployees': false,
         'canManageEmployees': false,
 
-               // ─── H. الموظف يشوف بياناته (1) ───
+        // ─── H. الموظف يشوف بياناته (1) ───
         'canViewOwnHRData': false,
 
         // ─── I. التقارير المجمعة (1) ⭐ جديد ───
@@ -1779,18 +1996,24 @@ return CachePartitions.run(() async {
     // super_admin + admin → كل شيء مفتوح
     // ==========================================================
 
-    if (_companyPolicyActive || (_scopeVerificationPending && !forVerifiedProfile)) {
+    if (_companyPolicyActive ||
+        (_scopeVerificationPending && !forVerifiedProfile)) {
       for (final entries in allPermissions.values) {
-        for (final key in entries.keys.toList()) { entries[key] = false; }
+        for (final key in entries.keys.toList()) {
+          entries[key] = false;
+        }
       }
     }
-    if ((!_scopeVerificationPending || forVerifiedProfile) && (effectiveRole == 'super_admin' || (effectiveRole == 'admin' && !_companyPolicyActive))) {
+    if ((!_scopeVerificationPending || forVerifiedProfile) &&
+        (effectiveRole == 'super_admin' ||
+            (effectiveRole == 'admin' && !_companyPolicyActive))) {
       for (final category in allPermissions.keys) {
         for (final permission in allPermissions[category]!.keys) {
           allPermissions[category]![permission] = true;
         }
       }
-    } else if (!_companyPolicyActive && (!_scopeVerificationPending || forVerifiedProfile)) {
+    } else if (!_companyPolicyActive &&
+        (!_scopeVerificationPending || forVerifiedProfile)) {
       // ⭐ employee → Sandbox: كل "إظهار X" = true، داخلي = false
       final globalPerms = allPermissions['صلاحيات عامة']!;
       globalPerms['إظهار حركة الخزينة'] = true;
@@ -1814,13 +2037,16 @@ return CachePartitions.run(() async {
   // فحص صلاحية عامة
   // ============================================================
 
+  // يحدد هل يملك المستخدم صلاحية محددة
   bool hasPermission(
     String category,
     String permission,
   ) {
-    return !_scopeVerificationPending && PermissionHierarchy.allows(_permissions, category, permission);
+    return !_scopeVerificationPending &&
+        PermissionHierarchy.allows(_permissions, category, permission);
   }
 
+  // يضبط الصلاحيات للاختبارات فقط
   /// منفذ اختبارات فقط: يثبّت خريطة صلاحيات ودوراً بدون
   /// Firestore/شبكة. لا يُستدعى من كود التطبيق.
   @visibleForTesting
@@ -1855,50 +2081,50 @@ return CachePartitions.run(() async {
   // حركة الخزينة
   // ============================================================
 
-  bool get canViewBalances =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية عرض الأرصدة
+  bool get canViewBalances => hasPermission(
         'حركة الخزينة',
         'شاشات الارصدة',
       );
 
-  bool get canAddTransaction =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية إضافة حركة
+  bool get canAddTransaction => hasPermission(
         'حركة الخزينة',
         'ادخال اذون',
       );
 
-  bool get canViewTransactions =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية عرض الحركات
+  bool get canViewTransactions => hasPermission(
         'حركة الخزينة',
         'المعاينة',
       );
 
-  bool get canEditTransaction =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية تعديل حركة
+  bool get canEditTransaction => hasPermission(
         'حركة الخزينة',
         'التعديل',
       );
 
-  bool get canDeleteTransaction =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية حذف حركة
+  bool get canDeleteTransaction => hasPermission(
         'حركة الخزينة',
         'الحذف',
       );
 
-  bool get canImportExcel =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية الاستيراد من Excel
+  bool get canImportExcel => hasPermission(
         'حركة الخزينة',
         'استيراد من اكسل',
       );
 
-  bool get canExport =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية التصدير
+  bool get canExport => hasPermission(
         'حركة الخزينة',
         'تصدير',
       );
 
-  bool get canFilter =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية التصفية
+  bool get canFilter => hasPermission(
         'حركة الخزينة',
         'فلترة',
       );
@@ -1907,68 +2133,68 @@ return CachePartitions.run(() async {
   // التكويد
   // ============================================================
 
-  bool get canViewCoding =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية عرض الترميز
+  bool get canViewCoding => hasPermission(
         'التكويد',
         'معاينة',
       );
 
-  bool get canAddCodingItem =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية إضافة صنف ترميز
+  bool get canAddCodingItem => hasPermission(
         'التكويد',
         'اضافة صنف',
       );
 
-  bool get canEditCodingItem =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية تعديل صنف ترميز
+  bool get canEditCodingItem => hasPermission(
         'التكويد',
         'اضافة صنف',
       );
 
-  bool get canAddBranch =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية إضافة فرع
+  bool get canAddBranch => hasPermission(
         'التكويد',
         'اضافة فرع',
       );
 
-  bool get canAddSafe =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية إضافة خزينة
+  bool get canAddSafe => hasPermission(
         'التكويد',
         'اضافة خزينة',
       );
 
-  bool get canAddSupplier =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية إضافة مورد
+  bool get canAddSupplier => hasPermission(
         'التكويد',
         'اضافة مورد',
       );
 
-  bool get canAddStore =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية إضافة مخزن
+  bool get canAddStore => hasPermission(
         'التكويد',
         'اضافة مخزن',
       );
 
-  bool get canAddCustomer =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية إضافة عميل
+  bool get canAddCustomer => hasPermission(
         'التكويد',
         'اضافة عملاء',
       );
 
-  bool get canAddPaymentMethod =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية إضافة طريقة دفع
+  bool get canAddPaymentMethod => hasPermission(
         'التكويد',
         'اضافة طرق دفع',
       );
 
-  bool get canAddBank =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية إضافة بنك
+  bool get canAddBank => hasPermission(
         'التكويد',
         'اضافة بنك',
       );
 
-  bool get canAddEmployee =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية إضافة موظف
+  bool get canAddEmployee => hasPermission(
         'التكويد',
         'اضافة موظف',
       );
@@ -1977,32 +2203,32 @@ return CachePartitions.run(() async {
   // حسابات الموردين = المشتريات
   // ============================================================
 
-  bool get canAddSupplierTransaction =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية إضافة معاملة مورد
+  bool get canAddSupplierTransaction => hasPermission(
         'حسابات الموردين',
         'اضافة',
       );
 
-  bool get canEditSupplierTransaction =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية تعديل معاملة مورد
+  bool get canEditSupplierTransaction => hasPermission(
         'حسابات الموردين',
         'تعديل',
       );
 
-  bool get canDeleteSupplierTransaction =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية حذف معاملة مورد
+  bool get canDeleteSupplierTransaction => hasPermission(
         'حسابات الموردين',
         'حذف',
       );
 
-  bool get canViewSupplierHistory =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية عرض سجل الموردين
+  bool get canViewSupplierHistory => hasPermission(
         'حسابات الموردين',
         'معاينة',
       );
 
-  bool get canExportSupplier =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية تصدير بيانات الموردين
+  bool get canExportSupplier => hasPermission(
         'حسابات الموردين',
         'تصدير',
       );
@@ -2011,32 +2237,32 @@ return CachePartitions.run(() async {
   // تسويات الموردين
   // ============================================================
 
-  bool get canAddSupplierSettlement =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية إضافة تسوية مورد
+  bool get canAddSupplierSettlement => hasPermission(
         'تسويات الموردين',
         'إضافة',
       );
 
-  bool get canEditSupplierSettlement =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية تعديل تسوية مورد
+  bool get canEditSupplierSettlement => hasPermission(
         'تسويات الموردين',
         'تعديل',
       );
 
-  bool get canDeleteSupplierSettlement =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية حذف تسوية مورد
+  bool get canDeleteSupplierSettlement => hasPermission(
         'تسويات الموردين',
         'حذف',
       );
 
-  bool get canViewSupplierSettlements =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية عرض تسويات الموردين
+  bool get canViewSupplierSettlements => hasPermission(
         'تسويات الموردين',
         'معاينة',
       );
 
-  bool get canExportSupplierSettlement =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية تصدير تسويات الموردين
+  bool get canExportSupplierSettlement => hasPermission(
         'تسويات الموردين',
         'تصدير',
       );
@@ -2045,46 +2271,46 @@ return CachePartitions.run(() async {
   //
   // السماح بالدخول لو المستخدم عنده
   // معاينة أو إضافة.
+  // يحدد هل تظهر شاشة تسويات الموردين
   bool get canShowSupplierSettlements =>
-      canViewSupplierSettlements ||
-      canAddSupplierSettlement;
+      canViewSupplierSettlements || canAddSupplierSettlement;
 
   // ============================================================
   // حركة الجرد
   // ============================================================
 
-  bool get canAddInventory =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية إضافة حركة مخزون
+  bool get canAddInventory => hasPermission(
         'حركة الجرد',
         'اضافة',
       );
 
-  bool get canEditInventory =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية تعديل حركة مخزون
+  bool get canEditInventory => hasPermission(
         'حركة الجرد',
         'تعديل',
       );
 
-  bool get canDeleteInventory =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية حذف حركة مخزون
+  bool get canDeleteInventory => hasPermission(
         'حركة الجرد',
         'حذف',
       );
 
-  bool get canViewInventory =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية عرض المخزون
+  bool get canViewInventory => hasPermission(
         'حركة الجرد',
         'معاينة',
       );
 
-  bool get canImportInventory =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية استيراد المخزون
+  bool get canImportInventory => hasPermission(
         'حركة الجرد',
         'استيراد',
       );
 
-  bool get canExportInventory =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية تصدير المخزون
+  bool get canExportInventory => hasPermission(
         'حركة الجرد',
         'تصدير',
       );
@@ -2093,20 +2319,20 @@ return CachePartitions.run(() async {
   // التقارير
   // ============================================================
 
-  bool get canViewReportsSales =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية عرض تقارير المبيعات
+  bool get canViewReportsSales => hasPermission(
         'التقارير',
         'تقرير المبيعات',
       );
 
-  bool get canViewReportsPeriod =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية عرض تقارير الفترات
+  bool get canViewReportsPeriod => hasPermission(
         'التقارير',
         'تقرير فترة',
       );
 
-  bool get canShareReports =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية مشاركة التقارير
+  bool get canShareReports => hasPermission(
         'التقارير',
         'مشاركة',
       );
@@ -2115,41 +2341,98 @@ return CachePartitions.run(() async {
 // التقارير التحليلية (Advanced)
 // ============================================================
 
-bool get canViewAdvancedReport1 => hasPermission('التقارير', 'تقرير التدفق النقدي');
-bool get canViewAdvancedReport2 => hasPermission('التقارير', 'تحليل هيكل المصروفات');
-bool get canViewAdvancedReport3 => hasPermission('التقارير', 'الربحية الصافية لكل فرع');
-bool get canViewAdvancedReport4 => hasPermission('التقارير', 'تحليل حجم الفاتورة');
-bool get canViewAdvancedReport5 => hasPermission('التقارير', 'تحليل الخزائن النقدية');
-bool get canViewAdvancedReport6 => hasPermission('التقارير', 'الأصناف بطيئة الحركة');
-bool get canViewAdvancedReport7 => hasPermission('التقارير', 'تحليل دقة الجرد');
-bool get canViewAdvancedReport8 => hasPermission('التقارير', 'تقييم المخزون و ABC');
-bool get canViewAdvancedReport9 => hasPermission('التقارير', 'تحليل أداء الموردين');
-bool get canViewAdvancedReport10 => hasPermission('التقارير', 'تحليل العوائد والخصومات');
-bool get canViewAdvancedReport11 => hasPermission('التقارير', 'تحليل الاتجاهات الموسمية');
-bool get canViewAdvancedReport12 => hasPermission('التقارير', 'تحليل هامش الربح الفعلي');
-bool get canViewAdvancedReport13 => hasPermission('التقارير', 'تحليل تجميع المنتجات');
-bool get canViewAdvancedReport14 => hasPermission('التقارير', 'تحليل المصروفات بالنسبة للمبيعات');
+// يحدد هل يملك المستخدم صلاحية عرض التقرير المتقدم رقم 1
+  bool get canViewAdvancedReport1 =>
+      hasPermission('التقارير', 'تقرير التدفق النقدي');
+
+// يحدد هل يملك المستخدم صلاحية عرض التقرير المتقدم رقم 2
+  bool get canViewAdvancedReport2 =>
+      hasPermission('التقارير', 'تحليل هيكل المصروفات');
+
+// يحدد هل يملك المستخدم صلاحية عرض التقرير المتقدم رقم 3
+  bool get canViewAdvancedReport3 =>
+      hasPermission('التقارير', 'الربحية الصافية لكل فرع');
+
+// يحدد هل يملك المستخدم صلاحية عرض التقرير المتقدم رقم 4
+  bool get canViewAdvancedReport4 =>
+      hasPermission('التقارير', 'تحليل حجم الفاتورة');
+
+// يحدد هل يملك المستخدم صلاحية عرض التقرير المتقدم رقم 5
+  bool get canViewAdvancedReport5 =>
+      hasPermission('التقارير', 'تحليل الخزائن النقدية');
+
+// يحدد هل يملك المستخدم صلاحية عرض التقرير المتقدم رقم 6
+  bool get canViewAdvancedReport6 =>
+      hasPermission('التقارير', 'الأصناف بطيئة الحركة');
+
+// يحدد هل يملك المستخدم صلاحية عرض التقرير المتقدم رقم 7
+  bool get canViewAdvancedReport7 =>
+      hasPermission('التقارير', 'تحليل دقة الجرد');
+
+// يحدد هل يملك المستخدم صلاحية عرض التقرير المتقدم رقم 8
+  bool get canViewAdvancedReport8 =>
+      hasPermission('التقارير', 'تقييم المخزون و ABC');
+
+// يحدد هل يملك المستخدم صلاحية عرض التقرير المتقدم رقم 9
+  bool get canViewAdvancedReport9 =>
+      hasPermission('التقارير', 'تحليل أداء الموردين');
+
+// يحدد هل يملك المستخدم صلاحية عرض التقرير المتقدم رقم 10
+  bool get canViewAdvancedReport10 =>
+      hasPermission('التقارير', 'تحليل العوائد والخصومات');
+
+// يحدد هل يملك المستخدم صلاحية عرض التقرير المتقدم رقم 11
+  bool get canViewAdvancedReport11 =>
+      hasPermission('التقارير', 'تحليل الاتجاهات الموسمية');
+
+// يحدد هل يملك المستخدم صلاحية عرض التقرير المتقدم رقم 12
+  bool get canViewAdvancedReport12 =>
+      hasPermission('التقارير', 'تحليل هامش الربح الفعلي');
+
+// يحدد هل يملك المستخدم صلاحية عرض التقرير المتقدم رقم 13
+  bool get canViewAdvancedReport13 =>
+      hasPermission('التقارير', 'تحليل تجميع المنتجات');
+
+// يحدد هل يملك المستخدم صلاحية عرض التقرير المتقدم رقم 14
+  bool get canViewAdvancedReport14 =>
+      hasPermission('التقارير', 'تحليل المصروفات بالنسبة للمبيعات');
 
 // صلاحية التقرير الموسع (صافي الجرد الحالي)
-bool get canViewExtendedReport => hasPermission('التقارير', 'التقرير الموسع (صافي الجرد)');
+// يحدد هل يملك المستخدم صلاحية عرض التقرير الموسّع
+  bool get canViewExtendedReport =>
+      hasPermission('التقارير', 'التقرير الموسع (صافي الجرد)');
 
   // ============================================================
   // رصيد المخزون
   // ============================================================
 
-  bool get canShowStock =>
-      hasPermission(
+  // يحدد هل تظهر شاشة رصيد المخزون
+  bool get canShowStock => hasPermission(
         'رصيد المخزون',
         'معاينة',
       );
 
+  // يحدد هل يملك المستخدم صلاحية إضافة عملية بيع
   bool get canAddSale => hasPermission('المبيعات', 'إضافة');
-  bool get canEditSale => hasPermission('المبيعات', 'تعديل');
-  bool get canDeleteSale => hasPermission('المبيعات', 'حذف');
-  bool get canViewSales => hasPermission('المبيعات', 'معاينة');
-  bool get canChangeSellingPrice => hasPermission('المبيعات', 'تغيير سعر البيع');
-  bool get canViewWholesaleInSale => hasPermission('المبيعات', 'عرض سعر الجملة');
 
+  // يحدد هل يملك المستخدم صلاحية تعديل عملية بيع
+  bool get canEditSale => hasPermission('المبيعات', 'تعديل');
+
+  // يحدد هل يملك المستخدم صلاحية حذف عملية بيع
+  bool get canDeleteSale => hasPermission('المبيعات', 'حذف');
+
+  // يحدد هل يملك المستخدم صلاحية عرض المبيعات
+  bool get canViewSales => hasPermission('المبيعات', 'معاينة');
+
+  // يحدد هل يملك المستخدم صلاحية تغيير سعر البيع
+  bool get canChangeSellingPrice =>
+      hasPermission('المبيعات', 'تغيير سعر البيع');
+
+  // يحدد هل يملك المستخدم صلاحية عرض سعر الجملة في البيع
+  bool get canViewWholesaleInSale =>
+      hasPermission('المبيعات', 'عرض سعر الجملة');
+
+  // يحدد هل يملك المستخدم أيًّا من صلاحيات عرض التكلفة
   /// أي من حقوق التكلفة الثلاثة (مطابق لقاعدة الخادم):
   /// التكويد/سعر الشراء أو المبيعات/عرض سعر الجملة أو
   /// رصيد المخزون/عرض سعر الجملة.
@@ -2157,40 +2440,105 @@ bool get canViewExtendedReport => hasPermission('التقارير', 'التقر�
       hasPermission('التكويد', 'سعر الشراء') ||
       canViewWholesaleInSale ||
       canViewStockWholesalePrice;
+
+  // يحدد هل يملك المستخدم صلاحية إضافة مرتجع بيع
   bool get canAddSaleReturn => hasPermission('المرتجعات', 'إضافة');
+
+  // يحدد هل يملك المستخدم صلاحية عرض مرتجعات البيع
   bool get canViewSaleReturns => hasPermission('المرتجعات', 'معاينة');
+
+  // يحدد هل يملك المستخدم صلاحية تعديل مرتجع بيع
   bool get canEditSaleReturn => hasPermission('المرتجعات', 'تعديل');
+
+  // يحدد هل يملك المستخدم صلاحية حذف مرتجع بيع
   bool get canDeleteSaleReturn => hasPermission('المرتجعات', 'حذف');
-  bool get canAddCustomerPayment => hasPermission('حسابات العملاء', 'إضافة تحصيل');
-  bool get canViewCustomerBalances => hasPermission('حسابات العملاء', 'عرض الأرصدة');
+
+  // يحدد هل يملك المستخدم صلاحية إضافة دفعة عميل
+  bool get canAddCustomerPayment =>
+      hasPermission('حسابات العملاء', 'إضافة تحصيل');
+
+  // يحدد هل يملك المستخدم صلاحية عرض أرصدة العملاء
+  bool get canViewCustomerBalances =>
+      hasPermission('حسابات العملاء', 'عرض الأرصدة');
+
+  // يحدد هل يملك المستخدم صلاحية عرض دفعات العملاء
   bool get canViewCustomerPayments => hasPermission('حسابات العملاء', 'معاينة');
+
+  // يحدد هل يملك المستخدم صلاحية إضافة تحويل مخزني
   bool get canAddStockTransfer => hasPermission('التحويلات المخزنية', 'إضافة');
-  bool get canViewStockTransfers => hasPermission('التحويلات المخزنية', 'معاينة');
+
+  // يحدد هل يملك المستخدم صلاحية عرض التحويلات المخزنية
+  bool get canViewStockTransfers =>
+      hasPermission('التحويلات المخزنية', 'معاينة');
+
+  // يحدد هل يملك المستخدم صلاحية تعديل تحويل مخزني
   bool get canEditStockTransfer => hasPermission('التحويلات المخزنية', 'تعديل');
+
+  // يحدد هل يملك المستخدم صلاحية حذف تحويل مخزني
   bool get canDeleteStockTransfer => hasPermission('التحويلات المخزنية', 'حذف');
-  bool get canAddTreasuryTransfer => canBypassPermissions || hasPermission('تحويلات الخزائن', 'إضافة');
-  bool get canViewTreasuryTransfers => canBypassPermissions || hasPermission('تحويلات الخزائن', 'معاينة');
-  bool get canEditTreasuryTransfer => canBypassPermissions || hasPermission('تحويلات الخزائن', 'تعديل');
-  bool get canDeleteTreasuryTransfer => canBypassPermissions || hasPermission('تحويلات الخزائن', 'حذف');
-  bool get canReadTreasuryEffects => !_scopeVerificationPending && (canBypassPermissions || TreasuryCacheScope.hasEffects(_permissions));
-  bool get canViewSalesTreasuries => hasPermission('أرصدة خزائن المبيعات', 'معاينة');
+
+  // يحدد هل يملك المستخدم صلاحية إضافة تحويل خزينة
+  bool get canAddTreasuryTransfer =>
+      canBypassPermissions || hasPermission('تحويلات الخزائن', 'إضافة');
+
+  // يحدد هل يملك المستخدم صلاحية عرض تحويلات الخزائن
+  bool get canViewTreasuryTransfers =>
+      canBypassPermissions || hasPermission('تحويلات الخزائن', 'معاينة');
+
+  // يحدد هل يملك المستخدم صلاحية تعديل تحويل خزينة
+  bool get canEditTreasuryTransfer =>
+      canBypassPermissions || hasPermission('تحويلات الخزائن', 'تعديل');
+
+  // يحدد هل يملك المستخدم صلاحية حذف تحويل خزينة
+  bool get canDeleteTreasuryTransfer =>
+      canBypassPermissions || hasPermission('تحويلات الخزائن', 'حذف');
+
+  // يحدد هل يملك المستخدم صلاحية قراءة أثر التحويلات على الأرصدة
+  bool get canReadTreasuryEffects =>
+      !_scopeVerificationPending &&
+      (canBypassPermissions || TreasuryCacheScope.hasEffects(_permissions));
+
+  // يحدد هل يملك المستخدم صلاحية عرض أرصدة خزائن المبيعات
+  bool get canViewSalesTreasuries =>
+      hasPermission('أرصدة خزائن المبيعات', 'معاينة');
+
+  // يحدد هل الصفحة ظاهرة
   bool pageVisible(String label, {bool fallback = true}) =>
-      !_scopeVerificationPending && (canBypassPermissions ||
+      !_scopeVerificationPending &&
+      (canBypassPermissions ||
           PageVisibility.visible(_permissions, label, fallback: fallback));
-  bool get canShowSales => pageVisible('المبيعات والعملاء', fallback: _legacyCanShowSales);
+
+  // يحدد هل تظهر شاشة المبيعات
+  bool get canShowSales =>
+      pageVisible('المبيعات والعملاء', fallback: _legacyCanShowSales);
+
+  // يحدد هل تظهر شاشة تحويلات الخزائن
   bool get canShowTreasuryTransfers => pageVisible('تحويلات الخزائن',
       fallback: canAddTreasuryTransfer || canViewTreasuryTransfers);
-  bool get canShowStockPage => pageVisible('رصيد المخزون', fallback: canShowInventory);
-  bool get _legacyCanShowSales => canAddSale || canViewSales || canAddSaleReturn || canViewSaleReturns || canAddCustomerPayment || canViewCustomerBalances || canViewCustomerPayments || canViewSalesTreasuries;
 
-  bool get canViewStockWholesalePrice =>
-      hasPermission(
+  // يحدد هل تظهر صفحة رصيد المخزون
+  bool get canShowStockPage =>
+      pageVisible('رصيد المخزون', fallback: canShowInventory);
+
+  // يحدد هل تظهر المبيعات وفق القواعد القديمة
+  bool get _legacyCanShowSales =>
+      canAddSale ||
+      canViewSales ||
+      canAddSaleReturn ||
+      canViewSaleReturns ||
+      canAddCustomerPayment ||
+      canViewCustomerBalances ||
+      canViewCustomerPayments ||
+      canViewSalesTreasuries;
+
+  // يحدد هل يملك المستخدم صلاحية عرض سعر الجملة في رصيد المخزون
+  bool get canViewStockWholesalePrice => hasPermission(
         'رصيد المخزون',
         'عرض سعر الجملة',
       );
 
-  bool get canExportStock =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية تصدير رصيد المخزون
+  bool get canExportStock => hasPermission(
         'رصيد المخزون',
         'تصدير',
       );
@@ -2199,84 +2547,100 @@ bool get canViewExtendedReport => hasPermission('التقارير', 'التقر�
   // الصلاحيات العامة
   // ============================================================
 
-  bool get canChangeBranch =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية تغيير الفرع
+  bool get canChangeBranch => hasPermission(
         'صلاحيات عامة',
         'تغيير الفرع(صفحة الهوم)',
       );
 
-  bool get canAccessPermissionsPage =>
-      hasPermission(
+  // يحدد هل يملك المستخدم صلاحية فتح صفحة الصلاحيات
+  bool get canAccessPermissionsPage => hasPermission(
         'صلاحيات عامة',
         'صفحة الصلاحيات(الاعدادات)',
       );
 
-  bool get canShowTreasury =>
-      hasPermission(
+  // يحدد هل تظهر شاشة الخزائن
+  bool get canShowTreasury => hasPermission(
         'صلاحيات عامة',
         'إظهار حركة الخزينة',
       );
 
-  bool get canShowCoding =>
-      hasPermission(
+  // يحدد هل تظهر شاشة الترميز
+  bool get canShowCoding => hasPermission(
         'صلاحيات عامة',
         'إظهار التكويد',
       );
 
-  bool get canShowReports =>
-      hasPermission(
+  // يحدد هل تظهر شاشة التقارير
+  bool get canShowReports => hasPermission(
         'صلاحيات عامة',
         'إظهار التقارير',
       );
 
-  bool get canShowSuppliers =>
-      hasPermission(
+  // يحدد هل تظهر شاشة الموردين
+  bool get canShowSuppliers => hasPermission(
         'صلاحيات عامة',
         'إظهار حركة الموردين',
       );
 
-  bool get canShowInventory =>
-      hasPermission(
+  // يحدد هل تظهر شاشة المخزون
+  bool get canShowInventory => hasPermission(
         'صلاحيات عامة',
         'إظهار حركة الجرد',
       );
+
+  // يحدد هل تظهر شاشة الإشعارات
   bool get canShowNotifications {
     // الافتراضي = true لو المفتاح غير موجود في بيانات المستخدم
     // (يغطي المستخدمين القدامى اللي اتسجلوا قبل إضافة الصلاحية)
-    return (!_scopeVerificationPending && (_permissions?['صلاحيات عامة']?['إظهار الإشعارات'] ?? !_companyPolicyActive));
+    return (!_scopeVerificationPending &&
+        (_permissions?['صلاحيات عامة']?['إظهار الإشعارات'] ??
+            !_companyPolicyActive));
   }
 
+  // يحدد هل تظهر شاشة البحث عن المنتجات
   bool get canShowProductLookup {
     // الافتراضي = true لو المفتاح غير موجود في بيانات المستخدم
     // (يغطي المستخدمين القدامى اللي اتسجلوا قبل إضافة الصلاحية)
-    return (!_scopeVerificationPending && (_permissions?['صلاحيات عامة']?['إظهار البحث عن المنتجات'] ?? !_companyPolicyActive));
-  }
-  bool get canShowOnlineUsers {
-    // الافتراضي = true لو المفتاح غير موجود (للمستخدمين القدامى)
-    return (!_scopeVerificationPending && (_permissions?['صلاحيات عامة']?['إظهار المستخدمين المتصلين'] ?? !_companyPolicyActive));
+    return (!_scopeVerificationPending &&
+        (_permissions?['صلاحيات عامة']?['إظهار البحث عن المنتجات'] ??
+            !_companyPolicyActive));
   }
 
-    // ============================================================
+  // يحدد هل تظهر قائمة المستخدمين المتصلين
+  bool get canShowOnlineUsers {
+    // الافتراضي = true لو المفتاح غير موجود (للمستخدمين القدامى)
+    return (!_scopeVerificationPending &&
+        (_permissions?['صلاحيات عامة']?['إظهار المستخدمين المتصلين'] ??
+            !_companyPolicyActive));
+  }
+
+  // ============================================================
   // الموارد البشرية (HR) — نظام جديد (21 صلاحية + فلترة)
   // ============================================================
 
+  // يحدد هل تظهر إشعارات الموارد البشرية
   /// هل يظهر قسم HR في القائمة الرئيسية؟
-  bool get hrNotificationsEnabled =>
-      (!_scopeVerificationPending && (_permissions?['صلاحيات عامة']?['إظهار الموارد البشرية'] ?? !_companyPolicyActive));
+  bool get hrNotificationsEnabled => (!_scopeVerificationPending &&
+      (_permissions?['صلاحيات عامة']?['إظهار الموارد البشرية'] ??
+          !_companyPolicyActive));
 
-  bool get canShowHR =>
-      hasPermission('صلاحيات عامة', 'إظهار الموارد البشرية');
+  // يحدد هل يظهر قسم الموارد البشرية
+  bool get canShowHR => hasPermission('صلاحيات عامة', 'إظهار الموارد البشرية');
 
   // ─────────────────────────────────────────────────────────
   // A. فتح الصفحات (3)
   // ─────────────────────────────────────────────────────────
 
+  // يحدد هل يمكن فتح صفحة الحضور
   bool get canOpenAttendancePage =>
       hasPermission('الموارد البشرية', 'canOpenAttendancePage');
 
+  // يحدد هل يمكن فتح صفحة الإجازات
   bool get canOpenVacationsPage =>
       hasPermission('الموارد البشرية', 'canOpenVacationsPage');
 
+  // يحدد هل يمكن فتح صفحة التقارير
   bool get canOpenReportPage =>
       hasPermission('الموارد البشرية', 'canOpenReportPage');
 
@@ -2284,12 +2648,15 @@ bool get canViewExtendedReport => hasPermission('التقارير', 'التقر�
   // B. عمليات الحضور (3)
   // ─────────────────────────────────────────────────────────
 
+  // يحدد هل يملك المستخدم صلاحية إضافة حضور
   bool get canAddAttendance =>
       hasPermission('الموارد البشرية', 'canAddAttendance');
 
+  // يحدد هل يملك المستخدم صلاحية تعديل حضور
   bool get canEditAttendance =>
       hasPermission('الموارد البشرية', 'canEditAttendance');
 
+  // يحدد هل يملك المستخدم صلاحية حذف حضور
   bool get canDeleteAttendance =>
       hasPermission('الموارد البشرية', 'canDeleteAttendance');
 
@@ -2297,12 +2664,14 @@ bool get canViewExtendedReport => hasPermission('التقارير', 'التقر�
   // C. عمليات الإجازات (3)
   // ─────────────────────────────────────────────────────────
 
-  bool get canAddVacation =>
-      hasPermission('الموارد البشرية', 'canAddVacation');
+  // يحدد هل يملك المستخدم صلاحية إضافة إجازة
+  bool get canAddVacation => hasPermission('الموارد البشرية', 'canAddVacation');
 
+  // يحدد هل يملك المستخدم صلاحية تعديل إجازة
   bool get canEditVacation =>
       hasPermission('الموارد البشرية', 'canEditVacation');
 
+  // يحدد هل يملك المستخدم صلاحية حذف إجازة
   bool get canDeleteVacation =>
       hasPermission('الموارد البشرية', 'canDeleteVacation');
 
@@ -2310,18 +2679,21 @@ bool get canViewExtendedReport => hasPermission('التقارير', 'التقر�
   // D. التسويات (5)
   // ─────────────────────────────────────────────────────────
 
+  // يحدد هل يملك المستخدم صلاحية عرض التسويات
   bool get canViewAdjustments =>
       hasPermission('الموارد البشرية', 'canViewAdjustments');
 
-  bool get canAddBonus =>
-      hasPermission('الموارد البشرية', 'canAddBonus');
+  // يحدد هل يملك المستخدم صلاحية إضافة مكافأة
+  bool get canAddBonus => hasPermission('الموارد البشرية', 'canAddBonus');
 
-  bool get canAddLoan =>
-      hasPermission('الموارد البشرية', 'canAddLoan');
+  // يحدد هل يملك المستخدم صلاحية إضافة سلفة
+  bool get canAddLoan => hasPermission('الموارد البشرية', 'canAddLoan');
 
+  // يحدد هل يملك المستخدم صلاحية تعديل تسوية
   bool get canEditAdjustment =>
       hasPermission('الموارد البشرية', 'canEditAdjustment');
 
+  // يحدد هل يملك المستخدم صلاحية حذف تسوية
   bool get canDeleteAdjustment =>
       hasPermission('الموارد البشرية', 'canDeleteAdjustment');
 
@@ -2329,12 +2701,15 @@ bool get canViewExtendedReport => hasPermission('التقارير', 'التقر�
   // E. الإعدادات (3)
   // ─────────────────────────────────────────────────────────
 
+  // يحدد هل يملك المستخدم صلاحية تعديل يوم الإجازة الأسبوعية
   bool get canEditWeeklyDay =>
       hasPermission('الموارد البشرية', 'canEditWeeklyDay');
 
+  // يحدد هل يملك المستخدم صلاحية تعديل جدول العمل
   bool get canEditWorkSchedule =>
       hasPermission('الموارد البشرية', 'canEditWorkSchedule');
 
+  // يحدد هل يملك المستخدم صلاحية تعديل قواعد التأخير
   bool get canEditDelayRules =>
       hasPermission('الموارد البشرية', 'canEditDelayRules');
 
@@ -2342,23 +2717,28 @@ bool get canViewExtendedReport => hasPermission('التقارير', 'التقر�
   // F. الخصم والراتب (3)
   // ─────────────────────────────────────────────────────────
 
+  // يحدد هل يملك المستخدم صلاحية إضافة خصم مباشر
   bool get canAddDirectDiscount =>
       hasPermission('الموارد البشرية', 'canAddDirectDiscount');
 
+  // يحدد هل يملك المستخدم صلاحية عرض مبالغ الرواتب
   bool get canViewSalaryAmounts =>
       hasPermission('الموارد البشرية', 'canViewSalaryAmounts');
 
-    bool get canExportReport =>
+  // يحدد هل يملك المستخدم صلاحية تصدير التقرير
+  bool get canExportReport =>
       hasPermission('الموارد البشرية', 'canExportReport');
 
-    // ─────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────
   // G. إدارة الموظفين (2)
   // ─────────────────────────────────────────────────────────
 
+  // يحدد هل يملك المستخدم صلاحية عرض الموظفين
   /// عرض قائمة الموظفين والبروفايل (read-only)
   bool get canViewEmployees =>
       hasPermission('الموارد البشرية', 'canViewEmployees');
 
+  // يحدد هل يملك المستخدم صلاحية إدارة الموظفين
   /// إدارة الموظفين (إضافة/تعديل/حذف)
   bool get canManageEmployees =>
       hasPermission('الموارد البشرية', 'canManageEmployees');
@@ -2367,27 +2747,34 @@ bool get canViewExtendedReport => hasPermission('التقارير', 'التقر�
   // H. الموظف يشوف بياناته (1) ⭐ جديد
   // ─────────────────────────────────────────────────────────
 
+  // يحدد هل يملك المستخدم صلاحية عرض بياناته الخاصة في الموارد البشرية
   /// الموظف يشوف بياناته هو فقط (بروفايل + راتب + حضور + إجازات + سلف)
   /// - يشتغل فقط لو مربوط بحساب Firebase (user_email)
   /// - بيسمح له بالوصول حتى لو canViewSalaryAmounts / canViewEmployees = false
   bool get canViewOwnHRData =>
       hasPermission('الموارد البشرية', 'canViewOwnHRData');
 
-    /// ⭐ عرض تقرير إجمالي الرواتب لكل فرع
+  // يحدد هل يملك المستخدم صلاحية عرض تقرير رواتب الفرع
+  /// ⭐ عرض تقرير إجمالي الرواتب لكل فرع
   bool get canViewBranchSalaryReport =>
       hasPermission('الموارد البشرية', 'canViewBranchSalaryReport');
-    /// كود الموظف المرتبط بالحساب الحالي (null لو مش مربوط)
+
+  // يحدد هل الهوية الحالية تخص الشركة
+  /// كود الموظف المرتبط بالحساب الحالي (null لو مش مربوط)
   ///
   /// ⭐ fallback: لو لسه ما اتحسبش، بيحاول يحسبه دلوقتي
   bool isCurrentIdentityForCompany(String company) =>
-      company == _identityCompany && company == _cachedPrefs?.getString('company_code') &&
+      company == _identityCompany &&
+      company == _cachedPrefs?.getString('company_code') &&
       FirebaseAuth.instance.currentUser?.uid == _identityProfileUid;
 
+  // يعيد كود الموظف الحالي
   String? get currentEmployeeCode {
     _tryComputeCurrentEmployeeCode();
     return _currentEmployeeCode;
   }
 
+  // يحدد هل الكود هو الموظف الحالي
   bool isCurrentEmployee(String employeeCode) {
     final code = currentEmployeeCode;
     return code != null && _normalizeCode(code) == _normalizeCode(employeeCode);
@@ -2397,13 +2784,21 @@ bool get canViewExtendedReport => hasPermission('التقارير', 'التقر�
   // I. فلترة الموظفين
   // ─────────────────────────────────────────────────────────
 
+  // يعيد نطاق تغطية الموارد البشرية
   /// قائمة الموظفين المرئيين (null = الكل في الفروع المسموحة)
   String get hrCoverageScope => jsonEncode([
-    FirebaseAuth.instance.currentUser?.uid, _currentRole, _companyPolicyActive,
-    _permissions?['الموارد البشرية'], _allowedBranchCodes, _hrViewableEmployees
-  ]);
+        FirebaseAuth.instance.currentUser?.uid,
+        _currentRole,
+        _companyPolicyActive,
+        _permissions?['الموارد البشرية'],
+        _allowedBranchCodes,
+        _hrViewableEmployees
+      ]);
+
+  // يعيد الموظفين الذين يحق للمستخدم عرضهم
   List<String>? get hrViewableEmployees => _hrViewableEmployees;
 
+  // يحدد هل يمكن للمستخدم عرض موظف معين
   /// هل يمكن رؤية موظف معين؟
   ///
   /// الأولويات:
@@ -2436,6 +2831,7 @@ bool get canViewExtendedReport => hasPermission('التقارير', 'التقر�
     return true;
   }
 
+  // يحدد هل يمكن للمستخدم رؤية راتب موظف
   /// ⭐ هل يمكن رؤية الراتب/المبالغ المالية لهذا الموظف؟
   ///
   /// المنطق:
@@ -2450,7 +2846,4 @@ bool get canViewExtendedReport => hasPermission('التقارير', 'التقر�
     // otherwise — الصلاحية العامة
     return canViewSalaryAmounts;
   }
-
-
-
 }

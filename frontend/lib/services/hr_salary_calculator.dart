@@ -1,9 +1,9 @@
-// lib/services/hr_salary_calculator.dart
+// frontend/lib/services/hr_salary_calculator.dart
 
 import '../core/hr_constants.dart';
 import '../models/hr_models.dart';
 
-
+// حاسبة الراتب الشهري (نسخة Dart مطابقة لحاسبة الخادم)
 /// حاسبة الراتب الشهري (نسخة Dart مطابقة لـ Python)
 ///
 /// ⚠️ مهم جداً:
@@ -37,6 +37,7 @@ class HRSalaryCalculator {
   // - أكثر من 120    → delay_120min
   // ============================================================
 
+  // يحسب أيام الخصم الناتجة عن دقائق التأخير
   static double _getDelayDeductionDays(
     int lateMinutes,
     Map<String, double> rules,
@@ -54,7 +55,8 @@ class HRSalaryCalculator {
     }
   }
 
-    static int _timeToMinutes(String time) {
+  // يحوّل الوقت النصي إلى دقائق
+  static int _timeToMinutes(String time) {
     if (time.isEmpty) return 0;
     final parts = time.split(':');
     if (parts.length < 2) return 0;
@@ -76,6 +78,7 @@ class HRSalaryCalculator {
   //   (يتحول لـ HRSalaryReportModel في HRReportService)
   // ============================================================
 
+  // يحسب الراتب الشهري ويعيد تفاصيله
   static Map<String, dynamic> calculate({
     required String companyCode,
     required String employeeCode,
@@ -209,7 +212,7 @@ class HRSalaryCalculator {
     //   4. غياب
     // ============================================================
 
-        for (int dayNum = 1; dayNum <= daysInMonth; dayNum++) {
+    for (int dayNum = 1; dayNum <= daysInMonth; dayNum++) {
       final dateStr = '$month-${dayNum.toString().padLeft(2, '0')}';
       final date = DateTime.parse(dateStr);
 
@@ -226,10 +229,13 @@ class HRSalaryCalculator {
         if (att.status == 'vacation') {
           vacationDays++;
           attendanceDetails.add({
-            'date': dateStr, 'status': 'vacation',
+            'date': dateStr,
+            'status': 'vacation',
             'note': att.notes.isNotEmpty ? att.notes : 'إجازة',
-            'check_in': null, 'check_out': null,
-            'late_minutes': 0, 'overtime_minutes': 0,
+            'check_in': null,
+            'check_out': null,
+            'late_minutes': 0,
+            'overtime_minutes': 0,
             'deduction_days': 0.0,
           });
           continue;
@@ -241,10 +247,13 @@ class HRSalaryCalculator {
           final deduction = delayRules['absence'] ?? 3.0;
           absenceDeductionDays += deduction;
           attendanceDetails.add({
-            'date': dateStr, 'status': 'absent',
+            'date': dateStr,
+            'status': 'absent',
             'note': att.notes.isNotEmpty ? att.notes : 'غياب',
-            'check_in': null, 'check_out': null,
-            'late_minutes': 0, 'overtime_minutes': 0,
+            'check_in': null,
+            'check_out': null,
+            'late_minutes': 0,
+            'overtime_minutes': 0,
             'deduction_days': deduction,
           });
           continue;
@@ -257,11 +266,13 @@ class HRSalaryCalculator {
           final deduction = delayRules['absence_with_permission'] ?? 1.0;
           permissionDeductionDays += deduction;
           attendanceDetails.add({
-            'date': dateStr, 'status': 'permission',
+            'date': dateStr,
+            'status': 'permission',
             'note': att.notes.isNotEmpty ? att.notes : 'إذن',
             'check_in': att.checkIn.isNotEmpty ? att.checkIn : null,
             'check_out': att.checkOut.isNotEmpty ? att.checkOut : null,
-            'late_minutes': 0, 'overtime_minutes': 0,
+            'late_minutes': 0,
+            'overtime_minutes': 0,
             'deduction_days': deduction,
           });
           continue;
@@ -323,9 +334,13 @@ class HRSalaryCalculator {
       if (isFuture) {
         futureDays++;
         attendanceDetails.add({
-          'date': dateStr, 'status': 'future',
-          'note': 'لم يأتِ بعد', 'check_in': null, 'check_out': null,
-          'late_minutes': 0, 'overtime_minutes': 0,
+          'date': dateStr,
+          'status': 'future',
+          'note': 'لم يأتِ بعد',
+          'check_in': null,
+          'check_out': null,
+          'late_minutes': 0,
+          'overtime_minutes': 0,
           'deduction_days': 0.0,
         });
         continue;
@@ -334,10 +349,13 @@ class HRSalaryCalculator {
       if (isWeekly || isVacation) {
         vacationDays++;
         attendanceDetails.add({
-          'date': dateStr, 'status': 'vacation',
+          'date': dateStr,
+          'status': 'vacation',
           'note': isWeekly ? 'إجازة أسبوعية' : 'إجازة رسمية',
-          'check_in': null, 'check_out': null,
-          'late_minutes': 0, 'overtime_minutes': 0,
+          'check_in': null,
+          'check_out': null,
+          'late_minutes': 0,
+          'overtime_minutes': 0,
           'deduction_days': 0.0,
         });
         continue;
@@ -348,13 +366,16 @@ class HRSalaryCalculator {
       final deduction = delayRules['absence'] ?? 3.0;
       absenceDeductionDays += deduction;
       attendanceDetails.add({
-        'date': dateStr, 'status': 'absent',
-        'note': 'بدون سجل', 'check_in': null, 'check_out': null,
-        'late_minutes': 0, 'overtime_minutes': 0,
+        'date': dateStr,
+        'status': 'absent',
+        'note': 'بدون سجل',
+        'check_in': null,
+        'check_out': null,
+        'late_minutes': 0,
+        'overtime_minutes': 0,
         'deduction_days': deduction,
       });
     }
-
 
     // ============================================================
     // 6) الحسابات المالية (بناءً على الأيام)
@@ -386,18 +407,14 @@ class HRSalaryCalculator {
         bonusesTotal += amount;
         adjustmentLines.add({
           'type': 'bonus',
-          'label': adj.reason.isNotEmpty
-              ? 'مكافأة: ${adj.reason}'
-              : 'مكافأة',
+          'label': adj.reason.isNotEmpty ? 'مكافأة: ${adj.reason}' : 'مكافأة',
           'amount': amount,
         });
       } else if (adj.type == 'deduction') {
         deductionsTotal += amount;
         adjustmentLines.add({
           'type': 'deduction',
-          'label': adj.reason.isNotEmpty
-              ? 'خصم: ${adj.reason}'
-              : 'خصم',
+          'label': adj.reason.isNotEmpty ? 'خصم: ${adj.reason}' : 'خصم',
           'amount': -amount,
         });
       } else if (adj.type == 'loan') {
@@ -491,7 +508,7 @@ class HRSalaryCalculator {
       'loans_total': _round2(loansTotal),
 
       'net_salary': _round2(netSalary),
-      'debt_remaining': _round2(debtRemaining),  // ⭐ جديد
+      'debt_remaining': _round2(debtRemaining), // ⭐ جديد
 
       // التفاصيل
       'adjustment_lines': adjustmentLines,
@@ -502,7 +519,6 @@ class HRSalaryCalculator {
     };
   }
 
-
   // ============================================================
   // Helper: تقريب لـ 2 خانة عشرية
   //
@@ -511,6 +527,7 @@ class HRSalaryCalculator {
   // - نستخدم * 100 → round → / 100 للحصول على أدق نتيجة
   // ============================================================
 
+  // يقرّب الرقم إلى خانتين عشريتين
   static double _round2(double value) {
     return (value * 100).round() / 100;
   }

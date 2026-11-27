@@ -1,10 +1,12 @@
-// lib/services/web_loading_helper.dart
+// frontend/lib/services/web_loading_helper.dart
 
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:universal_html/html.dart' as html;
 
+// علم يمنع إخفاء شاشة التحميل أكثر من مرة
 bool _hideCalled = false;
 
+// يخفي شاشة تحميل الويب
 void hideWebLoadingScreen() {
   if (!kIsWeb) return;
   if (_hideCalled) return;

@@ -1,5 +1,5 @@
+// frontend/lib/pages/hr/report_page.dart
 import '../../services/cache_partitions.dart';
-// lib/pages/hr/report_page.dart
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -14,7 +14,7 @@ import '../../services/export_service.dart';
 import '../../models/employee_model.dart';
 import '../../models/hr_salary_report_model.dart';
 
-
+// صفحة تقرير راتب الموظف
 /// صفحة تقرير راتب الموظف
 ///
 /// - التقرير يظهر أوتوماتيك لما تختار موظف أو تغير الشهر
@@ -23,11 +23,12 @@ import '../../models/hr_salary_report_model.dart';
 class HRReportPage extends StatefulWidget {
   const HRReportPage({super.key});
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<HRReportPage> createState() => _HRReportPageState();
 }
 
-
+// حالة الويدجت HRReportPage: تدير بيانات الشاشة وتفاعلاتها
 class _HRReportPageState extends State<HRReportPage> {
   // ============================================================
   // Services
@@ -35,7 +36,6 @@ class _HRReportPageState extends State<HRReportPage> {
 
   final EmployeeService _employeeService = EmployeeService();
   final HRReportService _reportService = HRReportService();
-
 
   // ============================================================
   // State
@@ -56,11 +56,11 @@ class _HRReportPageState extends State<HRReportPage> {
 
   bool _wasFromServer = false;
 
-
   // ============================================================
   // Lifecycle
   // ============================================================
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
@@ -68,285 +68,280 @@ class _HRReportPageState extends State<HRReportPage> {
     _loadEmployees();
   }
 
-
   // ============================================================
   // Helpers
   // ============================================================
 
+  // يعيد الشهر الحالي بصيغة نصية
   String _currentMonth() {
     final now = DateTime.now();
     return "${now.year}-${now.month.toString().padLeft(2, '0')}";
   }
 
-
   // ============================================================
   // Load employees
   // ============================================================
 
+  // يحمّل قائمة الموظفين
   Future<void> _loadEmployees() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      setState(() => _isLoading = true);
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        _companyCode = prefs.getString('company_code') ?? '';
+        _companyName = prefs.getString('company_name') ?? 'الشركة';
 
-    setState(() => _isLoading = true);
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      _companyCode = prefs.getString('company_code') ?? '';
-      _companyName = prefs.getString('company_name') ?? 'الشركة';
+        if (_companyCode.isEmpty) {
+          setState(() => _isLoading = false);
+          return;
+        }
 
-      if (_companyCode.isEmpty) {
-        setState(() => _isLoading = false);
-        return;
+        final allEmployees = await _employeeService.getEmployeesList(
+          companyCode: _companyCode,
+        );
+
+        // فلترة حسب canViewEmployee
+        final filtered = allEmployees
+            .where((e) =>
+                PermissionsService().canViewEmployee(e.code, e.branchCode))
+            .toList();
+
+        if (mounted) {
+          setState(() {
+            _employees = filtered;
+            _isLoading = false;
+
+            // ⭐ اختيار أول موظف تلقائيًا + توليد التقرير
+            if (filtered.isNotEmpty && _selectedEmployee == null) {
+              _selectedEmployee = filtered.first;
+              // ⭐ نولّد التقرير بعد ما الـ setState يخلص
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                _generateReport();
+              });
+            }
+          });
+        }
+      } catch (e) {
+        print("❌ خطأ: $e");
+        if (mounted) setState(() => _isLoading = false);
       }
-
-      final allEmployees = await _employeeService.getEmployeesList(
-        companyCode: _companyCode,
-      );
-
-      // فلترة حسب canViewEmployee
-      final filtered = allEmployees
-          .where((e) =>
-              PermissionsService().canViewEmployee(e.code, e.branchCode))
-          .toList();
-
-      if (mounted) {
-        setState(() {
-          _employees = filtered;
-          _isLoading = false;
-
-          // ⭐ اختيار أول موظف تلقائيًا + توليد التقرير
-          if (filtered.isNotEmpty && _selectedEmployee == null) {
-            _selectedEmployee = filtered.first;
-            // ⭐ نولّد التقرير بعد ما الـ setState يخلص
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              _generateReport();
-            });
-          }
-        });
-      }
-    } catch (e) {
-      print("❌ خطأ: $e");
-      if (mounted) setState(() => _isLoading = false);
-    }
-});
-}
-
+    });
+  }
 
   // ============================================================
   // اختيار الشهر (حوار شهور مخصص — يفتح على الشهور)
   // ============================================================
 
+  // يفتح نافذة اختيار الشهر
   Future<void> _pickMonth() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      final current = DateTime.parse('$_selectedMonth-01');
 
-    final current = DateTime.parse('$_selectedMonth-01');
+      final picked = await showDialog<DateTime>(
+        context: context,
+        builder: (ctx) => _MonthPickerDialog(
+          initialYear: current.year,
+          initialMonth: current.month,
+        ),
+      );
 
-    final picked = await showDialog<DateTime>(
-      context: context,
-      builder: (ctx) => _MonthPickerDialog(
-        initialYear: current.year,
-        initialMonth: current.month,
-      ),
-    );
+      if (picked != null) {
+        setState(() {
+          _selectedMonth =
+              "${picked.year}-${picked.month.toString().padLeft(2, '0')}";
+          _report = null;
+          _wasFromServer = false;
+        });
 
-    if (picked != null) {
-      setState(() {
-        _selectedMonth =
-            "${picked.year}-${picked.month.toString().padLeft(2, '0')}";
-        _report = null;
-        _wasFromServer = false;
-      });
-
-      // ⭐ توليد التقرير تلقائيًا بعد تغيير الشهر
-      if (_selectedEmployee != null) {
-        await _generateReport();
+        // ⭐ توليد التقرير تلقائيًا بعد تغيير الشهر
+        if (_selectedEmployee != null) {
+          await _generateReport();
+        }
       }
-    }
-});
-}
-
+    });
+  }
 
   // ============================================================
   // توليد التقرير (local-first)
   // ============================================================
 
+  // ينشئ التقرير للموظف والشهر المحددين
   Future<void> _generateReport() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_selectedEmployee == null) {
+        _showSnackBar(
+          "اختر موظف أولاً",
+          AppTheme.warningOrangeFor(context),
+        );
+        return;
+      }
 
-    if (_selectedEmployee == null) {
-      _showSnackBar(
-        "اختر موظف أولاً",
-        AppTheme.warningOrangeFor(context),
-      );
-      return;
-    }
+      setState(() {
+        _isGenerating = true;
+        _report = null;
+        _wasFromServer = false;
+      });
 
-    setState(() {
-      _isGenerating = true;
-      _report = null;
-      _wasFromServer = false;
-    });
+      try {
+        final report = await _reportService.getSalaryReport(
+          companyCode: _companyCode,
+          employeeCode: _selectedEmployee!.code,
+          month: _selectedMonth,
+        );
 
-    try {
-      final report = await _reportService.getSalaryReport(
-        companyCode: _companyCode,
-        employeeCode: _selectedEmployee!.code,
-        month: _selectedMonth,
-      );
+        if (mounted) {
+          setState(() {
+            _report = report;
+            _isGenerating = false;
+          });
 
-      if (mounted) {
-        setState(() {
-          _report = report;
-          _isGenerating = false;
-        });
-
-        if (report == null) {
+          if (report == null) {
+            _showSnackBar(
+              "فشل جلب التقرير",
+              AppTheme.dangerStrongFor(context),
+            );
+          }
+        }
+      } catch (e) {
+        if (mounted) {
+          setState(() => _isGenerating = false);
           _showSnackBar(
-            "فشل جلب التقرير",
+            "خطأ: $e",
             AppTheme.dangerStrongFor(context),
           );
         }
       }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isGenerating = false);
-        _showSnackBar(
-          "خطأ: $e",
-          AppTheme.dangerStrongFor(context),
-        );
-      }
-    }
-});
-}
-
+    });
+  }
 
   // ============================================================
   // تحديث من السيرفر (force refresh)
   // ============================================================
 
+  // يجلب التقرير من الخادم
   Future<void> _fetchFromServer() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_selectedEmployee == null) {
+        _showSnackBar(
+          "اختر موظف أولاً",
+          AppTheme.warningOrangeFor(context),
+        );
+        return;
+      }
 
-    if (_selectedEmployee == null) {
-      _showSnackBar(
-        "اختر موظف أولاً",
-        AppTheme.warningOrangeFor(context),
-      );
-      return;
-    }
+      setState(() {
+        _isFetchingFromServer = true;
+        _wasFromServer = false;
+      });
 
-    setState(() {
-      _isFetchingFromServer = true;
-      _wasFromServer = false;
-    });
+      try {
+        final report = await _reportService.getSalaryReportFromBackend(
+          companyCode: _companyCode,
+          employeeCode: _selectedEmployee!.code,
+          month: _selectedMonth,
+        );
 
-    try {
-      final report = await _reportService.getSalaryReportFromBackend(
-        companyCode: _companyCode,
-        employeeCode: _selectedEmployee!.code,
-        month: _selectedMonth,
-      );
+        if (mounted) {
+          setState(() {
+            _report = report;
+            _isFetchingFromServer = false;
+            _wasFromServer = report != null;
+          });
 
-      if (mounted) {
-        setState(() {
-          _report = report;
-          _isFetchingFromServer = false;
-          _wasFromServer = report != null;
-        });
-
-        if (report == null) {
+          if (report == null) {
+            _showSnackBar(
+              "فشل التحديث من السيرفر",
+              AppTheme.dangerStrongFor(context),
+            );
+          } else {
+            _showSnackBar(
+              "تم التحديث من السيرفر ✅",
+              AppTheme.successStrongFor(context),
+            );
+          }
+        }
+      } catch (e) {
+        if (mounted) {
+          setState(() => _isFetchingFromServer = false);
           _showSnackBar(
-            "فشل التحديث من السيرفر",
+            "خطأ: $e",
             AppTheme.dangerStrongFor(context),
-          );
-        } else {
-          _showSnackBar(
-            "تم التحديث من السيرفر ✅",
-            AppTheme.successStrongFor(context),
           );
         }
       }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isFetchingFromServer = false);
-        _showSnackBar(
-          "خطأ: $e",
-          AppTheme.dangerStrongFor(context),
-        );
-      }
-    }
-});
-}
-
+    });
+  }
 
   // ============================================================
   // مسح كاش التقرير
   // ============================================================
 
+  // يمسح ذاكرة التقارير المؤقتة
   Future<void> _clearCache() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_selectedEmployee == null) {
+        _showSnackBar(
+          "اختر موظف أولاً",
+          AppTheme.warningOrangeFor(context),
+        );
+        return;
+      }
 
-    if (_selectedEmployee == null) {
-      _showSnackBar(
-        "اختر موظف أولاً",
-        AppTheme.warningOrangeFor(context),
+      await _reportService.invalidateCache(
+        companyCode: _companyCode,
+        employeeCode: _selectedEmployee!.code,
       );
-      return;
-    }
 
-    await _reportService.invalidateCache(
-      companyCode: _companyCode,
-      employeeCode: _selectedEmployee!.code,
-    );
-
-    if (mounted) {
-      setState(() {
-        _report = null;
-        _wasFromServer = false;
-      });
-      _showSnackBar(
-        "تم مسح الكاش — أعد توليد التقرير",
-        AppTheme.successStrongFor(context),
-      );
-    }
-});
-}
-
+      if (mounted) {
+        setState(() {
+          _report = null;
+          _wasFromServer = false;
+        });
+        _showSnackBar(
+          "تم مسح الكاش — أعد توليد التقرير",
+          AppTheme.successStrongFor(context),
+        );
+      }
+    });
+  }
 
   // ============================================================
   // نسخ النص
   // ============================================================
 
+  // ينسخ التقرير كنص
   Future<void> _copyAsText() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_report == null) return;
 
-    if (_report == null) return;
+      final canSeeAmounts =
+          PermissionsService().canSeeEmployeeSalary(_report!.employeeCode);
 
-    final canSeeAmounts =
-        PermissionsService().canSeeEmployeeSalary(_report!.employeeCode);
+      if (!canSeeAmounts) {
+        _showSnackBar(
+          "ليس لديك صلاحية نسخ البيانات المالية لهذا الموظف",
+          AppTheme.dangerStrongFor(context),
+        );
+        return;
+      }
 
-    if (!canSeeAmounts) {
-      _showSnackBar(
-        "ليس لديك صلاحية نسخ البيانات المالية لهذا الموظف",
-        AppTheme.dangerStrongFor(context),
-      );
-      return;
-    }
+      final text = _report!.toPlainText();
+      await Clipboard.setData(ClipboardData(text: text));
 
-    final text = _report!.toPlainText();
-    await Clipboard.setData(ClipboardData(text: text));
-
-    if (mounted) {
-      _showSnackBar(
-        "تم النسخ - الصقه في واتساب أو أي تطبيق",
-        AppTheme.successStrongFor(context),
-      );
-    }
-});
-}
+      if (mounted) {
+        _showSnackBar(
+          "تم النسخ - الصقه في واتساب أو أي تطبيق",
+          AppTheme.successStrongFor(context),
+        );
+      }
+    });
+  }
 
   // ============================================================
   // ⭐ اسم الفرع من Hive (بدل الكود)
   // ============================================================
 
+  // يعيد اسم الفرع من الكود
   String _getBranchName(String? code) {
     if (code == null || code.isEmpty || code == 'all') {
       return 'كل الفروع';
@@ -373,241 +368,240 @@ return CachePartitions.run(() async {
   // تصدير PDF
   // ============================================================
 
+  // يصدّر التقرير إلى PDF
   Future<void> _exportPDF() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_report == null) return;
 
-    if (_report == null) return;
+      setState(() => _isExporting = true);
 
-    setState(() => _isExporting = true);
+      try {
+        final r = _report!;
 
-    try {
-      final r = _report!;
+        final attendanceData = r.attendanceDetails.map((d) {
+          return <String, dynamic>{
+            'date': d.date,
+            'status': d.statusLabel,
+            'check_in': d.checkIn ?? '-',
+            'check_out': d.checkOut ?? '-',
+            'late': d.lateMinutes > 0 ? d.lateMinutes : '-',
+            'overtime': d.overtimeMinutes > 0 ? d.overtimeMinutes : '-',
+            'note': d.note.isEmpty ? '-' : d.note,
+          };
+        }).toList();
 
-      final attendanceData = r.attendanceDetails.map((d) {
-        return <String, dynamic>{
-          'date': d.date,
-          'status': d.statusLabel,
-          'check_in': d.checkIn ?? '-',
-          'check_out': d.checkOut ?? '-',
-          'late': d.lateMinutes > 0 ? d.lateMinutes : '-',
-          'overtime': d.overtimeMinutes > 0 ? d.overtimeMinutes : '-',
-          'note': d.note.isEmpty ? '-' : d.note,
-        };
-      }).toList();
+        final canSeeAmounts =
+            PermissionsService().canSeeEmployeeSalary(r.employeeCode);
 
-      final canSeeAmounts =
-          PermissionsService().canSeeEmployeeSalary(r.employeeCode);
+        final summary = canSeeAmounts
+            ? <String, dynamic>{
+                'الراتب الشهري (الأساسي)': r.baseSalary,
+                if (r.elapsedDays < r.workDays)
+                  'المرتب المستحق (${r.elapsedDays}/${r.workDays} يوم)':
+                      r.basePay
+                else
+                  'المرتب المستحق': r.basePay,
+                if (r.futureDays > 0 && r.baseSalary > r.basePay)
+                  'غير مستحق (${r.futureDays} يوم لم يأتِ)':
+                      -(r.baseSalary - r.basePay),
+                if (r.absenceDeduction > 0)
+                  'خصم غياب (${r.absentDays} يوم)': -r.absenceDeduction,
+                if (r.lateDeduction > 0)
+                  'خصم تأخير (${r.lateMinutesTotal} د)': -r.lateDeduction,
+                if (r.earlyLeaveDeduction > 0)
+                  'خصم انصراف مبكر (${r.earlyLeaveMinutesTotal} د)':
+                      -r.earlyLeaveDeduction,
+                if (r.overtimeBonus > 0)
+                  'إضافي (${r.overtimeMinutesTotal} د)': r.overtimeBonus,
+                if (r.bonusesTotal > 0) 'إجمالي المكافآت': r.bonusesTotal,
+                if (r.deductionsTotal > 0)
+                  'إجمالي الخصومات': -r.deductionsTotal,
+                if (r.loansTotal > 0) 'إجمالي السلف': -r.loansTotal,
+                'صافي الراتب': r.netSalary,
+                // ⭐ الرصيد السالب — بيوضح إن الموظف مدين
+                if (r.netSalary < 0)
+                  'مدين للشركة (يُخصم لاحقًا)': r.debtRemaining,
+              }
+            : <String, dynamic>{
+                'حاضر': r.presentDays,
+                'غائب': r.absentDays,
+                'إجازة': r.vacationDays,
+                if (r.futureDays > 0) 'قادم': r.futureDays,
+                'تأخير (دقيقة)': r.lateMinutesTotal,
+                'إضافي (دقيقة)': r.overtimeMinutesTotal,
+              };
 
-      final summary = canSeeAmounts
-          ? <String, dynamic>{
-              'الراتب الشهري (الأساسي)': r.baseSalary,
-              if (r.elapsedDays < r.workDays)
-                'المرتب المستحق (${r.elapsedDays}/${r.workDays} يوم)':
-                    r.basePay
-              else
-                'المرتب المستحق': r.basePay,
-              if (r.futureDays > 0 && r.baseSalary > r.basePay)
-                'غير مستحق (${r.futureDays} يوم لم يأتِ)':
-                    -(r.baseSalary - r.basePay),
-              if (r.absenceDeduction > 0)
-                'خصم غياب (${r.absentDays} يوم)': -r.absenceDeduction,
-              if (r.lateDeduction > 0)
-                'خصم تأخير (${r.lateMinutesTotal} د)': -r.lateDeduction,
-              if (r.earlyLeaveDeduction > 0)
-                'خصم انصراف مبكر (${r.earlyLeaveMinutesTotal} د)':
-                    -r.earlyLeaveDeduction,
-              if (r.overtimeBonus > 0)
-                'إضافي (${r.overtimeMinutesTotal} د)': r.overtimeBonus,
-              if (r.bonusesTotal > 0) 'إجمالي المكافآت': r.bonusesTotal,
-              if (r.deductionsTotal > 0)
-                'إجمالي الخصومات': -r.deductionsTotal,
-              if (r.loansTotal > 0) 'إجمالي السلف': -r.loansTotal,
-              'صافي الراتب': r.netSalary,
-              // ⭐ الرصيد السالب — بيوضح إن الموظف مدين
-              if (r.netSalary < 0)
-                'مدين للشركة (يُخصم لاحقًا)': r.debtRemaining,
-            }
-          : <String, dynamic>{
-              'حاضر': r.presentDays,
-              'غائب': r.absentDays,
-              'إجازة': r.vacationDays,
-              if (r.futureDays > 0) 'قادم': r.futureDays,
-              'تأخير (دقيقة)': r.lateMinutesTotal,
-              'إضافي (دقيقة)': r.overtimeMinutesTotal,
-            };
+        final periodLabel = r.futureDays > 0
+            ? 'شهر ${r.month} — عدّى ${r.elapsedDays} من ${r.workDays} يوم (متبقي ${r.futureDays})'
+            : 'شهر ${r.month} (كامل)';
 
-      final periodLabel = r.futureDays > 0
-          ? 'شهر ${r.month} — عدّى ${r.elapsedDays} من ${r.workDays} يوم (متبقي ${r.futureDays})'
-          : 'شهر ${r.month} (كامل)';
-
-      await ExportService.exportToPDF(
-        data: attendanceData,
-        title: 'تقرير راتب - ${r.employeeName} - ${r.month}',
-        headers: [
-          'التاريخ',
-          'الحالة',
-          'دخول',
-          'خروج',
-          'تأخير',
-          'إضافي',
-          'ملاحظات',
-        ],
-        keys: [
-          'date',
-          'status',
-          'check_in',
-          'check_out',
-          'late',
-          'overtime',
-          'note',
-        ],
-        companyName: _companyName,
-        branchName: _getBranchName(r.branchCode),
-        employee: r.employeeName,
-        period: periodLabel,
-        summary: summary,
-        totalAmount: canSeeAmounts ? r.netSalary : null,
-      );
-
-      if (mounted) {
-        _showSnackBar(
-          "تم تصدير PDF بنجاح",
-          AppTheme.successStrongFor(context),
+        await ExportService.exportToPDF(
+          data: attendanceData,
+          title: 'تقرير راتب - ${r.employeeName} - ${r.month}',
+          headers: [
+            'التاريخ',
+            'الحالة',
+            'دخول',
+            'خروج',
+            'تأخير',
+            'إضافي',
+            'ملاحظات',
+          ],
+          keys: [
+            'date',
+            'status',
+            'check_in',
+            'check_out',
+            'late',
+            'overtime',
+            'note',
+          ],
+          companyName: _companyName,
+          branchName: _getBranchName(r.branchCode),
+          employee: r.employeeName,
+          period: periodLabel,
+          summary: summary,
+          totalAmount: canSeeAmounts ? r.netSalary : null,
         );
-      }
-    } catch (e) {
-      if (mounted) {
-        _showSnackBar(
-          "خطأ في PDF: $e",
-          AppTheme.dangerStrongFor(context),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isExporting = false);
-    }
-});
-}
 
+        if (mounted) {
+          _showSnackBar(
+            "تم تصدير PDF بنجاح",
+            AppTheme.successStrongFor(context),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          _showSnackBar(
+            "خطأ في PDF: $e",
+            AppTheme.dangerStrongFor(context),
+          );
+        }
+      } finally {
+        if (mounted) setState(() => _isExporting = false);
+      }
+    });
+  }
 
   // ============================================================
   // تصدير Excel
   // ============================================================
 
+  // يصدّر التقرير إلى Excel
   Future<void> _exportExcel() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_report == null) return;
 
-    if (_report == null) return;
+      setState(() => _isExporting = true);
 
-    setState(() => _isExporting = true);
+      try {
+        final r = _report!;
 
-    try {
-      final r = _report!;
+        final attendanceData = r.attendanceDetails.map((d) {
+          return <String, dynamic>{
+            'date': d.date,
+            'status': d.statusLabel,
+            'check_in': d.checkIn ?? '',
+            'check_out': d.checkOut ?? '',
+            'late': d.lateMinutes,
+            'overtime': d.overtimeMinutes,
+            'note': d.note,
+          };
+        }).toList();
 
-      final attendanceData = r.attendanceDetails.map((d) {
-        return <String, dynamic>{
-          'date': d.date,
-          'status': d.statusLabel,
-          'check_in': d.checkIn ?? '',
-          'check_out': d.checkOut ?? '',
-          'late': d.lateMinutes,
-          'overtime': d.overtimeMinutes,
-          'note': d.note,
-        };
-      }).toList();
+        final canSeeAmounts =
+            PermissionsService().canSeeEmployeeSalary(r.employeeCode);
 
-      final canSeeAmounts =
-          PermissionsService().canSeeEmployeeSalary(r.employeeCode);
+        final summary = canSeeAmounts
+            ? <String, dynamic>{
+                'الراتب الشهري (الأساسي)': r.baseSalary,
+                if (r.elapsedDays < r.workDays)
+                  'المرتب المستحق (${r.elapsedDays}/${r.workDays} يوم)':
+                      r.basePay
+                else
+                  'المرتب المستحق': r.basePay,
+                if (r.futureDays > 0 && r.baseSalary > r.basePay)
+                  'غير مستحق (${r.futureDays} يوم لم يأتِ)':
+                      -(r.baseSalary - r.basePay),
+                if (r.absenceDeduction > 0) 'خصم غياب': -r.absenceDeduction,
+                if (r.lateDeduction > 0) 'خصم تأخير': -r.lateDeduction,
+                if (r.earlyLeaveDeduction > 0)
+                  'خصم انصراف مبكر': -r.earlyLeaveDeduction,
+                if (r.overtimeBonus > 0) 'إضافي': r.overtimeBonus,
+                if (r.bonusesTotal > 0) 'إجمالي المكافآت': r.bonusesTotal,
+                if (r.deductionsTotal > 0)
+                  'إجمالي الخصومات': -r.deductionsTotal,
+                if (r.loansTotal > 0) 'إجمالي السلف': -r.loansTotal,
+                'صافي الراتب': r.netSalary,
+                // ⭐ الرصيد السالب
+                if (r.netSalary < 0)
+                  ' مدين للشركة (يُخصم لاحقًا)': r.debtRemaining,
+              }
+            : <String, dynamic>{
+                'حاضر': r.presentDays,
+                'غائب': r.absentDays,
+                'إجازة': r.vacationDays,
+                if (r.futureDays > 0) 'قادم': r.futureDays,
+                'تأخير (دقيقة)': r.lateMinutesTotal,
+                'إضافي (دقيقة)': r.overtimeMinutesTotal,
+              };
 
-      final summary = canSeeAmounts
-          ? <String, dynamic>{
-              'الراتب الشهري (الأساسي)': r.baseSalary,
-              if (r.elapsedDays < r.workDays)
-                'المرتب المستحق (${r.elapsedDays}/${r.workDays} يوم)':
-                    r.basePay
-              else
-                'المرتب المستحق': r.basePay,
-              if (r.futureDays > 0 && r.baseSalary > r.basePay)
-                'غير مستحق (${r.futureDays} يوم لم يأتِ)':
-                    -(r.baseSalary - r.basePay),
-              if (r.absenceDeduction > 0) 'خصم غياب': -r.absenceDeduction,
-              if (r.lateDeduction > 0) 'خصم تأخير': -r.lateDeduction,
-              if (r.earlyLeaveDeduction > 0)
-                'خصم انصراف مبكر': -r.earlyLeaveDeduction,
-              if (r.overtimeBonus > 0) 'إضافي': r.overtimeBonus,
-              if (r.bonusesTotal > 0) 'إجمالي المكافآت': r.bonusesTotal,
-              if (r.deductionsTotal > 0)
-                'إجمالي الخصومات': -r.deductionsTotal,
-              if (r.loansTotal > 0) 'إجمالي السلف': -r.loansTotal,
-              'صافي الراتب': r.netSalary,
-              // ⭐ الرصيد السالب
-              if (r.netSalary < 0)
-                ' مدين للشركة (يُخصم لاحقًا)': r.debtRemaining,
-            }
-          : <String, dynamic>{
-              'حاضر': r.presentDays,
-              'غائب': r.absentDays,
-              'إجازة': r.vacationDays,
-              if (r.futureDays > 0) 'قادم': r.futureDays,
-              'تأخير (دقيقة)': r.lateMinutesTotal,
-              'إضافي (دقيقة)': r.overtimeMinutesTotal,
-            };
+        final periodLabel = r.futureDays > 0
+            ? 'شهر ${r.month} — ${r.elapsedDays}/${r.workDays} يوم'
+            : 'شهر ${r.month}';
 
-      final periodLabel = r.futureDays > 0
-          ? 'شهر ${r.month} — ${r.elapsedDays}/${r.workDays} يوم'
-          : 'شهر ${r.month}';
-
-      await ExportService.exportToExcel(
-        attendanceData,
-        'راتب ${r.employeeName} - ${r.month}',
-        [
-          'التاريخ',
-          'الحالة',
-          'دخول',
-          'خروج',
-          'تأخير (د)',
-          'إضافي (د)',
-          'ملاحظات',
-        ],
-        [
-          'date',
-          'status',
-          'check_in',
-          'check_out',
-          'late',
-          'overtime',
-          'note',
-        ],
-        companyName: _companyName,
-        branchName: _getBranchName(r.branchCode),
-        employee: r.employeeName,
-        period: periodLabel,
-        summary: summary,
-      );
-
-      if (mounted) {
-        _showSnackBar(
-          "تم تصدير Excel بنجاح",
-          AppTheme.successStrongFor(context),
+        await ExportService.exportToExcel(
+          attendanceData,
+          'راتب ${r.employeeName} - ${r.month}',
+          [
+            'التاريخ',
+            'الحالة',
+            'دخول',
+            'خروج',
+            'تأخير (د)',
+            'إضافي (د)',
+            'ملاحظات',
+          ],
+          [
+            'date',
+            'status',
+            'check_in',
+            'check_out',
+            'late',
+            'overtime',
+            'note',
+          ],
+          companyName: _companyName,
+          branchName: _getBranchName(r.branchCode),
+          employee: r.employeeName,
+          period: periodLabel,
+          summary: summary,
         );
-      }
-    } catch (e) {
-      if (mounted) {
-        _showSnackBar(
-          "خطأ في Excel: $e",
-          AppTheme.dangerStrongFor(context),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isExporting = false);
-    }
-});
-}
 
+        if (mounted) {
+          _showSnackBar(
+            "تم تصدير Excel بنجاح",
+            AppTheme.successStrongFor(context),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          _showSnackBar(
+            "خطأ في Excel: $e",
+            AppTheme.dangerStrongFor(context),
+          );
+        }
+      } finally {
+        if (mounted) setState(() => _isExporting = false);
+      }
+    });
+  }
 
   // ============================================================
   // SnackBar
   // ============================================================
 
+  // يعرض رسالة سريعة بالنص واللون المحددين
   void _showSnackBar(String message, Color color) {
     if (!mounted) return;
 
@@ -623,11 +617,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // BUILD
   // ============================================================
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     if (!PermissionsService().canOpenReportPage) {
@@ -669,21 +663,18 @@ return CachePartitions.run(() async {
                   : _fetchFromServer,
               tooltip: 'تحديث من السيرفر',
             ),
-
           PopupMenuButton<String>(
             icon: Icon(
               Icons.more_vert_rounded,
               color: AppTheme.textMainFor(context),
             ),
             onSelected: (value) async {
-return CachePartitions.run(() async {
-
-              if (value == 'clear_cache') {
-                await _clearCache();
-              }
-
-});
-},
+              return CachePartitions.run(() async {
+                if (value == 'clear_cache') {
+                  await _clearCache();
+                }
+              });
+            },
             itemBuilder: (context) => [
               PopupMenuItem(
                 value: 'clear_cache',
@@ -766,11 +757,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Dropdown الموظف
   // ============================================================
 
+  // يبني قائمة اختيار الموظف
   Widget _buildEmployeeDropdown() {
     return GlassCard(
       child: Padding(
@@ -803,20 +794,18 @@ return CachePartitions.run(() async {
           onChanged: _isGenerating || _isFetchingFromServer
               ? null
               : (v) async {
-return CachePartitions.run(() async {
-
-                  setState(() {
-                    _selectedEmployee = v;
-                    _report = null;
-                    _wasFromServer = false;
+                  return CachePartitions.run(() async {
+                    setState(() {
+                      _selectedEmployee = v;
+                      _report = null;
+                      _wasFromServer = false;
+                    });
+                    // ⭐ auto-generate بعد اختيار الموظف
+                    if (v != null) {
+                      await _generateReport();
+                    }
                   });
-                  // ⭐ auto-generate بعد اختيار الموظف
-                  if (v != null) {
-                    await _generateReport();
-                  }
-
-});
-},
+                },
           style: TextStyle(
             fontFamily: 'Cairo',
             color: AppTheme.textMainFor(context),
@@ -826,11 +815,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Header Card (اسم + كود + badge على اليمين، والتاريخ على الشمال)
   // ============================================================
 
+  // يبني بطاقة رأس التقرير
   Widget _buildHeaderCard() {
     final emp = _selectedEmployee;
     final name = emp?.name ?? '—';
@@ -875,8 +864,7 @@ return CachePartitions.run(() async {
 
           // ─── الجزء الشمال: اختيار الشهر ───
           InkWell(
-            onTap:
-                _isGenerating || _isFetchingFromServer ? null : _pickMonth,
+            onTap: _isGenerating || _isFetchingFromServer ? null : _pickMonth,
             borderRadius: BorderRadius.circular(10),
             child: Container(
               padding: const EdgeInsets.symmetric(
@@ -928,11 +916,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // عرض التقرير
   // ============================================================
 
+  // يبني عرض التقرير
   Widget _buildReportView(HRSalaryReportModel r) {
     final canSeeAmounts =
         PermissionsService().canSeeEmployeeSalary(r.employeeCode);
@@ -960,10 +948,10 @@ return CachePartitions.run(() async {
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  _statChip('حاضر', '${r.presentDays}',
-                      AppTheme.successFor(context)),
-                  _statChip('غائب', '${r.absentDays}',
-                      AppTheme.dangerFor(context)),
+                  _statChip(
+                      'حاضر', '${r.presentDays}', AppTheme.successFor(context)),
+                  _statChip(
+                      'غائب', '${r.absentDays}', AppTheme.dangerFor(context)),
                   _statChip('إجازة', '${r.vacationDays}',
                       AppTheme.extraPurpleDeepFor(context)),
                   if (r.futureDays > 0)
@@ -1159,11 +1147,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // كالندر الحضور (مُصغّر)
   // ============================================================
 
+  // يبني تقويم الحضور
   Widget _buildAttendanceCalendar(HRSalaryReportModel r) {
     final firstDay = DateTime.parse('${r.month}-01');
     final daysInMonth = DateTime(firstDay.year, firstDay.month + 1, 0).day;
@@ -1252,9 +1240,8 @@ return CachePartitions.run(() async {
                 child: Text(
                   '$day',
                   style: TextStyle(
-                    color: status != null
-                        ? color
-                        : AppTheme.textMutedFor(context),
+                    color:
+                        status != null ? color : AppTheme.textMutedFor(context),
                     fontFamily: 'Cairo',
                     fontSize: 9,
                     fontWeight: FontWeight.bold,
@@ -1285,7 +1272,7 @@ return CachePartitions.run(() async {
     );
   }
 
-
+  // يبني عنصر دليل الألوان
   Widget _legendItem(Color color, String label) {
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -1312,7 +1299,7 @@ return CachePartitions.run(() async {
     );
   }
 
-
+  // يعيد لون اليوم في التقويم
   Color _calendarColor(String? status) {
     switch (status) {
       case 'present':
@@ -1332,18 +1319,17 @@ return CachePartitions.run(() async {
     }
   }
 
-
   // ============================================================
   // Badge مصدر التقرير
   // ============================================================
 
+  // يبني شارة مصدر البيانات
   Widget _buildSourceBadge() {
     final isServer = _wasFromServer;
     final color =
         isServer ? AppTheme.successFor(context) : AppTheme.infoFor(context);
-    final icon = isServer
-        ? Icons.cloud_done_rounded
-        : Icons.phone_android_rounded;
+    final icon =
+        isServer ? Icons.cloud_done_rounded : Icons.phone_android_rounded;
     final label = isServer ? 'من السيرفر (رسمي)' : 'حساب محلي';
 
     return Container(
@@ -1372,11 +1358,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // أزرار التصدير
   // ============================================================
 
+  // يبني أزرار التصدير
   Widget _buildExportButtons() {
     if (!PermissionsService().canExportReport) {
       return const SizedBox.shrink();
@@ -1385,8 +1371,7 @@ return CachePartitions.run(() async {
     return Row(
       children: [
         if (_report != null &&
-            PermissionsService()
-                .canSeeEmployeeSalary(_report!.employeeCode))
+            PermissionsService().canSeeEmployeeSalary(_report!.employeeCode))
           Expanded(
             child: ElevatedButton.icon(
               onPressed: _isExporting ? null : _copyAsText,
@@ -1406,8 +1391,7 @@ return CachePartitions.run(() async {
             ),
           ),
         if (_report != null &&
-            PermissionsService()
-                .canSeeEmployeeSalary(_report!.employeeCode))
+            PermissionsService().canSeeEmployeeSalary(_report!.employeeCode))
           const SizedBox(width: 8),
         Expanded(
           child: ElevatedButton.icon(
@@ -1459,11 +1443,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Helpers — عرض
   // ============================================================
 
+  // يبني شريحة إحصائية
   Widget _statChip(String label, String value, Color color) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -1497,7 +1481,7 @@ return CachePartitions.run(() async {
     );
   }
 
-
+  // يبني سطر راتب بعنوان ومبلغ
   Widget _salaryLine(String label, double amount, Color color) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -1528,7 +1512,7 @@ return CachePartitions.run(() async {
     );
   }
 
-
+  // يبني شاشة تعذّر الوصول لعدم توفر الصلاحية
   Widget _buildNoPermissionScreen(String permission) {
     return Scaffold(
       extendBodyBehindAppBar: true,
@@ -1583,11 +1567,11 @@ return CachePartitions.run(() async {
   }
 }
 
-
 // ============================================================
 // حوار اختيار الشهر (يفتح على الشهور مش السنة)
 // ============================================================
 
+// نافذة اختيار الشهر
 class _MonthPickerDialog extends StatefulWidget {
   final int initialYear;
   final int initialMonth;
@@ -1597,20 +1581,32 @@ class _MonthPickerDialog extends StatefulWidget {
     required this.initialMonth,
   });
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<_MonthPickerDialog> createState() => _MonthPickerDialogState();
 }
 
-
+// حالة الويدجت _MonthPickerDialog: تدير بيانات الشاشة وتفاعلاتها
 class _MonthPickerDialogState extends State<_MonthPickerDialog> {
   late int _year;
   late int _month;
 
   static const List<String> _months = [
-    'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
-    'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر',
+    'يناير',
+    'فبراير',
+    'مارس',
+    'أبريل',
+    'مايو',
+    'يونيو',
+    'يوليو',
+    'أغسطس',
+    'سبتمبر',
+    'أكتوبر',
+    'نوفمبر',
+    'ديسمبر',
   ];
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
@@ -1618,6 +1614,7 @@ class _MonthPickerDialogState extends State<_MonthPickerDialog> {
     _month = widget.initialMonth;
   }
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
@@ -1711,8 +1708,7 @@ class _MonthPickerDialogState extends State<_MonthPickerDialog> {
           ),
         ),
         TextButton(
-          onPressed: () =>
-              Navigator.pop(context, DateTime(_year, _month, 1)),
+          onPressed: () => Navigator.pop(context, DateTime(_year, _month, 1)),
           child: Text(
             'اختيار',
             style: TextStyle(

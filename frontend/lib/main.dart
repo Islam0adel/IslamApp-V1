@@ -1,3 +1,4 @@
+// frontend/lib/main.dart
 import 'services/sync_read_access.dart';
 import 'services/work_pool.dart';
 import 'services/cache_partitions.dart';
@@ -51,30 +52,49 @@ final GlobalSyncService _syncService = GlobalSyncService();
 // متغيرات قديمة للحفاظ على التوافق
 // ============================================================
 
+// اشتراك الاستماع للمزامنة العامة
 StreamSubscription? globalSyncSubscription;
+
+// اشتراك الاستماع لمزامنة الترميز
 StreamSubscription? codingSyncSubscription;
+
+// اشتراك الاستماع لمزامنة المخزون
 StreamSubscription? inventorySyncSubscription;
+
+// اشتراك الاستماع لمزامنة الموردين
 StreamSubscription? supplierSyncSubscription;
 
 // ============================================================
 // منع تشغيل أكثر من مزامنة في نفس الوقت
 // ============================================================
 
+// علم يمنع تشغيل أكثر من مزامنة في الوقت نفسه
 bool _isSyncing = false;
+
+// علم يبيّن أن الجهاز لم يكن لديه بيانات مخزنة عند بدء التطبيق
 bool _deviceHadNoCacheAtStart = false;
+
 // Web only: closed-app push cannot have prepared data (permission not granted or device not registered).
+// علم يبيّن عدم توفر الإشعارات عند بدء التطبيق
 bool _pushUnavailableAtStart = false;
+
 // Set when the startup merge could not apply staged changes (error or permission
 // verification failed): the open-time sync wait below then covers them (case 4).
+// علم يبيّن فشل دمج التغييرات المرحلية عند بدء التطبيق
 bool _startupMergeFailed = false;
+
 // Startup mode: default = verify + merge staged changes behind the loading page, then open and sync.
 // `?startup=bg` (measurement only) = open at once, merge in the background.
+// وضع الدمج عند بدء التطبيق
 final String _startupMergeMode = Uri.base.queryParameters['startup'] ?? 'merge';
+
 // Completes when the startup merge block is over; scoped resyncs wait for it.
+// بوابة انتظار اكتمال الدمج عند البدء
 Future<void>? _startupMergeGate;
 // Measurement only: slows the permissions reconciliation to test the scoped resync under a slow reload.
 final int _permDelayMs =
-    int.tryParse(Uri.base.queryParameters['permDelay'] ?? '') ?? const int.fromEnvironment('PERM_DELAY_MS');
+    int.tryParse(Uri.base.queryParameters['permDelay'] ?? '') ??
+        const int.fromEnvironment('PERM_DELAY_MS');
 // Measurement only: rebuilds the old behaviour (always wait) to compare against the new one.
 const bool _forceLegacyWait = bool.fromEnvironment('FORCE_WAIT');
 
@@ -84,6 +104,7 @@ final Completer<void> _initialSyncCompleter = Completer<void>();
 // ⭐ يخلص لما WebSocket يفشل في الاتصال (سيرفر واقع)
 final Completer<void> _wsConnectionFailedCompleter = Completer<void>();
 
+// ينتظر اكتمال المزامنة ضمن مهلة محددة
 Future<void> waitForSyncToComplete({
   Duration timeout = const Duration(seconds: 10),
 }) async {
@@ -148,15 +169,30 @@ final _scopeSyncQueue = ScopedSyncQueue(
   },
   reconcile: _forceScopeResync,
 );
+
+// مجموعة الوحدات المسموح بها أثناء المزامنة المحدودة النطاق
 /// Set only while a scoped resync runs: modules outside it were already synced by the open-time pass.
 Set<String>? _resyncOnly;
+
+// مهمة المزامنة الجارية حاليًا
 Future<bool>? _dataSyncWork;
+
+// مالك مهمة المزامنة الجارية
 String? _dataSyncOwner;
+
+// الشركة الخاصة بمهمة المزامنة الجارية
 String? _dataSyncCompany;
+
+// مالك البيانات الجاهزة
 String? _dataReadyOwner;
+
+// الشركة الخاصة بالبيانات الجاهزة
 String? _dataReadyCompany;
+
+// رقم الإصدار الخاص بالبيانات الجاهزة
 int? _dataReadyEpoch;
 
+// يكتشف عدم توفر الإشعارات ويعرض الملاحظة المعتمدة عند الحاجة
 /// Sets [_pushUnavailableAtStart] and shows the approved note on the loading page.
 /// Granted permission + registered device (alerts muted or not) is the normal path and shows nothing.
 Future<void> _detectPushUnavailable() async {
@@ -173,7 +209,8 @@ Future<void> _detectPushUnavailable() async {
       permission: parseBrowserPushPermission(raw, supported: supported),
       registrationEnabled: registered,
     );
-    print('🔔 push at start: permission=$raw supported=$supported registered=$registered '
+    print(
+        '🔔 push at start: permission=$raw supported=$supported registered=$registered '
         '-> unavailable=$_pushUnavailableAtStart');
     if (_pushUnavailableAtStart) {
       final el = html.document.getElementById('loading-note');
@@ -187,6 +224,7 @@ Future<void> _detectPushUnavailable() async {
   }
 }
 
+// يجدولُ إعادة مزامنة محدودة النطاق بعد تغيير الصلاحيات
 void _scheduleScopeResync(String code) {
   final modules = PermissionsService().takeScopeSyncModules();
   if (modules.isEmpty) return;
@@ -195,6 +233,7 @@ void _scheduleScopeResync(String code) {
   }));
 }
 
+// ينفّذ إعادة مزامنة محدودة النطاق لوحدات محددة للشركة
 Future<void> _forceScopeResync(String companyCode, Set<String> modules) async {
   // A resync must not run beside the startup merge (it moves the authorization epoch under it).
   final startupGate = _startupMergeGate;
@@ -211,7 +250,8 @@ Future<void> _forceScopeResync(String companyCode, Set<String> modules) async {
       DateTime.now().difference(waitStart) < const Duration(seconds: 4)) {
     await Future.delayed(const Duration(milliseconds: 100));
   }
-  print('🧭 scoped resync starts after ${DateTime.now().difference(waitStart).inMilliseconds}ms wait, authorizationReady=${_syncService.authorizationReady}');
+  print(
+      '🧭 scoped resync starts after ${DateTime.now().difference(waitStart).inMilliseconds}ms wait, authorizationReady=${_syncService.authorizationReady}');
   return CachePartitions.run(() async {
     final scope = await ReadAuthorizationSnapshot.capture();
     final prefs = await CachePartitions.preferences();
@@ -234,7 +274,8 @@ Future<void> _forceScopeResync(String companyCode, Set<String> modules) async {
         if (_dataReadyCompany == companyCode &&
             _dataReadyEpoch == ReadAuthorizationEpoch.value) break;
         if (!scope.sameContext) break;
-        print('🔁 scoped resync not completed at the current epoch, retry ${attempt + 1}');
+        print(
+            '🔁 scoped resync not completed at the current epoch, retry ${attempt + 1}');
         await Future.delayed(Duration(milliseconds: 500 * (attempt + 1)));
         if (!scope.sameContext) break;
       }
@@ -244,6 +285,7 @@ Future<void> _forceScopeResync(String companyCode, Set<String> modules) async {
   });
 }
 
+// يشغّل مزامنة كل البيانات عند الحاجة للشركة
 Future<void> syncAllDataIfNeeded(String companyCode) async {
   return CachePartitions.run(() async {
     final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
@@ -282,6 +324,7 @@ Future<void> syncAllDataIfNeeded(String companyCode) async {
   });
 }
 
+// ينفّذ مزامنة البيانات للشركة ويعيد نجاحها
 Future<bool> _runDataSync(String companyCode) async {
   return CachePartitions.run(() async {
     if (_isSyncing) {
@@ -327,7 +370,8 @@ Future<bool> _runDataSync(String companyCode) async {
           } else {
             await incremental(lastSync);
           }
-          if (module == 'daily') await StagedInbox.publishAfterSync(companyCode);
+          if (module == 'daily')
+            await StagedInbox.publishAfterSync(companyCode);
           print("  ✅ $name");
         } catch (e) {
           succeeded = false;
@@ -532,7 +576,8 @@ Future<bool> _runDataSync(String companyCode) async {
     } finally {
       _isSyncing = false;
       syncElapsed.stop();
-      print('[Sync] completed ms=${syncElapsed.elapsedMilliseconds} success=$succeeded');
+      print(
+          '[Sync] completed ms=${syncElapsed.elapsedMilliseconds} success=$succeeded');
 
       // ⭐ إشارة إن أول مزامنة خلصت
       if (!_initialSyncCompleter.isCompleted) {
@@ -547,6 +592,7 @@ Future<bool> _runDataSync(String companyCode) async {
 // تشغيل Global Sync
 // ============================================================
 
+// يشغّل مستمع المزامنة العام للشركة
 void initializeGlobalListener(String companyCode) {
   print("🌐 طلب تشغيل المزامنة للشركة: $companyCode");
   CommercialService.startBackgroundSync(companyCode);
@@ -572,12 +618,14 @@ void initializeGlobalListener(String companyCode) {
 
   _syncService.onPermissionsChanged ??= ({required bool resync}) async {
     print("🔐 معالجة permissions_changed (resync=$resync)");
-    if (_permDelayMs > 0) await Future.delayed(Duration(milliseconds: _permDelayMs));
+    if (_permDelayMs > 0)
+      await Future.delayed(Duration(milliseconds: _permDelayMs));
     try {
       // resync=false means the server signalled no narrowing: re-verify without
       // hiding the current scope, so the dashboard cards stay put. resync=true
       // keeps the fail-closed hold until the narrowed scope is applied.
-      await PermissionsService().verifyCurrentEffectiveProfile(restrictWhileLoading: resync);
+      await PermissionsService()
+          .verifyCurrentEffectiveProfile(restrictWhileLoading: resync);
     } catch (e) {
       print("⚠️ فشل تحديث الصلاحيات: $e");
       rethrow;
@@ -612,6 +660,7 @@ void initializeGlobalListener(String companyCode) {
 // إيقاف Global Sync
 // ============================================================
 
+// يوقف مستمع المزامنة العام ويحرّر اشتراكاته
 void disposeGlobalListener() {
   globalSyncSubscription?.cancel();
   codingSyncSubscription?.cancel();
@@ -629,12 +678,13 @@ void disposeGlobalListener() {
 // Main
 // ============================================================
 
+// نقطة بدء التطبيق: تهيئة الخدمات ثم تشغيل الواجهة
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Open-timing measurement (log only): main() start -> first rendered frame.
   // Flutter engine startup before main() is not measurable from Dart.
   final Stopwatch appStartWatch = Stopwatch()..start();
-  int mergeMs = 0;    // startup merge block duration (applying staged changes)
+  int mergeMs = 0; // startup merge block duration (applying staged changes)
   int syncWaitMs = 0; // open-time sync wait duration
   // Checkpoint hooks must exist before the first sync of this run, not only once a merge has run.
   StagedInbox.installHooks();
@@ -677,8 +727,10 @@ Future<void> main() async {
     // Decided BEFORE activate() creates the boxes: no cache box for this user+company on this
     // device means first use, the only case that still waits for the first full sync.
     _deviceHadNoCacheAtStart = !(await Hive.boxExists(
-        CachePartitions.physicalName('cache_metadata_box', startupUid, startupCompany)));
-    print('🧭 first use on this device (no Hive boxes at start): $_deviceHadNoCacheAtStart');
+        CachePartitions.physicalName(
+            'cache_metadata_box', startupUid, startupCompany)));
+    print(
+        '🧭 first use on this device (no Hive boxes at start): $_deviceHadNoCacheAtStart');
     if (!_deviceHadNoCacheAtStart) {
       // Early freshness probe: when something is staged, the daily feed's
       // server check starts NOW, overlapping the box opening below instead of
@@ -742,7 +794,14 @@ Future<void> main() async {
     // Bounded by the old 10s sync wait. On timeout the merge keeps going and the sync joins it.
     // `?startup=bg` restores the previous mode (merge in the background, home right away).
     if (_startupMergeMode == 'bg') {
-      unawaited(StagedInbox.mergeDaily(companyCode, eagerVerify: false).then((_) => StagedInbox.mergeTreasury(companyCode)).then((_) => StagedInbox.mergeCoding(companyCode)).then((_) => StagedInbox.mergeEmployees(companyCode)).then((_) => StagedInbox.mergeSupplier(companyCode)).then((_) => StagedInbox.mergeSettlement(companyCode)).then((_) => StagedInbox.mergeInventory(companyCode)).then((_) => StagedInbox.mergeAllCommercial(companyCode)));
+      unawaited(StagedInbox.mergeDaily(companyCode, eagerVerify: false)
+          .then((_) => StagedInbox.mergeTreasury(companyCode))
+          .then((_) => StagedInbox.mergeCoding(companyCode))
+          .then((_) => StagedInbox.mergeEmployees(companyCode))
+          .then((_) => StagedInbox.mergeSupplier(companyCode))
+          .then((_) => StagedInbox.mergeSettlement(companyCode))
+          .then((_) => StagedInbox.mergeInventory(companyCode))
+          .then((_) => StagedInbox.mergeAllCommercial(companyCode)));
     } else {
       bool online = true;
       if (kIsWeb) {
@@ -780,7 +839,9 @@ Future<void> main() async {
                 if (!verified) return;
                 final fs = PermissionsService().firstSnapshotHandled;
                 if (fs != null) {
-                  try { await fs; } catch (_) {}
+                  try {
+                    await fs;
+                  } catch (_) {}
                 }
                 // Every server refresh the listener's snapshot started must be finished first.
                 await PermissionsService().whenRefreshesIdle();
@@ -805,7 +866,8 @@ Future<void> main() async {
               if (!verified) _startupMergeFailed = true;
             } on TimeoutException {
               gateExpired = true;
-              reason = 'TIMEOUT after 10s: opening; staged data is left to the still-running merge or the normal sync';
+              reason =
+                  'TIMEOUT after 10s: opening; staged data is left to the still-running merge or the normal sync';
             }
           }
         }
@@ -816,7 +878,8 @@ Future<void> main() async {
         gate.complete();
       }
       mergeMs = swStartMerge.elapsedMilliseconds;
-      print('🧭 startup merge: $reason | result: ${StagedInbox.lastOutcome} | waited ${swStartMerge.elapsedMilliseconds}ms before the first screen');
+      print(
+          '🧭 startup merge: $reason | result: ${StagedInbox.lastOutcome} | waited ${swStartMerge.elapsedMilliseconds}ms before the first screen');
     }
     // Deferred above: the listener starts now on every path (merge done,
     // skipped, or running in background), so no permission change is missed.
@@ -881,17 +944,22 @@ Future<void> main() async {
       // or the startup merge failed and the open-time sync must cover it (case 4).
       // Push availability never gates opening: a device with cached boxes opens
       // instantly and syncs in the background, with or without push.
-      if (isOnline && (_deviceHadNoCacheAtStart || _forceLegacyWait || _startupMergeFailed)) {
+      if (isOnline &&
+          (_deviceHadNoCacheAtStart ||
+              _forceLegacyWait ||
+              _startupMergeFailed)) {
         // One 10s budget across the startup merge and this wait: a late merge
         // failure waits only for what is left, never a second 10s.
         final remainingMs =
             _startupMergeFailed ? (10000 - mergeMs).clamp(0, 10000) : 10000;
         if (remainingMs <= 0) {
-          print('⏳ open-sync wait skipped: the merge already used the 10s budget; '
+          print(
+              '⏳ open-sync wait skipped: the merge already used the 10s budget; '
               'opening now, sync continues in background');
         } else {
           final swWait = Stopwatch()..start();
-          print('⏳ open-sync wait: noBoxes=$_deviceHadNoCacheAtStart mergeFailed=$_startupMergeFailed budget=${remainingMs}ms');
+          print(
+              '⏳ open-sync wait: noBoxes=$_deviceHadNoCacheAtStart mergeFailed=$_startupMergeFailed budget=${remainingMs}ms');
           print(_startupMergeFailed
               ? "⏳ فشل الدمج: ننتظر المزامنة (max ${(remainingMs / 1000).toStringAsFixed(0)}s)..."
               : "⏳ أول استخدام: ننتظر الجلب الأولي (max ${(remainingMs / 1000).toStringAsFixed(0)}s)...");
@@ -951,6 +1019,7 @@ Future<void> main() async {
 // IslamApp
 // ============================================================
 
+// ويدجت التطبيق الرئيسي ويستقبل الشاشة الأولى
 class IslamApp extends StatefulWidget {
   final Widget initialScreen;
   final ThemeMode initialThemeMode;
@@ -961,10 +1030,12 @@ class IslamApp extends StatefulWidget {
     this.initialThemeMode = ThemeMode.dark,
   });
 
+  // يعيد حالة التطبيق من أقرب سياق
   static _IslamAppState of(BuildContext context) {
     return context.findAncestorStateOfType<_IslamAppState>()!;
   }
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<IslamApp> createState() => _IslamAppState();
 }
@@ -973,10 +1044,12 @@ class IslamApp extends StatefulWidget {
 // App State
 // ============================================================
 
+// حالة التطبيق: الثيم ودورة الحياة والمزامنة عند العودة
 class _IslamAppState extends State<IslamApp> with WidgetsBindingObserver {
   late ThemeMode _themeMode;
   bool _resumeSyncInProgress = false;
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
@@ -984,6 +1057,7 @@ class _IslamAppState extends State<IslamApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
   }
 
+  // يتفاعل مع تغيّر حالة دورة حياة التطبيق
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
@@ -994,6 +1068,7 @@ class _IslamAppState extends State<IslamApp> with WidgetsBindingObserver {
   // ==========================================================
   // Sync عند رجوع التطبيق
   // ==========================================================
+  // يشغّل المزامنة عند عودة التطبيق إلى المقدمة
   Future<void> _syncWhenAppResumes() async {
     if (_resumeSyncInProgress || _isSyncing) return;
 
@@ -1044,6 +1119,7 @@ class _IslamAppState extends State<IslamApp> with WidgetsBindingObserver {
   // ==========================================================
   // Theme
   // ==========================================================
+  // يغيّر وضع الثيم ويحفظه
   void changeTheme(ThemeMode themeMode) async {
     setState(() {
       _themeMode = themeMode;
@@ -1063,6 +1139,7 @@ class _IslamAppState extends State<IslamApp> with WidgetsBindingObserver {
   // ==========================================================
   // Dispose
   // ==========================================================
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -1073,6 +1150,7 @@ class _IslamAppState extends State<IslamApp> with WidgetsBindingObserver {
   // ==========================================================
   // Build
   // ==========================================================
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     return MaterialApp(

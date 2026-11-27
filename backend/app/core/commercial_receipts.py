@@ -1,3 +1,4 @@
+# backend/app/core/commercial_receipts.py
 """Owner-bound retry acknowledgement for committed commercial creates.
 
 The caller holds the existing record save lock. This stores hashes and identity,
@@ -9,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.models import CommercialCreationReceipt
 
 
+# يوحّد الأرقام في القيمة (تحويل لنص ثابت) عشان البصمة تبقى ثابتة
 def _canonical_numbers(value):
     if isinstance(value, float) and value.is_integer():
         return int(value)
@@ -19,6 +21,7 @@ def _canonical_numbers(value):
     return value
 
 
+# يحسب بصمة طلب الإنشاء من بياناته
 def request_fingerprint(data):
     values = data.model_dump(mode='json')
     values.pop('base_updated_at', None)
@@ -27,12 +30,14 @@ def request_fingerprint(data):
         separators=(',', ':'), allow_nan=False).encode('utf-8')).hexdigest()
 
 
+# يحسب بصمة سجل محفوظ حسب شكله
 def record_fingerprint(record, schema):
     values = {key: getattr(record, key) for key in schema.model_fields
               if key != 'base_updated_at' and hasattr(record, key)}
     return request_fingerprint(schema.model_validate(values))
 
 
+# يتحقق هل الإنشاء المكرر نفس الطلب السابق ويرجّع السجل الموجود
 async def unchanged_creation(db, *, kind, data, schema, existing, owner_uid, fingerprint):
     if not isinstance(db, AsyncSession) or not owner_uid:
         return None
@@ -53,6 +58,7 @@ async def unchanged_creation(db, *, kind, data, schema, existing, owner_uid, fin
             'updated_at':existing.updated_at.isoformat(), 'action':'unchanged'}
 
 
+# يسجّل إيصال إنشاء عشان إعادة نفس الطلب ما تكررش السجل
 def remember_creation(db, *, kind, data, schema, record, owner_uid, fingerprint):
     if not isinstance(db, AsyncSession) or not owner_uid:
         return

@@ -1,5 +1,5 @@
+// frontend/lib/views/dashboard/supplier_settlement_page.dart
 import '../../services/cache_partitions.dart';
-// lib/views/dashboard/supplier_settlement_page.dart
 
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
@@ -12,6 +12,7 @@ import '../../services/permissions_service.dart';
 import '../../views/widgets/glass_card.dart';
 import 'supplier_settlement_history_page.dart';
 
+// صفحة تسوية المورد
 class SupplierSettlementPage extends StatefulWidget {
   final String companyCode;
   final String? selectedBranchCode;
@@ -26,17 +27,15 @@ class SupplierSettlementPage extends StatefulWidget {
     this.editItem,
   });
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
-  State<SupplierSettlementPage> createState() =>
-      _SupplierSettlementPageState();
+  State<SupplierSettlementPage> createState() => _SupplierSettlementPageState();
 }
 
-class _SupplierSettlementPageState
-    extends State<SupplierSettlementPage> {
-  final SupplierSettlementService _service =
-      SupplierSettlementService();
-  final SupplierService _supplierService =
-      SupplierService();
+// حالة صفحة تسوية المورد
+class _SupplierSettlementPageState extends State<SupplierSettlementPage> {
+  final SupplierSettlementService _service = SupplierSettlementService();
+  final SupplierService _supplierService = SupplierService();
 
   // ============================================================
   // Controllers
@@ -79,12 +78,12 @@ class _SupplierSettlementPageState
   bool _isLoading = true;
   bool _isSaving = false;
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
 
-    _dateController.text =
-        DateFormat('yyyy-MM-dd').format(DateTime.now());
+    _dateController.text = DateFormat('yyyy-MM-dd').format(DateTime.now());
 
     _amountController.addListener(_updateExpectedBalance);
     _loadData();
@@ -94,121 +93,123 @@ class _SupplierSettlementPageState
   // تحميل البيانات
   // ============================================================
 
+  // يحمّل بيانات الشاشة
   Future<void> _loadData() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      try {
+        // جلب اسم المستخدم من SharedPreferences
+        final prefs = await SharedPreferences.getInstance();
+        _currentUserName = prefs.getString('user_name') ?? 'غير محدد';
 
-  try {
-    // جلب اسم المستخدم من SharedPreferences
-    final prefs = await SharedPreferences.getInstance();
-    _currentUserName = prefs.getString('user_name') ?? 'غير محدد';
+        final box = CachePartitions.box('coding_box');
 
-    final box = CachePartitions.box('coding_box');
+        // الموردين
+        final suppliers =
+            box.get('${widget.companyCode}_suppliers') as List? ?? [];
+        _suppliers = suppliers
+            .whereType<Map>()
+            .map((e) => {
+                  'code': e['code']?.toString() ?? '',
+                  'name': e['name']?.toString() ?? '',
+                })
+            .where((e) => e['code']!.isNotEmpty && e['name']!.isNotEmpty)
+            .toList();
 
-    // الموردين
-    final suppliers = box.get('${widget.companyCode}_suppliers') as List? ?? [];
-    _suppliers = suppliers
-        .whereType<Map>()
-        .map((e) => {
-              'code': e['code']?.toString() ?? '',
-              'name': e['name']?.toString() ?? '',
-            })
-        .where((e) => e['code']!.isNotEmpty && e['name']!.isNotEmpty)
-        .toList();
+        // الخزائن
+        final treasuries =
+            box.get('${widget.companyCode}_safes') as List? ?? [];
+        _treasuries = treasuries
+            .whereType<Map>()
+            .map((e) => {
+                  'code': e['code']?.toString() ?? '',
+                  'name': e['name']?.toString() ?? '',
+                })
+            .where((e) => e['code']!.isNotEmpty && e['name']!.isNotEmpty)
+            .toList();
 
-    // الخزائن
-    final treasuries = box.get('${widget.companyCode}_safes') as List? ?? [];
-    _treasuries = treasuries
-        .whereType<Map>()
-        .map((e) => {
-              'code': e['code']?.toString() ?? '',
-              'name': e['name']?.toString() ?? '',
-            })
-        .where((e) => e['code']!.isNotEmpty && e['name']!.isNotEmpty)
-        .toList();
+        // طرق الدفع
+        final paymentMethods =
+            box.get('${widget.companyCode}_payment_methods') as List? ?? [];
+        _paymentMethods = paymentMethods
+            .whereType<Map>()
+            .map((e) => {
+                  'code': e['code']?.toString() ?? '',
+                  'name': e['name']?.toString() ?? '',
+                })
+            .where((e) => e['code']!.isNotEmpty && e['name']!.isNotEmpty)
+            .toList();
 
-    // طرق الدفع
-    final paymentMethods = box.get('${widget.companyCode}_payment_methods') as List? ?? [];
-    _paymentMethods = paymentMethods
-        .whereType<Map>()
-        .map((e) => {
-              'code': e['code']?.toString() ?? '',
-              'name': e['name']?.toString() ?? '',
-            })
-        .where((e) => e['code']!.isNotEmpty && e['name']!.isNotEmpty)
-        .toList();
+        // القيم الافتراضية
+        if (_treasuries.isNotEmpty) {
+          _selectedTreasury = _treasuries.first['name'];
+        }
 
-    // القيم الافتراضية
-    if (_treasuries.isNotEmpty) {
-      _selectedTreasury = _treasuries.first['name'];
-    }
+        if (_paymentMethods.isNotEmpty) {
+          _selectedPaymentMethod = _paymentMethods.first['name'] ?? 'نقدي';
+        }
 
-    if (_paymentMethods.isNotEmpty) {
-      _selectedPaymentMethod = _paymentMethods.first['name'] ?? 'نقدي';
-    }
+        // ✅ في حالة التعديل نحمّل بيانات الإذن أولاً
+        if (widget.editItem != null) {
+          _loadEditData(widget.editItem!);
+        } else {
+          // ✅ مورد واحد فقط
+          if (_suppliers.length == 1) {
+            _selectedSupplier = _suppliers.first['name'];
+            await _loadBalance();
+          }
 
-    // ✅ في حالة التعديل نحمّل بيانات الإذن أولاً
-    if (widget.editItem != null) {
-      _loadEditData(widget.editItem!);
-    } else {
-      // ✅ مورد واحد فقط
-      if (_suppliers.length == 1) {
-        _selectedSupplier = _suppliers.first['name'];
-        await _loadBalance();
+          // ✅ رقم الإذن الجديد
+          _currentSerial = _getNextSerial();
+        }
+
+        if (mounted) {
+          setState(() => _isLoading = false);
+        }
+      } catch (e) {
+        print('❌ خطأ في تحميل التسوية: $e');
+        if (mounted) {
+          setState(() => _isLoading = false);
+        }
       }
-
-      // ✅ رقم الإذن الجديد
-      _currentSerial = _getNextSerial();
-    }
-
-    if (mounted) {
-      setState(() => _isLoading = false);
-    }
-  } catch (e) {
-    print('❌ خطأ في تحميل التسوية: $e');
-    if (mounted) {
-      setState(() => _isLoading = false);
-    }
+    });
   }
-
-});
-}
 
   // ============================================================
   // تحميل بيانات الإذن في وضع التعديل
   // ============================================================
 
+  // يحمّل بيانات التسوية للتعديل
   Future<void> _loadEditData(
     SupplierSettlementModel item,
   ) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      _currentSerial = item.serial;
+      _selectedSupplier = item.supplierName;
+      _addSettlementToDaily = item.linkId?.isNotEmpty == true;
+      _selectedTreasury = item.treasury;
+      _selectedPaymentMethod = item.paymentMethod;
+      _amountController.text = item.amount.toString();
+      _statementController.text = item.statement;
+      _dateController.text = item.date;
 
-    _currentSerial = item.serial;
-    _selectedSupplier = item.supplierName;
-    _addSettlementToDaily = item.linkId?.isNotEmpty == true;
-    _selectedTreasury = item.treasury;
-    _selectedPaymentMethod = item.paymentMethod;
-    _amountController.text = item.amount.toString();
-    _statementController.text = item.statement;
-    _dateController.text = item.date;
+      await _loadBalance();
 
-    await _loadBalance();
-
-    // ✅ الرصيد بعد الدفعة أثناء التعديل:
-    // نعيد مبلغ الإذن القديم للرصيد قبل حساب الدفعة الجديدة.
-    if (mounted) {
-      setState(() {
-        _expectedBalance =
-            _supplierBalance + item.amount - item.amount;
-      });
-    }
-});
-}
+      // ✅ الرصيد بعد الدفعة أثناء التعديل:
+      // نعيد مبلغ الإذن القديم للرصيد قبل حساب الدفعة الجديدة.
+      if (mounted) {
+        setState(() {
+          _expectedBalance = _supplierBalance + item.amount - item.amount;
+        });
+      }
+    });
+  }
 
   // ============================================================
   // حساب رقم الإذن التالي
   // لكل شركة + فرع بشكل مستقل
   // ============================================================
 
+  // يعيد الرقم التسلسلي التالي
   int _getNextSerial() {
     final box = CachePartitions.box('supplier_settlement_box');
     final branchCode = widget.selectedBranchCode ?? 'all';
@@ -227,8 +228,7 @@ return CachePartitions.run(() async {
         if (map['company_code']?.toString() != widget.companyCode) continue;
         if (map['branch_code']?.toString() != branchCode) continue;
 
-        final serial =
-            int.tryParse(map['serial']?.toString() ?? '0') ?? 0;
+        final serial = int.tryParse(map['serial']?.toString() ?? '0') ?? 0;
 
         if (serial > maxSerial) maxSerial = serial;
       }
@@ -241,191 +241,196 @@ return CachePartitions.run(() async {
   // رصيد المورد
   // ============================================================
 
+  // يحمّل رصيد المورد
   Future<void> _loadBalance() async {
-return CachePartitions.run(() async {
-
-    if (_selectedSupplier == null || _selectedSupplier!.isEmpty) {
-      if (mounted) {
-        setState(() {
-          _supplierBalance = 0.0;
-          _expectedBalance = 0.0;
-        });
+    return CachePartitions.run(() async {
+      if (_selectedSupplier == null || _selectedSupplier!.isEmpty) {
+        if (mounted) {
+          setState(() {
+            _supplierBalance = 0.0;
+            _expectedBalance = 0.0;
+          });
+        }
+        return;
       }
-      return;
-    }
 
-    try {
-      final balance = await _supplierService.getSupplierBalance(
-        widget.companyCode,
-        widget.selectedBranchCode ?? 'all',
-        _selectedSupplier!,
-      );
+      try {
+        final balance = await _supplierService.getSupplierBalance(
+          widget.companyCode,
+          widget.selectedBranchCode ?? 'all',
+          _selectedSupplier!,
+        );
 
-      // null = الرصيد مخفي (بلا حق تكلفة): بطاقة الرصيد مخفية
-      // أصلاً، ولا حساب متوقع ولا أي مسار رقمي على قيمة غير موجودة.
-      if (balance == null) return;
+        // null = الرصيد مخفي (بلا حق تكلفة): بطاقة الرصيد مخفية
+        // أصلاً، ولا حساب متوقع ولا أي مسار رقمي على قيمة غير موجودة.
+        if (balance == null) return;
 
-      if (!mounted) return;
+        if (!mounted) return;
 
-      final enteredAmount =
-          double.tryParse(_amountController.text) ?? 0.0;
+        final enteredAmount = double.tryParse(_amountController.text) ?? 0.0;
 
-      // ✅ أثناء التعديل الرصيد الحالي يحتوي بالفعل على الدفعة القديمة
-      // لذلك نضيفها قبل طرح المبلغ الجديد.
-      final oldAmount =
-          widget.editItem?.amount ?? 0.0;
+        // ✅ أثناء التعديل الرصيد الحالي يحتوي بالفعل على الدفعة القديمة
+        // لذلك نضيفها قبل طرح المبلغ الجديد.
+        final oldAmount = widget.editItem?.amount ?? 0.0;
 
-      setState(() {
-        _supplierBalance = balance;
-        _expectedBalance =
-            balance + oldAmount - enteredAmount;
-      });
-    } catch (e) {
-      print('❌ خطأ في تحميل رصيد المورد: $e');
-    }
-});
-}
+        setState(() {
+          _supplierBalance = balance;
+          _expectedBalance = balance + oldAmount - enteredAmount;
+        });
+      } catch (e) {
+        print('❌ خطأ في تحميل رصيد المورد: $e');
+      }
+    });
+  }
 
   // ============================================================
   // تحديث الرصيد المتوقع
   // ============================================================
 
+  // يحدّث الرصيد المتوقع
   void _updateExpectedBalance() {
-  final amount = double.tryParse(_amountController.text) ?? 0.0;
-  final oldAmount = widget.editItem?.amount ?? 0.0;
+    final amount = double.tryParse(_amountController.text) ?? 0.0;
+    final oldAmount = widget.editItem?.amount ?? 0.0;
 
-  double newBalance = _supplierBalance + oldAmount - amount;
-  // تصحيح الصفر السالب
-  if (newBalance.abs() < 0.0001) {
-    newBalance = 0.0;
-  }
+    double newBalance = _supplierBalance + oldAmount - amount;
+    // تصحيح الصفر السالب
+    if (newBalance.abs() < 0.0001) {
+      newBalance = 0.0;
+    }
 
-  if (mounted) {
-    setState(() {
-      _expectedBalance = newBalance;
-    });
+    if (mounted) {
+      setState(() {
+        _expectedBalance = newBalance;
+      });
+    }
   }
-}
 
   // ============================================================
   // حفظ / تعديل الدفعة
   // ============================================================
 
+  // يتحقق من البيانات ويحفظها
   Future<void> _handleSave() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      final isEdit = widget.editItem != null;
 
-  final isEdit = widget.editItem != null;
-
-  // ✅ الإضافة لها صلاحية مستقلة عن التعديل
-  if (isEdit) {
-    if (!PermissionsService().canEditSupplierSettlement) {
-      _showSnackBar('ليس لديك صلاحية تعديل الدفعة', AppTheme.warningOrangeFor(context));
-      return;
-    }
-  } else {
-    if (!PermissionsService().canAddSupplierSettlement) {
-      _showSnackBar('ليس لديك صلاحية إضافة دفعة', AppTheme.warningOrangeFor(context));
-      return;
-    }
-  }
-
-  // المورد
-  if (_selectedSupplier == null || _selectedSupplier!.isEmpty) {
-    _showSnackBar('اختر المورد', AppTheme.warningOrangeFor(context));
-    return;
-  }
-
-  // المبلغ
-  final amount = double.tryParse(_amountController.text.trim()) ?? 0.0;
-  if (amount <= 0) {
-    _showSnackBar('أدخل مبلغ الدفعة', AppTheme.warningOrangeFor(context));
-    return;
-  }
-
-  // ✅ في الإضافة نتحقق من الرصيد. في التعديل نسمح باستخدام الرصيد + مبلغ الدفعة القديمة.
-  // final availableBalance = _supplierBalance + (widget.editItem?.amount ?? 0.0);
-  // if (amount > availableBalance) {
-  //   _showSnackBar('مبلغ الدفعة أكبر من رصيد المورد', AppTheme.warningOrangeFor(context));
-  //   return;
-  // }
-
-  setState(() => _isSaving = true);
-
-  try {
-    if (_currentSerial <= 0) {
-      _currentSerial = _getNextSerial();
-    }
-
-    // ✅ استخدم اسم المستخدم الحالي (من SharedPreferences أو من widget.userName)
-    final employeeName = widget.userName != null && widget.userName!.trim().isNotEmpty
-        ? widget.userName!.trim()
-        : _currentUserName;
-
-    final model = SupplierSettlementModel(
-      companyCode: widget.companyCode,
-      branchCode: widget.selectedBranchCode ?? 'all',
-      supplierName: _selectedSupplier!,
-      date: _dateController.text,
-      serial: _currentSerial,
-      amount: amount,
-      paymentMethod: _selectedPaymentMethod,
-      treasury: _selectedTreasury ?? '',
-      statement: _statementController.text,
-      employee: employeeName,
-      docId: widget.editItem?.docId,
-      linkId: widget.editItem?.linkId ??
-          (_addSettlementToDaily ? _service.newLinkId() : null),
-      addToDaily: _addSettlementToDaily,
-      unlinkDaily: widget.editItem?.linkId?.isNotEmpty == true && !_addSettlementToDaily,
-    );
-
-    final result = await _service.saveSettlement(model);
-
-    if (result['success'] == true) {
-      final savedSerial = result['serial'] is num
-          ? (result['serial'] as num).toInt()
-          : model.serial;
-
-      _showSnackBar(
-        isEdit ? 'تم تعديل الدفعة رقم $savedSerial بنجاح' : 'تم حفظ الدفعة رقم $savedSerial بنجاح',
-        AppTheme.successStrongFor(context),
-      );
-
-      // ✅ في وضع التعديل نرجع للمعاينة بعد الحفظ
+      // ✅ الإضافة لها صلاحية مستقلة عن التعديل
       if (isEdit) {
-        if (mounted) Navigator.pop(context, true);
+        if (!PermissionsService().canEditSupplierSettlement) {
+          _showSnackBar('ليس لديك صلاحية تعديل الدفعة',
+              AppTheme.warningOrangeFor(context));
+          return;
+        }
+      } else {
+        if (!PermissionsService().canAddSupplierSettlement) {
+          _showSnackBar(
+              'ليس لديك صلاحية إضافة دفعة', AppTheme.warningOrangeFor(context));
+          return;
+        }
+      }
+
+      // المورد
+      if (_selectedSupplier == null || _selectedSupplier!.isEmpty) {
+        _showSnackBar('اختر المورد', AppTheme.warningOrangeFor(context));
         return;
       }
 
-      // ✅ تنظيف بعد الإضافة
-      _amountController.clear();
-      _statementController.clear();
-
-      await _loadBalance();
-
-      if (mounted) {
-        setState(() {
-          _currentSerial = _getNextSerial();
-        });
+      // المبلغ
+      final amount = double.tryParse(_amountController.text.trim()) ?? 0.0;
+      if (amount <= 0) {
+        _showSnackBar('أدخل مبلغ الدفعة', AppTheme.warningOrangeFor(context));
+        return;
       }
-    } else {
-      _showSnackBar('فشل الحفظ: ${result['error']}', AppTheme.dangerStrongFor(context));
-    }
-  } catch (e) {
-    _showSnackBar('خطأ: $e', AppTheme.dangerStrongFor(context));
-  } finally {
-    if (mounted) {
-      setState(() => _isSaving = false);
-    }
-  }
 
-});
-}
+      // ✅ في الإضافة نتحقق من الرصيد. في التعديل نسمح باستخدام الرصيد + مبلغ الدفعة القديمة.
+      // final availableBalance = _supplierBalance + (widget.editItem?.amount ?? 0.0);
+      // if (amount > availableBalance) {
+      //   _showSnackBar('مبلغ الدفعة أكبر من رصيد المورد', AppTheme.warningOrangeFor(context));
+      //   return;
+      // }
+
+      setState(() => _isSaving = true);
+
+      try {
+        if (_currentSerial <= 0) {
+          _currentSerial = _getNextSerial();
+        }
+
+        // ✅ استخدم اسم المستخدم الحالي (من SharedPreferences أو من widget.userName)
+        final employeeName =
+            widget.userName != null && widget.userName!.trim().isNotEmpty
+                ? widget.userName!.trim()
+                : _currentUserName;
+
+        final model = SupplierSettlementModel(
+          companyCode: widget.companyCode,
+          branchCode: widget.selectedBranchCode ?? 'all',
+          supplierName: _selectedSupplier!,
+          date: _dateController.text,
+          serial: _currentSerial,
+          amount: amount,
+          paymentMethod: _selectedPaymentMethod,
+          treasury: _selectedTreasury ?? '',
+          statement: _statementController.text,
+          employee: employeeName,
+          docId: widget.editItem?.docId,
+          linkId: widget.editItem?.linkId ??
+              (_addSettlementToDaily ? _service.newLinkId() : null),
+          addToDaily: _addSettlementToDaily,
+          unlinkDaily: widget.editItem?.linkId?.isNotEmpty == true &&
+              !_addSettlementToDaily,
+        );
+
+        final result = await _service.saveSettlement(model);
+
+        if (result['success'] == true) {
+          final savedSerial = result['serial'] is num
+              ? (result['serial'] as num).toInt()
+              : model.serial;
+
+          _showSnackBar(
+            isEdit
+                ? 'تم تعديل الدفعة رقم $savedSerial بنجاح'
+                : 'تم حفظ الدفعة رقم $savedSerial بنجاح',
+            AppTheme.successStrongFor(context),
+          );
+
+          // ✅ في وضع التعديل نرجع للمعاينة بعد الحفظ
+          if (isEdit) {
+            if (mounted) Navigator.pop(context, true);
+            return;
+          }
+
+          // ✅ تنظيف بعد الإضافة
+          _amountController.clear();
+          _statementController.clear();
+
+          await _loadBalance();
+
+          if (mounted) {
+            setState(() {
+              _currentSerial = _getNextSerial();
+            });
+          }
+        } else {
+          _showSnackBar('فشل الحفظ: ${result['error']}',
+              AppTheme.dangerStrongFor(context));
+        }
+      } catch (e) {
+        _showSnackBar('خطأ: $e', AppTheme.dangerStrongFor(context));
+      } finally {
+        if (mounted) {
+          setState(() => _isSaving = false);
+        }
+      }
+    });
+  }
 
   // ============================================================
   // SnackBar
   // ============================================================
 
+  // يعرض رسالة سريعة بالنص واللون المحددين
   void _showSnackBar(String message, Color color) {
     if (!mounted) return;
 
@@ -445,6 +450,7 @@ return CachePartitions.run(() async {
   // اسم الفرع
   // ============================================================
 
+  // يعيد اسم الفرع من الكود
   String _getBranchName(String? code) {
     if (code == null || code.isEmpty || code == 'all') {
       return 'كل الفروع';
@@ -471,6 +477,7 @@ return CachePartitions.run(() async {
   // Build
   // ============================================================
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     final isEdit = widget.editItem != null;
@@ -537,7 +544,8 @@ return CachePartitions.run(() async {
         child: SafeArea(
           child: _isLoading
               ? Center(
-                  child: CircularProgressIndicator(color: AppTheme.textMainFor(context)),
+                  child: CircularProgressIndicator(
+                      color: AppTheme.textMainFor(context)),
                 )
               : SingleChildScrollView(
                   padding: const EdgeInsets.all(12),
@@ -553,13 +561,11 @@ return CachePartitions.run(() async {
                         width: double.infinity,
                         height: 52,
                         child: ElevatedButton(
-                          onPressed:
-                              _isSaving ? null : _handleSave,
+                          onPressed: _isSaving ? null : _handleSave,
                           style: ElevatedButton.styleFrom(
-                            backgroundColor:
-                                isEdit
-                                    ? AppTheme.warningOrangeSoftFor(context)
-                                    : AppTheme.successFor(context),
+                            backgroundColor: isEdit
+                                ? AppTheme.warningOrangeSoftFor(context)
+                                : AppTheme.successFor(context),
                             foregroundColor: AppTheme.onAccentFor(context),
                           ),
                           child: Text(
@@ -589,8 +595,7 @@ return CachePartitions.run(() async {
                               Navigator.push(
                                 context,
                                 MaterialPageRoute(
-                                  builder: (c) =>
-                                      SupplierSettlementHistoryPage(
+                                  builder: (c) => SupplierSettlementHistoryPage(
                                     companyCode: widget.companyCode,
                                     selectedBranchCode:
                                         widget.selectedBranchCode,
@@ -616,11 +621,9 @@ return CachePartitions.run(() async {
                                 color: AppTheme.accentFor(context),
                               ),
                               shape: RoundedRectangleBorder(
-                                borderRadius:
-                                    BorderRadius.circular(10),
+                                borderRadius: BorderRadius.circular(10),
                               ),
-                              backgroundColor:
-                                  GlassStyle.fill03For(context),
+                              backgroundColor: GlassStyle.fill03For(context),
                             ),
                           ),
                         ),
@@ -636,48 +639,58 @@ return CachePartitions.run(() async {
   // بطاقة الرصيد
   // ============================================================
 
+  // يبني بطاقة الرصيد
   Widget _buildBalanceCard() {
-  // رصيد المورد مشتق من إجماليات الفواتير (أسعار جملة): مخفي
-  // لمن لا يملك حق التكلفة (سياسة الصلاحيات: الإجمالي لا يظهر)
-  if (!PermissionsService().canViewCostPrices) {
-    return const SizedBox.shrink();
-  }
-  double balance = _supplierBalance.abs() < 0.0001 ? 0.0 : _supplierBalance;
-  double expected = _expectedBalance.abs() < 0.0001 ? 0.0 : _expectedBalance;
+    // رصيد المورد مشتق من إجماليات الفواتير (أسعار جملة): مخفي
+    // لمن لا يملك حق التكلفة (سياسة الصلاحيات: الإجمالي لا يظهر)
+    if (!PermissionsService().canViewCostPrices) {
+      return const SizedBox.shrink();
+    }
+    double balance = _supplierBalance.abs() < 0.0001 ? 0.0 : _supplierBalance;
+    double expected = _expectedBalance.abs() < 0.0001 ? 0.0 : _expectedBalance;
 
-  return GlassCard(
-    child: Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        children: [
-          Text(
-            'رصيد المورد',
-            style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo'),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            balance.toStringAsFixed(2),
-            style: TextStyle(color: AppTheme.warningFor(context), fontSize: 24, fontWeight: FontWeight.bold),
-          ),
-          Divider(color: GlassStyle.line24For(context)),
-          Text(
-            'الرصيد بعد الدفعة',
-            style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo'),
-          ),
-          Text(
-            expected.toStringAsFixed(2),
-            style: TextStyle(color: AppTheme.successFor(context), fontSize: 20, fontWeight: FontWeight.bold),
-          ),
-        ],
+    return GlassCard(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          children: [
+            Text(
+              'رصيد المورد',
+              style: TextStyle(
+                  color: AppTheme.textSoftFor(context), fontFamily: 'Cairo'),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              balance.toStringAsFixed(2),
+              style: TextStyle(
+                  color: AppTheme.warningFor(context),
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold),
+            ),
+            Divider(color: GlassStyle.line24For(context)),
+            Text(
+              'الرصيد بعد الدفعة',
+              style: TextStyle(
+                  color: AppTheme.textSoftFor(context), fontFamily: 'Cairo'),
+            ),
+            Text(
+              expected.toStringAsFixed(2),
+              style: TextStyle(
+                  color: AppTheme.successFor(context),
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
       ),
-    ),
-  );
-}
+    );
+  }
 
   // ============================================================
   // الفورم
   // ============================================================
 
+  // يبني النموذج
   Widget _buildForm() {
     final isEdit = widget.editItem != null;
     final canEdit = PermissionsService().canEditSupplierSettlement;
@@ -698,21 +711,21 @@ return CachePartitions.run(() async {
                 labelText: 'المورد',
                 labelStyle: TextStyle(color: AppTheme.textSoftFor(context)),
               ),
-              items: _suppliers.map(
-                (s) => DropdownMenuItem<String>(
-                  value: s['name'],
-                  child: Text(s['name'] ?? ''),
-                ),
-              ).toList(),
+              items: _suppliers
+                  .map(
+                    (s) => DropdownMenuItem<String>(
+                      value: s['name'],
+                      child: Text(s['name'] ?? ''),
+                    ),
+                  )
+                  .toList(),
               onChanged: enabled
                   ? (value) async {
-return CachePartitions.run(() async {
-
-                      setState(() => _selectedSupplier = value);
-                      await _loadBalance();
-
-});
-}
+                      return CachePartitions.run(() async {
+                        setState(() => _selectedSupplier = value);
+                        await _loadBalance();
+                      });
+                    }
                   : null,
             ),
 
@@ -736,7 +749,9 @@ return CachePartitions.run(() async {
                   ),
                 ),
                 value: _addSettlementToDaily,
-                onChanged: enabled ? (value) => setState(() => _addSettlementToDaily = value) : null,
+                onChanged: enabled
+                    ? (value) => setState(() => _addSettlementToDaily = value)
+                    : null,
               ),
             ),
 
@@ -768,12 +783,14 @@ return CachePartitions.run(() async {
                     decoration: const InputDecoration(
                       labelText: 'طريقة الدفع',
                     ),
-                    items: _paymentMethods.map(
-                      (s) => DropdownMenuItem<String>(
-                        value: s['name'],
-                        child: Text(s['name'] ?? ''),
-                      ),
-                    ).toList(),
+                    items: _paymentMethods
+                        .map(
+                          (s) => DropdownMenuItem<String>(
+                            value: s['name'],
+                            child: Text(s['name'] ?? ''),
+                          ),
+                        )
+                        .toList(),
                     onChanged: enabled
                         ? (v) {
                             if (v != null) {
@@ -791,14 +808,15 @@ return CachePartitions.run(() async {
                     initialValue: _selectedTreasury,
                     dropdownColor: AppTheme.dropdownBackground(context),
                     style: TextStyle(color: AppTheme.textMainFor(context)),
-                    decoration:
-                        const InputDecoration(labelText: 'الخزينة'),
-                    items: _treasuries.map(
-                      (s) => DropdownMenuItem<String>(
-                        value: s['name'],
-                        child: Text(s['name'] ?? ''),
-                      ),
-                    ).toList(),
+                    decoration: const InputDecoration(labelText: 'الخزينة'),
+                    items: _treasuries
+                        .map(
+                          (s) => DropdownMenuItem<String>(
+                            value: s['name'],
+                            child: Text(s['name'] ?? ''),
+                          ),
+                        )
+                        .toList(),
                     onChanged: enabled
                         ? (v) => setState(() => _selectedTreasury = v)
                         : null,
@@ -830,8 +848,8 @@ return CachePartitions.run(() async {
               style: TextStyle(color: AppTheme.textMainFor(context)),
               decoration: InputDecoration(
                 labelText: 'التاريخ',
-                suffixIcon:
-                    Icon(Icons.calendar_today, color: AppTheme.warningFor(context)),
+                suffixIcon: Icon(Icons.calendar_today,
+                    color: AppTheme.warningFor(context)),
               ),
               onTap: enabled ? _pickDate : null,
             ),
@@ -845,30 +863,29 @@ return CachePartitions.run(() async {
   // اختيار التاريخ
   // ============================================================
 
+  // يفتح نافذة اختيار التاريخ
   Future<void> _pickDate() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      final picked = await showDatePicker(
+        context: context,
+        initialDate: DateTime.tryParse(_dateController.text) ?? DateTime.now(),
+        firstDate: DateTime(2020),
+        lastDate: DateTime(2101),
+      );
 
-    final picked = await showDatePicker(
-      context: context,
-      initialDate:
-          DateTime.tryParse(_dateController.text) ?? DateTime.now(),
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2101),
-    );
+      if (picked == null || !mounted) return;
 
-    if (picked == null || !mounted) return;
-
-    setState(() {
-      _dateController.text =
-          DateFormat('yyyy-MM-dd').format(picked);
+      setState(() {
+        _dateController.text = DateFormat('yyyy-MM-dd').format(picked);
+      });
     });
-});
-}
+  }
 
   // ============================================================
   // Dispose
   // ============================================================
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     _amountController.removeListener(_updateExpectedBalance);

@@ -1,3 +1,4 @@
+# backend/app/core/permissions.py
 from app.core.auth_middleware import can_bypass_permissions
 """
 فحص الصلاحيات على الخادم — يعكس عقد الواجهة بالظبط.
@@ -14,6 +15,7 @@ from fastapi import HTTPException, Request
 
 from app.core.auth_middleware import _effective_role
 
+# اسم تصنيف صلاحيات الموارد البشرية
 _HR_CATEGORY = "الموارد البشرية"
 
 # مفاتيح الإظهار العامة لكل قسم (نفس أسماء permissions_service)
@@ -29,6 +31,7 @@ _SECTION_GLOBAL_TOGGLE = {
 _HR_GLOBAL_TOGGLE = "إظهار الموارد البشرية"
 
 
+# يفحص مفتاح الإظهار العام للقسم (لو False يمنع القسم)
 def _global_toggle_allows(profile: Dict[str, Any], toggle_key: str) -> bool:
     """لو مفتاح الإظهار العام موجود وقيمته False يمنع القسم. غير موجود = مسموح."""
     permissions = profile.get("permissions")
@@ -46,6 +49,7 @@ def _global_toggle_allows(profile: Dict[str, Any], toggle_key: str) -> bool:
 from app.core.permission_hierarchy import ADD_TO_EDIT as _ADD_TO_EDIT, action_allowed as _action_allowed
 
 
+# يفحص هل المستخدم عنده صلاحية على قسم ومفتاح معين
 def has_section_permission(
     profile: Dict[str, Any],
     category: str,
@@ -74,6 +78,7 @@ def has_section_permission(
     return _action_allowed(section, category, key)
 
 
+# يفحص هل المستخدم عنده صلاحية موارد بشرية معينة
 def has_hr_permission(profile: Dict[str, Any], key: str) -> bool:
     """
     صلاحيات الموارد البشرية (مفاتيح camelCase زي canViewEmployees).
@@ -93,10 +98,12 @@ def has_hr_permission(profile: Dict[str, Any], key: str) -> bool:
     return _action_allowed(hr_permissions, _HR_CATEGORY, key)
 
 
+# يستخرج بروفايل المستخدم من الطلب
 def _profile_from_request(request: Request) -> Dict[str, Any]:
     return getattr(request.state, "auth_user", None) or {}
 
 
+# يرفض الطلب بـ403 لو المستخدم مش عنده صلاحية القسم
 def require_section_permission(
     request: Request, category: str, key: str
 ) -> Dict[str, Any]:
@@ -110,11 +117,13 @@ def require_section_permission(
     return profile
 
 
+# يفحص هل المستخدم عنده أي مفتاح من مفاتيح الموارد البشرية
 def has_any_hr_permission(profile: Dict[str, Any], keys: list) -> bool:
     """True لو أي مفتاح من مفاتيح الموارد البشرية متاح."""
     return any(has_hr_permission(profile, key) for key in keys)
 
 
+# يرفض الطلب بـ403 لو مفيش صلاحية موارد بشرية مطلوبة
 def require_hr_permission(request: Request, key: str) -> Dict[str, Any]:
     """يرمي 403 لو المستخدم مش عنده صلاحية الموارد البشرية المطلوبة."""
     profile = _profile_from_request(request)
@@ -126,6 +135,7 @@ def require_hr_permission(request: Request, key: str) -> Dict[str, Any]:
     return profile
 
 
+# يرفض الطلب لو المستخدم مش عنده أي صلاحية من أقسام مجموعة
 def require_any_section_permission(
     request: Request, checks: list
 ) -> Dict[str, Any]:

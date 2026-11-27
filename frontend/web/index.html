@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- frontend/web/index.html -->
 <html>
 <head>
   <!--
@@ -36,6 +37,7 @@
   <link rel="manifest" href="manifest.json">
 
   <!-- ⭐ ========== شاشة التحميل — CSS ========== -->
+  <!-- أنماط شاشة التحميل والحركات -->
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -256,12 +258,15 @@
     </div>
   </div>
 
+  <!-- تحميل سكربت قراءة التغييرات المؤقتة من جهة الصفحة -->
   <script src="staged-sync-page.js"></script>
   <!-- ⭐ ========== App Badge Helper ========== -->
+  <!-- سكربت شارة التطبيق: يعرض رقم الإشعارات على الأيقونة ويمسحه -->
   <script>
     window.appBadge = (function () {
       let dbPromise = null;
 
+      // يفتح قاعدة IndexedDB الخاصة بالشارة
       function openDb() {
         if (dbPromise) return dbPromise;
         dbPromise = new Promise((resolve, reject) => {
@@ -278,6 +283,7 @@
         return dbPromise;
       }
 
+      // يحفظ قيمة في قاعدة الشارة
       async function put(key, value) {
         try {
           const db = await openDb();
@@ -291,6 +297,7 @@
       }
 
       return {
+        // يضبط رقم الشارة على أيقونة التطبيق
         set: async function (count) {
           count = Math.max(0, parseInt(count) || 0);
           console.log(`[Badge-Web] set(${count})`);
@@ -313,9 +320,11 @@
         },
         // App-level "mute alerts" preference. Stored where the service worker
         // can read it. It never touches the push registration.
+        // يحفظ حالة كتم التنبيهات
         setMuted: async function (muted) {
           await put("muted", !!muted);
         },
+        // يمسح الشارة
         clear: async function () {
           await put("count", 0);
           try {
@@ -330,9 +339,11 @@
   </script>
 
 
+  <!-- تحميل سكربت Flutter الرئيسي -->
   <script src="flutter_bootstrap.js" async></script>
 
   <!-- ⭐ ========== حقن الحروف + إخفاء شاشة التحميل ========== -->
+  <!-- سكربت حقن حروف شاشة التحميل وإخفاؤها -->
   <script>
     // حقن الحروف
     (function () {
@@ -365,6 +376,7 @@
 const HARD_TIMEOUT_MS = 40000;
       let hiding = false;
 
+      // يُخفي شاشة التحميل ويسجّل السبب
       function hide(reason) {
         if (hiding) return;
         hiding = true;

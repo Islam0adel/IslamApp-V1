@@ -1,6 +1,6 @@
+// frontend/lib/views/dashboard/company_users_page.dart
 import '../../services/cache_partitions.dart';
 import '../../services/admin_cache_events.dart';
-// lib/views/dashboard/company_users_page.dart
 
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -13,6 +13,7 @@ import '../../services/user_service.dart';
 import '../../services/account_editor_snapshot.dart';
 import '../../services/read_authorization_snapshot.dart';
 
+// صفحة مستخدمي الشركة
 class CompanyUsersPage extends StatefulWidget {
   final String companyCode; // '' = super_admin
   final String companyName;
@@ -23,10 +24,12 @@ class CompanyUsersPage extends StatefulWidget {
     required this.companyName,
   });
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<CompanyUsersPage> createState() => _CompanyUsersPageState();
 }
 
+// حالة الويدجت CompanyUsersPage: تدير بيانات الشاشة وتفاعلاتها
 class _CompanyUsersPageState extends State<CompanyUsersPage> {
   final UserService _service = UserService();
   final CompanyService _companyService = CompanyService();
@@ -39,6 +42,7 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
   String? _filterStatus;
   String _actorEmail = '';
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
@@ -51,6 +55,7 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
     _loadInitialData(forceRefresh: true);
   }
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     PermissionsService().removeListener(_scopeChanged);
@@ -58,166 +63,177 @@ class _CompanyUsersPageState extends State<CompanyUsersPage> {
     AdminCacheEvents.companies.removeListener(_companiesChanged);
     super.dispose();
   }
+
+  // يستجيب لتغيّر دليل المستخدمين
   void _directoryChanged() {
     if (!mounted || !PermissionsService().canOpenUserManagement) return;
     final company = AdminCacheEvents.users.value.company;
     if (company == _selectedCompanyCode ||
         (PermissionsService().isSuperAdmin && _selectedCompanyCode.isEmpty)) {
       _loadInitialData();
-    } else if (PermissionsService().isSuperAdmin && PermissionsService().canReviewUserRequests) {
-      _service.ensureRequests().then((_) { if (mounted) setState(() {}); }).catchError((Object error) {
-        if (mounted) setState(() => _error = 'تعذر تحديث الطلبات. اضغط تحديث للمحاولة.');
+    } else if (PermissionsService().isSuperAdmin &&
+        PermissionsService().canReviewUserRequests) {
+      _service.ensureRequests().then((_) {
+        if (mounted) setState(() {});
+      }).catchError((Object error) {
+        if (mounted)
+          setState(() => _error = 'تعذر تحديث الطلبات. اضغط تحديث للمحاولة.');
       });
     }
   }
+
+  // يستجيب لتغيّر قائمة الشركات
   void _companiesChanged() {
     if (mounted && PermissionsService().isSuperAdmin) _loadInitialData();
   }
 
+  // يستجيب لتغيّر النطاق أو الصلاحيات
   void _scopeChanged() {
     if (mounted) setState(() {});
   }
 
+  // يحمّل بريد المستخدم الحالي
   Future<void> _loadActorEmail() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        _actorEmail =
+            (prefs.getString('user_email') ?? '').toLowerCase().trim();
+      } catch (_) {}
+    });
+  }
 
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      _actorEmail =
-          (prefs.getString('user_email') ?? '').toLowerCase().trim();
-    } catch (_) {}
-});
-}
-
+  // يحمّل البيانات الأولية
   Future<void> _loadInitialData({bool forceRefresh = false}) async {
-return CachePartitions.run(() async {
-
-    setState(() => _isLoading = true);
-    try {
-      // تحميل الشركات (لو super_admin)
-      if (PermissionsService().isSuperAdmin) {
-        if (forceRefresh) {
-        await _companyService.fetchAllCompanies();
-      } else if (!_companyService.hasSnapshot) {
-          await _companyService.ensureCached();
-        }
-        // اختار أول شركة لو مفيش شركة محددة
-        if (_selectedCompanyCode.isEmpty) {
-          final companies = _companyService.getCompaniesFromHive();
-          if (companies.isNotEmpty) {
-            _selectedCompanyCode =
-                companies.first['code']?.toString() ?? '';
-            _selectedCompanyName =
-                companies.first['name']?.toString() ?? '';
+    return CachePartitions.run(() async {
+      setState(() => _isLoading = true);
+      try {
+        // تحميل الشركات (لو super_admin)
+        if (PermissionsService().isSuperAdmin) {
+          if (forceRefresh) {
+            await _companyService.fetchAllCompanies();
+          } else if (!_companyService.hasSnapshot) {
+            await _companyService.ensureCached();
+          }
+          // اختار أول شركة لو مفيش شركة محددة
+          if (_selectedCompanyCode.isEmpty) {
+            final companies = _companyService.getCompaniesFromHive();
+            if (companies.isNotEmpty) {
+              _selectedCompanyCode = companies.first['code']?.toString() ?? '';
+              _selectedCompanyName = companies.first['name']?.toString() ?? '';
+            }
           }
         }
-      }
 
-      // تحميل المستخدمين (من Hive أولاً)
-      final hasUsers = _service.hasUsersSnapshot(
-        companyCode: PermissionsService().isSuperAdmin
-            ? (_selectedCompanyCode.isEmpty ? null : _selectedCompanyCode)
-            : _selectedCompanyCode,
-      );
-
-      // لو Hive فاضي، جيب من السيرفر
-      if (forceRefresh) {
-      await _service.fetchAllUsers(companyCode: _selectedCompanyCode.isEmpty ? null : _selectedCompanyCode);
-    } else if (!hasUsers) {
-        await _service.ensureUsers(
+        // تحميل المستخدمين (من Hive أولاً)
+        final hasUsers = _service.hasUsersSnapshot(
           companyCode: PermissionsService().isSuperAdmin
               ? (_selectedCompanyCode.isEmpty ? null : _selectedCompanyCode)
               : _selectedCompanyCode,
         );
-      }
 
-      // تحميل الطلبات المعلقة (للـ admin + super_admin فقط)
-      if (PermissionsService().canReviewUserRequests) {
+        // لو Hive فاضي، جيب من السيرفر
         if (forceRefresh) {
+          await _service.fetchAllUsers(
+              companyCode:
+                  _selectedCompanyCode.isEmpty ? null : _selectedCompanyCode);
+        } else if (!hasUsers) {
+          await _service.ensureUsers(
+            companyCode: PermissionsService().isSuperAdmin
+                ? (_selectedCompanyCode.isEmpty ? null : _selectedCompanyCode)
+                : _selectedCompanyCode,
+          );
+        }
+
+        // تحميل الطلبات المعلقة (للـ admin + super_admin فقط)
+        if (PermissionsService().canReviewUserRequests) {
+          if (forceRefresh) {
+            await _service.fetchPendingRequests();
+          } else {
+            await _service.ensureRequests();
+          }
+        }
+
+        if (!mounted) return;
+        setState(() {
+          _isLoading = false;
+          _error = null;
+        });
+      } catch (e) {
+        if (!mounted) return;
+        setState(() {
+          _isLoading = false;
+          _error = e.toString();
+        });
+      }
+    });
+  }
+
+  // يحدّث بيانات الشاشة
+  Future<void> _refresh() async {
+    return CachePartitions.run(() async {
+      setState(() => _isLoading = true);
+      try {
+        await _service.fetchAllUsers(
+          companyCode: PermissionsService().isSuperAdmin
+              ? (_selectedCompanyCode.isEmpty ? null : _selectedCompanyCode)
+              : _selectedCompanyCode,
+        );
+        if (PermissionsService().canReviewUserRequests) {
           await _service.fetchPendingRequests();
-        } else {
-          await _service.ensureRequests();
+        }
+        if (mounted) setState(() => _isLoading = false);
+      } catch (e) {
+        if (mounted) {
+          setState(() => _isLoading = false);
+          _showSnackBar(e.toString(), AppTheme.dangerFor(context));
         }
       }
-
-      if (!mounted) return;
-      setState(() {
-        _isLoading = false;
-        _error = null;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _isLoading = false;
-        _error = e.toString();
-      });
-    }
-});
-}
-
-  Future<void> _refresh() async {
-return CachePartitions.run(() async {
-
-    setState(() => _isLoading = true);
-    try {
-      await _service.fetchAllUsers(
-        companyCode: PermissionsService().isSuperAdmin
-            ? (_selectedCompanyCode.isEmpty ? null : _selectedCompanyCode)
-            : _selectedCompanyCode,
-      );
-      if (PermissionsService().canReviewUserRequests) {
-        await _service.fetchPendingRequests();
-      }
-      if (mounted) setState(() => _isLoading = false);
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isLoading = false);
-        _showSnackBar(e.toString(), AppTheme.dangerFor(context));
-      }
-    }
-});
-}
-
-  Future<void> _onCompanyChanged(String? code) async {
-return CachePartitions.run(() async {
-
-    if (code == null || code == _selectedCompanyCode) return;
-    final companies = _companyService.getCompaniesFromHive();
-    final company = companies.firstWhere(
-      (c) => c['code']?.toString() == code,
-      orElse: () => {'code': code, 'name': ''},
-    );
-
-    setState(() {
-      _selectedCompanyCode = code;
-      _selectedCompanyName = company['name']?.toString() ?? '';
-      _isLoading = true;
     });
+  }
 
-    try {
-      // جلب مستخدمين الشركة الجديدة
-      await _service.ensureUsers(companyCode: code);
-      if (mounted) setState(() => _isLoading = false);
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isLoading = false);
-        _showSnackBar(e.toString(), AppTheme.dangerFor(context));
+  // يعالج تغيير الشركة المحددة
+  Future<void> _onCompanyChanged(String? code) async {
+    return CachePartitions.run(() async {
+      if (code == null || code == _selectedCompanyCode) return;
+      final companies = _companyService.getCompaniesFromHive();
+      final company = companies.firstWhere(
+        (c) => c['code']?.toString() == code,
+        orElse: () => {'code': code, 'name': ''},
+      );
+
+      setState(() {
+        _selectedCompanyCode = code;
+        _selectedCompanyName = company['name']?.toString() ?? '';
+        _isLoading = true;
+      });
+
+      try {
+        // جلب مستخدمين الشركة الجديدة
+        await _service.ensureUsers(companyCode: code);
+        if (mounted) setState(() => _isLoading = false);
+      } catch (e) {
+        if (mounted) {
+          setState(() => _isLoading = false);
+          _showSnackBar(e.toString(), AppTheme.dangerFor(context));
+        }
       }
-    }
-});
-}
+    });
+  }
 
   // ============================================================
   // Helpers
   // ============================================================
 
+  // يعيد فروع الشركة
   List<Map<String, String>> _branchesFor(String companyCode) {
     final branches = <Map<String, String>>[];
     if (companyCode.isEmpty) return branches;
 
     try {
       final box = CachePartitions.box('coding_box');
-      final raw = box.get('${companyCode}_branches', defaultValue: []) as List? ?? [];
+      final raw =
+          box.get('${companyCode}_branches', defaultValue: []) as List? ?? [];
       for (final item in raw) {
         if (item is! Map) continue;
         final code = item['code']?.toString() ?? '';
@@ -232,6 +248,7 @@ return CachePartitions.run(() async {
     return branches;
   }
 
+  // يعيد المستخدمين بعد التصفية
   List<Map<String, dynamic>> get _filteredUsers {
     final allUsers = _service.getUsersFromHive(
       companyCode: PermissionsService().isSuperAdmin
@@ -242,9 +259,7 @@ return CachePartitions.run(() async {
     var result = List<Map<String, dynamic>>.from(allUsers);
 
     if (_filterStatus != null && _filterStatus!.isNotEmpty) {
-      result = result
-          .where((u) => _accountStatus(u) == _filterStatus)
-          .toList();
+      result = result.where((u) => _accountStatus(u) == _filterStatus).toList();
     }
 
     if (_searchQuery.trim().isNotEmpty) {
@@ -268,527 +283,534 @@ return CachePartitions.run(() async {
   // Add User
   // ============================================================
 
+  // يعرض نافذة إضافة مستخدم
   Future<void> _showAddUserDialog() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_selectedCompanyCode.isEmpty) {
+        _showSnackBar('اختر شركة أولاً', AppTheme.warningOrangeFor(context));
+        return;
+      }
 
-    if (_selectedCompanyCode.isEmpty) {
-      _showSnackBar('اختر شركة أولاً', AppTheme.warningOrangeFor(context));
-      return;
-    }
+      final branches = _branchesFor(_selectedCompanyCode);
+      if (branches.isEmpty) {
+        _showSnackBar(
+          'لا توجد فروع مسجلة لهذه الشركة. أضف فرعاً أولاً من صفحة التكويد.',
+          AppTheme.warningOrangeFor(context),
+        );
+        return;
+      }
 
-    final branches = _branchesFor(_selectedCompanyCode);
-    if (branches.isEmpty) {
-      _showSnackBar(
-        'لا توجد فروع مسجلة لهذه الشركة. أضف فرعاً أولاً من صفحة التكويد.',
-        AppTheme.warningOrangeFor(context),
-      );
-      return;
-    }
+      final branchesWithAll = [
+        {'code': 'all', 'name': 'كل الفروع (موظف عام)'},
+        ...branches,
+      ];
 
-    final branchesWithAll = [
-      {'code': 'all', 'name': 'كل الفروع (موظف عام)'},
-      ...branches,
-    ];
+      final allowedRoles = PermissionsService().isSuperAdmin
+          ? {'admin': 'مدير شركة', 'employee': 'موظف عادي'}
+          : {'employee': 'موظف عادي'};
 
-    final allowedRoles = PermissionsService().isSuperAdmin
-        ? {'admin': 'مدير شركة', 'employee': 'موظف عادي'}
-        : {'employee': 'موظف عادي'};
-
-    final result = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (_) => _AddUserDialog(
-        branches: branchesWithAll,
-        allowedRoles: allowedRoles,
-        companyName: _selectedCompanyName,
-      ),
-    );
-
-    if (result == null || !mounted) return;
-
-    setState(() => _isLoading = true);
-    try {
-      await _service.addUser(
-        name: (result['name'] as String?) ?? '',
-        phoneNumber: (result['phone_number'] as String?) ?? '',
-        branchCode: result['branch_code'] as String,
-        role: result['role'] as String,
-        companyCode: _selectedCompanyCode,
-        email: (result['email'] as String?) ?? '',
-        username: result['username'] as String?,
+      final result = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (_) => _AddUserDialog(
+          branches: branchesWithAll,
+          allowedRoles: allowedRoles,
+          companyName: _selectedCompanyName,
+        ),
       );
 
-      if (!mounted) return;
-      final displayName =
-          (result['name'] as String?)?.trim().isNotEmpty == true
-              ? result['name']
-              : ((result['email'] as String?)?.trim().isNotEmpty == true
-                  ? result['email']
-                  : result['phone_number']);
+      if (result == null || !mounted) return;
 
-      _showSnackBar('تمت إضافة $displayName بنجاح ✅',
-          AppTheme.successStrongFor(context));
-      setState(() => _isLoading = false);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _isLoading = false);
-      _showSnackBar(e.toString(), AppTheme.dangerFor(context));
-    }
-});
-}
+      setState(() => _isLoading = true);
+      try {
+        await _service.addUser(
+          name: (result['name'] as String?) ?? '',
+          phoneNumber: (result['phone_number'] as String?) ?? '',
+          branchCode: result['branch_code'] as String,
+          role: result['role'] as String,
+          companyCode: _selectedCompanyCode,
+          email: (result['email'] as String?) ?? '',
+          username: result['username'] as String?,
+        );
+
+        if (!mounted) return;
+        final displayName =
+            (result['name'] as String?)?.trim().isNotEmpty == true
+                ? result['name']
+                : ((result['email'] as String?)?.trim().isNotEmpty == true
+                    ? result['email']
+                    : result['phone_number']);
+
+        _showSnackBar('تمت إضافة $displayName بنجاح ✅',
+            AppTheme.successStrongFor(context));
+        setState(() => _isLoading = false);
+      } catch (e) {
+        if (!mounted) return;
+        setState(() => _isLoading = false);
+        _showSnackBar(e.toString(), AppTheme.dangerFor(context));
+      }
+    });
+  }
 
   // ============================================================
   // Edit User
   // ============================================================
 
+  // يعرض نافذة تعديل مستخدم
   Future<void> _showEditUserDialog(Map<String, dynamic> user) async {
-return CachePartitions.run(() async {
-
-    final email = (user['email'] ?? '').toString();
-    if (email.isEmpty) {
-      _showSnackBar('المستخدم بدون بريد إلكتروني — لا يمكن تعديله',
-          AppTheme.warningOrangeFor(context));
-      return;
-    }
-
-    AccountEditorSnapshot editor;
-    setState(() => _isLoading = true);
-    try {
-      editor = await _service.loadAccountEditor(email);
-      if (!mounted) return;
-      if (_selectedCompanyCode.isNotEmpty && editor.companyCode != _selectedCompanyCode) {
-        throw StateError('تغيرت الشركة المحددة. أعد فتح المستخدم');
-      }
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _isLoading = false);
-      _showSnackBar(e.toString(), AppTheme.dangerFor(context));
-      return;
-    }
-    setState(() => _isLoading = false);
-    final userRole = editor.data['role'];
-    final canChangeRole = editor.canChangeRole && userRole != 'super_admin';
-    final canChangeStatus = editor.canChangeStatus && userRole != 'super_admin';
-    final allowedRoles = canChangeRole
-        ? {'employee': 'موظف عادي', 'admin': 'مدير شركة'}
-        : <String, String>{};
-
-    final result = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (_) => CompanyUserEditDialog(
-        user: editor.data,
-        authorization: editor,
-        branches: editor.branches,
-        allowedRoles: allowedRoles,
-        canChangeRole: canChangeRole,
-        canChangeStatus: canChangeStatus,
-        isSelf: _isCurrentUser(editor.data),
-        canEditMetadata: editor.canEdit,
-      ),
-    );
-
-    if (result == null || !mounted) return;
-
-    setState(() => _isLoading = true);
-    try {
-      await _service.editUser(
-        email: email,
-        editor: editor,
-        name: result['name'] as String?,
-        invitationEmail: result['invitation_email'] as String?,
-        phoneNumber: result['phone_number'] as String?,
-        branchCode: result['branch_code'] as String?,
-        role: result['role'] as String?,
-        username: result['username'] as String?,
-        status: result['status'] as String?,
-        isActive: result['is_active'] as bool?,
-        companyCode: _selectedCompanyCode,
-      );
-      if (!mounted) return;
-      if (!editor.isCurrent) {
-        setState(() => _isLoading = false);
+    return CachePartitions.run(() async {
+      final email = (user['email'] ?? '').toString();
+      if (email.isEmpty) {
+        _showSnackBar('المستخدم بدون بريد إلكتروني — لا يمكن تعديله',
+            AppTheme.warningOrangeFor(context));
         return;
       }
-      _showSnackBar('تم التحديث بنجاح ✅', AppTheme.successStrongFor(context));
+
+      AccountEditorSnapshot editor;
+      setState(() => _isLoading = true);
+      try {
+        editor = await _service.loadAccountEditor(email);
+        if (!mounted) return;
+        if (_selectedCompanyCode.isNotEmpty &&
+            editor.companyCode != _selectedCompanyCode) {
+          throw StateError('تغيرت الشركة المحددة. أعد فتح المستخدم');
+        }
+      } catch (e) {
+        if (!mounted) return;
+        setState(() => _isLoading = false);
+        _showSnackBar(e.toString(), AppTheme.dangerFor(context));
+        return;
+      }
       setState(() => _isLoading = false);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _isLoading = false);
-      _showSnackBar(e.toString(), e is UserSavedRefreshFailed
-          ? AppTheme.warningOrangeFor(context) : AppTheme.dangerFor(context));
-    }
-});
-}
+      final userRole = editor.data['role'];
+      final canChangeRole = editor.canChangeRole && userRole != 'super_admin';
+      final canChangeStatus =
+          editor.canChangeStatus && userRole != 'super_admin';
+      final allowedRoles = canChangeRole
+          ? {'employee': 'موظف عادي', 'admin': 'مدير شركة'}
+          : <String, String>{};
+
+      final result = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (_) => CompanyUserEditDialog(
+          user: editor.data,
+          authorization: editor,
+          branches: editor.branches,
+          allowedRoles: allowedRoles,
+          canChangeRole: canChangeRole,
+          canChangeStatus: canChangeStatus,
+          isSelf: _isCurrentUser(editor.data),
+          canEditMetadata: editor.canEdit,
+        ),
+      );
+
+      if (result == null || !mounted) return;
+
+      setState(() => _isLoading = true);
+      try {
+        await _service.editUser(
+          email: email,
+          editor: editor,
+          name: result['name'] as String?,
+          invitationEmail: result['invitation_email'] as String?,
+          phoneNumber: result['phone_number'] as String?,
+          branchCode: result['branch_code'] as String?,
+          role: result['role'] as String?,
+          username: result['username'] as String?,
+          status: result['status'] as String?,
+          isActive: result['is_active'] as bool?,
+          companyCode: _selectedCompanyCode,
+        );
+        if (!mounted) return;
+        if (!editor.isCurrent) {
+          setState(() => _isLoading = false);
+          return;
+        }
+        _showSnackBar('تم التحديث بنجاح ✅', AppTheme.successStrongFor(context));
+        setState(() => _isLoading = false);
+      } catch (e) {
+        if (!mounted) return;
+        setState(() => _isLoading = false);
+        _showSnackBar(
+            e.toString(),
+            e is UserSavedRefreshFailed
+                ? AppTheme.warningOrangeFor(context)
+                : AppTheme.dangerFor(context));
+      }
+    });
+  }
 
   // ============================================================
   // Delete User
   // ============================================================
 
+  // يطلب تأكيد الحذف ثم ينفذه
   Future<void> _confirmDelete(Map<String, dynamic> user) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      final email = (user['email'] ?? '').toString();
+      final name = (user['name'] ?? '').toString();
+      if (email.isEmpty) {
+        _showSnackBar(
+            'لا يمكن حذف مستخدم بدون بريد', AppTheme.warningOrangeFor(context));
+        return;
+      }
 
-    final email = (user['email'] ?? '').toString();
-    final name = (user['name'] ?? '').toString();
-    if (email.isEmpty) {
-      _showSnackBar('لا يمكن حذف مستخدم بدون بريد',
-          AppTheme.warningOrangeFor(context));
-      return;
-    }
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.dialogBackground(context),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-        title: Text('حذف المستخدم',
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppTheme.dialogBackground(context),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          title: Text('حذف المستخدم',
+              style: TextStyle(
+                  fontFamily: 'Cairo',
+                  color: AppTheme.textMainFor(context),
+                  fontWeight: FontWeight.bold)),
+          content: Text(
+            'سيتم حذف "$name" نهائياً.\nسيتم حذف حسابه من Firebase والبيانات.',
             style: TextStyle(
-                fontFamily: 'Cairo',
-                color: AppTheme.textMainFor(context),
-                fontWeight: FontWeight.bold)),
-        content: Text(
-          'سيتم حذف "$name" نهائياً.\nسيتم حذف حسابه من Firebase والبيانات.',
-          style: TextStyle(
-              fontFamily: 'Cairo', color: AppTheme.textMutedFor(context)),
+                fontFamily: 'Cairo', color: AppTheme.textMutedFor(context)),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: Text('إلغاء',
+                    style: TextStyle(
+                        fontFamily: 'Cairo',
+                        color: AppTheme.textMutedFor(context)))),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: Text('حذف',
+                    style: TextStyle(
+                        fontFamily: 'Cairo',
+                        color: AppTheme.dangerStrongFor(context),
+                        fontWeight: FontWeight.bold))),
+          ],
         ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text('إلغاء',
-                  style: TextStyle(
-                      fontFamily: 'Cairo',
-                      color: AppTheme.textMutedFor(context)))),
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: Text('حذف',
-                  style: TextStyle(
-                      fontFamily: 'Cairo',
-                      color: AppTheme.dangerStrongFor(context),
-                      fontWeight: FontWeight.bold))),
-        ],
-      ),
-    );
-
-    if (confirmed != true) return;
-
-    setState(() => _isLoading = true);
-    try {
-      await _service.deleteUser(
-        email: email,
-        companyCode: _selectedCompanyCode,
       );
-      if (!mounted) return;
-      _showSnackBar('تم حذف $name', AppTheme.warningOrangeFor(context));
-      setState(() => _isLoading = false);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _isLoading = false);
-      _showSnackBar(e.toString(), AppTheme.dangerFor(context));
-    }
-});
-}
+
+      if (confirmed != true) return;
+
+      setState(() => _isLoading = true);
+      try {
+        await _service.deleteUser(
+          email: email,
+          companyCode: _selectedCompanyCode,
+        );
+        if (!mounted) return;
+        _showSnackBar('تم حذف $name', AppTheme.warningOrangeFor(context));
+        setState(() => _isLoading = false);
+      } catch (e) {
+        if (!mounted) return;
+        setState(() => _isLoading = false);
+        _showSnackBar(e.toString(), AppTheme.dangerFor(context));
+      }
+    });
+  }
 
   // ============================================================
   // Reset Pending User
   // ============================================================
 
+  // يؤكد إعادة ضبط الطلب المعلق
   Future<void> _confirmResetPending(Map<String, dynamic> user) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      final email = (user['email'] ?? '').toString();
+      final name = (user['name'] ?? '').toString();
+      if (email.isEmpty) {
+        _showSnackBar('لا يمكن إعادة التعيين بدون بريد',
+            AppTheme.warningOrangeFor(context));
+        return;
+      }
 
-    final email = (user['email'] ?? '').toString();
-    final name = (user['name'] ?? '').toString();
-    if (email.isEmpty) {
-      _showSnackBar('لا يمكن إعادة التعيين بدون بريد',
-          AppTheme.warningOrangeFor(context));
-      return;
-    }
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.dialogBackground(context),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-        title: Text('إعادة السماح بالتسجيل',
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppTheme.dialogBackground(context),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          title: Text('إعادة السماح بالتسجيل',
+              style: TextStyle(
+                  fontFamily: 'Cairo',
+                  color: AppTheme.textMainFor(context),
+                  fontWeight: FontWeight.bold)),
+          content: Text(
+            'سيتم إعادة تعيين "$name":\n'
+            '• مسح الحساب من Firebase\n'
+            '• مسح البريد وكلمة المرور\n'
+            '• العودة لحالة "بانتظار إكمال التسجيل"\n\n'
+            'المستخدم سيقدر يدخل رقمه من جديد ويكمل التسجيل.',
             style: TextStyle(
                 fontFamily: 'Cairo',
-                color: AppTheme.textMainFor(context),
-                fontWeight: FontWeight.bold)),
-        content: Text(
-          'سيتم إعادة تعيين "$name":\n'
-          '• مسح الحساب من Firebase\n'
-          '• مسح البريد وكلمة المرور\n'
-          '• العودة لحالة "بانتظار إكمال التسجيل"\n\n'
-          'المستخدم سيقدر يدخل رقمه من جديد ويكمل التسجيل.',
-          style: TextStyle(
-              fontFamily: 'Cairo',
-              color: AppTheme.textMutedFor(context),
-              height: 1.6),
+                color: AppTheme.textMutedFor(context),
+                height: 1.6),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: Text('إلغاء',
+                    style: TextStyle(
+                        fontFamily: 'Cairo',
+                        color: AppTheme.textMutedFor(context)))),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: Text('إعادة تعيين',
+                    style: TextStyle(
+                        fontFamily: 'Cairo',
+                        color: AppTheme.warningOrangeFor(context),
+                        fontWeight: FontWeight.bold))),
+          ],
         ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text('إلغاء',
-                  style: TextStyle(
-                      fontFamily: 'Cairo',
-                      color: AppTheme.textMutedFor(context)))),
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: Text('إعادة تعيين',
-                  style: TextStyle(
-                      fontFamily: 'Cairo',
-                      color: AppTheme.warningOrangeFor(context),
-                      fontWeight: FontWeight.bold))),
-        ],
-      ),
-    );
-
-    if (confirmed != true) return;
-
-    setState(() => _isLoading = true);
-    try {
-      await _service.resetPendingUser(
-        email: email,
-        companyCode: _selectedCompanyCode,
       );
-      if (!mounted) return;
-      _showSnackBar('تم إعادة تعيين $name — يمكنه التسجيل من جديد',
-          AppTheme.successStrongFor(context));
-      setState(() => _isLoading = false);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _isLoading = false);
-      _showSnackBar(e.toString(), AppTheme.dangerFor(context));
-    }
-});
-}
+
+      if (confirmed != true) return;
+
+      setState(() => _isLoading = true);
+      try {
+        await _service.resetPendingUser(
+          email: email,
+          companyCode: _selectedCompanyCode,
+        );
+        if (!mounted) return;
+        _showSnackBar('تم إعادة تعيين $name — يمكنه التسجيل من جديد',
+            AppTheme.successStrongFor(context));
+        setState(() => _isLoading = false);
+      } catch (e) {
+        if (!mounted) return;
+        setState(() => _isLoading = false);
+        _showSnackBar(e.toString(), AppTheme.dangerFor(context));
+      }
+    });
+  }
 
   // ============================================================
   // Approve/Reject Requests
   // ============================================================
 
+  // يوافق على طلب
   Future<void> _approveRequest(String requestId, String name) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      final requests = _service.getRequestsFromHive();
+      Map<String, dynamic>? request;
+      try {
+        request = requests.firstWhere(
+          (r) => (r['id'] ?? '').toString() == requestId,
+        );
+      } catch (_) {
+        _showSnackBar('الطلب غير موجود', AppTheme.dangerFor(context));
+        return;
+      }
 
-    final requests = _service.getRequestsFromHive();
-    Map<String, dynamic>? request;
-    try {
-      request = requests.firstWhere(
-        (r) => (r['id'] ?? '').toString() == requestId,
-      );
-    } catch (_) {
-      _showSnackBar('الطلب غير موجود', AppTheme.dangerFor(context));
-      return;
-    }
+      final requestCompanyCode = (request['company_code'] ?? '').toString();
+      final isSuperAdmin = PermissionsService().isSuperAdmin;
+      final needsCompany = requestCompanyCode.isEmpty && isSuperAdmin;
 
-    final requestCompanyCode = (request['company_code'] ?? '').toString();
-    final isSuperAdmin = PermissionsService().isSuperAdmin;
-    final needsCompany = requestCompanyCode.isEmpty && isSuperAdmin;
+      if (requestCompanyCode.isEmpty && !isSuperAdmin) {
+        _showSnackBar(
+          'الطلب غير مرتبط بشركة — يجب أن يوافق عليه السوبر أدمن',
+          AppTheme.dangerFor(context),
+        );
+        return;
+      }
 
-    if (requestCompanyCode.isEmpty && !isSuperAdmin) {
-      _showSnackBar(
-        'الطلب غير مرتبط بشركة — يجب أن يوافق عليه السوبر أدمن',
-        AppTheme.dangerFor(context),
-      );
-      return;
-    }
+      // ⭐ الشركات من Hive (بدل الـ API)
+      final companies = _companyService.getCompaniesFromHive();
 
-    // ⭐ الشركات من Hive (بدل الـ API)
-    final companies = _companyService.getCompaniesFromHive();
+      final branches = _branchesFor(_selectedCompanyCode);
+      final branchesWithAll = [
+        {'code': 'all', 'name': 'كل الفروع (موظف عام)'},
+        ...branches,
+      ];
 
-    final branches = _branchesFor(_selectedCompanyCode);
-    final branchesWithAll = [
-      {'code': 'all', 'name': 'كل الفروع (موظف عام)'},
-      ...branches,
-    ];
+      final allowedRoles = isSuperAdmin
+          ? {'admin': 'مدير شركة', 'employee': 'موظف عادي'}
+          : {'employee': 'موظف عادي'};
 
-    final allowedRoles = isSuperAdmin
-        ? {'admin': 'مدير شركة', 'employee': 'موظف عادي'}
-        : {'employee': 'موظف عادي'};
+      final result = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (ctx) {
+          String role = allowedRoles.keys.first;
+          String branch = branchesWithAll.isNotEmpty
+              ? branchesWithAll.first['code']!
+              : 'all';
+          String company = requestCompanyCode.isNotEmpty
+              ? requestCompanyCode
+              : (companies.isNotEmpty
+                  ? (companies.first['code'] ?? '').toString()
+                  : '');
 
-    final result = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (ctx) {
-        String role = allowedRoles.keys.first;
-        String branch = branchesWithAll.isNotEmpty
-            ? branchesWithAll.first['code']!
-            : 'all';
-        String company = requestCompanyCode.isNotEmpty
-            ? requestCompanyCode
-            : (companies.isNotEmpty
-                ? (companies.first['code'] ?? '').toString()
-                : '');
-
-        return StatefulBuilder(
-          builder: (ctx, setLocal) => AlertDialog(
-            backgroundColor: AppTheme.dialogBackground(context),
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(15)),
-            title: Text('موافقة على $name',
-                style: TextStyle(
-                    fontFamily: 'Cairo',
-                    color: AppTheme.textMainFor(context),
-                    fontWeight: FontWeight.bold)),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (needsCompany) ...[
+          return StatefulBuilder(
+            builder: (ctx, setLocal) => AlertDialog(
+              backgroundColor: AppTheme.dialogBackground(context),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(15)),
+              title: Text('موافقة على $name',
+                  style: TextStyle(
+                      fontFamily: 'Cairo',
+                      color: AppTheme.textMainFor(context),
+                      fontWeight: FontWeight.bold)),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (needsCompany) ...[
+                      DropdownButtonFormField<String>(
+                        initialValue: company.isEmpty ? null : company,
+                        isExpanded: true,
+                        dropdownColor: AppTheme.dropdownBackground(context),
+                        decoration:
+                            const InputDecoration(labelText: 'الشركة (مطلوب)'),
+                        items: companies.map((c) {
+                          final code = (c['code'] ?? '').toString();
+                          final cname = (c['name'] ?? '').toString();
+                          return DropdownMenuItem(
+                            value: code,
+                            child: Text('$cname ($code)',
+                                style: const TextStyle(fontFamily: 'Cairo')),
+                          );
+                        }).toList(),
+                        onChanged: (v) => setLocal(() => company = v ?? ''),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
                     DropdownButtonFormField<String>(
-                      initialValue: company.isEmpty ? null : company,
-                      isExpanded: true,
-                      dropdownColor: AppTheme.dropdownBackground(context),
+                      initialValue: role,
                       decoration:
-                          const InputDecoration(labelText: 'الشركة (مطلوب)'),
-                      items: companies.map((c) {
-                        final code = (c['code'] ?? '').toString();
-                        final cname = (c['name'] ?? '').toString();
-                        return DropdownMenuItem(
-                          value: code,
-                          child: Text('$cname ($code)',
-                              style:
-                                  const TextStyle(fontFamily: 'Cairo')),
-                        );
-                      }).toList(),
-                      onChanged: (v) => setLocal(() => company = v ?? ''),
-                    ),
-                    const SizedBox(height: 10),
-                  ],
-                  DropdownButtonFormField<String>(
-                    initialValue: role,
-                    decoration:
-                        const InputDecoration(labelText: 'نوع المستخدم'),
-                    items: allowedRoles.entries
-                        .map((e) => DropdownMenuItem(
-                              value: e.key,
-                              child: Text(e.value,
-                                  style: const TextStyle(fontFamily: 'Cairo')),
-                            ))
-                        .toList(),
-                    onChanged: (v) => setLocal(() => role = v ?? role),
-                  ),
-                  const SizedBox(height: 10),
-                  if (branchesWithAll.isNotEmpty)
-                    DropdownButtonFormField<String>(
-                      initialValue: branch,
-                      decoration: const InputDecoration(labelText: 'الفرع'),
-                      items: branchesWithAll
-                          .map((b) => DropdownMenuItem(
-                                value: b['code'],
-                                child: Text(b['name']!,
-                                    style: const TextStyle(
-                                        fontFamily: 'Cairo')),
+                          const InputDecoration(labelText: 'نوع المستخدم'),
+                      items: allowedRoles.entries
+                          .map((e) => DropdownMenuItem(
+                                value: e.key,
+                                child: Text(e.value,
+                                    style:
+                                        const TextStyle(fontFamily: 'Cairo')),
                               ))
                           .toList(),
-                      onChanged: (v) => setLocal(() => branch = v ?? branch),
+                      onChanged: (v) => setLocal(() => role = v ?? role),
                     ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: Text('إلغاء',
-                      style: TextStyle(
-                          fontFamily: 'Cairo',
-                          color: AppTheme.textMutedFor(context)))),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(ctx, {
-                  'role': role,
-                  'branch_code': branch,
-                  'company_code': company,
-                }),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.successStrongFor(context),
-                  foregroundColor: Colors.white,
+                    const SizedBox(height: 10),
+                    if (branchesWithAll.isNotEmpty)
+                      DropdownButtonFormField<String>(
+                        initialValue: branch,
+                        decoration: const InputDecoration(labelText: 'الفرع'),
+                        items: branchesWithAll
+                            .map((b) => DropdownMenuItem(
+                                  value: b['code'],
+                                  child: Text(b['name']!,
+                                      style:
+                                          const TextStyle(fontFamily: 'Cairo')),
+                                ))
+                            .toList(),
+                        onChanged: (v) => setLocal(() => branch = v ?? branch),
+                      ),
+                  ],
                 ),
-                child: const Text('موافقة',
+              ),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: Text('إلغاء',
+                        style: TextStyle(
+                            fontFamily: 'Cairo',
+                            color: AppTheme.textMutedFor(context)))),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx, {
+                    'role': role,
+                    'branch_code': branch,
+                    'company_code': company,
+                  }),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.successStrongFor(context),
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('موافقة',
+                      style: TextStyle(
+                          fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+
+      if (result == null) return;
+
+      setState(() => _isLoading = true);
+      try {
+        await _service.approveRequest(
+          requestId: requestId,
+          role: result['role'] as String,
+          branchCode: result['branch_code'] as String?,
+          companyCode: (result['company_code'] as String?)?.isEmpty == true
+              ? null
+              : result['company_code'] as String?,
+        );
+        if (!mounted) return;
+        _showSnackBar(
+            'تمت الموافقة على $name ✅', AppTheme.successStrongFor(context));
+        setState(() => _isLoading = false);
+      } catch (e) {
+        if (!mounted) return;
+        setState(() => _isLoading = false);
+        _showSnackBar(e.toString(), AppTheme.dangerFor(context));
+      }
+    });
+  }
+
+  // يرفض طلبًا
+  Future<void> _rejectRequest(String requestId, String name) async {
+    return CachePartitions.run(() async {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppTheme.dialogBackground(context),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          title: Text('رفض الطلب',
+              style: TextStyle(
+                  fontFamily: 'Cairo',
+                  color: AppTheme.textMainFor(context),
+                  fontWeight: FontWeight.bold)),
+          content: Text('رفض طلب انضمام $name؟',
+              style: TextStyle(
+                  fontFamily: 'Cairo', color: AppTheme.textMutedFor(context))),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: Text('إلغاء',
                     style: TextStyle(
                         fontFamily: 'Cairo',
-                        fontWeight: FontWeight.bold)),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-
-    if (result == null) return;
-
-    setState(() => _isLoading = true);
-    try {
-      await _service.approveRequest(
-        requestId: requestId,
-        role: result['role'] as String,
-        branchCode: result['branch_code'] as String?,
-        companyCode: (result['company_code'] as String?)?.isEmpty == true
-            ? null
-            : result['company_code'] as String?,
+                        color: AppTheme.textMutedFor(context)))),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: Text('رفض',
+                    style: TextStyle(
+                        fontFamily: 'Cairo',
+                        color: AppTheme.dangerStrongFor(context),
+                        fontWeight: FontWeight.bold))),
+          ],
+        ),
       );
-      if (!mounted) return;
-      _showSnackBar('تمت الموافقة على $name ✅',
-          AppTheme.successStrongFor(context));
-      setState(() => _isLoading = false);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _isLoading = false);
-      _showSnackBar(e.toString(), AppTheme.dangerFor(context));
-    }
-});
-}
 
-  Future<void> _rejectRequest(String requestId, String name) async {
-return CachePartitions.run(() async {
+      if (confirmed != true) return;
 
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.dialogBackground(context),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-        title: Text('رفض الطلب',
-            style: TextStyle(
-                fontFamily: 'Cairo',
-                color: AppTheme.textMainFor(context),
-                fontWeight: FontWeight.bold)),
-        content: Text('رفض طلب انضمام $name؟',
-            style: TextStyle(
-                fontFamily: 'Cairo',
-                color: AppTheme.textMutedFor(context))),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text('إلغاء',
-                  style: TextStyle(
-                      fontFamily: 'Cairo',
-                      color: AppTheme.textMutedFor(context)))),
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: Text('رفض',
-                  style: TextStyle(
-                      fontFamily: 'Cairo',
-                      color: AppTheme.dangerStrongFor(context),
-                      fontWeight: FontWeight.bold))),
-        ],
-      ),
-    );
-
-    if (confirmed != true) return;
-
-    setState(() => _isLoading = true);
-    try {
-      await _service.rejectRequest(requestId: requestId);
-      if (!mounted) return;
-      _showSnackBar('تم الرفض', AppTheme.warningOrangeFor(context));
-      setState(() => _isLoading = false);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _isLoading = false);
-      _showSnackBar(e.toString(), AppTheme.dangerFor(context));
-    }
-});
-}
+      setState(() => _isLoading = true);
+      try {
+        await _service.rejectRequest(requestId: requestId);
+        if (!mounted) return;
+        _showSnackBar('تم الرفض', AppTheme.warningOrangeFor(context));
+        setState(() => _isLoading = false);
+      } catch (e) {
+        if (!mounted) return;
+        setState(() => _isLoading = false);
+        _showSnackBar(e.toString(), AppTheme.dangerFor(context));
+      }
+    });
+  }
 
   // ============================================================
   // Helpers (بدون تغيير)
   // ============================================================
 
+  // يحدد دور المستخدم
   String _userRole(Map<String, dynamic> user) {
     final role = (user['role'] ?? '').toString().trim();
     if (role.isNotEmpty) return role;
@@ -803,6 +825,7 @@ return CachePartitions.run(() async {
     }
   }
 
+  // يعيد اسم الدور للعرض
   String _roleLabel(String role) {
     switch (role) {
       case 'super_admin':
@@ -814,6 +837,7 @@ return CachePartitions.run(() async {
     }
   }
 
+  // يعيد أيقونة الدور
   IconData _roleIcon(String role) {
     switch (role) {
       case 'super_admin':
@@ -825,6 +849,7 @@ return CachePartitions.run(() async {
     }
   }
 
+  // يعيد لون الدور
   Color _roleColor(String role) {
     switch (role) {
       case 'super_admin':
@@ -836,15 +861,19 @@ return CachePartitions.run(() async {
     }
   }
 
+  // يحدد هل المستخدم هو الحالي
   bool _isCurrentUser(Map<String, dynamic> user) {
     if (_actorEmail.isEmpty) return false;
     final userEmail = (user['email'] ?? '').toString().toLowerCase().trim();
     return userEmail.isNotEmpty && userEmail == _actorEmail;
   }
 
-  String _accountStatus(Map<String, dynamic> user) =>
-      user['is_active'] == false ? 'suspended' : (user['status'] ?? 'active').toString();
+  // يحدد حالة الحساب
+  String _accountStatus(Map<String, dynamic> user) => user['is_active'] == false
+      ? 'suspended'
+      : (user['status'] ?? 'active').toString();
 
+  // يعيد اسم الحالة بالعربية
   String _statusLabel(String status) {
     switch (status) {
       case 'pending':
@@ -856,6 +885,7 @@ return CachePartitions.run(() async {
     }
   }
 
+  // يعيد لون الحالة
   Color _statusColor(String status) {
     switch (status) {
       case 'pending':
@@ -867,6 +897,7 @@ return CachePartitions.run(() async {
     }
   }
 
+  // يعيد أيقونة الحالة
   IconData _statusIcon(String status) {
     switch (status) {
       case 'pending':
@@ -878,6 +909,7 @@ return CachePartitions.run(() async {
     }
   }
 
+  // يعرض رسالة سريعة بالنص واللون المحددين
   void _showSnackBar(String msg, Color color) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -894,6 +926,7 @@ return CachePartitions.run(() async {
   // Build
   // ============================================================
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     if (!PermissionsService().canOpenUserManagement) {
@@ -927,17 +960,18 @@ return CachePartitions.run(() async {
           ),
         ],
       ),
-      floatingActionButton: _isLoading || !PermissionsService().canUserManagementAction('إضافة')
-          ? null
-          : FloatingActionButton.extended(
-              backgroundColor: AppTheme.accentFor(context),
-              foregroundColor: AppTheme.onAccentFor(context),
-              onPressed: _showAddUserDialog,
-              icon: const Icon(Icons.person_add_rounded),
-              label: const Text('إضافة مستخدم',
-                  style: TextStyle(
-                      fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
-            ),
+      floatingActionButton:
+          _isLoading || !PermissionsService().canUserManagementAction('إضافة')
+              ? null
+              : FloatingActionButton.extended(
+                  backgroundColor: AppTheme.accentFor(context),
+                  foregroundColor: AppTheme.onAccentFor(context),
+                  onPressed: _showAddUserDialog,
+                  icon: const Icon(Icons.person_add_rounded),
+                  label: const Text('إضافة مستخدم',
+                      style: TextStyle(
+                          fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
+                ),
       body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
@@ -949,8 +983,8 @@ return CachePartitions.run(() async {
         child: SafeArea(
           child: _isLoading && _service.getUsersFromHive().isEmpty
               ? Center(
-                  child:
-                      CircularProgressIndicator(color: AppTheme.accentFor(context)))
+                  child: CircularProgressIndicator(
+                      color: AppTheme.accentFor(context)))
               : _error != null
                   ? _buildErrorState()
                   : ValueListenableBuilder<Box>(
@@ -964,10 +998,12 @@ return CachePartitions.run(() async {
                                   : _selectedCompanyCode)
                               : _selectedCompanyCode,
                         );
-                        final pending =
-                            allUsers.where((u) => _accountStatus(u) == 'pending').length;
-                        final active =
-                            allUsers.where((u) => _accountStatus(u) == 'active').length;
+                        final pending = allUsers
+                            .where((u) => _accountStatus(u) == 'pending')
+                            .length;
+                        final active = allUsers
+                            .where((u) => _accountStatus(u) == 'active')
+                            .length;
                         final suspended = allUsers
                             .where((u) => _accountStatus(u) == 'suspended')
                             .length;
@@ -981,6 +1017,7 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يبني حالة الخطأ مع زر إعادة المحاولة
   Widget _buildErrorState() {
     return Center(
       child: Padding(
@@ -1013,6 +1050,7 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يبني شاشة تعذّر الوصول لعدم توفر الصلاحية
   Widget _buildNoPermissionScreen() {
     return Scaffold(
       appBar: AppBar(
@@ -1038,6 +1076,7 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يبني محتوى الشاشة الرئيسي
   Widget _buildContent(
     List<Map<String, dynamic>> companies,
     int pending,
@@ -1096,19 +1135,22 @@ return CachePartitions.run(() async {
               children: [
                 Expanded(
                     child: _statChip(
-                        'نشط', '$active',
+                        'نشط',
+                        '$active',
                         AppTheme.successStrongFor(context),
                         Icons.check_circle_rounded)),
                 const SizedBox(width: 6),
                 Expanded(
                     child: _statChip(
-                        'معلق', '$pending',
+                        'معلق',
+                        '$pending',
                         AppTheme.warningOrangeFor(context),
                         Icons.schedule_rounded)),
                 const SizedBox(width: 6),
                 Expanded(
                     child: _statChip(
-                        'موقوف', '$suspended',
+                        'موقوف',
+                        '$suspended',
                         AppTheme.dangerStrongFor(context),
                         Icons.block_rounded)),
               ],
@@ -1127,8 +1169,10 @@ return CachePartitions.run(() async {
                       fontFamily: 'Cairo',
                       color: AppTheme.textMainFor(context)),
                   decoration: InputDecoration(
-                    hintText: PermissionsService().canUserManagementAction('معاينة')
-                        ? 'بحث بالاسم / إيميل / موبايل' : 'بحث بالاسم / إيميل',
+                    hintText:
+                        PermissionsService().canUserManagementAction('معاينة')
+                            ? 'بحث بالاسم / إيميل / موبايل'
+                            : 'بحث بالاسم / إيميل',
                     hintStyle: TextStyle(
                         fontFamily: 'Cairo',
                         color: AppTheme.textMutedFor(context),
@@ -1177,6 +1221,7 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يبني شريحة إحصائية
   Widget _statChip(String label, String value, Color color, IconData icon) {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
@@ -1205,11 +1250,11 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يبني شريحة تصفية
   Widget _filterChip(String label, String? value) {
     final selected = _filterStatus == value;
-    final color = selected
-        ? AppTheme.accentFor(context)
-        : AppTheme.textMutedFor(context);
+    final color =
+        selected ? AppTheme.accentFor(context) : AppTheme.textMutedFor(context);
     return InkWell(
       onTap: () => setState(() => _filterStatus = value),
       borderRadius: BorderRadius.circular(20),
@@ -1231,12 +1276,12 @@ return CachePartitions.run(() async {
                 fontFamily: 'Cairo',
                 color: color,
                 fontSize: 12,
-                fontWeight:
-                    selected ? FontWeight.bold : FontWeight.normal)),
+                fontWeight: selected ? FontWeight.bold : FontWeight.normal)),
       ),
     );
   }
 
+  // يبني حالة العرض الفارغة
   Widget _buildEmptyState() {
     return Center(
       child: Padding(
@@ -1251,13 +1296,13 @@ return CachePartitions.run(() async {
               _searchQuery.isNotEmpty || _filterStatus != null
                   ? 'لا توجد نتائج مطابقة'
                   : (PermissionsService().companyPolicyActive &&
-                      !PermissionsService().canUserManagementAction('معاينة'))
+                          !PermissionsService()
+                              .canUserManagementAction('معاينة'))
                       ? 'لا توجد حسابات للعرض ضمن صلاحياتك الحالية'
                       : 'لا يوجد مستخدمون بعد',
               textAlign: TextAlign.center,
               style: TextStyle(
-                  fontFamily: 'Cairo',
-                  color: AppTheme.textMutedFor(context)),
+                  fontFamily: 'Cairo', color: AppTheme.textMutedFor(context)),
             ),
           ],
         ),
@@ -1265,6 +1310,7 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يبني قسم الطلبات
   Widget _buildRequestsSection() {
     if (!PermissionsService().canReviewUserRequests) {
       return const SizedBox.shrink();
@@ -1296,8 +1342,8 @@ return CachePartitions.run(() async {
                             fontWeight: FontWeight.bold)),
                     const Spacer(),
                     Container(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 2),
                       decoration: BoxDecoration(
                         color: AppTheme.warningOrangeFor(context)
                             .withValues(alpha: 0.15),
@@ -1322,6 +1368,7 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يبني صف طلب
   Widget _buildRequestRow(Map<String, dynamic> r) {
     final name = (r['name'] ?? '').toString();
     final phone = (r['phone_number'] ?? '').toString();
@@ -1358,23 +1405,26 @@ return CachePartitions.run(() async {
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              if (PermissionsService().canUserManagementAction('رفض طلب')) TextButton(
-                onPressed: () => _rejectRequest(id, name),
-                child: Text('رفض',
-                    style: TextStyle(
-                        fontFamily: 'Cairo',
-                        fontSize: 11,
-                        color: AppTheme.dangerFor(context))),
-              ),
-              if (PermissionsService().canUserManagementAction('الموافقة على طلب')) TextButton(
-                onPressed: () => _approveRequest(id, name),
-                child: Text('موافقة',
-                    style: TextStyle(
-                        fontFamily: 'Cairo',
-                        fontSize: 11,
-                        color: AppTheme.successStrongFor(context),
-                        fontWeight: FontWeight.bold)),
-              ),
+              if (PermissionsService().canUserManagementAction('رفض طلب'))
+                TextButton(
+                  onPressed: () => _rejectRequest(id, name),
+                  child: Text('رفض',
+                      style: TextStyle(
+                          fontFamily: 'Cairo',
+                          fontSize: 11,
+                          color: AppTheme.dangerFor(context))),
+                ),
+              if (PermissionsService()
+                  .canUserManagementAction('الموافقة على طلب'))
+                TextButton(
+                  onPressed: () => _approveRequest(id, name),
+                  child: Text('موافقة',
+                      style: TextStyle(
+                          fontFamily: 'Cairo',
+                          fontSize: 11,
+                          color: AppTheme.successStrongFor(context),
+                          fontWeight: FontWeight.bold)),
+                ),
             ],
           ),
         ],
@@ -1382,6 +1432,7 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يبني بطاقة مستخدم
   Widget _buildUserCard(Map<String, dynamic> user) {
     final name = (user['name'] ?? '').toString().trim();
     final email = (user['email'] ?? '').toString().trim();
@@ -1489,20 +1540,18 @@ return CachePartitions.run(() async {
               if (email.isNotEmpty) _infoChip(Icons.email_rounded, email),
               if (username.isNotEmpty)
                 _infoChip(Icons.alternate_email_rounded, '@$username'),
-              if (user['directory_summary_only'] != true && branchCode.isNotEmpty)
+              if (user['directory_summary_only'] != true &&
+                  branchCode.isNotEmpty)
                 _infoChip(Icons.storefront_rounded, 'فرع $branchCode')
               else if (user['directory_summary_only'] != true)
                 _infoChip(Icons.public_rounded, 'كل الفروع (موظف عام)',
                     color: AppTheme.infoFor(context)),
-              if (status == 'active' &&
-                  requiresVerification &&
-                  !emailVerified)
-                _infoChip(Icons.mark_email_unread_rounded,
-                    'بانتظار التحقق من البريد',
+              if (status == 'active' && requiresVerification && !emailVerified)
+                _infoChip(
+                    Icons.mark_email_unread_rounded, 'بانتظار التحقق من البريد',
                     color: AppTheme.warningOrangeFor(context)),
               if (status == 'pending')
-                _infoChip(Icons.info_outline_rounded,
-                    'بانتظار إكمال التسجيل',
+                _infoChip(Icons.info_outline_rounded, 'بانتظار إكمال التسجيل',
                     color: AppTheme.infoFor(context)),
               if (status == 'active' && !hasAccount)
                 _infoChip(Icons.error_outline_rounded, 'بدون حساب',
@@ -1520,8 +1569,7 @@ return CachePartitions.run(() async {
                   TextButton.icon(
                     onPressed: () => _confirmResetPending(user),
                     icon: Icon(Icons.restart_alt_rounded,
-                        size: 14,
-                        color: AppTheme.warningOrangeFor(context)),
+                        size: 14, color: AppTheme.warningOrangeFor(context)),
                     label: Text('إعادة تعيين',
                         style: TextStyle(
                             fontFamily: 'Cairo',
@@ -1561,6 +1609,7 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يحدد هل يمكن تعديل المستخدم
   bool _canEditUser(Map<String, dynamic> user) {
     final permissions = PermissionsService();
     if (!permissions.canUserManagementAction('تعديل') &&
@@ -1568,19 +1617,23 @@ return CachePartitions.run(() async {
     return permissions.isSuperAdmin || _userRole(user) != 'super_admin';
   }
 
+  // يحدد هل يمكن حذف المستخدم
   bool _canDeleteUser(Map<String, dynamic> user) {
     if (!PermissionsService().canUserManagementAction('حذف') ||
         _userRole(user) == 'super_admin') return false;
     return PermissionsService().isSuperAdmin || _userRole(user) == 'employee';
   }
 
+  // يحدد هل يمكن إعادة ضبط المستخدم
   bool _canResetUser(Map<String, dynamic> user) {
     if (!PermissionsService().canUserManagementAction('إعادة تهيئة حساب') ||
         _userRole(user) == 'super_admin') return false;
     final stuck = user['status'] == 'pending' || user['has_account'] != true;
-    return stuck && (PermissionsService().isSuperAdmin || _userRole(user) == 'employee');
+    return stuck &&
+        (PermissionsService().isSuperAdmin || _userRole(user) == 'employee');
   }
 
+  // يبني شريحة معلومات
   Widget _infoChip(IconData icon, String text, {Color? color}) {
     final c = color ?? AppTheme.textMutedFor(context);
     return Row(
@@ -1599,6 +1652,7 @@ return CachePartitions.run(() async {
 // Add User Dialog + Edit User Dialog (احتفظ بالكود الأصلي)
 // ============================================================
 
+// نافذة إضافة مستخدم
 class _AddUserDialog extends StatefulWidget {
   final List<Map<String, String>> branches;
   final Map<String, String> allowedRoles;
@@ -1610,10 +1664,12 @@ class _AddUserDialog extends StatefulWidget {
     required this.companyName,
   });
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<_AddUserDialog> createState() => _AddUserDialogState();
 }
 
+// حالة الويدجت _AddUserDialog: تدير بيانات الشاشة وتفاعلاتها
 class _AddUserDialogState extends State<_AddUserDialog> {
   final _nameCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
@@ -1622,6 +1678,7 @@ class _AddUserDialogState extends State<_AddUserDialog> {
   late String _branchCode;
   late String _role;
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
@@ -1629,6 +1686,7 @@ class _AddUserDialogState extends State<_AddUserDialog> {
     _branchCode = widget.branches.first['code'] ?? '';
   }
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     _nameCtrl.dispose();
@@ -1638,6 +1696,7 @@ class _AddUserDialogState extends State<_AddUserDialog> {
     super.dispose();
   }
 
+  // يتحقق من البيانات ويرسلها
   void _submit() {
     final phone = _phoneCtrl.text.trim();
     final email = _emailCtrl.text.trim().toLowerCase();
@@ -1663,6 +1722,7 @@ class _AddUserDialogState extends State<_AddUserDialog> {
     });
   }
 
+  // يعرض رسالة خطأ
   void _error(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -1674,6 +1734,7 @@ class _AddUserDialogState extends State<_AddUserDialog> {
     );
   }
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
@@ -1696,7 +1757,10 @@ class _AddUserDialogState extends State<_AddUserDialog> {
               _field(_phoneCtrl, 'رقم الموبايل', Icons.phone_rounded,
                   keyboardType: TextInputType.phone),
               const SizedBox(height: 10),
-              _dropdown('الفرع', Icons.storefront_rounded, _branchCode,
+              _dropdown(
+                  'الفرع',
+                  Icons.storefront_rounded,
+                  _branchCode,
                   widget.branches
                       .map((b) => DropdownMenuItem<String>(
                           value: b['code'] ?? '',
@@ -1705,7 +1769,10 @@ class _AddUserDialogState extends State<_AddUserDialog> {
                       .toList(),
                   (v) => setState(() => _branchCode = v ?? '')),
               const SizedBox(height: 10),
-              _dropdown('نوع المستخدم', Icons.badge_rounded, _role,
+              _dropdown(
+                  'نوع المستخدم',
+                  Icons.badge_rounded,
+                  _role,
                   widget.allowedRoles.entries
                       .map((e) => DropdownMenuItem<String>(
                           value: e.key,
@@ -1737,20 +1804,21 @@ class _AddUserDialogState extends State<_AddUserDialog> {
             foregroundColor: Colors.white,
           ),
           child: const Text('إضافة',
-              style: TextStyle(
-                  fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
+              style:
+                  TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
         ),
       ],
     );
   }
 
+  // يبني حقل إدخال
   Widget _field(TextEditingController c, String label, IconData icon,
       {TextInputType? keyboardType}) {
     return TextField(
       controller: c,
       keyboardType: keyboardType,
-      style: TextStyle(
-          fontFamily: 'Cairo', color: AppTheme.textMainFor(context)),
+      style:
+          TextStyle(fontFamily: 'Cairo', color: AppTheme.textMainFor(context)),
       decoration: InputDecoration(
         prefixIcon: Icon(icon, color: AppTheme.textSoftFor(context), size: 18),
         labelText: label,
@@ -1768,6 +1836,7 @@ class _AddUserDialogState extends State<_AddUserDialog> {
     );
   }
 
+  // يبني قائمة منسدلة
   Widget _dropdown<T>(String label, IconData icon, T value,
       List<DropdownMenuItem<T>> items, ValueChanged<T?> onChanged) {
     return DropdownButtonFormField<T>(
@@ -1797,6 +1866,7 @@ class _AddUserDialogState extends State<_AddUserDialog> {
   }
 }
 
+// نافذة تعديل مستخدم الشركة
 class CompanyUserEditDialog extends StatefulWidget {
   final Map<String, dynamic> user;
   final List<Map<String, String>> branches;
@@ -1819,16 +1889,20 @@ class CompanyUserEditDialog extends StatefulWidget {
     this.authorization,
   });
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<CompanyUserEditDialog> createState() => _EditUserDialogState();
 }
 
+// حالة الويدجت CompanyUserEditDialog: تدير بيانات الشاشة وتفاعلاتها
 class _EditUserDialogState extends State<CompanyUserEditDialog> {
   late String _initialBranchCode;
   bool _authorityLost = false;
 
+  // يستجيب لتغيّر صلاحية المنفّذ
   void _authorizationChanged() {
-    if (_authorityLost || widget.authorization == null ||
+    if (_authorityLost ||
+        widget.authorization == null ||
         widget.authorization!.isCurrent) return;
     _authorityLost = true;
     // Remove the exact dialog route, never a newer route above it.
@@ -1846,17 +1920,20 @@ class _EditUserDialogState extends State<CompanyUserEditDialog> {
     WidgetsBinding.instance.scheduleFrame();
   }
 
+  // يستجيب لتغيّر الاعتماديات الخاصة بالسياق
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     _authorizationChanged();
   }
 
-
+  // يعيد الفروع الابتدائية
   List<Map<String, String>> get _startupBranches {
     final scope = widget.user['allowed_branches'];
     final all = scope == null ||
-        (scope is List && (scope.isEmpty || scope.any((v) => v.toString().toLowerCase() == 'all'))) ||
+        (scope is List &&
+            (scope.isEmpty ||
+                scope.any((v) => v.toString().toLowerCase() == 'all'))) ||
         (scope is String && scope.toLowerCase() == 'all');
     final result = <Map<String, String>>[
       {'code': 'all', 'name': 'كل الفروع المسموحة'},
@@ -1864,14 +1941,18 @@ class _EditUserDialogState extends State<CompanyUserEditDialog> {
     final seen = <String>{'all'};
     for (final branch in widget.branches) {
       final code = branch['code'] ?? '';
-      if (code.isNotEmpty && seen.add(code) &&
+      if (code.isNotEmpty &&
+          seen.add(code) &&
           (all || (scope is List && scope.contains(code)) || scope == code)) {
         result.add(branch);
       }
     }
     if (!result.any((branch) => branch['code'] == _initialBranchCode)) {
-      result.add({'code': _initialBranchCode,
-        'name': '$_initialBranchCode (غير متاح حالياً)', 'unavailable': 'true'});
+      result.add({
+        'code': _initialBranchCode,
+        'name': '$_initialBranchCode (غير متاح حالياً)',
+        'unavailable': 'true'
+      });
     }
     return result;
   }
@@ -1885,24 +1966,28 @@ class _EditUserDialogState extends State<CompanyUserEditDialog> {
   late String _status;
   late String _initialStatus;
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
-    _invitationEmailCtrl = TextEditingController(text: (widget.user['invitation_email'] ?? '').toString());
+    _invitationEmailCtrl = TextEditingController(
+        text: (widget.user['invitation_email'] ?? '').toString());
     _nameCtrl =
         TextEditingController(text: (widget.user['name'] ?? '').toString());
     _phoneCtrl = TextEditingController(
         text: (widget.user['phone_number'] ?? '').toString());
-    _usernameCtrl = TextEditingController(
-        text: (widget.user['username'] ?? '').toString());
-    _branchCode = (widget.user['startup_branch_code'] ?? widget.user['branch_code'] ?? '').toString();
+    _usernameCtrl =
+        TextEditingController(text: (widget.user['username'] ?? '').toString());
+    _branchCode =
+        (widget.user['startup_branch_code'] ?? widget.user['branch_code'] ?? '')
+            .toString();
     if (_branchCode.isEmpty) _branchCode = 'all';
-    _role = widget.allowedRoles.containsKey(
-            (widget.user['role'] ?? '').toString())
-        ? (widget.user['role'] ?? '').toString()
-        : (widget.allowedRoles.isNotEmpty
-            ? widget.allowedRoles.keys.first
-            : 'employee');
+    _role =
+        widget.allowedRoles.containsKey((widget.user['role'] ?? '').toString())
+            ? (widget.user['role'] ?? '').toString()
+            : (widget.allowedRoles.isNotEmpty
+                ? widget.allowedRoles.keys.first
+                : 'employee');
     _initialStatus = (widget.user['status'] ?? 'active').toString();
     _status = widget.user['is_active'] == false ? 'blocked' : _initialStatus;
 
@@ -1911,6 +1996,7 @@ class _EditUserDialogState extends State<CompanyUserEditDialog> {
     _authorizationChanged();
   }
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     ReadAuthorizationEpoch.changes.removeListener(_authorizationChanged);
@@ -1921,6 +2007,7 @@ class _EditUserDialogState extends State<CompanyUserEditDialog> {
     super.dispose();
   }
 
+  // يتحقق من البيانات ويرسلها
   void _submit() {
     _authorizationChanged();
     if (_authorityLost) return;
@@ -1928,7 +2015,8 @@ class _EditUserDialogState extends State<CompanyUserEditDialog> {
     if (widget.canEditMetadata && name.isEmpty) return _error('الاسم مطلوب');
     Navigator.pop(context, {
       if (widget.canEditMetadata) 'name': name,
-      if (widget.canEditMetadata && widget.user['can_set_invitation_email'] == true)
+      if (widget.canEditMetadata &&
+          widget.user['can_set_invitation_email'] == true)
         'invitation_email': _invitationEmailCtrl.text.trim(),
       if (widget.canEditMetadata) 'phone_number': _phoneCtrl.text.trim(),
       if (widget.canEditMetadata && _branchCode != _initialBranchCode)
@@ -1940,6 +2028,7 @@ class _EditUserDialogState extends State<CompanyUserEditDialog> {
     });
   }
 
+  // يعرض رسالة خطأ
   void _error(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -1951,6 +2040,7 @@ class _EditUserDialogState extends State<CompanyUserEditDialog> {
     );
   }
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     if (_authorityLost) return const SizedBox.shrink();
@@ -1971,53 +2061,70 @@ class _EditUserDialogState extends State<CompanyUserEditDialog> {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (widget.canEditMetadata) ...[
-              if (widget.user['can_set_invitation_email'] == true) ...[
-                _field(_invitationEmailCtrl, 'بريد الدعوة (مطلوب)', Icons.email_rounded, keyboardType: TextInputType.emailAddress),
+                if (widget.user['can_set_invitation_email'] == true) ...[
+                  _field(_invitationEmailCtrl, 'بريد الدعوة (مطلوب)',
+                      Icons.email_rounded,
+                      keyboardType: TextInputType.emailAddress),
+                  const SizedBox(height: 10),
+                ],
+                _field(_nameCtrl, 'الاسم الكامل', Icons.person_rounded),
                 const SizedBox(height: 10),
-              ],
-              _field(_nameCtrl, 'الاسم الكامل', Icons.person_rounded),
-              const SizedBox(height: 10),
-              _field(_phoneCtrl, 'رقم الموبايل', Icons.phone_rounded,
-                  keyboardType: TextInputType.phone),
-              const SizedBox(height: 10),
-              _dropdown('فرع بداية الاستخدام', Icons.storefront_rounded, _branchCode,
+                _field(_phoneCtrl, 'رقم الموبايل', Icons.phone_rounded,
+                    keyboardType: TextInputType.phone),
+                const SizedBox(height: 10),
+                _dropdown(
+                    'فرع بداية الاستخدام',
+                    Icons.storefront_rounded,
+                    _branchCode,
                     _startupBranches
                         .map((b) => DropdownMenuItem<String>(
                             enabled: b['unavailable'] != 'true',
                             value: b['code'] ?? '',
                             child: Text(b['name'] ?? b['code']!,
-                                style:
-                                    const TextStyle(fontFamily: 'Cairo'))))
+                                style: const TextStyle(fontFamily: 'Cairo'))))
                         .toList(),
                     (v) => setState(() => _branchCode = v ?? 'all')),
-              const SizedBox(height: 6),
-              Text('لا يغيّر الفروع المسموحة أو فرع العمل.',
-                  style: TextStyle(fontFamily: 'Cairo', fontSize: 11,
-                      color: AppTheme.textMutedFor(context))),
+                const SizedBox(height: 6),
+                Text('لا يغيّر الفروع المسموحة أو فرع العمل.',
+                    style: TextStyle(
+                        fontFamily: 'Cairo',
+                        fontSize: 11,
+                        color: AppTheme.textMutedFor(context))),
               ],
               if (widget.canChangeRole && widget.allowedRoles.isNotEmpty) ...[
                 const SizedBox(height: 10),
-                _dropdown('نوع المستخدم', Icons.badge_rounded, _role,
+                _dropdown(
+                    'نوع المستخدم',
+                    Icons.badge_rounded,
+                    _role,
                     widget.allowedRoles.entries
                         .map((e) => DropdownMenuItem<String>(
                             value: e.key,
                             child: Text(e.value,
-                                style:
-                                    const TextStyle(fontFamily: 'Cairo'))))
+                                style: const TextStyle(fontFamily: 'Cairo'))))
                         .toList(),
                     (v) => setState(() => _role = v ?? 'employee')),
               ],
               if (widget.canChangeStatus) ...[
                 const SizedBox(height: 10),
-                _dropdown('الحالة', Icons.verified_user_rounded, _status,
+                _dropdown(
+                    'الحالة',
+                    Icons.verified_user_rounded,
+                    _status,
                     [
                       if (_initialStatus == 'pending' || _status == 'pending')
-                        const DropdownMenuItem(value: 'pending', child: Text('معلق', style: TextStyle(fontFamily: 'Cairo'))),
+                        const DropdownMenuItem(
+                            value: 'pending',
+                            child: Text('معلق',
+                                style: TextStyle(fontFamily: 'Cairo'))),
                       const DropdownMenuItem(
                           value: 'active',
                           child: Text('نشط',
                               style: TextStyle(fontFamily: 'Cairo'))),
-                      const DropdownMenuItem(value: 'blocked', child: Text('محظور', style: TextStyle(fontFamily: 'Cairo'))),
+                      const DropdownMenuItem(
+                          value: 'blocked',
+                          child: Text('محظور',
+                              style: TextStyle(fontFamily: 'Cairo'))),
                       const DropdownMenuItem(
                           value: 'suspended',
                           child: Text('موقوف',
@@ -2027,7 +2134,8 @@ class _EditUserDialogState extends State<CompanyUserEditDialog> {
               ],
               if (widget.canEditMetadata) ...[
                 const SizedBox(height: 10),
-                _field(_usernameCtrl, 'اسم المستخدم', Icons.alternate_email_rounded),
+                _field(_usernameCtrl, 'اسم المستخدم',
+                    Icons.alternate_email_rounded),
               ],
             ],
           ),
@@ -2047,20 +2155,21 @@ class _EditUserDialogState extends State<CompanyUserEditDialog> {
             foregroundColor: AppTheme.onAccentFor(context),
           ),
           child: const Text('حفظ',
-              style: TextStyle(
-                  fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
+              style:
+                  TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
         ),
       ],
     );
   }
 
+  // يبني حقل إدخال
   Widget _field(TextEditingController c, String label, IconData icon,
       {TextInputType? keyboardType}) {
     return TextField(
       controller: c,
       keyboardType: keyboardType,
-      style: TextStyle(
-          fontFamily: 'Cairo', color: AppTheme.textMainFor(context)),
+      style:
+          TextStyle(fontFamily: 'Cairo', color: AppTheme.textMainFor(context)),
       decoration: InputDecoration(
         prefixIcon: Icon(icon, color: AppTheme.textSoftFor(context), size: 18),
         labelText: label,
@@ -2078,6 +2187,7 @@ class _EditUserDialogState extends State<CompanyUserEditDialog> {
     );
   }
 
+  // يبني قائمة منسدلة
   Widget _dropdown<T>(String label, IconData icon, T value,
       List<DropdownMenuItem<T>> items, ValueChanged<T?> onChanged) {
     return DropdownButtonFormField<T>(

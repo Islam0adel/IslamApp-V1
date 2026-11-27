@@ -1,9 +1,11 @@
-// web/firebase-messaging-sw.js
+// frontend/web/firebase-messaging-sw.js
 
+// تحميل مكتبات Firebase (التطبيق والرسائل والمصادقة) داخل الـservice worker
 importScripts("https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js");
 importScripts("https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js");
 importScripts("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js");
 
+// إعداد مشروع Firebase للـservice worker
 firebase.initializeApp({
   apiKey: "AIzaSyDpBqnzHBdY_uti60LB2UQ0K1-XFgbNhAo",
   appId: "1:11267289622:web:41c4829ddbc2e36a73fb37",
@@ -14,13 +16,16 @@ firebase.initializeApp({
   databaseURL: "https://islam-app-d6139-default-rtdb.europe-west1.firebasedatabase.app/",
 });
 
+// تحميل ملف المزامنة المؤقتة الذي يخزّن تغييرات الإشعارات
 importScripts("staged-sync-sw.js");
 
+// كائن Firebase Messaging لاستقبال الإشعارات في الخلفية
 const messaging = firebase.messaging();
 
 // ============================================================
 // IndexedDB helpers for badge count (shared with window)
 // ============================================================
+// يفتح قاعدة IndexedDB المشتركة التي تخزّن عدد الإشعارات غير المقروءة
 function openBadgeDb() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open("islam_badge_db", 1);
@@ -35,6 +40,7 @@ function openBadgeDb() {
   });
 }
 
+// يقرأ عدد الإشعارات غير المقروءة من IndexedDB
 async function getBadgeCount() {
   try {
     const db = await openBadgeDb();
@@ -50,6 +56,7 @@ async function getBadgeCount() {
 }
 
 // App-level "alerts muted" preference (written by the page, see index.html).
+// يقرأ هل المستخدم كتم تنبيهات الإشعارات
 async function getAlertsMuted() {
   try {
     const db = await openBadgeDb();
@@ -64,6 +71,7 @@ async function getAlertsMuted() {
   }
 }
 
+// يحفظ عدد الإشعارات غير المقروءة في IndexedDB
 async function putBadgeCount(count) {
   try {
     const db = await openBadgeDb();
@@ -76,6 +84,7 @@ async function putBadgeCount(count) {
   } catch (_) {}
 }
 
+// يحدّث رقم الشارة (badge) على أيقونة التطبيق
 async function updateAppBadge(count) {
   try {
     if (count > 0) {
@@ -97,6 +106,7 @@ async function updateAppBadge(count) {
 // ============================================================
 // Background message handler
 // ============================================================
+// يعالج الإشعار الوارد أثناء عمل التطبيق في الخلفية ويعرضه للمستخدم
 messaging.onBackgroundMessage(async (payload) => {
   console.log("[firebase-messaging-sw.js] Background message:", payload);
 
@@ -158,6 +168,7 @@ messaging.onBackgroundMessage(async (payload) => {
 //   A. التطبيق مفتوح → نبعت postMessage للتاب المفتوح
 //   B. التطبيق مقفول → نفتح URL فيه ?notif=<json>
 // ============================================================
+// يفتح التطبيق أو ينقل التركيز إليه عند النقر على الإشعار
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
 

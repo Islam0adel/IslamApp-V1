@@ -1,3 +1,4 @@
+# backend/app/core/coding_changes_v2.py
 """EXPERIMENT (isolated copy only): commit-safe change feed for coding_records.
 
 Cursor "tx:id" like transactions. Company-wide across categories (the client splits by the
@@ -9,6 +10,7 @@ from sqlalchemy import text, select
 from app.core.changes_v2 import parse_cursor, MAX_ID, bootstrap_cursor  # same cursor rules
 from app.core.models import CodingRecord
 
+# استعلام SQL اللي بيجيب تغييرات الكودنج بعد المؤشر
 SQL = text("""
 with w as (select pg_snapshot_xmin(pg_current_snapshot()) wm, pg_snapshot_xmax(pg_current_snapshot()) xm)
 select t.id, t.tx::text as tx, w.wm::text as wm, w.xm::text as xm
@@ -18,6 +20,8 @@ from w left join lateral (
   order by x.tx, x.id limit :lim) t on true
 """)
 
+
+# يجيب تغييرات بيانات الكودنج بعد المؤشر للشركة
 async def fetch(db, company, cursor, limit, serialize):
     ctx, cid = parse_cursor(cursor)
     res = await db.execute(SQL, {"company": company, "ctx": str(ctx), "cid": cid, "lim": limit + 1})

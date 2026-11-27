@@ -1,5 +1,5 @@
+// frontend/lib/views/dashboard/supplier_history_page.dart
 import '../../services/cache_partitions.dart';
-// lib/views/dashboard/supplier_history_page.dart
 
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
@@ -17,6 +17,7 @@ import 'supplier_page.dart';
 // صفحة معاينة المشتريات
 // ============================================================
 
+// صفحة سجل الموردين
 class SupplierHistoryPage extends StatefulWidget {
   final String companyCode;
   final String? selectedBranchCode;
@@ -29,10 +30,12 @@ class SupplierHistoryPage extends StatefulWidget {
     this.userName,
   });
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<SupplierHistoryPage> createState() => _SupplierHistoryPageState();
 }
 
+// حالة الويدجت SupplierHistoryPage: تدير بيانات الشاشة وتفاعلاتها
 class _SupplierHistoryPageState extends State<SupplierHistoryPage> {
   final SupplierService _supplierService = SupplierService();
 
@@ -60,13 +63,15 @@ class _SupplierHistoryPageState extends State<SupplierHistoryPage> {
   double _totalSettlements = 0.0;
   double _supplierRemaining = 0.0;
   double _previousBalance = 0.0;
-double _totalSupplierBalance = 0.0;
+  double _totalSupplierBalance = 0.0;
 
   // إجماليات المشتريات والأرصدة مشتقة من أسعار الجملة: مخفية
   // لمن لا يملك حق التكلفة، وتُعرض '—' بدل أي صفر مضلل،
   // وتُحذف من التصدير والطباعة.
+  // يحدد هل يمكن عرض التكلفة
   bool get _canViewCosts => PermissionsService().canViewCostPrices;
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
@@ -79,254 +84,272 @@ double _totalSupplierBalance = 0.0;
   // الفروع
   // ==========================================================
 
+  // يحدد هل الفروع كلها محددة
   bool get _isAllBranches {
     final code = widget.selectedBranchCode?.trim();
-    return code == null || code.isEmpty || code == 'all' || code == 'الكل' || code == 'كل الفروع';
+    return code == null ||
+        code.isEmpty ||
+        code == 'all' ||
+        code == 'الكل' ||
+        code == 'كل الفروع';
   }
 
-  String? get _effectiveBranchCode => _isAllBranches ? null : widget.selectedBranchCode;
+  // يعيد رمز الفرع الفعلي
+  String? get _effectiveBranchCode =>
+      _isAllBranches ? null : widget.selectedBranchCode;
 
   // ==========================================================
   // التهيئة
   // ==========================================================
 
+  // يهيّئ البيانات والصلاحيات
   Future<void> _initialize() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_isInitializing) return;
+      _isInitializing = true;
 
-    if (_isInitializing) return;
-    _isInitializing = true;
+      await _loadDropdowns();
+      await _loadData();
 
-    await _loadDropdowns();
-    await _loadData();
+      if (!mounted) return;
 
-    if (!mounted) return;
-
-    setState(() {
-      _isLoading = false;
-      _isInitializing = false;
+      setState(() {
+        _isLoading = false;
+        _isInitializing = false;
+      });
     });
-});
-}
+  }
 
   // ==========================================================
   // تحميل القوائم
   // ==========================================================
 
+  // يحمّل خيارات القوائم المنسدلة
   Future<void> _loadDropdowns() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      final box = CachePartitions.box('coding_box');
 
-    final box = CachePartitions.box('coding_box');
+      _suppliers = [
+        {'code': 'all', 'name': 'كل الموردين'}
+      ];
+      final suppliers =
+          box.get('${widget.companyCode}_suppliers') as List? ?? [];
 
-    _suppliers = [{'code': 'all', 'name': 'كل الموردين'}];
-    final suppliers = box.get('${widget.companyCode}_suppliers') as List? ?? [];
+      for (final item in suppliers) {
+        if (item is! Map) continue;
 
-    for (final item in suppliers) {
-      if (item is! Map) continue;
+        final code = item['code']?.toString() ?? '';
+        final name = item['name']?.toString() ?? '';
 
-      final code = item['code']?.toString() ?? '';
-      final name = item['name']?.toString() ?? '';
+        if (code.isEmpty || name.isEmpty) continue;
+        _suppliers.add({'code': code, 'name': name});
+      }
 
-      if (code.isEmpty || name.isEmpty) continue;
-      _suppliers.add({'code': code, 'name': name});
-    }
+      _stores = [
+        {'code': 'all', 'name': 'كل المخازن'}
+      ];
+      final stores = box.get('${widget.companyCode}_stores') as List? ?? [];
 
-    _stores = [{'code': 'all', 'name': 'كل المخازن'}];
-    final stores = box.get('${widget.companyCode}_stores') as List? ?? [];
+      for (final item in stores) {
+        if (item is! Map) continue;
 
-    for (final item in stores) {
-      if (item is! Map) continue;
+        final code = item['code']?.toString() ?? '';
+        final name = item['name']?.toString() ?? '';
 
-      final code = item['code']?.toString() ?? '';
-      final name = item['name']?.toString() ?? '';
+        if (code.isEmpty || name.isEmpty) continue;
+        _stores.add({'code': code, 'name': name});
+      }
 
-      if (code.isEmpty || name.isEmpty) continue;
-      _stores.add({'code': code, 'name': name});
-    }
-
-    if (mounted) setState(() {});
-});
-}
+      if (mounted) setState(() {});
+    });
+  }
 
   // ==========================================================
   // تحميل بيانات المشتريات
   // ==========================================================
 
+  // يحمّل بيانات الشاشة
   Future<void> _loadData() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (mounted) setState(() => _isLoading = true);
 
-  if (mounted) setState(() => _isLoading = true);
+      try {
+        String? supplierName;
+        if (_selectedSupplierCode != null && _selectedSupplierCode != 'all') {
+          final found = _suppliers.firstWhere(
+            (s) => s['code'] == _selectedSupplierCode,
+            orElse: () => {},
+          );
+          supplierName = found['name'];
+        }
 
-  try {
-    String? supplierName;
-    if (_selectedSupplierCode != null && _selectedSupplierCode != 'all') {
-      final found = _suppliers.firstWhere(
-        (s) => s['code'] == _selectedSupplierCode,
-        orElse: () => {},
-      );
-      supplierName = found['name'];
-    }
+        final startDate = DateFormat('yyyy-MM-dd').format(_fromDate);
+        final endDate = DateFormat('yyyy-MM-dd').format(_toDate);
 
-    final startDate = DateFormat('yyyy-MM-dd').format(_fromDate);
-    final endDate = DateFormat('yyyy-MM-dd').format(_toDate);
+        // ==========================================================
+        // 1) مشتريات الفترة
+        // ==========================================================
 
-    // ==========================================================
-    // 1) مشتريات الفترة
-    // ==========================================================
+        final transactions = await _supplierService.getSupplierTransactions(
+          companyCode: widget.companyCode,
+          branchCode: _effectiveBranchCode,
+          supplierName: supplierName,
+          startDate: startDate,
+          endDate: endDate,
+        );
 
-    final transactions = await _supplierService.getSupplierTransactions(
-      companyCode: widget.companyCode,
-      branchCode: _effectiveBranchCode,
-      supplierName: supplierName,
-      startDate: startDate,
-      endDate: endDate,
-    );
+        List<SupplierTransactionModel> filtered = transactions;
+        if (_filterStore != null && _filterStore != 'all') {
+          filtered =
+              filtered.where((t) => t.storeCode == _filterStore).toList();
+        }
 
-    List<SupplierTransactionModel> filtered = transactions;
-    if (_filterStore != null && _filterStore != 'all') {
-      filtered = filtered.where((t) => t.storeCode == _filterStore).toList();
-    }
+        filtered.sort((a, b) {
+          final dateCompare = b.date.compareTo(a.date);
+          if (dateCompare != 0) return dateCompare;
+          return b.serial.compareTo(a.serial);
+        });
 
-    filtered.sort((a, b) {
-      final dateCompare = b.date.compareTo(a.date);
-      if (dateCompare != 0) return dateCompare;
-      return b.serial.compareTo(a.serial);
-    });
+        final purchasesTotal = filtered.fold<double>(
+          0.0,
+          (sum, item) => sum + item.totalAmount,
+        );
 
-    final purchasesTotal = filtered.fold<double>(
-      0.0,
-      (sum, item) => sum + item.totalAmount,
-    );
+        // ==========================================================
+        // 2) تسويات الفترة (من _fromDate إلى _toDate)
+        // ==========================================================
 
-    // ==========================================================
-    // 2) تسويات الفترة (من _fromDate إلى _toDate)
-    // ==========================================================
+        final settlementTotal = await _calculateSettlementTotal(
+          supplierName: supplierName,
+          startDate: _fromDate,
+          endDate: _toDate,
+        );
 
-    final settlementTotal = await _calculateSettlementTotal(
-      supplierName: supplierName,
-      startDate: _fromDate,
-      endDate: _toDate,
-    );
+        // ==========================================================
+        // 3) الرصيد السابق (قبل _fromDate)
+        // ==========================================================
 
-    // ==========================================================
-    // 3) الرصيد السابق (قبل _fromDate)
-    // ==========================================================
+        final previousPurchases =
+            await _supplierService.getSupplierTransactions(
+          companyCode: widget.companyCode,
+          branchCode: _effectiveBranchCode,
+          supplierName: supplierName,
+          startDate: null,
+          endDate: DateFormat('yyyy-MM-dd')
+              .format(_fromDate.subtract(const Duration(days: 1))),
+        );
 
-    final previousPurchases = await _supplierService.getSupplierTransactions(
-      companyCode: widget.companyCode,
-      branchCode: _effectiveBranchCode,
-      supplierName: supplierName,
-      startDate: null,
-      endDate: DateFormat('yyyy-MM-dd').format(_fromDate.subtract(const Duration(days: 1))),
-    );
+        double prevPurchasesTotal = previousPurchases.fold<double>(
+            0.0, (sum, item) => sum + item.totalAmount);
 
-    double prevPurchasesTotal = previousPurchases.fold<double>(0.0, (sum, item) => sum + item.totalAmount);
+        // حساب تسويات الرصيد السابق (بدون حد أدنى)
+        double prevSettlementsTotal = await _calculateSettlementTotal(
+          supplierName: supplierName,
+          // startDate غير موجود -> جميع التسويات قبل endDate
+          endDate: _fromDate.subtract(const Duration(days: 1)),
+        );
 
-    // حساب تسويات الرصيد السابق (بدون حد أدنى)
-    double prevSettlementsTotal = await _calculateSettlementTotal(
-      supplierName: supplierName,
-      // startDate غير موجود -> جميع التسويات قبل endDate
-      endDate: _fromDate.subtract(const Duration(days: 1)),
-    );
+        // ==========================================================
+        // 4) حساب الإجماليات
+        // ==========================================================
 
-    // ==========================================================
-    // 4) حساب الإجماليات
-    // ==========================================================
+        final remaining = purchasesTotal - settlementTotal;
+        final previousBalance = prevPurchasesTotal - prevSettlementsTotal;
+        final totalBalance = previousBalance + remaining;
 
-    final remaining = purchasesTotal - settlementTotal;
-    final previousBalance = prevPurchasesTotal - prevSettlementsTotal;
-    final totalBalance = previousBalance + remaining;
+        if (!mounted) return;
 
-    if (!mounted) return;
-
-    setState(() {
-      _transactions = filtered;
-      _totalPurchases = purchasesTotal;
-      _totalSettlements = settlementTotal;
-      _supplierRemaining = remaining;
-      _previousBalance = previousBalance;
-      _totalSupplierBalance = totalBalance;
-      _isLoading = false;
-    });
-  } catch (e) {
-    print('❌ خطأ في تحميل حركات الموردين: $e');
-    if (!mounted) return;
-    setState(() {
-      _transactions = [];
-      _totalPurchases = 0.0;
-      _totalSettlements = 0.0;
-      _supplierRemaining = 0.0;
-      _previousBalance = 0.0;
-      _totalSupplierBalance = 0.0;
-      _isLoading = false;
+        setState(() {
+          _transactions = filtered;
+          _totalPurchases = purchasesTotal;
+          _totalSettlements = settlementTotal;
+          _supplierRemaining = remaining;
+          _previousBalance = previousBalance;
+          _totalSupplierBalance = totalBalance;
+          _isLoading = false;
+        });
+      } catch (e) {
+        print('❌ خطأ في تحميل حركات الموردين: $e');
+        if (!mounted) return;
+        setState(() {
+          _transactions = [];
+          _totalPurchases = 0.0;
+          _totalSettlements = 0.0;
+          _supplierRemaining = 0.0;
+          _previousBalance = 0.0;
+          _totalSupplierBalance = 0.0;
+          _isLoading = false;
+        });
+      }
     });
   }
-
-});
-}
 
   // ==========================================================
   // حساب إجمالي تسويات المورد
   // ==========================================================
 
+  // يحسب إجمالي التسويات
   Future<double> _calculateSettlementTotal({
-  String? supplierName,
-  DateTime? startDate,
-  DateTime? endDate,
-}) async {
-return CachePartitions.run(() async {
+    String? supplierName,
+    DateTime? startDate,
+    DateTime? endDate,
+  }) async {
+    return CachePartitions.run(() async {
+      double total = 0.0;
+      final box = CachePartitions.box('supplier_settlement_box');
 
-  double total = 0.0;
-  final box = CachePartitions.box('supplier_settlement_box');
+      final endDateStr = endDate != null
+          ? DateFormat('yyyy-MM-dd').format(endDate)
+          : DateFormat('yyyy-MM-dd').format(_toDate);
 
-  final endDateStr = endDate != null
-      ? DateFormat('yyyy-MM-dd').format(endDate)
-      : DateFormat('yyyy-MM-dd').format(_toDate);
+      final startDateStr = startDate != null
+          ? DateFormat('yyyy-MM-dd').format(startDate)
+          : null; // بدون حد أدنى -> جميع التسويات قبل endDate
 
-  final startDateStr = startDate != null
-      ? DateFormat('yyyy-MM-dd').format(startDate)
-      : null; // بدون حد أدنى -> جميع التسويات قبل endDate
+      for (final key in box.keys) {
+        final raw = box.get(key);
+        if (raw is! List) continue;
 
-  for (final key in box.keys) {
-    final raw = box.get(key);
-    if (raw is! List) continue;
+        for (final item in raw) {
+          if (item is! Map) continue;
 
-    for (final item in raw) {
-      if (item is! Map) continue;
+          final map = Map<String, dynamic>.from(item);
 
-      final map = Map<String, dynamic>.from(item);
+          if (map['is_deleted'] == true) continue;
+          if (map['company_code']?.toString() != widget.companyCode) continue;
 
-      if (map['is_deleted'] == true) continue;
-      if (map['company_code']?.toString() != widget.companyCode) continue;
+          if (!_isAllBranches &&
+              map['branch_code']?.toString() != widget.selectedBranchCode) {
+            continue;
+          }
 
-      if (!_isAllBranches && map['branch_code']?.toString() != widget.selectedBranchCode) {
-        continue;
+          if (supplierName != null &&
+              map['supplier_name']?.toString() != supplierName) {
+            continue;
+          }
+
+          final date = map['date']?.toString() ?? '';
+          if (date.isEmpty) continue;
+
+          // التحقق من الحد الأدنى (إن وُجد)
+          if (startDateStr != null && date.compareTo(startDateStr) < 0)
+            continue;
+          // التحقق من الحد الأعلى
+          if (date.compareTo(endDateStr) > 0) continue;
+
+          total += _toDouble(map['amount']);
+        }
       }
 
-      if (supplierName != null && map['supplier_name']?.toString() != supplierName) {
-        continue;
-      }
-
-      final date = map['date']?.toString() ?? '';
-      if (date.isEmpty) continue;
-
-      // التحقق من الحد الأدنى (إن وُجد)
-      if (startDateStr != null && date.compareTo(startDateStr) < 0) continue;
-      // التحقق من الحد الأعلى
-      if (date.compareTo(endDateStr) > 0) continue;
-
-      total += _toDouble(map['amount']);
-    }
+      return total;
+    });
   }
-
-  return total;
-
-});
-}
 
   // ==========================================================
   // أسماء البيانات
   // ==========================================================
 
+  // يعيد اسم المخزن من الكود
   String _getStoreName(String? code) {
     if (code == null || code == 'all') return 'كل المخازن';
 
@@ -338,8 +361,13 @@ return CachePartitions.run(() async {
     return found['name'] ?? code;
   }
 
+  // يعيد اسم الفرع من الكود
   String _getBranchName(String? codeOrName) {
-    if (codeOrName == null || codeOrName.isEmpty || codeOrName == 'all' || codeOrName == 'الكل' || codeOrName == 'كل الفروع') {
+    if (codeOrName == null ||
+        codeOrName.isEmpty ||
+        codeOrName == 'all' ||
+        codeOrName == 'الكل' ||
+        codeOrName == 'كل الفروع') {
       return 'كل الفروع';
     }
 
@@ -350,7 +378,8 @@ return CachePartitions.run(() async {
       for (final item in raw) {
         if (item is! Map) continue;
 
-        if (item['code']?.toString() == codeOrName || item['name']?.toString() == codeOrName) {
+        if (item['code']?.toString() == codeOrName ||
+            item['name']?.toString() == codeOrName) {
           return item['name']?.toString() ?? codeOrName;
         }
       }
@@ -359,25 +388,29 @@ return CachePartitions.run(() async {
     return codeOrName;
   }
 
+  // يعيد اسم الشركة من الكود
   Future<String> _getCompanyName() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString('company_name') ?? 'شركتي';
+    });
+  }
 
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('company_name') ?? 'شركتي';
-});
-}
-
+  // يحوّل قيمة ديناميكية إلى عدد عشري بأمان
   double _toDouble(dynamic value) {
     if (value is num) return value.toDouble();
     return double.tryParse(value?.toString() ?? '0') ?? 0.0;
   }
 
-  String _formatCurrency(double amount) => NumberFormat('#,##0.00', 'en_US').format(amount);
+  // ينسّق المبلغ كعملة للعرض
+  String _formatCurrency(double amount) =>
+      NumberFormat('#,##0.00', 'en_US').format(amount);
 
   // ==========================================================
   // التفاصيل والتنقل
   // ==========================================================
 
+  // يعرض تفاصيل الحركة
   void _showTransactionDetails(SupplierTransactionModel model) {
     setState(() {
       _selectedTransaction = model;
@@ -385,6 +418,7 @@ return CachePartitions.run(() async {
     });
   }
 
+  // يعود إلى القائمة
   void _goBackToList() {
     setState(() {
       _showDetails = false;
@@ -392,6 +426,7 @@ return CachePartitions.run(() async {
     });
   }
 
+  // يفتح الحركة للتعديل
   void _editTransaction(SupplierTransactionModel model) {
     Navigator.push(
       context,
@@ -406,6 +441,7 @@ return CachePartitions.run(() async {
     ).then((_) => _loadData());
   }
 
+  // يطلب تأكيد الحذف ثم ينفذه
   void _confirmDelete(SupplierTransactionModel model) {
     showDialog(
       context: context,
@@ -413,43 +449,52 @@ return CachePartitions.run(() async {
         backgroundColor: AppTheme.dialogBackground(context),
         title: Text(
           'تأكيد الحذف',
-          style: TextStyle(color: AppTheme.textMainFor(context), fontFamily: 'Cairo'),
+          style: TextStyle(
+              color: AppTheme.textMainFor(context), fontFamily: 'Cairo'),
         ),
         content: Text(
           'هل أنت متأكد من حذف فاتورة المورد رقم ${model.serial}؟',
-          style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo'),
+          style: TextStyle(
+              color: AppTheme.textSoftFor(context), fontFamily: 'Cairo'),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: Text('إلغاء', style: TextStyle(color: AppTheme.textMainFor(context), fontFamily: 'Cairo')),
+            child: Text('إلغاء',
+                style: TextStyle(
+                    color: AppTheme.textMainFor(context), fontFamily: 'Cairo')),
           ),
           TextButton(
             onPressed: () async {
-return CachePartitions.run(() async {
+              return CachePartitions.run(() async {
+                Navigator.pop(ctx);
 
-              Navigator.pop(ctx);
+                if (model.docId == null) {
+                  _showSnackBar('رقم الحركة غير موجود',
+                      AppTheme.dangerStrongFor(context));
+                  return;
+                }
 
-              if (model.docId == null) {
-                _showSnackBar('رقم الحركة غير موجود', AppTheme.dangerStrongFor(context));
-                return;
-              }
+                final deleted =
+                    await _supplierService.deleteSupplierTransaction(
+                  widget.companyCode,
+                  model.docId!,
+                );
 
-              final deleted = await _supplierService.deleteSupplierTransaction(
-                widget.companyCode,
-                model.docId!,
-              );
-
-              if (deleted) {
-                _showSnackBar('تم حذف الفاتورة بنجاح', AppTheme.successStrongFor(context));
-                await _loadData();
-              } else {
-                _showSnackBar('فشل حذف الفاتورة', AppTheme.dangerStrongFor(context));
-              }
-
-});
-},
-            child: Text('حذف', style: TextStyle(color: AppTheme.dangerStrongFor(context), fontFamily: 'Cairo')),
+                if (deleted) {
+                  _showSnackBar('تم حذف الفاتورة بنجاح',
+                      AppTheme.successStrongFor(context));
+                  await _loadData();
+                } else {
+                  _showSnackBar(
+                      'فشل حذف الفاتورة', AppTheme.dangerStrongFor(context));
+                }
+              });
+            },
+            child: Text('حذف',
+                style: TextStyle(
+                    color: AppTheme.dangerStrongFor(context),
+                    fontFamily: 'Cairo')),
           ),
         ],
       ),
@@ -460,127 +505,145 @@ return CachePartitions.run(() async {
   // التصدير العام
   // ==========================================================
 
+  // يصدّر البيانات إلى ملف Excel
   Future<void> _exportExcel() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_transactions.isEmpty) {
+        _showSnackBar(
+            'لا توجد بيانات للتصدير', AppTheme.warningOrangeFor(context));
+        return;
+      }
 
-    if (_transactions.isEmpty) {
-      _showSnackBar('لا توجد بيانات للتصدير', AppTheme.warningOrangeFor(context));
-      return;
-    }
+      try {
+        final companyName = await _getCompanyName();
+        final branchName = _isAllBranches
+            ? 'كل الفروع'
+            : _getBranchName(widget.selectedBranchCode);
+        final period =
+            '${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}';
 
-    try {
-      final companyName = await _getCompanyName();
-      final branchName = _isAllBranches ? 'كل الفروع' : _getBranchName(widget.selectedBranchCode);
-      final period = '${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}';
+        final data = _transactions
+            .map((t) => {
+                  'رقم الإذن': t.serial,
+                  'التاريخ': t.date,
+                  'الفرع': _getBranchName(t.branchCode),
+                  'المورد': t.supplierName,
+                  'المخزن': _getStoreName(t.storeCode),
+                  if (_canViewCosts) 'إجمالي الفاتورة': t.totalAmount,
+                  'عدد الأصناف': t.items.length,
+                  'إضافة للمخزن': t.isAddToStore ? 'نعم' : 'لا',
+                  'الموظف': t.employee,
+                })
+            .toList();
 
-      final data = _transactions.map((t) => {
-        'رقم الإذن': t.serial,
-        'التاريخ': t.date,
-        'الفرع': _getBranchName(t.branchCode),
-        'المورد': t.supplierName,
-        'المخزن': _getStoreName(t.storeCode),
-        if (_canViewCosts) 'إجمالي الفاتورة': t.totalAmount,
-        'عدد الأصناف': t.items.length,
-        'إضافة للمخزن': t.isAddToStore ? 'نعم' : 'لا',
-        'الموظف': t.employee,
-      }).toList();
+        final headers = [
+          'رقم الإذن',
+          'التاريخ',
+          'الفرع',
+          'المورد',
+          'المخزن',
+          if (_canViewCosts) 'إجمالي الفاتورة',
+          'عدد الأصناف',
+          'إضافة للمخزن',
+          'الموظف',
+        ];
 
-      final headers = [
-        'رقم الإذن',
-        'التاريخ',
-        'الفرع',
-        'المورد',
-        'المخزن',
-        if (_canViewCosts) 'إجمالي الفاتورة',
-        'عدد الأصناف',
-        'إضافة للمخزن',
-        'الموظف',
-      ];
+        await ExportService.exportToExcel(
+          data,
+          'تقرير المشتريات',
+          headers,
+          headers,
+          companyName: companyName,
+          branchName: branchName,
+          period: period,
+          supplierName: _selectedSupplierCode == 'all'
+              ? null
+              : _getSupplierName(_selectedSupplierCode),
+          summary: {
+            if (_canViewCosts) 'إجمالي المشتريات': _totalPurchases,
+            'إجمالي الدفعات': _totalSettlements,
+            if (_canViewCosts) 'المتبقي': _supplierRemaining,
+          },
+        );
 
-      await ExportService.exportToExcel(
-        data,
-        'تقرير المشتريات',
-        headers,
-        headers,
-        companyName: companyName,
-        branchName: branchName,
-        period: period,
-        supplierName: _selectedSupplierCode == 'all' ? null : _getSupplierName(_selectedSupplierCode),
-        summary: {
-          if (_canViewCosts) 'إجمالي المشتريات': _totalPurchases,
-          'إجمالي الدفعات': _totalSettlements,
-          if (_canViewCosts) 'المتبقي': _supplierRemaining,
-        },
-      );
+        _showSnackBar(
+            'تم تصدير Excel بنجاح', AppTheme.successStrongFor(context));
+      } catch (e) {
+        _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
+      }
+    });
+  }
 
-      _showSnackBar('تم تصدير Excel بنجاح', AppTheme.successStrongFor(context));
-    } catch (e) {
-      _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
-    }
-});
-}
-
+  // يصدّر البيانات إلى ملف PDF
   Future<void> _exportPDF() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_transactions.isEmpty) {
+        _showSnackBar(
+            'لا توجد بيانات للتصدير', AppTheme.warningOrangeFor(context));
+        return;
+      }
 
-    if (_transactions.isEmpty) {
-      _showSnackBar('لا توجد بيانات للتصدير', AppTheme.warningOrangeFor(context));
-      return;
-    }
+      try {
+        final companyName = await _getCompanyName();
+        final branchName = _isAllBranches
+            ? 'كل الفروع'
+            : _getBranchName(widget.selectedBranchCode);
+        final period =
+            '${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}';
 
-    try {
-      final companyName = await _getCompanyName();
-      final branchName = _isAllBranches ? 'كل الفروع' : _getBranchName(widget.selectedBranchCode);
-      final period = '${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}';
+        final data = _transactions
+            .map((t) => {
+                  'رقم الإذن': t.serial,
+                  'التاريخ': t.date,
+                  'الفرع': _getBranchName(t.branchCode),
+                  'المورد': t.supplierName,
+                  'المخزن': _getStoreName(t.storeCode),
+                  if (_canViewCosts) 'إجمالي الفاتورة': t.totalAmount,
+                  'عدد الأصناف': t.items.length,
+                  'إضافة للمخزن': t.isAddToStore ? 'نعم' : 'لا',
+                  'الموظف': t.employee,
+                })
+            .toList();
 
-      final data = _transactions.map((t) => {
-        'رقم الإذن': t.serial,
-        'التاريخ': t.date,
-        'الفرع': _getBranchName(t.branchCode),
-        'المورد': t.supplierName,
-        'المخزن': _getStoreName(t.storeCode),
-        if (_canViewCosts) 'إجمالي الفاتورة': t.totalAmount,
-        'عدد الأصناف': t.items.length,
-        'إضافة للمخزن': t.isAddToStore ? 'نعم' : 'لا',
-        'الموظف': t.employee,
-      }).toList();
+        final headers = [
+          'رقم الإذن',
+          'التاريخ',
+          'الفرع',
+          'المورد',
+          'المخزن',
+          if (_canViewCosts) 'إجمالي الفاتورة',
+          'عدد الأصناف',
+          'إضافة للمخزن',
+          'الموظف',
+        ];
 
-      final headers = [
-        'رقم الإذن',
-        'التاريخ',
-        'الفرع',
-        'المورد',
-        'المخزن',
-        if (_canViewCosts) 'إجمالي الفاتورة',
-        'عدد الأصناف',
-        'إضافة للمخزن',
-        'الموظف',
-      ];
+        await ExportService.exportToPDF(
+          data: data,
+          title: 'تقرير المشتريات',
+          headers: headers,
+          keys: headers,
+          companyName: companyName,
+          branchName: branchName,
+          period: period,
+          supplierName: _selectedSupplierCode == 'all'
+              ? null
+              : _getSupplierName(_selectedSupplierCode),
+          summary: {
+            if (_canViewCosts) 'totalAmount': _totalPurchases,
+            'إجمالي الدفعات': _totalSettlements,
+            if (_canViewCosts) 'المتبقي': _supplierRemaining,
+          },
+          totalAmount: _canViewCosts ? _totalPurchases : null,
+        );
 
-      await ExportService.exportToPDF(
-        data: data,
-        title: 'تقرير المشتريات',
-        headers: headers,
-        keys: headers,
-        companyName: companyName,
-        branchName: branchName,
-        period: period,
-        supplierName: _selectedSupplierCode == 'all' ? null : _getSupplierName(_selectedSupplierCode),
-        summary: {
-          if (_canViewCosts) 'totalAmount': _totalPurchases,
-          'إجمالي الدفعات': _totalSettlements,
-          if (_canViewCosts) 'المتبقي': _supplierRemaining,
-        },
-        totalAmount: _canViewCosts ? _totalPurchases : null,
-      );
+        _showSnackBar('تم تصدير PDF بنجاح', AppTheme.successStrongFor(context));
+      } catch (e) {
+        _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
+      }
+    });
+  }
 
-      _showSnackBar('تم تصدير PDF بنجاح', AppTheme.successStrongFor(context));
-    } catch (e) {
-      _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
-    }
-});
-}
-
+  // يعيد اسم المورد من كوده
   String? _getSupplierName(String? code) {
     if (code == null || code == 'all') return null;
 
@@ -596,119 +659,128 @@ return CachePartitions.run(() async {
   // تصدير إذن واحد
   // ==========================================================
 
+  // يصدّر حركة واحدة إلى Excel
   Future<void> _exportSingleExcel(SupplierTransactionModel inv) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      try {
+        final companyName = await _getCompanyName();
+        final branchName = _getBranchName(inv.branchCode);
 
-    try {
-      final companyName = await _getCompanyName();
-      final branchName = _getBranchName(inv.branchCode);
+        final data = inv.items
+            .map((item) => {
+                  'الكود': item.code,
+                  'الصنف': item.name,
+                  'الكمية': item.quantity,
+                  'السعر': item.price,
+                  'نسبة الخصم': item.discountRate,
+                  'مبلغ الخصم': item.discountAmount,
+                  'الإجمالي': item.total,
+                })
+            .toList();
 
-      final data = inv.items.map((item) => {
-        'الكود': item.code,
-        'الصنف': item.name,
-        'الكمية': item.quantity,
-        'السعر': item.price,
-        'نسبة الخصم': item.discountRate,
-        'مبلغ الخصم': item.discountAmount,
-        'الإجمالي': item.total,
-      }).toList();
+        const headers = [
+          'الكود',
+          'الصنف',
+          'الكمية',
+          'السعر',
+          'نسبة الخصم',
+          'مبلغ الخصم',
+          'الإجمالي',
+        ];
 
-      const headers = [
-        'الكود',
-        'الصنف',
-        'الكمية',
-        'السعر',
-        'نسبة الخصم',
-        'مبلغ الخصم',
-        'الإجمالي',
-      ];
+        final totalQuantity =
+            inv.items.fold<double>(0.0, (sum, item) => sum + item.quantity);
 
-      final totalQuantity = inv.items.fold<double>(0.0, (sum, item) => sum + item.quantity);
+        await ExportService.exportToExcel(
+          data,
+          'حركة_مورد_${inv.serial}_${inv.date}',
+          headers,
+          headers,
+          companyName: companyName,
+          branchName: branchName,
+          storeName: _getStoreName(inv.storeCode),
+          serial: inv.serial.toString(),
+          date: inv.date,
+          supplierName: inv.supplierName,
+          employee: inv.employee,
+          summary: {
+            'إجمالي الكمية': totalQuantity,
+            'إجمالي المشتريات': inv.totalAmount,
+          },
+        );
 
-      await ExportService.exportToExcel(
-        data,
-        'حركة_مورد_${inv.serial}_${inv.date}',
-        headers,
-        headers,
-        companyName: companyName,
-        branchName: branchName,
-        storeName: _getStoreName(inv.storeCode),
-        serial: inv.serial.toString(),
-        date: inv.date,
-        supplierName: inv.supplierName,
-        employee: inv.employee,
-        summary: {
-          'إجمالي الكمية': totalQuantity,
-          'إجمالي المشتريات': inv.totalAmount,
-        },
-      );
+        _showSnackBar(
+            'تم تصدير الإذن بنجاح', AppTheme.successStrongFor(context));
+      } catch (e) {
+        _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
+      }
+    });
+  }
 
-      _showSnackBar('تم تصدير الإذن بنجاح', AppTheme.successStrongFor(context));
-    } catch (e) {
-      _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
-    }
-});
-}
-
+  // يصدّر حركة واحدة إلى PDF
   Future<void> _exportSinglePDF(SupplierTransactionModel inv) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      try {
+        final companyName = await _getCompanyName();
+        final branchName = _getBranchName(inv.branchCode);
 
-    try {
-      final companyName = await _getCompanyName();
-      final branchName = _getBranchName(inv.branchCode);
+        final data = inv.items
+            .map((item) => {
+                  'الكود': item.code,
+                  'الصنف': item.name,
+                  'الكمية': item.quantity,
+                  'السعر': item.price,
+                  'نسبة الخصم': item.discountRate,
+                  'مبلغ الخصم': item.discountAmount,
+                  'الإجمالي': item.total,
+                })
+            .toList();
 
-      final data = inv.items.map((item) => {
-        'الكود': item.code,
-        'الصنف': item.name,
-        'الكمية': item.quantity,
-        'السعر': item.price,
-        'نسبة الخصم': item.discountRate,
-        'مبلغ الخصم': item.discountAmount,
-        'الإجمالي': item.total,
-      }).toList();
+        const headers = [
+          'الكود',
+          'الصنف',
+          'الكمية',
+          'السعر',
+          'نسبة الخصم',
+          'مبلغ الخصم',
+          'الإجمالي',
+        ];
 
-      const headers = [
-        'الكود',
-        'الصنف',
-        'الكمية',
-        'السعر',
-        'نسبة الخصم',
-        'مبلغ الخصم',
-        'الإجمالي',
-      ];
+        final totalQuantity =
+            inv.items.fold<double>(0.0, (sum, item) => sum + item.quantity);
 
-      final totalQuantity = inv.items.fold<double>(0.0, (sum, item) => sum + item.quantity);
+        await ExportService.exportToPDF(
+          data: data,
+          title: 'حركة مورد - ${inv.supplierName}',
+          headers: headers,
+          keys: headers,
+          companyName: companyName,
+          branchName: branchName,
+          storeName: _getStoreName(inv.storeCode),
+          serial: inv.serial.toString(),
+          date: inv.date,
+          supplierName: inv.supplierName,
+          employee: inv.employee,
+          summary: {
+            'totalQuantity': totalQuantity,
+            'totalAmount': inv.totalAmount,
+          },
+          totalAmount: inv.totalAmount,
+        );
 
-      await ExportService.exportToPDF(
-        data: data,
-        title: 'حركة مورد - ${inv.supplierName}',
-        headers: headers,
-        keys: headers,
-        companyName: companyName,
-        branchName: branchName,
-        storeName: _getStoreName(inv.storeCode),
-        serial: inv.serial.toString(),
-        date: inv.date,
-        supplierName: inv.supplierName,
-        employee: inv.employee,
-        summary: {
-          'totalQuantity': totalQuantity,
-          'totalAmount': inv.totalAmount,
-        },
-        totalAmount: inv.totalAmount,
-      );
-
-      _showSnackBar('تم تصدير الإذن بنجاح', AppTheme.successStrongFor(context));
-    } catch (e) {
-      _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
-    }
-});
-}
+        _showSnackBar(
+            'تم تصدير الإذن بنجاح', AppTheme.successStrongFor(context));
+      } catch (e) {
+        _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
+      }
+    });
+  }
 
   // ==========================================================
   // تقرير تفصيلي للمشتريات حسب المورد والفترة
   // ==========================================================
 
+  // يعيد بيانات تقرير المورد
   List<Map<String, dynamic>> _getSupplierReportData() {
     final data = <Map<String, dynamic>>[];
 
@@ -730,72 +802,88 @@ return CachePartitions.run(() async {
     return data;
   }
 
+  // يصدّر تقرير أصناف المورد
   Future<void> _exportSupplierItemReport({required bool pdf}) async {
-return CachePartitions.run(() async {
-
-    if (_transactions.isEmpty) {
-      _showSnackBar('لا توجد بيانات للتقرير', AppTheme.warningOrangeFor(context));
-      return;
-    }
-
-    try {
-      final companyName = await _getCompanyName();
-      final branchName = _isAllBranches ? 'كل الفروع' : _getBranchName(widget.selectedBranchCode);
-      final period = '${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}';
-      final data = _getSupplierReportData();
-      final headers = [
-        'التاريخ', 'رقم الإذن', 'المورد', 'الكود', 'الصنف', 'الكمية',
-        if (_canViewCosts) 'السعر',
-        if (_canViewCosts) 'الإجمالي',
-      ];
-
-      if (pdf) {
-        await ExportService.exportToPDF(
-          data: data,
-          title: 'تقرير تفصيلي لمشتريات المورد',
-          headers: headers,
-          keys: headers,
-          companyName: companyName,
-          branchName: branchName,
-          period: period,
-          supplierName: _selectedSupplierCode == 'all' ? null : _getSupplierName(_selectedSupplierCode),
-          summary: {
-            if (_canViewCosts) 'إجمالي المشتريات': _totalPurchases,
-            'إجمالي الدفعات': _totalSettlements,
-            if (_canViewCosts) 'المتبقي للمورد': _supplierRemaining,
-          },
-          totalAmount: _canViewCosts ? _totalPurchases : null,
-        );
-      } else {
-        await ExportService.exportToExcel(
-          data,
-          'تقرير تفصيلي لمشتريات المورد',
-          headers,
-          headers,
-          companyName: companyName,
-          branchName: branchName,
-          period: period,
-          supplierName: _selectedSupplierCode == 'all' ? null : _getSupplierName(_selectedSupplierCode),
-          summary: {
-            if (_canViewCosts) 'إجمالي المشتريات': _totalPurchases,
-            'إجمالي الدفعات': _totalSettlements,
-            if (_canViewCosts) 'المتبقي للمورد': _supplierRemaining,
-          },
-        );
+    return CachePartitions.run(() async {
+      if (_transactions.isEmpty) {
+        _showSnackBar(
+            'لا توجد بيانات للتقرير', AppTheme.warningOrangeFor(context));
+        return;
       }
 
-      _showSnackBar(pdf ? 'تم تصدير PDF بنجاح' : 'تم تصدير Excel بنجاح', AppTheme.successStrongFor(context));
-    } catch (e) {
-      _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
-    }
-});
-}
+      try {
+        final companyName = await _getCompanyName();
+        final branchName = _isAllBranches
+            ? 'كل الفروع'
+            : _getBranchName(widget.selectedBranchCode);
+        final period =
+            '${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}';
+        final data = _getSupplierReportData();
+        final headers = [
+          'التاريخ',
+          'رقم الإذن',
+          'المورد',
+          'الكود',
+          'الصنف',
+          'الكمية',
+          if (_canViewCosts) 'السعر',
+          if (_canViewCosts) 'الإجمالي',
+        ];
 
+        if (pdf) {
+          await ExportService.exportToPDF(
+            data: data,
+            title: 'تقرير تفصيلي لمشتريات المورد',
+            headers: headers,
+            keys: headers,
+            companyName: companyName,
+            branchName: branchName,
+            period: period,
+            supplierName: _selectedSupplierCode == 'all'
+                ? null
+                : _getSupplierName(_selectedSupplierCode),
+            summary: {
+              if (_canViewCosts) 'إجمالي المشتريات': _totalPurchases,
+              'إجمالي الدفعات': _totalSettlements,
+              if (_canViewCosts) 'المتبقي للمورد': _supplierRemaining,
+            },
+            totalAmount: _canViewCosts ? _totalPurchases : null,
+          );
+        } else {
+          await ExportService.exportToExcel(
+            data,
+            'تقرير تفصيلي لمشتريات المورد',
+            headers,
+            headers,
+            companyName: companyName,
+            branchName: branchName,
+            period: period,
+            supplierName: _selectedSupplierCode == 'all'
+                ? null
+                : _getSupplierName(_selectedSupplierCode),
+            summary: {
+              if (_canViewCosts) 'إجمالي المشتريات': _totalPurchases,
+              'إجمالي الدفعات': _totalSettlements,
+              if (_canViewCosts) 'المتبقي للمورد': _supplierRemaining,
+            },
+          );
+        }
+
+        _showSnackBar(pdf ? 'تم تصدير PDF بنجاح' : 'تم تصدير Excel بنجاح',
+            AppTheme.successStrongFor(context));
+      } catch (e) {
+        _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
+      }
+    });
+  }
+
+  // يعرض تقرير أصناف المورد
   void _showSupplierItemReport() {
     final data = _getSupplierReportData();
 
     if (data.isEmpty) {
-      _showSnackBar('لا توجد بيانات للتقرير', AppTheme.warningOrangeFor(context));
+      _showSnackBar(
+          'لا توجد بيانات للتقرير', AppTheme.warningOrangeFor(context));
       return;
     }
 
@@ -805,7 +893,8 @@ return CachePartitions.run(() async {
         backgroundColor: AppTheme.dialogBackground(context),
         title: Text(
           'تقرير مشتريات المورد',
-          style: TextStyle(color: AppTheme.textMainFor(context), fontFamily: 'Cairo'),
+          style: TextStyle(
+              color: AppTheme.textMainFor(context), fontFamily: 'Cairo'),
         ),
         content: SizedBox(
           width: 1100,
@@ -814,11 +903,27 @@ return CachePartitions.run(() async {
             children: [
               Row(
                 children: [
-                  if (_canViewCosts) Expanded(child: _buildSummaryBox('إجمالي المشتريات', _formatCurrency(_totalPurchases), AppTheme.successFor(context))),
+                  if (_canViewCosts)
+                    Expanded(
+                        child: _buildSummaryBox(
+                            'إجمالي المشتريات',
+                            _formatCurrency(_totalPurchases),
+                            AppTheme.successFor(context))),
                   const SizedBox(width: 6),
-                  Expanded(child: _buildSummaryBox('إجمالي الدفعات', _formatCurrency(_totalSettlements), AppTheme.dangerFor(context))),
+                  Expanded(
+                      child: _buildSummaryBox(
+                          'إجمالي الدفعات',
+                          _formatCurrency(_totalSettlements),
+                          AppTheme.dangerFor(context))),
                   const SizedBox(width: 6),
-                  if (_canViewCosts) Expanded(child: _buildSummaryBox('المتبقي للمورد', _formatCurrency(_supplierRemaining), _supplierRemaining >= 0 ? AppTheme.accentFor(context) : AppTheme.warningOrangeSoftFor(context))),
+                  if (_canViewCosts)
+                    Expanded(
+                        child: _buildSummaryBox(
+                            'المتبقي للمورد',
+                            _formatCurrency(_supplierRemaining),
+                            _supplierRemaining >= 0
+                                ? AppTheme.accentFor(context)
+                                : AppTheme.warningOrangeSoftFor(context))),
                 ],
               ),
               const SizedBox(height: 8),
@@ -827,31 +932,79 @@ return CachePartitions.run(() async {
                   scrollDirection: Axis.horizontal,
                   child: SingleChildScrollView(
                     child: DataTable(
-                      headingRowColor: WidgetStateProperty.all(GlassStyle.fill10For(context)),
+                      headingRowColor: WidgetStateProperty.all(
+                          GlassStyle.fill10For(context)),
                       columns: [
-                        DataColumn(label: Text('التاريخ', style: TextStyle(color: AppTheme.accentFor(context)))),
-                        DataColumn(label: Text('الإذن', style: TextStyle(color: AppTheme.accentFor(context)))),
-                        DataColumn(label: Text('المورد', style: TextStyle(color: AppTheme.accentFor(context)))),
-                        DataColumn(label: Text('الكود', style: TextStyle(color: AppTheme.accentFor(context)))),
-                        DataColumn(label: Text('الصنف', style: TextStyle(color: AppTheme.accentFor(context)))),
-                        DataColumn(label: Text('الكمية', style: TextStyle(color: AppTheme.accentFor(context)))),
+                        DataColumn(
+                            label: Text('التاريخ',
+                                style: TextStyle(
+                                    color: AppTheme.accentFor(context)))),
+                        DataColumn(
+                            label: Text('الإذن',
+                                style: TextStyle(
+                                    color: AppTheme.accentFor(context)))),
+                        DataColumn(
+                            label: Text('المورد',
+                                style: TextStyle(
+                                    color: AppTheme.accentFor(context)))),
+                        DataColumn(
+                            label: Text('الكود',
+                                style: TextStyle(
+                                    color: AppTheme.accentFor(context)))),
+                        DataColumn(
+                            label: Text('الصنف',
+                                style: TextStyle(
+                                    color: AppTheme.accentFor(context)))),
+                        DataColumn(
+                            label: Text('الكمية',
+                                style: TextStyle(
+                                    color: AppTheme.accentFor(context)))),
                         if (_canViewCosts)
-                          DataColumn(label: Text('السعر', style: TextStyle(color: AppTheme.successFor(context)))),
+                          DataColumn(
+                              label: Text('السعر',
+                                  style: TextStyle(
+                                      color: AppTheme.successFor(context)))),
                         if (_canViewCosts)
-                          DataColumn(label: Text('الإجمالي', style: TextStyle(color: AppTheme.successFor(context)))),
+                          DataColumn(
+                              label: Text('الإجمالي',
+                                  style: TextStyle(
+                                      color: AppTheme.successFor(context)))),
                       ],
-                      rows: data.map((row) => DataRow(cells: [
-                        DataCell(Text(row['التاريخ'].toString(), style: TextStyle(color: AppTheme.textSoftFor(context)))),
-                        DataCell(Text(row['رقم الإذن'].toString(), style: TextStyle(color: AppTheme.textSoftFor(context)))),
-                        DataCell(Text(row['المورد'].toString(), style: TextStyle(color: AppTheme.textMainFor(context)))),
-                        DataCell(Text(row['الكود'].toString(), style: TextStyle(color: AppTheme.textSoftFor(context)))),
-                        DataCell(Text(row['الصنف'].toString(), style: TextStyle(color: AppTheme.textMainFor(context)))),
-                        DataCell(Text(row['الكمية'].toString(), style: TextStyle(color: AppTheme.textSoftFor(context)))),
-                        if (_canViewCosts)
-                          DataCell(Text(_formatCurrency(_toDouble(row['السعر'])), style: TextStyle(color: AppTheme.successFor(context)))),
-                        if (_canViewCosts)
-                          DataCell(Text(_formatCurrency(_toDouble(row['الإجمالي'])), style: TextStyle(color: AppTheme.successFor(context)))),
-                      ])).toList(),
+                      rows: data
+                          .map((row) => DataRow(cells: [
+                                DataCell(Text(row['التاريخ'].toString(),
+                                    style: TextStyle(
+                                        color: AppTheme.textSoftFor(context)))),
+                                DataCell(Text(row['رقم الإذن'].toString(),
+                                    style: TextStyle(
+                                        color: AppTheme.textSoftFor(context)))),
+                                DataCell(Text(row['المورد'].toString(),
+                                    style: TextStyle(
+                                        color: AppTheme.textMainFor(context)))),
+                                DataCell(Text(row['الكود'].toString(),
+                                    style: TextStyle(
+                                        color: AppTheme.textSoftFor(context)))),
+                                DataCell(Text(row['الصنف'].toString(),
+                                    style: TextStyle(
+                                        color: AppTheme.textMainFor(context)))),
+                                DataCell(Text(row['الكمية'].toString(),
+                                    style: TextStyle(
+                                        color: AppTheme.textSoftFor(context)))),
+                                if (_canViewCosts)
+                                  DataCell(Text(
+                                      _formatCurrency(_toDouble(row['السعر'])),
+                                      style: TextStyle(
+                                          color:
+                                              AppTheme.successFor(context)))),
+                                if (_canViewCosts)
+                                  DataCell(Text(
+                                      _formatCurrency(
+                                          _toDouble(row['الإجمالي'])),
+                                      style: TextStyle(
+                                          color:
+                                              AppTheme.successFor(context)))),
+                              ]))
+                          .toList(),
                     ),
                   ),
                 ),
@@ -864,17 +1017,21 @@ return CachePartitions.run(() async {
             TextButton.icon(
               onPressed: () => _exportSupplierItemReport(pdf: false),
               icon: Icon(Icons.download, color: AppTheme.infoFor(context)),
-              label: Text('Excel', style: TextStyle(color: AppTheme.infoFor(context))),
+              label: Text('Excel',
+                  style: TextStyle(color: AppTheme.infoFor(context))),
             ),
           if (PermissionsService().canExportSupplier)
             TextButton.icon(
               onPressed: () => _exportSupplierItemReport(pdf: true),
-              icon: Icon(Icons.picture_as_pdf, color: AppTheme.dangerFor(context)),
-              label: Text('PDF', style: TextStyle(color: AppTheme.dangerFor(context))),
+              icon: Icon(Icons.picture_as_pdf,
+                  color: AppTheme.dangerFor(context)),
+              label: Text('PDF',
+                  style: TextStyle(color: AppTheme.dangerFor(context))),
             ),
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: Text('إغلاق', style: TextStyle(color: AppTheme.textMainFor(context))),
+            child: Text('إغلاق',
+                style: TextStyle(color: AppTheme.textMainFor(context))),
           ),
         ],
       ),
@@ -885,6 +1042,7 @@ return CachePartitions.run(() async {
   // SnackBar
   // ==========================================================
 
+  // يعرض رسالة سريعة بالنص واللون المحددين
   void _showSnackBar(String message, Color color) {
     if (!mounted) return;
 
@@ -905,6 +1063,7 @@ return CachePartitions.run(() async {
   // Build
   // ==========================================================
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     if (!PermissionsService().canViewSupplierHistory) {
@@ -955,7 +1114,8 @@ return CachePartitions.run(() async {
         elevation: 0,
         leading: IconButton(
           icon: Icon(Icons.arrow_back, color: AppTheme.textMainFor(context)),
-          onPressed: _showDetails ? _goBackToList : () => Navigator.pop(context),
+          onPressed:
+              _showDetails ? _goBackToList : () => Navigator.pop(context),
         ),
         actions: [
           if (!_showDetails && PermissionsService().canExportSupplier)
@@ -966,13 +1126,15 @@ return CachePartitions.run(() async {
             ),
           if (!_showDetails && PermissionsService().canExportSupplier)
             IconButton(
-              icon: Icon(Icons.picture_as_pdf, color: AppTheme.dangerFor(context)),
+              icon: Icon(Icons.picture_as_pdf,
+                  color: AppTheme.dangerFor(context)),
               onPressed: _exportPDF,
               tooltip: 'تصدير PDF',
             ),
           if (!_showDetails && PermissionsService().canAddSupplierTransaction)
             IconButton(
-              icon: Icon(Icons.assignment_return, color: AppTheme.dangerFor(context)),
+              icon: Icon(Icons.assignment_return,
+                  color: AppTheme.dangerFor(context)),
               onPressed: () => Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -996,21 +1158,21 @@ return CachePartitions.run(() async {
             IconButton(
               icon: Icon(Icons.refresh, color: AppTheme.textMainFor(context)),
               onPressed: () async {
-return CachePartitions.run(() async {
+                return CachePartitions.run(() async {
+                  setState(() => _isLoading = true);
 
-                setState(() => _isLoading = true);
-
-                try {
-                  await _supplierService.syncChangesFromServer(widget.companyCode);
-                  await _loadData();
-                } catch (e) {
-                  _showSnackBar('فشل التحديث: $e', AppTheme.dangerStrongFor(context));
-                } finally {
-                  if (mounted) setState(() => _isLoading = false);
-                }
-
-});
-},
+                  try {
+                    await _supplierService
+                        .syncChangesFromServer(widget.companyCode);
+                    await _loadData();
+                  } catch (e) {
+                    _showSnackBar(
+                        'فشل التحديث: $e', AppTheme.dangerStrongFor(context));
+                  } finally {
+                    if (mounted) setState(() => _isLoading = false);
+                  }
+                });
+              },
               tooltip: 'تحديث من السيرفر',
             ),
         ],
@@ -1025,7 +1187,9 @@ return CachePartitions.run(() async {
         ),
         child: SafeArea(
           child: _isLoading
-              ? Center(child: CircularProgressIndicator(color: AppTheme.textMainFor(context)))
+              ? Center(
+                  child: CircularProgressIndicator(
+                      color: AppTheme.textMainFor(context)))
               : _showDetails && _selectedTransaction != null
                   ? _buildDetailsView(_selectedTransaction!)
                   : _buildListView(),
@@ -1038,27 +1202,68 @@ return CachePartitions.run(() async {
   // القائمة
   // ==========================================================
 
+  // يبني عرض القائمة
   Widget _buildListView() {
-  final bool isMobile = MediaQuery.of(context).size.width < 600;
+    final bool isMobile = MediaQuery.of(context).size.width < 600;
 
-  return CustomScrollView(
-    slivers: [
-      // الفلاتر
-      SliverToBoxAdapter(
-        child: GlassCard(
-          child: Padding(
-            padding: const EdgeInsets.all(8),
-            child: isMobile
-                ? SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
+    return CustomScrollView(
+      slivers: [
+        // الفلاتر
+        SliverToBoxAdapter(
+          child: GlassCard(
+            child: Padding(
+              padding: const EdgeInsets.all(8),
+              child: isMobile
+                  ? SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          SizedBox(width: 130, child: _buildSupplierFilter()),
+                          const SizedBox(width: 6),
+                          SizedBox(width: 130, child: _buildStoreFilter()),
+                          const SizedBox(width: 6),
+                          SizedBox(
+                            width: 110,
+                            child: _buildDatePicker(
+                              label: 'من',
+                              date: _fromDate,
+                              onChanged: (d) {
+                                if (d == null) return;
+                                setState(() => _fromDate = d);
+                                _loadData();
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          SizedBox(
+                            width: 110,
+                            child: _buildDatePicker(
+                              label: 'إلى',
+                              date: _toDate,
+                              onChanged: (d) {
+                                if (d == null) return;
+                                setState(() => _toDate = d);
+                                _loadData();
+                              },
+                            ),
+                          ),
+                          IconButton(
+                            icon: Icon(Icons.clear,
+                                color: AppTheme.textSoftFor(context), size: 18),
+                            onPressed: _clearFilters,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                        ],
+                      ),
+                    )
+                  : Row(
                       children: [
-                        SizedBox(width: 130, child: _buildSupplierFilter()),
-                        const SizedBox(width: 6),
-                        SizedBox(width: 130, child: _buildStoreFilter()),
-                        const SizedBox(width: 6),
-                        SizedBox(
-                          width: 110,
+                        Expanded(child: _buildSupplierFilter()),
+                        const SizedBox(width: 12),
+                        Expanded(child: _buildStoreFilter()),
+                        const SizedBox(width: 8),
+                        Expanded(
                           child: _buildDatePicker(
                             label: 'من',
                             date: _fromDate,
@@ -1069,9 +1274,8 @@ return CachePartitions.run(() async {
                             },
                           ),
                         ),
-                        const SizedBox(width: 6),
-                        SizedBox(
-                          width: 110,
+                        const SizedBox(width: 8),
+                        Expanded(
                           child: _buildDatePicker(
                             label: 'إلى',
                             date: _toDate,
@@ -1083,126 +1287,113 @@ return CachePartitions.run(() async {
                           ),
                         ),
                         IconButton(
-                          icon: Icon(Icons.clear, color: AppTheme.textSoftFor(context), size: 18),
+                          icon: Icon(Icons.clear,
+                              color: AppTheme.textSoftFor(context)),
                           onPressed: _clearFilters,
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
                         ),
                       ],
                     ),
-                  )
-                : Row(
-                    children: [
-                      Expanded(child: _buildSupplierFilter()),
-                      const SizedBox(width: 12),
-                      Expanded(child: _buildStoreFilter()),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _buildDatePicker(
-                          label: 'من',
-                          date: _fromDate,
-                          onChanged: (d) {
-                            if (d == null) return;
-                            setState(() => _fromDate = d);
-                            _loadData();
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _buildDatePicker(
-                          label: 'إلى',
-                          date: _toDate,
-                          onChanged: (d) {
-                            if (d == null) return;
-                            setState(() => _toDate = d);
-                            _loadData();
-                          },
-                        ),
-                      ),
-                      IconButton(
-                        icon: Icon(Icons.clear, color: AppTheme.textSoftFor(context)),
-                        onPressed: _clearFilters,
-                      ),
-                    ],
-                  ),
+            ),
           ),
         ),
-      ),
-      // الإجماليات
-      SliverToBoxAdapter(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          child: _buildPeriodSummary(),
+        // الإجماليات
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: _buildPeriodSummary(),
+          ),
         ),
-      ),
-      // قائمة الأذون
-      SliverList(
-        delegate: SliverChildBuilderDelegate(
-          (context, index) {
-            if (_transactions.isEmpty) {
-              return Center(
-                child: Padding(
-                  padding: EdgeInsets.all(20),
-                  child: Text(
-                    'لا توجد مشتريات',
-                    style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo'),
+        // قائمة الأذون
+        SliverList(
+          delegate: SliverChildBuilderDelegate(
+            (context, index) {
+              if (_transactions.isEmpty) {
+                return Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(20),
+                    child: Text(
+                      'لا توجد مشتريات',
+                      style: TextStyle(
+                          color: AppTheme.textSoftFor(context),
+                          fontFamily: 'Cairo'),
+                    ),
                   ),
-                ),
-              );
-            }
-            return _buildTransactionCard(_transactions[index]);
-          },
-          childCount: _transactions.isEmpty ? 1 : _transactions.length,
+                );
+              }
+              return _buildTransactionCard(_transactions[index]);
+            },
+            childCount: _transactions.isEmpty ? 1 : _transactions.length,
+          ),
         ),
-      ),
-    ],
-  );
-}
+      ],
+    );
+  }
 
   // ==========================================================
   // إجماليات الفترة
   // ==========================================================
 
+  // يبني ملخص الفترة
   Widget _buildPeriodSummary() {
-  // قائمة العناصر الخمسة
-  final items = [
-    if (_canViewCosts)
-      _buildSummaryBox('الرصيد السابق', _formatCurrency(_previousBalance), AppTheme.infoFor(context)),
-    if (_canViewCosts)
-      _buildSummaryBox('مشتريات الفترة', _formatCurrency(_totalPurchases), AppTheme.successFor(context)),
-    _buildSummaryBox('دفعات الفترة', _formatCurrency(_totalSettlements), AppTheme.dangerFor(context)),
-    if (_canViewCosts)
-      _buildSummaryBox('المتبقي', _formatCurrency(_supplierRemaining), _supplierRemaining >= 0 ? AppTheme.accentFor(context) : AppTheme.warningOrangeSoftFor(context)),
-    if (_canViewCosts)
-      _buildSummaryBox('إجمالي رصيد المورد', _formatCurrency(_totalSupplierBalance), AppTheme.extraPurpleFor(context)),
-  ];
+    // قائمة العناصر الخمسة
+    final items = [
+      if (_canViewCosts)
+        _buildSummaryBox('الرصيد السابق', _formatCurrency(_previousBalance),
+            AppTheme.infoFor(context)),
+      if (_canViewCosts)
+        _buildSummaryBox('مشتريات الفترة', _formatCurrency(_totalPurchases),
+            AppTheme.successFor(context)),
+      _buildSummaryBox('دفعات الفترة', _formatCurrency(_totalSettlements),
+          AppTheme.dangerFor(context)),
+      if (_canViewCosts)
+        _buildSummaryBox(
+            'المتبقي',
+            _formatCurrency(_supplierRemaining),
+            _supplierRemaining >= 0
+                ? AppTheme.accentFor(context)
+                : AppTheme.warningOrangeSoftFor(context)),
+      if (_canViewCosts)
+        _buildSummaryBox(
+            'إجمالي رصيد المورد',
+            _formatCurrency(_totalSupplierBalance),
+            AppTheme.extraPurpleFor(context)),
+    ];
 
-  // على الشاشات الصغيرة (موبايل): 3 في السطر الأول و 2 في الثاني
-  // نضع الرصيد السابق وإجمالي رصيد المورد في السطر الثاني
-  final firstRowItems = [items[1], items[2], items[3]]; // مشتريات, دفعات, المتبقي
-  final secondRowItems = [items[0], items[4]]; // الرصيد السابق, إجمالي رصيد المورد
+    // على الشاشات الصغيرة (موبايل): 3 في السطر الأول و 2 في الثاني
+    // نضع الرصيد السابق وإجمالي رصيد المورد في السطر الثاني
+    final firstRowItems = [
+      items[1],
+      items[2],
+      items[3]
+    ]; // مشتريات, دفعات, المتبقي
+    final secondRowItems = [
+      items[0],
+      items[4]
+    ]; // الرصيد السابق, إجمالي رصيد المورد
 
-  return GlassCard(
-    child: Padding(
-      padding: const EdgeInsets.all(10),
-      child: Column(
-        children: [
-          // السطر الأول (3 عناصر)
-          Row(
-            children: firstRowItems.map((item) => Expanded(child: item)).toList(),
-          ),
-          const SizedBox(height: 8),
-          // السطر الثاني (2 عناصر)
-          Row(
-            children: secondRowItems.map((item) => Expanded(child: item)).toList(),
-          ),
-        ],
+    return GlassCard(
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          children: [
+            // السطر الأول (3 عناصر)
+            Row(
+              children:
+                  firstRowItems.map((item) => Expanded(child: item)).toList(),
+            ),
+            const SizedBox(height: 8),
+            // السطر الثاني (2 عناصر)
+            Row(
+              children:
+                  secondRowItems.map((item) => Expanded(child: item)).toList(),
+            ),
+          ],
+        ),
       ),
-    ),
-  );
-}
+    );
+  }
 
+  // يبني مربع ملخص
   Widget _buildSummaryBox(String label, String value, Color color) {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
@@ -1241,6 +1432,7 @@ return CachePartitions.run(() async {
   // بطاقة الفاتورة
   // ==========================================================
 
+  // يبني بطاقة حركة
   Widget _buildTransactionCard(SupplierTransactionModel t) {
     return Card(
       color: GlassStyle.fill05For(context),
@@ -1316,18 +1508,25 @@ return CachePartitions.run(() async {
                     ),
                   ),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     decoration: BoxDecoration(
-                      color: t.isAddToStore ? GlassStyle.successFill15For(context) : GlassStyle.neutralFill15For(context),
+                      color: t.isAddToStore
+                          ? GlassStyle.successFill15For(context)
+                          : GlassStyle.neutralFill15For(context),
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(
-                        color: t.isAddToStore ? GlassStyle.successBorder30For(context) : GlassStyle.neutralBorder30For(context),
+                        color: t.isAddToStore
+                            ? GlassStyle.successBorder30For(context)
+                            : GlassStyle.neutralBorder30For(context),
                       ),
                     ),
                     child: Text(
                       t.isAddToStore ? 'مضاف للمخزن' : 'بدون إضافة',
                       style: TextStyle(
-                        color: t.isAddToStore ? AppTheme.successFor(context) : AppTheme.neutralFor(context),
+                        color: t.isAddToStore
+                            ? AppTheme.successFor(context)
+                            : AppTheme.neutralFor(context),
                         fontSize: 8,
                         fontWeight: FontWeight.bold,
                       ),
@@ -1339,9 +1538,12 @@ return CachePartitions.run(() async {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
-                  _buildInfoChip('المخزن', _getStoreName(t.storeCode), AppTheme.infoFor(context), false),
-                  _buildInfoChip('الإجمالي', _formatCurrency(t.totalAmount), AppTheme.successFor(context), false),
-                  _buildInfoChip('الأصناف', t.items.length.toString(), AppTheme.warningOrangeFor(context), false),
+                  _buildInfoChip('المخزن', _getStoreName(t.storeCode),
+                      AppTheme.infoFor(context), false),
+                  _buildInfoChip('الإجمالي', _formatCurrency(t.totalAmount),
+                      AppTheme.successFor(context), false),
+                  _buildInfoChip('الأصناف', t.items.length.toString(),
+                      AppTheme.warningOrangeFor(context), false),
                 ],
               ),
               const SizedBox(height: 4),
@@ -1350,20 +1552,23 @@ return CachePartitions.run(() async {
                 children: [
                   if (PermissionsService().canEditSupplierTransaction)
                     IconButton(
-                      icon: Icon(Icons.edit, color: AppTheme.warningOrangeFor(context), size: 18),
+                      icon: Icon(Icons.edit,
+                          color: AppTheme.warningOrangeFor(context), size: 18),
                       onPressed: () => _editTransaction(t),
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(),
                     ),
                   if (PermissionsService().canDeleteSupplierTransaction)
                     IconButton(
-                      icon: Icon(Icons.delete, color: AppTheme.dangerStrongFor(context), size: 18),
+                      icon: Icon(Icons.delete,
+                          color: AppTheme.dangerStrongFor(context), size: 18),
                       onPressed: () => _confirmDelete(t),
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(),
                     ),
                   IconButton(
-                    icon: Icon(Icons.arrow_forward_ios, color: AppTheme.accentFor(context), size: 16),
+                    icon: Icon(Icons.arrow_forward_ios,
+                        color: AppTheme.accentFor(context), size: 16),
                     onPressed: () => _showTransactionDetails(t),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
@@ -1381,7 +1586,9 @@ return CachePartitions.run(() async {
   // Info Chip
   // ==========================================================
 
-  Widget _buildInfoChip(String label, String value, Color color, bool isMobile) {
+  // يبني شريحة معلومات بأيقونة ونص
+  Widget _buildInfoChip(
+      String label, String value, Color color, bool isMobile) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
@@ -1392,9 +1599,16 @@ return CachePartitions.run(() async {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(label, style: TextStyle(color: AppTheme.textMutedFor(context), fontSize: isMobile ? 8 : 10)),
+          Text(label,
+              style: TextStyle(
+                  color: AppTheme.textMutedFor(context),
+                  fontSize: isMobile ? 8 : 10)),
           const SizedBox(width: 4),
-          Text(value, style: TextStyle(color: color, fontSize: isMobile ? 9 : 11, fontWeight: FontWeight.bold)),
+          Text(value,
+              style: TextStyle(
+                  color: color,
+                  fontSize: isMobile ? 9 : 11,
+                  fontWeight: FontWeight.bold)),
         ],
       ),
     );
@@ -1404,6 +1618,7 @@ return CachePartitions.run(() async {
   // فلتر المورد
   // ==========================================================
 
+  // يبني مرشح المورد
   Widget _buildSupplierFilter() {
     return DropdownButtonFormField<String?>(
       initialValue: _selectedSupplierCode,
@@ -1411,19 +1626,26 @@ return CachePartitions.run(() async {
       style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 12),
       decoration: InputDecoration(
         labelText: 'المورد',
-        labelStyle: TextStyle(color: AppTheme.textSoftFor(context), fontSize: 10),
+        labelStyle:
+            TextStyle(color: AppTheme.textSoftFor(context), fontSize: 10),
         isDense: true,
         contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-        border: OutlineInputBorder(borderSide: BorderSide(color: GlassStyle.line24For(context))),
-        enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: GlassStyle.line24For(context))),
-        focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: AppTheme.accentFor(context))),
+        border: OutlineInputBorder(
+            borderSide: BorderSide(color: GlassStyle.line24For(context))),
+        enabledBorder: OutlineInputBorder(
+            borderSide: BorderSide(color: GlassStyle.line24For(context))),
+        focusedBorder: OutlineInputBorder(
+            borderSide: BorderSide(color: AppTheme.accentFor(context))),
       ),
-      items: _suppliers.map(
-        (s) => DropdownMenuItem<String?>(
-          value: s['code'],
-          child: Text(s['name'] ?? '', style: const TextStyle(fontSize: 10)),
-        ),
-      ).toList(),
+      items: _suppliers
+          .map(
+            (s) => DropdownMenuItem<String?>(
+              value: s['code'],
+              child:
+                  Text(s['name'] ?? '', style: const TextStyle(fontSize: 10)),
+            ),
+          )
+          .toList(),
       onChanged: (val) {
         setState(() => _selectedSupplierCode = val ?? 'all');
         _loadData();
@@ -1435,6 +1657,7 @@ return CachePartitions.run(() async {
   // فلتر المخزن
   // ==========================================================
 
+  // يبني مرشح المخزن
   Widget _buildStoreFilter() {
     return DropdownButtonFormField<String?>(
       initialValue: _filterStore,
@@ -1442,19 +1665,26 @@ return CachePartitions.run(() async {
       style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 12),
       decoration: InputDecoration(
         labelText: 'المخزن',
-        labelStyle: TextStyle(color: AppTheme.textSoftFor(context), fontSize: 10),
+        labelStyle:
+            TextStyle(color: AppTheme.textSoftFor(context), fontSize: 10),
         isDense: true,
         contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-        border: OutlineInputBorder(borderSide: BorderSide(color: GlassStyle.line24For(context))),
-        enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: GlassStyle.line24For(context))),
-        focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: AppTheme.accentFor(context))),
+        border: OutlineInputBorder(
+            borderSide: BorderSide(color: GlassStyle.line24For(context))),
+        enabledBorder: OutlineInputBorder(
+            borderSide: BorderSide(color: GlassStyle.line24For(context))),
+        focusedBorder: OutlineInputBorder(
+            borderSide: BorderSide(color: AppTheme.accentFor(context))),
       ),
-      items: _stores.map(
-        (s) => DropdownMenuItem<String?>(
-          value: s['code'],
-          child: Text(s['name'] ?? '', style: const TextStyle(fontSize: 10)),
-        ),
-      ).toList(),
+      items: _stores
+          .map(
+            (s) => DropdownMenuItem<String?>(
+              value: s['code'],
+              child:
+                  Text(s['name'] ?? '', style: const TextStyle(fontSize: 10)),
+            ),
+          )
+          .toList(),
       onChanged: (val) {
         setState(() => _filterStore = val ?? 'all');
         _loadData();
@@ -1466,6 +1696,7 @@ return CachePartitions.run(() async {
   // التاريخ
   // ==========================================================
 
+  // يبني حقل التاريخ
   Widget _buildDatePicker({
     required String label,
     required DateTime date,
@@ -1473,18 +1704,17 @@ return CachePartitions.run(() async {
   }) {
     return GestureDetector(
       onTap: () async {
-return CachePartitions.run(() async {
+        return CachePartitions.run(() async {
+          final picked = await showDatePicker(
+            context: context,
+            initialDate: date,
+            firstDate: DateTime(2020),
+            lastDate: DateTime(2101),
+          );
 
-        final picked = await showDatePicker(
-          context: context,
-          initialDate: date,
-          firstDate: DateTime(2020),
-          lastDate: DateTime(2101),
-        );
-
-        if (picked != null) onChanged(picked);
-});
-},
+          if (picked != null) onChanged(picked);
+        });
+      },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
         decoration: BoxDecoration(
@@ -1495,13 +1725,17 @@ return CachePartitions.run(() async {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('$label: ', style: TextStyle(color: AppTheme.textMutedFor(context), fontSize: 10)),
+            Text('$label: ',
+                style: TextStyle(
+                    color: AppTheme.textMutedFor(context), fontSize: 10)),
             const SizedBox(width: 4),
             Text(
               DateFormat('yyyy-MM-dd').format(date),
-              style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 11),
+              style:
+                  TextStyle(color: AppTheme.textMainFor(context), fontSize: 11),
             ),
-            Icon(Icons.calendar_today, color: AppTheme.warningFor(context), size: 12),
+            Icon(Icons.calendar_today,
+                color: AppTheme.warningFor(context), size: 12),
           ],
         ),
       ),
@@ -1512,6 +1746,7 @@ return CachePartitions.run(() async {
   // إعادة الفلاتر
   // ==========================================================
 
+  // يمسح كل المرشحات
   void _clearFilters() {
     setState(() {
       _selectedSupplierCode = 'all';
@@ -1527,6 +1762,7 @@ return CachePartitions.run(() async {
   // تفاصيل الفاتورة
   // ==========================================================
 
+  // يبني عرض التفاصيل
   Widget _buildDetailsView(SupplierTransactionModel t) {
     final bool isMobile = MediaQuery.of(context).size.width < 600;
 
@@ -1600,18 +1836,25 @@ return CachePartitions.run(() async {
                         ),
                       ),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
-                          color: t.isAddToStore ? GlassStyle.successFill15For(context) : GlassStyle.neutralFill15For(context),
+                          color: t.isAddToStore
+                              ? GlassStyle.successFill15For(context)
+                              : GlassStyle.neutralFill15For(context),
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(
-                            color: t.isAddToStore ? GlassStyle.successBorder30For(context) : GlassStyle.neutralBorder30For(context),
+                            color: t.isAddToStore
+                                ? GlassStyle.successBorder30For(context)
+                                : GlassStyle.neutralBorder30For(context),
                           ),
                         ),
                         child: Text(
                           t.isAddToStore ? 'مضاف للمخزن' : 'بدون إضافة',
                           style: TextStyle(
-                            color: t.isAddToStore ? AppTheme.successFor(context) : AppTheme.neutralFor(context),
+                            color: t.isAddToStore
+                                ? AppTheme.successFor(context)
+                                : AppTheme.neutralFor(context),
                             fontSize: 11,
                             fontWeight: FontWeight.bold,
                           ),
@@ -1622,9 +1865,19 @@ return CachePartitions.run(() async {
                   Divider(color: GlassStyle.line24For(context), height: 16),
                   Row(
                     children: [
-                      Expanded(child: _buildDetailItem('المخزن', _getStoreName(t.storeCode), Icons.store)),
-                      Expanded(child: _buildDetailItem('الإجمالي', _formatCurrency(t.totalAmount), Icons.attach_money, color: AppTheme.successFor(context))),
-                      Expanded(child: _buildDetailItem('عدد الأصناف', t.items.length.toString(), Icons.list_alt, color: AppTheme.infoFor(context))),
+                      Expanded(
+                          child: _buildDetailItem('المخزن',
+                              _getStoreName(t.storeCode), Icons.store)),
+                      Expanded(
+                          child: _buildDetailItem(
+                              'الإجمالي',
+                              _formatCurrency(t.totalAmount),
+                              Icons.attach_money,
+                              color: AppTheme.successFor(context))),
+                      Expanded(
+                          child: _buildDetailItem('عدد الأصناف',
+                              t.items.length.toString(), Icons.list_alt,
+                              color: AppTheme.infoFor(context))),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -1634,26 +1887,46 @@ return CachePartitions.run(() async {
                       if (PermissionsService().canEditSupplierTransaction)
                         TextButton.icon(
                           onPressed: () => _editTransaction(t),
-                          icon: Icon(Icons.edit, color: AppTheme.warningOrangeFor(context), size: 16),
-                          label: Text('تعديل', style: TextStyle(color: AppTheme.warningOrangeFor(context), fontSize: 12, fontFamily: 'Cairo')),
+                          icon: Icon(Icons.edit,
+                              color: AppTheme.warningOrangeFor(context),
+                              size: 16),
+                          label: Text('تعديل',
+                              style: TextStyle(
+                                  color: AppTheme.warningOrangeFor(context),
+                                  fontSize: 12,
+                                  fontFamily: 'Cairo')),
                         ),
                       if (PermissionsService().canDeleteSupplierTransaction)
                         TextButton.icon(
                           onPressed: () => _confirmDelete(t),
-                          icon: Icon(Icons.delete, color: AppTheme.dangerStrongFor(context), size: 16),
-                          label: Text('حذف', style: TextStyle(color: AppTheme.dangerStrongFor(context), fontSize: 12, fontFamily: 'Cairo')),
+                          icon: Icon(Icons.delete,
+                              color: AppTheme.dangerStrongFor(context),
+                              size: 16),
+                          label: Text('حذف',
+                              style: TextStyle(
+                                  color: AppTheme.dangerStrongFor(context),
+                                  fontSize: 12,
+                                  fontFamily: 'Cairo')),
                         ),
                       if (PermissionsService().canExportSupplier)
                         TextButton.icon(
                           onPressed: () => _exportSingleExcel(t),
-                          icon: Icon(Icons.download, color: AppTheme.infoFor(context), size: 16),
-                          label: Text('Excel', style: TextStyle(color: AppTheme.infoFor(context), fontSize: 12)),
+                          icon: Icon(Icons.download,
+                              color: AppTheme.infoFor(context), size: 16),
+                          label: Text('Excel',
+                              style: TextStyle(
+                                  color: AppTheme.infoFor(context),
+                                  fontSize: 12)),
                         ),
                       if (PermissionsService().canExportSupplier)
                         TextButton.icon(
                           onPressed: () => _exportSinglePDF(t),
-                          icon: Icon(Icons.picture_as_pdf, color: AppTheme.dangerFor(context), size: 16),
-                          label: Text('PDF', style: TextStyle(color: AppTheme.dangerFor(context), fontSize: 12)),
+                          icon: Icon(Icons.picture_as_pdf,
+                              color: AppTheme.dangerFor(context), size: 16),
+                          label: Text('PDF',
+                              style: TextStyle(
+                                  color: AppTheme.dangerFor(context),
+                                  fontSize: 12)),
                         ),
                     ],
                   ),
@@ -1679,12 +1952,15 @@ return CachePartitions.run(() async {
                   ),
                   const SizedBox(height: 8),
                   Container(
-                    padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+                    padding:
+                        const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
                     decoration: BoxDecoration(
                       color: GlassStyle.fill10For(context),
                       borderRadius: BorderRadius.circular(6),
                     ),
-                    child: isMobile ? _buildMobileItemsTable(t) : _buildDesktopItemsTable(t),
+                    child: isMobile
+                        ? _buildMobileItemsTable(t)
+                        : _buildDesktopItemsTable(t),
                   ),
                 ],
               ),
@@ -1708,7 +1984,8 @@ return CachePartitions.run(() async {
                         ),
                       ),
                       Text(
-                        NumberFormat('0.########', 'en_US').format(t.items.fold<double>(0.0, (sum, i) => sum + i.quantity)),
+                        NumberFormat('0.########', 'en_US').format(t.items
+                            .fold<double>(0.0, (sum, i) => sum + i.quantity)),
                         style: TextStyle(
                           color: AppTheme.accentFor(context),
                           fontSize: 16,
@@ -1717,7 +1994,10 @@ return CachePartitions.run(() async {
                       ),
                     ],
                   ),
-                  Container(width: 1, height: 30, color: GlassStyle.line24For(context)),
+                  Container(
+                      width: 1,
+                      height: 30,
+                      color: GlassStyle.line24For(context)),
                   Column(
                     children: [
                       Text(
@@ -1751,6 +2031,7 @@ return CachePartitions.run(() async {
   // جدول الأصناف للموبايل
   // ==========================================================
 
+  // يبني جدول الأصناف للهاتف
   Widget _buildMobileItemsTable(SupplierTransactionModel t) {
     const double colWidth = 55.0;
     const double nameWidth = 70.0;
@@ -1768,7 +2049,8 @@ return CachePartitions.run(() async {
               _tableHeader('الكمية', colWidth, AppTheme.accentAltFor(context)),
               _tableHeader('السعر', colWidth, AppTheme.successFor(context)),
               _tableHeader('الخصم%', colWidth, AppTheme.warningFor(context)),
-              _tableHeader('مبلغ الخصم', colWidth, AppTheme.warningFor(context)),
+              _tableHeader(
+                  'مبلغ الخصم', colWidth, AppTheme.warningFor(context)),
               _tableHeader('الإجمالي', colWidth, AppTheme.successFor(context)),
             ],
           ),
@@ -1782,11 +2064,18 @@ return CachePartitions.run(() async {
                 _tableCell('${index + 1}', 30, AppTheme.textHintFor(context)),
                 _tableCell(item.code, colWidth, AppTheme.textSoftFor(context)),
                 _tableCell(item.name, nameWidth, AppTheme.textMainFor(context)),
-                _tableCell(NumberFormat('0.########', 'en_US').format(item.quantity), colWidth, AppTheme.textSoftFor(context)),
-                _tableCell(_formatCurrency(item.price), colWidth, AppTheme.successFor(context)),
-                _tableCell(item.discountRate.toStringAsFixed(1), colWidth, AppTheme.warningFor(context)),
-                _tableCell(_formatCurrency(item.discountAmount), colWidth, AppTheme.warningFor(context)),
-                _tableCell(_formatCurrency(item.total), colWidth, AppTheme.successFor(context)),
+                _tableCell(
+                    NumberFormat('0.########', 'en_US').format(item.quantity),
+                    colWidth,
+                    AppTheme.textSoftFor(context)),
+                _tableCell(_formatCurrency(item.price), colWidth,
+                    AppTheme.successFor(context)),
+                _tableCell(item.discountRate.toStringAsFixed(1), colWidth,
+                    AppTheme.warningFor(context)),
+                _tableCell(_formatCurrency(item.discountAmount), colWidth,
+                    AppTheme.warningFor(context)),
+                _tableCell(_formatCurrency(item.total), colWidth,
+                    AppTheme.successFor(context)),
               ],
             );
           }),
@@ -1799,6 +2088,7 @@ return CachePartitions.run(() async {
   // جدول الأصناف لسطح المكتب
   // ==========================================================
 
+  // يبني جدول الأصناف لسطح المكتب
   Widget _buildDesktopItemsTable(SupplierTransactionModel t) {
     return Column(
       children: [
@@ -1806,35 +2096,75 @@ return CachePartitions.run(() async {
           children: [
             Expanded(
               flex: 1,
-              child: Text('#', textAlign: TextAlign.center, style: TextStyle(color: AppTheme.accentAltFor(context), fontWeight: FontWeight.bold, fontSize: 9)),
+              child: Text('#',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      color: AppTheme.accentAltFor(context),
+                      fontWeight: FontWeight.bold,
+                      fontSize: 9)),
             ),
             Expanded(
               flex: 1,
-              child: Text('الكود', textAlign: TextAlign.center, style: TextStyle(color: AppTheme.accentAltFor(context), fontWeight: FontWeight.bold, fontSize: 9)),
+              child: Text('الكود',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      color: AppTheme.accentAltFor(context),
+                      fontWeight: FontWeight.bold,
+                      fontSize: 9)),
             ),
             Expanded(
               flex: 2,
-              child: Text('الصنف', textAlign: TextAlign.center, style: TextStyle(color: AppTheme.accentAltFor(context), fontWeight: FontWeight.bold, fontSize: 9)),
+              child: Text('الصنف',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      color: AppTheme.accentAltFor(context),
+                      fontWeight: FontWeight.bold,
+                      fontSize: 9)),
             ),
             Expanded(
               flex: 1,
-              child: Text('الكمية', textAlign: TextAlign.center, style: TextStyle(color: AppTheme.accentAltFor(context), fontWeight: FontWeight.bold, fontSize: 9)),
+              child: Text('الكمية',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      color: AppTheme.accentAltFor(context),
+                      fontWeight: FontWeight.bold,
+                      fontSize: 9)),
             ),
             Expanded(
               flex: 1,
-              child: Text('السعر', textAlign: TextAlign.center, style: TextStyle(color: AppTheme.successFor(context), fontWeight: FontWeight.bold, fontSize: 9)),
+              child: Text('السعر',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      color: AppTheme.successFor(context),
+                      fontWeight: FontWeight.bold,
+                      fontSize: 9)),
             ),
             Expanded(
               flex: 1,
-              child: Text('الخصم%', textAlign: TextAlign.center, style: TextStyle(color: AppTheme.warningFor(context), fontWeight: FontWeight.bold, fontSize: 9)),
+              child: Text('الخصم%',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      color: AppTheme.warningFor(context),
+                      fontWeight: FontWeight.bold,
+                      fontSize: 9)),
             ),
             Expanded(
               flex: 1,
-              child: Text('مبلغ الخصم', textAlign: TextAlign.center, style: TextStyle(color: AppTheme.warningFor(context), fontWeight: FontWeight.bold, fontSize: 9)),
+              child: Text('مبلغ الخصم',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      color: AppTheme.warningFor(context),
+                      fontWeight: FontWeight.bold,
+                      fontSize: 9)),
             ),
             Expanded(
               flex: 1,
-              child: Text('الإجمالي', textAlign: TextAlign.center, style: TextStyle(color: AppTheme.successFor(context), fontWeight: FontWeight.bold, fontSize: 9)),
+              child: Text('الإجمالي',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      color: AppTheme.successFor(context),
+                      fontWeight: FontWeight.bold,
+                      fontSize: 9)),
             ),
           ],
         ),
@@ -1847,14 +2177,42 @@ return CachePartitions.run(() async {
             padding: const EdgeInsets.symmetric(vertical: 4),
             child: Row(
               children: [
-                Expanded(flex: 1, child: _tableDesktopText('${index + 1}', AppTheme.textHintFor(context))),
-                Expanded(flex: 1, child: _tableDesktopText(item.code, AppTheme.textSoftFor(context))),
-                Expanded(flex: 2, child: _tableDesktopText(item.name, AppTheme.textMainFor(context))),
-                Expanded(flex: 1, child: _tableDesktopText(NumberFormat('0.########', 'en_US').format(item.quantity), AppTheme.textSoftFor(context))),
-                Expanded(flex: 1, child: _tableDesktopText(_formatCurrency(item.price), AppTheme.successFor(context))),
-                Expanded(flex: 1, child: _tableDesktopText(item.discountRate.toStringAsFixed(1), AppTheme.warningFor(context))),
-                Expanded(flex: 1, child: _tableDesktopText(_formatCurrency(item.discountAmount), AppTheme.warningFor(context))),
-                Expanded(flex: 1, child: _tableDesktopText(_formatCurrency(item.total), AppTheme.successFor(context))),
+                Expanded(
+                    flex: 1,
+                    child: _tableDesktopText(
+                        '${index + 1}', AppTheme.textHintFor(context))),
+                Expanded(
+                    flex: 1,
+                    child: _tableDesktopText(
+                        item.code, AppTheme.textSoftFor(context))),
+                Expanded(
+                    flex: 2,
+                    child: _tableDesktopText(
+                        item.name, AppTheme.textMainFor(context))),
+                Expanded(
+                    flex: 1,
+                    child: _tableDesktopText(
+                        NumberFormat('0.########', 'en_US')
+                            .format(item.quantity),
+                        AppTheme.textSoftFor(context))),
+                Expanded(
+                    flex: 1,
+                    child: _tableDesktopText(_formatCurrency(item.price),
+                        AppTheme.successFor(context))),
+                Expanded(
+                    flex: 1,
+                    child: _tableDesktopText(
+                        item.discountRate.toStringAsFixed(1),
+                        AppTheme.warningFor(context))),
+                Expanded(
+                    flex: 1,
+                    child: _tableDesktopText(
+                        _formatCurrency(item.discountAmount),
+                        AppTheme.warningFor(context))),
+                Expanded(
+                    flex: 1,
+                    child: _tableDesktopText(_formatCurrency(item.total),
+                        AppTheme.successFor(context))),
               ],
             ),
           );
@@ -1867,6 +2225,7 @@ return CachePartitions.run(() async {
   // Table helpers
   // ==========================================================
 
+  // يبني رأس عمود
   Widget _tableHeader(String text, double width, Color color) {
     return SizedBox(
       width: width,
@@ -1882,6 +2241,7 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يبني خلية جدول
   Widget _tableCell(String text, double width, Color color) {
     return SizedBox(
       width: width,
@@ -1897,6 +2257,7 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يبني نص الجدول لسطح المكتب
   Widget _tableDesktopText(String text, Color color) {
     return Text(
       text,
@@ -1910,6 +2271,7 @@ return CachePartitions.run(() async {
   // Detail item
   // ==========================================================
 
+  // يبني عنصر تفصيل
   Widget _buildDetailItem(
     String label,
     String value,
@@ -1949,6 +2311,7 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     super.dispose();

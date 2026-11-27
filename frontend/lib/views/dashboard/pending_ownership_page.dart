@@ -1,3 +1,4 @@
+// frontend/lib/views/dashboard/pending_ownership_page.dart
 import '../../services/cache_partitions.dart';
 import 'package:flutter/material.dart';
 
@@ -6,6 +7,7 @@ import '../../services/permissions_service.dart';
 import '../../services/revocation_service.dart';
 import '../widgets/glass_card.dart';
 
+// صفحة تسوية العمليات المعلقة
 /// مسار التسوية المرئي للعمليات المعلقة مجهولة المالك.
 ///
 /// عمليات أنشئت قبل نظام تتبع المالك (بلا user_uid) لا تُرفع
@@ -22,84 +24,87 @@ class PendingOwnershipPage extends StatefulWidget {
 
   const PendingOwnershipPage({super.key, required this.companyCode});
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
-  State<PendingOwnershipPage> createState() =>
-      _PendingOwnershipPageState();
+  State<PendingOwnershipPage> createState() => _PendingOwnershipPageState();
 }
 
-class _PendingOwnershipPageState
-    extends State<PendingOwnershipPage> {
+// حالة صفحة تسوية العمليات المعلقة
+class _PendingOwnershipPageState extends State<PendingOwnershipPage> {
   List<Map<String, dynamic>> _ops = [];
   List<Map<String, dynamic>> _discarded = [];
   bool _loading = true;
   bool _showDiscarded = false;
 
+  // يحدد هل المستخدم مدير
   bool get _isAdmin => PermissionsService().canManageUsers;
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
     _reload();
   }
 
+  // يعيد تحميل العمليات المعلقة
   void _reload() {
     final service = RevocationService.instance;
     setState(() {
       _ops = _isAdmin
           ? service.listUnverifiedOwnershipOps(widget.companyCode)
           : [];
-      _discarded = _isAdmin
-          ? service.listDiscardedOwnershipOps(widget.companyCode)
-          : [];
+      _discarded =
+          _isAdmin ? service.listDiscardedOwnershipOps(widget.companyCode) : [];
       _loading = false;
     });
   }
 
+  // يطلب تأكيد المستخدم
   Future<bool> _confirm({
     required String title,
     required String body,
     required String actionLabel,
     required Color actionColor,
   }) async {
-return CachePartitions.run(() async {
-
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.dialogBackground(context),
-        title: Text(
-          title,
-          style: TextStyle(
-            color: AppTheme.textMainFor(context),
-            fontFamily: 'Cairo',
-          ),
-        ),
-        content: Text(
-          body,
-          style: TextStyle(
-            color: AppTheme.textSoftFor(context),
-            fontFamily: 'Cairo',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('إلغاء'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(
-              actionLabel,
-              style: TextStyle(color: actionColor),
+    return CachePartitions.run(() async {
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppTheme.dialogBackground(context),
+          title: Text(
+            title,
+            style: TextStyle(
+              color: AppTheme.textMainFor(context),
+              fontFamily: 'Cairo',
             ),
           ),
-        ],
-      ),
-    );
-    return confirm == true;
-});
-}
+          content: Text(
+            body,
+            style: TextStyle(
+              color: AppTheme.textSoftFor(context),
+              fontFamily: 'Cairo',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('إلغاء'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(
+                actionLabel,
+                style: TextStyle(color: actionColor),
+              ),
+            ),
+          ],
+        ),
+      );
+      return confirm == true;
+    });
+  }
 
+  // يصف العملية المعلقة
   String _opDescription(Map<String, dynamic> op) {
     final parts = <String>[
       'القسم: ${op['section']}',
@@ -116,91 +121,88 @@ return CachePartitions.run(() async {
     return parts.join(' — ');
   }
 
+  // يسند العملية إلى المستخدم
   Future<void> _assignToMe(Map<String, dynamic> op) async {
-return CachePartitions.run(() async {
-
-    final ok = await _confirm(
-      title: 'نسب العملية لحسابك؟',
-      body: '${_opDescription(op)}\n\n'
-          'ستُنسب العملية لحسابك أنت (تُقرأ هويتك من جلسة '
-          'الدخول) وستُرفع ضمن المزامنة بصلاحياتك. لا يمكن '
-          'نسبها لحساب آخر من هنا.',
-      actionLabel: 'نسبها لحسابي',
-      actionColor: AppTheme.successFor(context),
-    );
-    if (!ok) return;
-    final done =
-        await RevocationService.instance.assignPendingOpToUser(
-      boxName: op['box']?.toString() ?? '',
-      key: op['key']?.toString() ?? '',
-      companyCode: widget.companyCode,
-    );
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          done
-              ? 'تم نسب العملية لحسابك وستُرفع ضمن المزامنة'
-              : 'تعذر نسب العملية',
+    return CachePartitions.run(() async {
+      final ok = await _confirm(
+        title: 'نسب العملية لحسابك؟',
+        body: '${_opDescription(op)}\n\n'
+            'ستُنسب العملية لحسابك أنت (تُقرأ هويتك من جلسة '
+            'الدخول) وستُرفع ضمن المزامنة بصلاحياتك. لا يمكن '
+            'نسبها لحساب آخر من هنا.',
+        actionLabel: 'نسبها لحسابي',
+        actionColor: AppTheme.successFor(context),
+      );
+      if (!ok) return;
+      final done = await RevocationService.instance.assignPendingOpToUser(
+        boxName: op['box']?.toString() ?? '',
+        key: op['key']?.toString() ?? '',
+        companyCode: widget.companyCode,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            done
+                ? 'تم نسب العملية لحسابك وستُرفع ضمن المزامنة'
+                : 'تعذر نسب العملية',
+          ),
         ),
-      ),
-    );
-    _reload();
-});
-}
+      );
+      _reload();
+    });
+  }
 
+  // يتجاهل العملية
   Future<void> _discard(Map<String, dynamic> op) async {
-return CachePartitions.run(() async {
-
-    final ok = await _confirm(
-      title: 'استبعاد العملية؟',
-      body: '${_opDescription(op)}\n\n'
-          'ستخرج العملية من القوائم ولن تُرفع أبداً، لكنها '
-          'تبقى محفوظة على الجهاز ويمكن استرجاعها لاحقاً من '
-          'قائمة المستبعدة.',
-      actionLabel: 'استبعاد',
-      actionColor: AppTheme.dangerStrongFor(context),
-    );
-    if (!ok) return;
-    final done =
-        await RevocationService.instance.discardUnverifiedPendingOp(
-      boxName: op['box']?.toString() ?? '',
-      key: op['key']?.toString() ?? '',
-      companyCode: widget.companyCode,
-    );
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content:
-            Text(done ? 'تم استبعاد العملية' : 'تعذر الاستبعاد'),
-      ),
-    );
-    _reload();
-});
-}
-
-  Future<void> _recover(Map<String, dynamic> op) async {
-return CachePartitions.run(() async {
-
-    final done =
-        await RevocationService.instance.recoverDiscardedPendingOp(
-      boxName: op['box']?.toString() ?? '',
-      key: op['key']?.toString() ?? '',
-    );
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          done
-              ? 'تم الاسترجاع: عادت العملية لقائمة التسوية'
-              : 'تعذر الاسترجاع',
+    return CachePartitions.run(() async {
+      final ok = await _confirm(
+        title: 'استبعاد العملية؟',
+        body: '${_opDescription(op)}\n\n'
+            'ستخرج العملية من القوائم ولن تُرفع أبداً، لكنها '
+            'تبقى محفوظة على الجهاز ويمكن استرجاعها لاحقاً من '
+            'قائمة المستبعدة.',
+        actionLabel: 'استبعاد',
+        actionColor: AppTheme.dangerStrongFor(context),
+      );
+      if (!ok) return;
+      final done = await RevocationService.instance.discardUnverifiedPendingOp(
+        boxName: op['box']?.toString() ?? '',
+        key: op['key']?.toString() ?? '',
+        companyCode: widget.companyCode,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(done ? 'تم استبعاد العملية' : 'تعذر الاستبعاد'),
         ),
-      ),
-    );
-    _reload();
-});
-}
+      );
+      _reload();
+    });
+  }
 
+  // يستعيد العملية
+  Future<void> _recover(Map<String, dynamic> op) async {
+    return CachePartitions.run(() async {
+      final done = await RevocationService.instance.recoverDiscardedPendingOp(
+        boxName: op['box']?.toString() ?? '',
+        key: op['key']?.toString() ?? '',
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            done
+                ? 'تم الاسترجاع: عادت العملية لقائمة التسوية'
+                : 'تعذر الاسترجاع',
+          ),
+        ),
+      );
+      _reload();
+    });
+  }
+
+  // يبني بطاقة عملية
   Widget _opCard(
     Map<String, dynamic> op, {
     required List<Widget> actions,
@@ -248,6 +250,7 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -263,8 +266,7 @@ return CachePartitions.run(() async {
         centerTitle: true,
         backgroundColor: AppTheme.appBarBgGlass,
         elevation: 0,
-        iconTheme:
-            IconThemeData(color: AppTheme.textMainFor(context)),
+        iconTheme: IconThemeData(color: AppTheme.textMainFor(context)),
       ),
       backgroundColor: AppTheme.dialogBackground(context),
       body: !_isAdmin
@@ -289,8 +291,7 @@ return CachePartitions.run(() async {
                     if (_ops.isEmpty)
                       Center(
                         child: Padding(
-                          padding:
-                              const EdgeInsets.symmetric(vertical: 24),
+                          padding: const EdgeInsets.symmetric(vertical: 24),
                           child: Text(
                             'لا توجد عمليات مجهولة المالك',
                             style: TextStyle(
@@ -311,15 +312,13 @@ return CachePartitions.run(() async {
                                 onPressed: () => _assignToMe(op),
                                 icon: Icon(
                                   Icons.person_add_alt,
-                                  color:
-                                      AppTheme.successFor(context),
+                                  color: AppTheme.successFor(context),
                                   size: 18,
                                 ),
                                 label: Text(
                                   'نسبها لحسابي',
                                   style: TextStyle(
-                                    color: AppTheme.successFor(
-                                        context),
+                                    color: AppTheme.successFor(context),
                                     fontFamily: 'Cairo',
                                   ),
                                 ),
@@ -329,16 +328,13 @@ return CachePartitions.run(() async {
                                 onPressed: () => _discard(op),
                                 icon: Icon(
                                   Icons.visibility_off_outlined,
-                                  color: AppTheme.dangerStrongFor(
-                                      context),
+                                  color: AppTheme.dangerStrongFor(context),
                                   size: 18,
                                 ),
                                 label: Text(
                                   'استبعاد',
                                   style: TextStyle(
-                                    color:
-                                        AppTheme.dangerStrongFor(
-                                            context),
+                                    color: AppTheme.dangerStrongFor(context),
                                     fontFamily: 'Cairo',
                                   ),
                                 ),
@@ -370,8 +366,7 @@ return CachePartitions.run(() async {
                       if (_showDiscarded)
                         ..._discarded.map(
                           (op) => Padding(
-                            padding:
-                                const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.only(bottom: 8),
                             child: _opCard(
                               op,
                               actions: [
@@ -379,15 +374,13 @@ return CachePartitions.run(() async {
                                   onPressed: () => _recover(op),
                                   icon: Icon(
                                     Icons.restore,
-                                    color: AppTheme.successFor(
-                                        context),
+                                    color: AppTheme.successFor(context),
                                     size: 18,
                                   ),
                                   label: Text(
                                     'استرجاع',
                                     style: TextStyle(
-                                      color: AppTheme.successFor(
-                                          context),
+                                      color: AppTheme.successFor(context),
                                       fontFamily: 'Cairo',
                                     ),
                                   ),

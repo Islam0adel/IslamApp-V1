@@ -1,28 +1,31 @@
+# backend/app/core/firebase_setup.py
 import firebase_admin
 from firebase_admin import credentials, firestore, db as realtime_database
 import os
 import json
 
+
+# يجهّز Firebase Admin من متغيرات البيئة أو ملف المفاتيح المحلي
 def setup_firebase():
     try:
         # منع تكرار الـ initialization
         if not firebase_admin._apps:
-            
+
             # 1. المحاولة الأولى: البحث عن "Secret" في إعدادات السيرفر (Hugging Face / Vercel)
             firebase_keys_json = os.getenv("FIREBASE_KEYS")
-            
+
             if firebase_keys_json:
                 print("✅ Firebase: Loading from Environment Secrets (Cloud)...")
                 key_dict = json.loads(firebase_keys_json)
                 cred = credentials.Certificate(key_dict)
-            
+
             else:
                 # 2. المحاولة الثانية: العمل محلياً (Local) من خلال ملف الـ JSON
                 print("🏠 Firebase: Loading from local JSON file...")
-                
+
                 base_dir = os.path.dirname(os.path.abspath(__file__))
                 local_key_path = os.path.join(base_dir, "serviceAccountKey.json")
-                
+
                 if not os.path.exists(local_key_path):
                     local_key_path = os.path.join(base_dir, "../../serviceAccountKey.json")
 
@@ -37,18 +40,20 @@ def setup_firebase():
                 cred,
                 {"databaseURL": database_url} if database_url else None,
             )
-            
+
         return firestore.client()
-        
+
     except Exception as e:
         print(f"⚠️ خطأ في الاتصال بفايربيز: {e}")
         return None
 
 
 # تصدير كائن db ليتم استخدامه في auth.py وباقي الأجزاء
+# كائن قاعدة البيانات اللي بيتستخدم في auth.py وباقي الأجزاء
 db = setup_firebase()
 
 
+# يرجّع عميل Realtime Database ويشترط رابطه في النشر
 def get_realtime_database():
     """Returns the Admin RTDB client, requiring FIREBASE_DATABASE_URL in deployment."""
     if not firebase_admin._apps:
@@ -61,6 +66,7 @@ def get_realtime_database():
 
 # ⭐ expose the default app for FCM (used by firebase_admin.messaging)
 # لو الـ init نجح، الـ app موجود → FCM سيعمل تلقائياً بنفس الـ credentials.
+# تطبيق Firebase الافتراضي لاستخدامه في الإشعارات (FCM)
 firebase_app = None
 try:
     if firebase_admin._apps:

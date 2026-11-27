@@ -1,4 +1,4 @@
-// lib/views/auth/phone_entry_screen.dart
+// frontend/lib/views/auth/phone_entry_screen.dart
 
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
@@ -6,13 +6,16 @@ import '../../views/widgets/glass_card.dart';
 import '../../services/api_service.dart';
 import 'complete_registration_screen.dart';
 
+// شاشة إدخال الهاتف أو المعرّف للمتابعة
 class PhoneEntryScreen extends StatefulWidget {
   const PhoneEntryScreen({super.key});
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<PhoneEntryScreen> createState() => _PhoneEntryScreenState();
 }
 
+// حالة الويدجت PhoneEntryScreen: تدير بيانات الشاشة وتفاعلاتها
 class _PhoneEntryScreenState extends State<PhoneEntryScreen>
     with SingleTickerProviderStateMixin {
   final _identifierController = TextEditingController();
@@ -20,6 +23,7 @@ class _PhoneEntryScreenState extends State<PhoneEntryScreen>
   final _apiService = ApiService();
   bool _isLoading = false;
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
@@ -29,6 +33,7 @@ class _PhoneEntryScreenState extends State<PhoneEntryScreen>
     )..forward();
   }
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     _identifierController.dispose();
@@ -36,6 +41,7 @@ class _PhoneEntryScreenState extends State<PhoneEntryScreen>
     super.dispose();
   }
 
+  // يتابع بعد إدخال المعرّف
   Future<void> _handleContinue() async {
     final identifier = _identifierController.text.trim();
     if (identifier.isEmpty) {
@@ -126,15 +132,15 @@ class _PhoneEntryScreenState extends State<PhoneEntryScreen>
       }
 
       // ⭐ حالة 1: سوبر أدمن مش متسجل
-      if (result['is_super_admin'] == true &&
-          result['needs_setup'] == true) {
+      if (result['is_super_admin'] == true && result['needs_setup'] == true) {
         Navigator.push(
           context,
           MaterialPageRoute(
             builder: (_) => CompleteRegistrationScreen(
               phoneNumber: null, // السوبر أدمن مش محتاج رقم
               userName: (result['name'] ?? 'Super Admin').toString(),
-              companyName: (result['company_name'] ?? 'الشركة الافتراضية').toString(),
+              companyName:
+                  (result['company_name'] ?? 'الشركة الافتراضية').toString(),
               branchCode: '',
               isSuperAdminSetup: true,
               prefilledEmail: isEmail ? identifier : null,
@@ -174,7 +180,8 @@ class _PhoneEntryScreenState extends State<PhoneEntryScreen>
     }
   }
 
-    Future<void> _showRequestDialog({
+  // يعرض نافذة طلب الانضمام
+  Future<void> _showRequestDialog({
     String? prefilledPhone,
     String? prefilledEmail,
   }) async {
@@ -210,6 +217,7 @@ class _PhoneEntryScreenState extends State<PhoneEntryScreen>
     }
   }
 
+  // يعرض رسالة سريعة بالنص واللون المحددين
   void _showSnackBar(String msg, Color color) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -222,8 +230,8 @@ class _PhoneEntryScreenState extends State<PhoneEntryScreen>
       ),
     );
   }
-  
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -239,8 +247,7 @@ class _PhoneEntryScreenState extends State<PhoneEntryScreen>
         ),
         child: SafeArea(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(
-                horizontal: 20, vertical: 40),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
             child: Column(
               children: [
                 FadeTransition(
@@ -332,8 +339,8 @@ class _PhoneEntryScreenState extends State<PhoneEntryScreen>
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor:
                                       AppTheme.authActionBackground(context),
-                                  padding: const EdgeInsets.symmetric(
-                                      vertical: 15),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 15),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(15),
                                   ),
@@ -343,9 +350,8 @@ class _PhoneEntryScreenState extends State<PhoneEntryScreen>
                                   'متابعة',
                                   style: TextStyle(
                                     fontSize: 18,
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onPrimary,
+                                    color:
+                                        Theme.of(context).colorScheme.onPrimary,
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
@@ -370,12 +376,14 @@ class _PhoneEntryScreenState extends State<PhoneEntryScreen>
     );
   }
 }
+
 // ============================================================
 // Dialog: طلب الانضمام
 // ============================================================
 // ============================================================
 // Dialog: طلب الانضمام (بدون اختيار شركة — الأدمن يحددها)
 // ============================================================
+// نافذة طلب الانضمام لشركة
 class _RequestRegistrationDialog extends StatefulWidget {
   final String? prefilledPhone;
   final String? prefilledEmail;
@@ -385,11 +393,13 @@ class _RequestRegistrationDialog extends StatefulWidget {
     this.prefilledEmail,
   });
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<_RequestRegistrationDialog> createState() =>
       _RequestRegistrationDialogState();
 }
 
+// حالة نافذة طلب الانضمام
 class _RequestRegistrationDialogState
     extends State<_RequestRegistrationDialog> {
   final _nameCtrl = TextEditingController();
@@ -397,6 +407,7 @@ class _RequestRegistrationDialogState
   final _emailCtrl = TextEditingController();
   final _noteCtrl = TextEditingController();
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
@@ -408,6 +419,7 @@ class _RequestRegistrationDialogState
     }
   }
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     _nameCtrl.dispose();
@@ -417,6 +429,7 @@ class _RequestRegistrationDialogState
     super.dispose();
   }
 
+  // يرسل طلب الانضمام
   void _submit() {
     final name = _nameCtrl.text.trim();
     if (name.isEmpty) return _error('الاسم مطلوب');
@@ -428,12 +441,13 @@ class _RequestRegistrationDialogState
       'name': name,
       'phone_number': _phoneCtrl.text.trim(),
       'email': _emailCtrl.text.trim(),
-      'company_code': '',  // ⭐ الأدمن يحددها
+      'company_code': '', // ⭐ الأدمن يحددها
       'branch_code': '',
       'note': _noteCtrl.text.trim(),
     });
   }
 
+  // يعرض رسالة خطأ
   void _error(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -447,6 +461,7 @@ class _RequestRegistrationDialogState
     );
   }
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
@@ -566,6 +581,7 @@ class _RequestRegistrationDialogState
     );
   }
 
+  // يبني حقل إدخال
   Widget _field({
     required TextEditingController controller,
     required String label,

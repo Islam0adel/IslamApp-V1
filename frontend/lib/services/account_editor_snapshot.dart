@@ -1,5 +1,7 @@
+// frontend/lib/services/account_editor_snapshot.dart
 import 'read_authorization_snapshot.dart';
 
+// لقطة صلاحيات محرر الحساب: تُستخدم نفسها عند التحميل والحفظ
 /// The same authorization snapshot accompanies loading and saving this editor.
 class AccountEditorSnapshot {
   AccountEditorSnapshot._(
@@ -20,8 +22,11 @@ class AccountEditorSnapshot {
   final bool canEdit, canChangeStatus, canChangeRole;
   final Map<String, dynamic> data;
   final List<Map<String, String>> branches;
+
+  // يحدد هل اللقطة ما زالت صالحة للنطاق الحالي
   bool get isCurrent => scope.isCurrent;
 
+  // ينشئ اللقطة من استجابة الخادم بعد التحقق من النطاق
   factory AccountEditorSnapshot.fromServer(Map<String, dynamic> value,
       String requestedId, ReadAuthorizationSnapshot scope) {
     scope.check();
@@ -88,7 +93,9 @@ class AccountEditorSnapshot {
             {'code': item['code'] as String, 'name': item['name'] as String}));
       }
       data.addAll({
-        'invitation_email': value['invitation_email'] is String ? value['invitation_email'] : '',
+        'invitation_email': value['invitation_email'] is String
+            ? value['invitation_email']
+            : '',
         'can_set_invitation_email': value['can_set_invitation_email'] == true,
         'phone_number': text('phone_number'),
         'username': text('username'),
@@ -111,8 +118,11 @@ class AccountEditorSnapshot {
   }
 }
 
+// استثناء يدل على أن الحفظ تم لكن تحديث القائمة فشل
 class UserSavedRefreshFailed implements Exception {
   const UserSavedRefreshFailed();
+
+  // يعيد رسالة الاستثناء للعرض
   @override
   String toString() =>
       'تم حفظ التعديل، لكن تعذر تحديث قائمة المستخدمين. أعد تحميل القائمة ولا تكرر الحفظ.';

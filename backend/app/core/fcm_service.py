@@ -20,6 +20,7 @@ from app.core.models import UserFcmToken
 from app.core.firebase_setup import firebase_app
 
 # ─── استيراد messaging بشكل آمن ────────────────────────────
+# استيراد مكتبة messaging بشكل آمن عشان البرنامج يشتغل حتى لو مش متسطبة
 try:
     from firebase_admin import messaging as _fb_messaging
     _MESSAGING_IMPORTED = True
@@ -28,6 +29,7 @@ except ImportError:
     _MESSAGING_IMPORTED = False
 
 
+# يفحص هل إشعارات FCM جاهزة للإرسال
 def is_fcm_enabled() -> bool:
     """هل FCM جاهز للإرسال؟ (يحتاج Admin SDK + app initialized)"""
     return _MESSAGING_IMPORTED and firebase_app is not None
@@ -37,6 +39,8 @@ def is_fcm_enabled() -> bool:
 # 1. قراءة الرموز من Neon
 # ============================================================
 
+
+# يجيب كل رموز FCM لأجهزة المستخدم في الشركة
 async def get_user_tokens(user_uid: str, company_code: str) -> list[str]:
     """جلب كل رموز FCM للمستخدم في شركة معينة (كل أجهزته)"""
     if not user_uid or not company_code:
@@ -52,6 +56,7 @@ async def get_user_tokens(user_uid: str, company_code: str) -> list[str]:
         return [row[0] for row in result.all()]
 
 
+# يمسح الرموز الفاشلة أو المنتهية من قاعدة البيانات
 async def delete_tokens(tokens: list[str]) -> None:
     """حذف الرموز الفاشلة (invalid/unregistered) من Neon"""
     if not tokens:
@@ -68,12 +73,15 @@ async def delete_tokens(tokens: list[str]) -> None:
 # 2. الإرسال المتزامن (في executor)
 # ============================================================
 
+
+# نتيجة الإرسال: الرموز الناجحة والرموز المنتهية
 @dataclass(frozen=True)
 class FcmSendResult:
     invalid_tokens: tuple[str, ...] = ()
     success_count: int = 0
 
 
+# يرسل الإشعار فعليًا ويفصل النجاح عن الأجهزة المنتهية
 def _send_sync(
     tokens: list[str],
     title: str,
@@ -133,6 +141,8 @@ def _send_sync(
 # 3. الإرسال غير المتزامن (async)
 # ============================================================
 
+
+# يرسل إشعار لمستخدم على كل أجهزته
 async def send_push_to_user(
     user_uid: str,
     company_code: str,
@@ -177,6 +187,8 @@ async def send_push_to_user(
 # 4. Fire-and-forget scheduling
 # ============================================================
 
+
+# يرسل الإشعار في الخلفية من غير ما يستنى الرد
 def send_push_to_user_bg(
     user_uid: str,
     company_code: str,

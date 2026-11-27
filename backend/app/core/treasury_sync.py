@@ -1,3 +1,4 @@
+# backend/app/core/treasury_sync.py
 """Scoped, transaction-serialized treasury changes. No device timestamps."""
 import hashlib
 import json
@@ -5,6 +6,7 @@ from sqlalchemy import select
 from app.core.models import TreasurySyncState, TreasurySyncEntry, TreasuryTransferRecord
 
 
+# يحوّل صف تحويل الخزينة لحمولة للتزامن
 def record_payload(row):
     keys = ('id', 'company_code', 'branch_code', 'serial', 'from_treasury',
             'to_treasury', 'amount', 'statement', 'employee', 'date', 'is_deleted')
@@ -13,6 +15,7 @@ def record_payload(row):
     return result
 
 
+# يخزّن إدخال تزامن جديد ويرفع رقم النسخة
 async def store_entry(db, state, row):
     state.revision += 1
     entry = await db.get(TreasurySyncEntry, (row.company_code, row.id))
@@ -25,6 +28,7 @@ async def store_entry(db, state, row):
     return entry
 
 
+# يقفل حالة تزامن الشركة حسب نوع قاعدة البيانات
 async def lock_state(db, company):
     dialect = db.bind.dialect.name
     if dialect == 'postgresql':
@@ -45,7 +49,7 @@ async def lock_state(db, company):
     return state
 
 
+# يبني توكن نطاق التزامن من المستخدم والشركة والنمط والفروع
 def scope_token(uid, company, mode, branches):
     value = json.dumps([uid, company, mode, sorted(branches or [])], separators=(',', ':'))
     return hashlib.sha256(value.encode()).hexdigest()
-

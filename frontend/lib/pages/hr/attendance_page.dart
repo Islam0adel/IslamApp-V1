@@ -1,9 +1,9 @@
+// frontend/lib/pages/hr/attendance_page.dart
 import '../../services/cache_partitions.dart';
-// lib/pages/hr/attendance_page.dart
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../../services/permissions_service.dart';  // ⭐ جديد
+import '../../services/permissions_service.dart'; // ⭐ جديد
 import '../../core/theme.dart';
 import '../../core/hr_constants.dart';
 import '../../views/widgets/glass_card.dart';
@@ -12,8 +12,9 @@ import '../../services/hr_service.dart';
 import '../../services/hr_report_service.dart';
 import '../../models/employee_model.dart';
 import '../../models/hr_models.dart';
-import 'dart:async';  // عشان unawaited
+import 'dart:async'; // عشان unawaited
 
+// صفحة الحضور والانصراف الشهرية للموظف
 /// صفحة الحضور والانصراف
 ///
 /// ⚠️ النسخة الجديدة:
@@ -24,11 +25,12 @@ import 'dart:async';  // عشان unawaited
 class AttendancePage extends StatefulWidget {
   const AttendancePage({super.key});
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<AttendancePage> createState() => _AttendancePageState();
 }
 
-
+// حالة الويدجت AttendancePage: تدير بيانات الشاشة وتفاعلاتها
 class _AttendancePageState extends State<AttendancePage> {
   // ============================================================
   // Services
@@ -37,7 +39,6 @@ class _AttendancePageState extends State<AttendancePage> {
   final EmployeeService _employeeService = EmployeeService();
   final HRService _hrService = HRService();
   final HRReportService _reportService = HRReportService();
-
 
   // ============================================================
   // State
@@ -52,13 +53,12 @@ class _AttendancePageState extends State<AttendancePage> {
   DateTime _selectedMonth = DateTime.now();
 
   // البيانات المحملة من Hive/السيرفر
-    Map<String, HRAttendanceModel> _attendanceMap = {};
+  Map<String, HRAttendanceModel> _attendanceMap = {};
   Set<String> _vacationDates = {};
   HREmployeeSettingsModel? _employeeSettings;
 
   // ⭐ جديد: خصومات الشهر (للربط بين اليوم والخصم)
   List<HRAdjustmentModel> _monthAdjustments = [];
-
 
   // ============================================================
   // Constants
@@ -66,29 +66,50 @@ class _AttendancePageState extends State<AttendancePage> {
 
   static const int _graceMinutes = 15;
   static const List<String> _monthNamesAr = [
-    'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
-    'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر',
+    'يناير',
+    'فبراير',
+    'مارس',
+    'أبريل',
+    'مايو',
+    'يونيو',
+    'يوليو',
+    'أغسطس',
+    'سبتمبر',
+    'أكتوبر',
+    'نوفمبر',
+    'ديسمبر',
   ];
   static const List<String> _dayNamesAr = [
-    'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس',
-    'الجمعة', 'السبت', 'الأحد',
+    'الاثنين',
+    'الثلاثاء',
+    'الأربعاء',
+    'الخميس',
+    'الجمعة',
+    'السبت',
+    'الأحد',
   ];
-
 
   // ============================================================
   // Getters — إعدادات الموظف
   // ============================================================
 
+  // يعيد وقت الحضور الافتراضي للموظف
   String get _defaultCheckIn => _employeeSettings?.defaultCheckIn ?? '09:00';
-  String get _defaultCheckOut => _employeeSettings?.defaultCheckOut ?? '17:00';
-  int? get _weeklyVacationDay => _employeeSettings?.weeklyVacationDay;
-  bool get _flexibleHours => _employeeSettings?.flexibleHours ?? false;
 
+  // يعيد وقت الانصراف الافتراضي للموظف
+  String get _defaultCheckOut => _employeeSettings?.defaultCheckOut ?? '17:00';
+
+  // يعيد يوم الإجازة الأسبوعية للموظف
+  int? get _weeklyVacationDay => _employeeSettings?.weeklyVacationDay;
+
+  // يحدد هل الموظف بدوام مرن
+  bool get _flexibleHours => _employeeSettings?.flexibleHours ?? false;
 
   // ============================================================
   // Getters — Pending
   // ============================================================
 
+  // يعيد عدد العمليات المعلقة للموظف الحالي
   /// عدد العمليات المعلقة للموظف الحالي (في كل الشهور)
   int get _pendingCount {
     if (_selectedEmployee == null) return 0;
@@ -101,9 +122,12 @@ class _AttendancePageState extends State<AttendancePage> {
         .length;
   }
 
+  // يحدد هل توجد تعديلات غير محفوظة
   /// هل فيه تعديلات غير محفوظة؟
   bool get _hasUnsavedChanges => _pendingCount > 0;
-    /// ⭐ هل يقدر المستخدم يحفظ؟ (أي صلاحية من الـ 3)
+
+  // يحدد هل يحق للمستخدم حفظ التعديلات
+  /// ⭐ هل يقدر المستخدم يحفظ؟ (أي صلاحية من الـ 3)
   bool get _canSaveChanges {
     final ps = PermissionsService();
     return ps.canAddAttendance ||
@@ -111,39 +135,48 @@ class _AttendancePageState extends State<AttendancePage> {
         ps.canDeleteAttendance;
   }
 
-
   // ============================================================
   // initState / dispose
   // ============================================================
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
     _loadEmployees();
   }
 
-
   // ============================================================
   // Helpers — تواريخ
   // ============================================================
 
+  // يحوّل الشهر إلى نص
   String _monthStr(DateTime dt) => HRConstants.monthToStr(dt);
+
+  // يحوّل التاريخ إلى نص
   String _dateStr(DateTime dt) => HRConstants.dateToStr(dt);
+
+  // ينسّق التاريخ للعرض
   String _displayDate(DateTime dt) => '${dt.day}/${dt.month}';
+
+  // يعيد اسم اليوم
   String _getDayName(DateTime dt) => _dayNamesAr[dt.weekday - 1];
+
+  // يعيد اسم الشهر والسنة
   String _getMonthName(DateTime dt) =>
       '${_monthNamesAr[dt.month - 1]} ${dt.year}';
-  int _daysInMonth(DateTime dt) => HRConstants.daysInMonth(dt);
 
+  // يحسب عدد أيام الشهر
+  int _daysInMonth(DateTime dt) => HRConstants.daysInMonth(dt);
 
   // ============================================================
   // Helper — هل التاريخ إجازة أسبوعية؟
   // ============================================================
 
+  // يحدد هل اليوم هو يوم الإجازة الأسبوعية
   bool _isWeeklyVacationDay(DateTime date) {
     return HRConstants.isWeeklyVacation(date, _weeklyVacationDay);
   }
-
 
   // ============================================================
   // الخريطة الفعلية (Hive + Pending)
@@ -152,6 +185,7 @@ class _AttendancePageState extends State<AttendancePage> {
   // عشان الـ UI يعرض آخر حالة يراها المستخدم.
   // ============================================================
 
+  // يدمج الحضور المحفوظ مع التعديلات المعلقة
   Map<String, HRAttendanceModel> _getEffectiveMap() {
     final result = Map<String, HRAttendanceModel>.from(_attendanceMap);
 
@@ -187,301 +221,295 @@ class _AttendancePageState extends State<AttendancePage> {
     return result;
   }
 
-
   // ============================================================
   // تحميل الموظفين
   // ============================================================
 
+  // يحمّل قائمة الموظفين
   Future<void> _loadEmployees() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      setState(() => _isLoading = true);
 
-    setState(() => _isLoading = true);
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        _companyCode = prefs.getString('company_code') ?? '';
 
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      _companyCode = prefs.getString('company_code') ?? '';
+        if (_companyCode.isEmpty) {
+          setState(() => _isLoading = false);
+          return;
+        }
 
-      if (_companyCode.isEmpty) {
-        setState(() => _isLoading = false);
-        return;
+        final allEmployees = await _employeeService.getEmployeesList(
+          companyCode: _companyCode,
+        );
+
+        // ⭐ فلترة حسب الصلاحيات (allowed_branches + hr_viewable_employees)
+        _employees = allEmployees
+            .where((e) =>
+                PermissionsService().canViewEmployee(e.code, e.branchCode))
+            .toList();
+
+        if (_employees.isEmpty && allEmployees.isNotEmpty) {
+          print('⚠️ لا يوجد موظفون مرئيون لهذا المستخدم');
+        }
+
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+            if (_employees.isNotEmpty && _selectedEmployee == null) {
+              _selectedEmployee = _employees.first;
+              _loadMonthData();
+            }
+          });
+        }
+      } catch (e) {
+        print("❌ خطأ في تحميل الموظفين: $e");
+        if (mounted) setState(() => _isLoading = false);
       }
+    });
+  }
 
-            final allEmployees = await _employeeService.getEmployeesList(
-        companyCode: _companyCode,
-      );
-
-      // ⭐ فلترة حسب الصلاحيات (allowed_branches + hr_viewable_employees)
-      _employees = allEmployees
-          .where((e) => PermissionsService()
-              .canViewEmployee(e.code, e.branchCode))
-          .toList();
-
-      if (_employees.isEmpty && allEmployees.isNotEmpty) {
-        print('⚠️ لا يوجد موظفون مرئيون لهذا المستخدم');
-      }
-
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          if (_employees.isNotEmpty && _selectedEmployee == null) {
-            _selectedEmployee = _employees.first;
-            _loadMonthData();
-          }
-        });
-      }
-    } catch (e) {
-      print("❌ خطأ في تحميل الموظفين: $e");
-      if (mounted) setState(() => _isLoading = false);
-    }
-});
-}
-
-
-    // ============================================================
+  // ============================================================
   // تحميل بيانات الشهر — من Hive فقط (local-first)
   //
   // ⭐ لو عايز تجيب من السيرفر: اضغط زر "تحديث" (بينادي _refreshFromServer)
   // ============================================================
 
+  // يحمّل بيانات حضور الشهر
   Future<void> _loadMonthData({bool showLoader = true}) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_selectedEmployee == null) return;
+      if (showLoader) setState(() => _isLoading = true);
 
-    if (_selectedEmployee == null) return;
-    if (showLoader) setState(() => _isLoading = true);
+      try {
+        final monthStr = _monthStr(_selectedMonth);
 
-    try {
-      final monthStr = _monthStr(_selectedMonth);
+        final settings = await _hrService.getEmployeeSettings(
+          companyCode: _companyCode,
+          employeeCode: _selectedEmployee!.code,
+        );
 
-      final settings = await _hrService.getEmployeeSettings(
-        companyCode: _companyCode,
-        employeeCode: _selectedEmployee!.code,
-      );
+        final attendance = await _hrService.getEmployeeMonthAttendance(
+          companyCode: _companyCode,
+          employeeCode: _selectedEmployee!.code,
+          month: monthStr,
+        );
 
-      final attendance = await _hrService.getEmployeeMonthAttendance(
-        companyCode: _companyCode,
-        employeeCode: _selectedEmployee!.code,
-        month: monthStr,
-      );
+        final vacations = await _hrService.getVacations(
+          companyCode: _companyCode,
+          fromDate: '$monthStr-01',
+          toDate: '$monthStr-31',
+          branchCode: _selectedEmployee!.branchCode,
+          employeeCode: _selectedEmployee!.code,
+        );
 
-      final vacations = await _hrService.getVacations(
-        companyCode: _companyCode,
-        fromDate: '$monthStr-01',
-        toDate: '$monthStr-31',
-        branchCode: _selectedEmployee!.branchCode,
-        employeeCode: _selectedEmployee!.code,
-      );
+        final vacationSet = vacations.map((v) => v.date).toSet();
 
-      final vacationSet = vacations.map((v) => v.date).toSet();
+        final monthAdjustments = await _hrService.getAdjustmentsForMonth(
+          companyCode: _companyCode,
+          month: monthStr,
+          branchCode: _selectedEmployee!.branchCode,
+        );
 
-      final monthAdjustments = await _hrService.getAdjustmentsForMonth(
-        companyCode: _companyCode,
-        month: monthStr,
-        branchCode: _selectedEmployee!.branchCode,
-      );
+        final deductions = monthAdjustments
+            .where((a) =>
+                a.employeeCode == _selectedEmployee!.code && a.isDeduction)
+            .toList();
 
-      final deductions = monthAdjustments
-          .where((a) =>
-              a.employeeCode == _selectedEmployee!.code &&
-              a.isDeduction)
-          .toList();
-
-      if (mounted) {
-        setState(() {
-          _employeeSettings = settings;
-          _attendanceMap = attendance;
-          _vacationDates = vacationSet;
-          _monthAdjustments = deductions;
-          _isLoading = false;
-        });
+        if (mounted) {
+          setState(() {
+            _employeeSettings = settings;
+            _attendanceMap = attendance;
+            _vacationDates = vacationSet;
+            _monthAdjustments = deductions;
+            _isLoading = false;
+          });
+        }
+      } catch (e) {
+        print("❌ خطأ في تحميل بيانات الشهر: $e");
+        if (mounted) setState(() => _isLoading = false);
       }
-    } catch (e) {
-      print("❌ خطأ في تحميل بيانات الشهر: $e");
-      if (mounted) setState(() => _isLoading = false);
-    }
-});
-}
+    });
+  }
 
+  // يحدّث البيانات من الخادم
   /// ⭐ تحديث من السيرفر — متوازي عشان يكون سريع
   Future<void> _refreshFromServer() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      setState(() => _isLoading = true);
 
-    setState(() => _isLoading = true);
+      try {
+        // ✅ تحميل متوازي بدل sequential
+        await Future.wait([
+          _hrService.fetchAllAttendance(_companyCode),
+          _hrService.fetchAllVacations(_companyCode),
+          _hrService.fetchAllAdjustments(_companyCode),
+          _hrService.fetchAllEmployeeSettings(_companyCode),
+        ]);
 
-    try {
-      // ✅ تحميل متوازي بدل sequential
-      await Future.wait([
-        _hrService.fetchAllAttendance(_companyCode),
-        _hrService.fetchAllVacations(_companyCode),
-        _hrService.fetchAllAdjustments(_companyCode),
-        _hrService.fetchAllEmployeeSettings(_companyCode),
-      ]);
+        await _reportService.invalidateCache(companyCode: _companyCode);
 
-      await _reportService.invalidateCache(companyCode: _companyCode);
-
-      if (!mounted) return;
-      _showSnackBar(
-        "تم التحديث من السيرفر ✅",
-        AppTheme.successStrongFor(context),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      _showSnackBar(
-        "فشل التحديث: $e",
-        AppTheme.dangerStrongFor(context),
-      );
-    } finally {
-      if (mounted) {
-        await _loadMonthData(showLoader: false);
+        if (!mounted) return;
+        _showSnackBar(
+          "تم التحديث من السيرفر ✅",
+          AppTheme.successStrongFor(context),
+        );
+      } catch (e) {
+        if (!mounted) return;
+        _showSnackBar(
+          "فشل التحديث: $e",
+          AppTheme.dangerStrongFor(context),
+        );
+      } finally {
+        if (mounted) {
+          await _loadMonthData(showLoader: false);
+        }
       }
-    }
-});
-}
-
+    });
+  }
 
   // ============================================================
   // اختيار الشهر
   // ============================================================
 
+  // يفتح نافذة اختيار الشهر
   Future<void> _pickMonth() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      final canProceed = await _confirmSaveIfNeeded();
+      if (!canProceed) return;
 
-    final canProceed = await _confirmSaveIfNeeded();
-    if (!canProceed) return;
+      final picked = await showDialog<DateTime>(
+        context: context,
+        builder: (ctx) => _MonthPickerDialog(initial: _selectedMonth),
+      );
 
-    final picked = await showDialog<DateTime>(
-      context: context,
-      builder: (ctx) => _MonthPickerDialog(initial: _selectedMonth),
-    );
-
-    if (picked != null) {
-      setState(() {
-        _selectedMonth = DateTime(picked.year, picked.month, 1);
-      });
-      _loadMonthData();
-    }
-});
-}
-
+      if (picked != null) {
+        setState(() {
+          _selectedMonth = DateTime(picked.year, picked.month, 1);
+        });
+        _loadMonthData();
+      }
+    });
+  }
 
   // ============================================================
   // تبديل الموظف
   // ============================================================
 
+  // يستجيب لتغيير الموظف المحدد
   Future<void> _onEmployeeChanged(EmployeeModel? v) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (v == null || v.code == _selectedEmployee?.code) return;
 
-    if (v == null || v.code == _selectedEmployee?.code) return;
+      final canProceed = await _confirmSaveIfNeeded();
+      if (!canProceed) return;
 
-    final canProceed = await _confirmSaveIfNeeded();
-    if (!canProceed) return;
-
-    setState(() {
-      _selectedEmployee = v;
-      _attendanceMap = {};
-      _vacationDates = {};
-      _employeeSettings = null;
+      setState(() {
+        _selectedEmployee = v;
+        _attendanceMap = {};
+        _vacationDates = {};
+        _employeeSettings = null;
+      });
+      _loadMonthData();
     });
-    _loadMonthData();
-});
-}
+  }
 
-
+  // يطلب تأكيد الحفظ عند وجود تعديلات
   Future<bool> _confirmSaveIfNeeded() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (!_hasUnsavedChanges) return true;
 
-    if (!_hasUnsavedChanges) return true;
-
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.dialogBackground(context),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(15),
-        ),
-        title: Text(
-          'تعديلات غير محفوظة',
-          style: TextStyle(
-            color: AppTheme.textMainFor(context),
-            fontFamily: 'Cairo',
-            fontWeight: FontWeight.bold,
+      final result = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppTheme.dialogBackground(context),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(15),
           ),
-        ),
-        content: Text(
-          'لديك $_pendingCount تعديل لم يُحفظ. ماذا تريد أن تفعل؟',
-          style: TextStyle(
-            color: AppTheme.textMutedFor(context),
-            fontFamily: 'Cairo',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, 'cancel'),
-            child: Text(
-              'إلغاء',
-              style: TextStyle(
-                color: AppTheme.textMutedFor(context),
-                fontFamily: 'Cairo',
-              ),
+          title: Text(
+            'تعديلات غير محفوظة',
+            style: TextStyle(
+              color: AppTheme.textMainFor(context),
+              fontFamily: 'Cairo',
+              fontWeight: FontWeight.bold,
             ),
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, 'discard'),
-            child: Text(
-              'تجاهل',
-              style: TextStyle(
-                color: AppTheme.dangerFor(context),
-                fontFamily: 'Cairo',
-              ),
+          content: Text(
+            'لديك $_pendingCount تعديل لم يُحفظ. ماذا تريد أن تفعل؟',
+            style: TextStyle(
+              color: AppTheme.textMutedFor(context),
+              fontFamily: 'Cairo',
             ),
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, 'save'),
-            child: Text(
-              'حفظ',
-              style: TextStyle(
-                color: AppTheme.successStrongFor(context),
-                fontFamily: 'Cairo',
-                fontWeight: FontWeight.bold,
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'cancel'),
+              child: Text(
+                'إلغاء',
+                style: TextStyle(
+                  color: AppTheme.textMutedFor(context),
+                  fontFamily: 'Cairo',
+                ),
               ),
             ),
-          ),
-        ],
-      ),
-    );
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'discard'),
+              child: Text(
+                'تجاهل',
+                style: TextStyle(
+                  color: AppTheme.dangerFor(context),
+                  fontFamily: 'Cairo',
+                ),
+              ),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'save'),
+              child: Text(
+                'حفظ',
+                style: TextStyle(
+                  color: AppTheme.successStrongFor(context),
+                  fontFamily: 'Cairo',
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
 
-    if (result == 'save') {
-      await _saveAll();
-      return true;
-    } else if (result == 'discard') {
-      await _hrService.clearPending(_companyCode);
-      if (mounted) setState(() {});
-      return true;
-    }
-    return false;
-});
-}
-
+      if (result == 'save') {
+        await _saveAll();
+        return true;
+      } else if (result == 'discard') {
+        await _hrService.clearPending(_companyCode);
+        if (mounted) setState(() {});
+        return true;
+      }
+      return false;
+    });
+  }
 
   // ============================================================
   // إحصائيات (بناءً على effective map + vacation dates)
   // ============================================================
 
-  int get _presentDays => _getEffectiveMap().values
-      .where((a) => a.isPresentStatus)
-      .length;
+  // يحسب عدد أيام الحضور
+  int get _presentDays =>
+      _getEffectiveMap().values.where((a) => a.isPresentStatus).length;
 
-  int get _absentDays => _getEffectiveMap().values
-      .where((a) => a.status == 'absent')
-      .length;
+  // يحسب عدد أيام الغياب
+  int get _absentDays =>
+      _getEffectiveMap().values.where((a) => a.status == 'absent').length;
 
-  int get _lateMinutesTotal => _getEffectiveMap()
-      .values
-      .fold(0, (sum, a) => sum + a.lateMinutes);
+  // يحسب إجمالي دقائق التأخير
+  int get _lateMinutesTotal =>
+      _getEffectiveMap().values.fold(0, (sum, a) => sum + a.lateMinutes);
 
-  int get _overtimeMinutesTotal => _getEffectiveMap()
-      .values
-      .fold(0, (sum, a) => sum + a.overtimeMinutes);
+  // يحسب إجمالي دقائق الوقت الإضافي
+  int get _overtimeMinutesTotal =>
+      _getEffectiveMap().values.fold(0, (sum, a) => sum + a.overtimeMinutes);
 
+  // يحسب عدد أيام الإجازة
   int get _vacationDays {
     final effective = _getEffectiveMap();
     int count = 0;
@@ -504,7 +532,9 @@ return CachePartitions.run(() async {
     }
     return count;
   }
-    // ⭐ إجمالي الخصومات في الشهر (بالجنيه)
+
+  // ⭐ إجمالي الخصومات في الشهر (بالجنيه)
+  // يحسب إجمالي مبلغ الخصومات
   double get _totalDiscountsAmount {
     return _monthAdjustments
         .where((a) => a.isDeduction)
@@ -512,17 +542,18 @@ return CachePartitions.run(() async {
   }
 
   // ⭐ إجمالي الخصومات في الشهر (بالأيام)
+  // يحسب إجمالي أيام الخصومات
   int get _totalDiscountsDays {
     final dailyRate = (_selectedEmployee?.salary ?? 0) / 30;
     if (dailyRate <= 0) return 0;
     return (_totalDiscountsAmount / dailyRate).round();
   }
 
-
   // ============================================================
   // Helpers — وقت (HH:MM → دقائق)
   // ============================================================
 
+  // يحوّل الوقت النصي إلى دقائق
   int _timeToMinutes(String time) {
     final parts = time.split(':');
     if (parts.length != 2) return 0;
@@ -531,6 +562,7 @@ return CachePartitions.run(() async {
     return h * 60 + m;
   }
 
+  // يحسب دقائق التأخير من وقت الحضور
   int _calculateLateMinutes(String checkIn) {
     if (_flexibleHours) return 0;
     final actual = _timeToMinutes(checkIn);
@@ -538,6 +570,7 @@ return CachePartitions.run(() async {
     return actual > expected ? actual - _timeToMinutes(_defaultCheckIn) : 0;
   }
 
+  // يحسب دقائق الوقت الإضافي من وقت الانصراف
   int _calculateOvertimeMinutes(String checkOut) {
     if (_flexibleHours) return 0;
     final actual = _timeToMinutes(checkOut);
@@ -545,13 +578,13 @@ return CachePartitions.run(() async {
     return actual > expected ? actual - expected : 0;
   }
 
+  // يحسب دقائق الانصراف المبكر
   int _calculateEarlyLeave(String checkOut) {
     if (_flexibleHours) return 0;
     final actual = _timeToMinutes(checkOut);
     final expected = _timeToMinutes(_defaultCheckOut);
     return actual < expected ? expected - actual : 0;
   }
-
 
   // ============================================================
   // تسجيل حضور سريع (pending — يُحفظ في Hive فورًا)
@@ -563,113 +596,111 @@ return CachePartitions.run(() async {
   // الفايدة: pending في Hive → مايضيعش لو التطبيق اتقفل
   // ============================================================
 
-    Future<void> _quickRecordAttendance(String dateStr) async {
-return CachePartitions.run(() async {
+  // يسجّل حضور يوم بسرعة بالقيم الافتراضية
+  Future<void> _quickRecordAttendance(String dateStr) async {
+    return CachePartitions.run(() async {
+      if (_selectedEmployee == null) return;
 
-    if (_selectedEmployee == null) return;
+      // ⭐ فحص الصلاحية
+      if (!PermissionsService().canAddAttendance) {
+        _showSnackBar(
+          "ليس لديك صلاحية تسجيل الحضور",
+          AppTheme.dangerFor(context),
+        );
+        return;
+      }
 
-    // ⭐ فحص الصلاحية
-    if (!PermissionsService().canAddAttendance) {
-      _showSnackBar(
-        "ليس لديك صلاحية تسجيل الحضور",
-        AppTheme.dangerFor(context),
+      final effective = _getEffectiveMap();
+      final existing = effective[dateStr];
+
+      // لو اليوم مكتمل (فيه checkIn + checkOut) → متسجل بالفعل
+      if (existing != null && existing.checkOut.isNotEmpty) {
+        _showSnackBar(
+          "اليوم مكتمل بالفعل",
+          AppTheme.warningOrangeSoftFor(context),
+        );
+        return;
+      }
+
+      final lateMinutes = _calculateLateMinutes(_defaultCheckIn);
+      final overtimeMinutes = _calculateOvertimeMinutes(_defaultCheckOut);
+      final earlyLeave = _calculateEarlyLeave(_defaultCheckOut);
+
+      final model = HRAttendanceModel(
+        id: existing?.id,
+        companyCode: _companyCode,
+        branchCode: _selectedEmployee!.branchCode,
+        employeeCode: _selectedEmployee!.code,
+        date: dateStr,
+        status: lateMinutes > 0 ? 'late' : 'present',
+        checkIn: _defaultCheckIn,
+        checkOut: _defaultCheckOut,
+        lateMinutes: lateMinutes,
+        overtimeMinutes: overtimeMinutes,
+        earlyLeaveMinutes: earlyLeave,
+        notes: existing?.notes ?? '',
       );
-      return;
-    }
 
-    final effective = _getEffectiveMap();
-    final existing = effective[dateStr];
+      // ⭐ حفظ في Hive (pending) بدل الذاكرة
+      await _hrService.addPendingSave(model);
 
-    // لو اليوم مكتمل (فيه checkIn + checkOut) → متسجل بالفعل
-    if (existing != null && existing.checkOut.isNotEmpty) {
-      _showSnackBar(
-        "اليوم مكتمل بالفعل",
-        AppTheme.warningOrangeSoftFor(context),
-      );
-      return;
-    }
-
-    final lateMinutes = _calculateLateMinutes(_defaultCheckIn);
-    final overtimeMinutes = _calculateOvertimeMinutes(_defaultCheckOut);
-    final earlyLeave = _calculateEarlyLeave(_defaultCheckOut);
-
-    final model = HRAttendanceModel(
-      id: existing?.id,
-      companyCode: _companyCode,
-      branchCode: _selectedEmployee!.branchCode,
-      employeeCode: _selectedEmployee!.code,
-      date: dateStr,
-      status: lateMinutes > 0 ? 'late' : 'present',
-      checkIn: _defaultCheckIn,
-      checkOut: _defaultCheckOut,
-      lateMinutes: lateMinutes,
-      overtimeMinutes: overtimeMinutes,
-      earlyLeaveMinutes: earlyLeave,
-      notes: existing?.notes ?? '',
-    );
-
-    // ⭐ حفظ في Hive (pending) بدل الذاكرة
-    await _hrService.addPendingSave(model);
-
-    if (!mounted) return;
-    setState(() {});
-});
-}
-
+      if (!mounted) return;
+      setState(() {});
+    });
+  }
 
   // ============================================================
   // تعديل/إدخال يوم (pending — يُحفظ في Hive فورًا)
   // ============================================================
 
-    Future<void> _editDay(String dateStr) async {
-return CachePartitions.run(() async {
+  // يفتح نافذة تعديل حضور يوم
+  Future<void> _editDay(String dateStr) async {
+    return CachePartitions.run(() async {
+      if (_selectedEmployee == null) return;
 
-    if (_selectedEmployee == null) return;
+      // ⭐ فحص الصلاحية
+      if (!PermissionsService().canEditAttendance) {
+        _showSnackBar(
+          "ليس لديك صلاحية تعديل الحضور",
+          AppTheme.dangerFor(context),
+        );
+        return;
+      }
 
-    // ⭐ فحص الصلاحية
-    if (!PermissionsService().canEditAttendance) {
-      _showSnackBar(
-        "ليس لديك صلاحية تعديل الحضور",
-        AppTheme.dangerFor(context),
+      final effective = _getEffectiveMap();
+      final existing = effective[dateStr];
+
+      final result = await showDialog<dynamic>(
+        context: context,
+        builder: (ctx) => _EditAttendanceDialog(
+          existing: existing,
+          companyCode: _companyCode,
+          branchCode: _selectedEmployee!.branchCode,
+          employeeCode: _selectedEmployee!.code,
+          date: dateStr,
+          defaultCheckIn: _defaultCheckIn,
+          defaultCheckOut: _defaultCheckOut,
+          flexibleHours: _flexibleHours,
+        ),
       );
-      return;
-    }
 
-    final effective = _getEffectiveMap();
-    final existing = effective[dateStr];
+      if (result == null) return;
 
-    final result = await showDialog<dynamic>(
-      context: context,
-      builder: (ctx) => _EditAttendanceDialog(
-        existing: existing,
-        companyCode: _companyCode,
-        branchCode: _selectedEmployee!.branchCode,
-        employeeCode: _selectedEmployee!.code,
-        date: dateStr,
-        defaultCheckIn: _defaultCheckIn,
-        defaultCheckOut: _defaultCheckOut,
-        flexibleHours: _flexibleHours,
-      ),
-    );
+      // المستخدم اختار "حذف"
+      if (result is String && result == 'delete') {
+        await _deleteDay(dateStr);
+        return;
+      }
 
-    if (result == null) return;
+      // المستخدم حفظ تعديل
+      if (result is HRAttendanceModel) {
+        await _hrService.addPendingSave(result);
 
-    // المستخدم اختار "حذف"
-    if (result is String && result == 'delete') {
-      await _deleteDay(dateStr);
-      return;
-    }
-
-    // المستخدم حفظ تعديل
-    if (result is HRAttendanceModel) {
-      await _hrService.addPendingSave(result);
-
-      if (!mounted) return;
-      setState(() {});
-    }
-});
-}
-
+        if (!mounted) return;
+        setState(() {});
+      }
+    });
+  }
 
   // ============================================================
   // حذف يوم (pending)
@@ -680,84 +711,83 @@ return CachePartitions.run(() async {
   // - لو السجل مش موجود (كان pending save بس) → امسح الـ pending
   // ============================================================
 
+  // يحذف سجل حضور يوم
   Future<void> _deleteDay(String dateStr) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_selectedEmployee == null) return;
 
-    if (_selectedEmployee == null) return;
-
-    if (!PermissionsService().canDeleteAttendance) {
-      _showSnackBar(
-        "ليس لديك صلاحية حذف الحضور",
-        AppTheme.dangerFor(context),
-      );
-      return;
-    }
-
-    // ⭐ لو السجل ده لسه بيترفع دلوقتي، استنى لحد ما يخلص (3 ثواني max)
-    if (_hrService.isUploadingKey(
-      _companyCode,
-      _selectedEmployee!.code,
-      dateStr,
-    )) {
-      _showSnackBar(
-        "جاري الحفظ... انتظر لحظة",
-        AppTheme.warningFor(context),
-      );
-      int waited = 0;
-      while (_hrService.isUploadingKey(
-            _companyCode,
-            _selectedEmployee!.code,
-            dateStr,
-          ) &&
-          waited < 3000) {
-        await Future.delayed(const Duration(milliseconds: 100));
-        waited += 100;
+      if (!PermissionsService().canDeleteAttendance) {
+        _showSnackBar(
+          "ليس لديك صلاحية حذف الحضور",
+          AppTheme.dangerFor(context),
+        );
+        return;
       }
-    }
 
-    // ⭐ نقرأ من Hive (فيه id محدّث من الرفع) + الـ pending (لو لسه مرفوعش)
-    final freshMap = await _hrService.getEmployeeMonthAttendance(
-      companyCode: _companyCode,
-      employeeCode: _selectedEmployee!.code,
-      month: _monthStr(_selectedMonth),
-    );
-    final hiveRecord = freshMap[dateStr];
-    final pendingRecord = _hrService.getPendingModel(
-      _companyCode,
-      _selectedEmployee!.code,
-      dateStr,
-    );
+      // ⭐ لو السجل ده لسه بيترفع دلوقتي، استنى لحد ما يخلص (3 ثواني max)
+      if (_hrService.isUploadingKey(
+        _companyCode,
+        _selectedEmployee!.code,
+        dateStr,
+      )) {
+        _showSnackBar(
+          "جاري الحفظ... انتظر لحظة",
+          AppTheme.warningFor(context),
+        );
+        int waited = 0;
+        while (_hrService.isUploadingKey(
+              _companyCode,
+              _selectedEmployee!.code,
+              dateStr,
+            ) &&
+            waited < 3000) {
+          await Future.delayed(const Duration(milliseconds: 100));
+          waited += 100;
+        }
+      }
 
-    final existing = hiveRecord ?? pendingRecord;
-    final hasServerId = (existing?.id != null);
-
-    if (hasServerId) {
-      // سجل موجود على السيرفر → pending delete
-      await _hrService.addPendingDelete(
+      // ⭐ نقرأ من Hive (فيه id محدّث من الرفع) + الـ pending (لو لسه مرفوعش)
+      final freshMap = await _hrService.getEmployeeMonthAttendance(
         companyCode: _companyCode,
         employeeCode: _selectedEmployee!.code,
-        date: dateStr,
+        month: _monthStr(_selectedMonth),
       );
-    } else {
-      // سجل جديد (لسه مرفوعش) → امسحه من Hive مباشرة + امسح pending
-      await _hrService.removePending(
+      final hiveRecord = freshMap[dateStr];
+      final pendingRecord = _hrService.getPendingModel(
         _companyCode,
         _selectedEmployee!.code,
         dateStr,
       );
 
-      // امسح من _attendanceMap (لأنه مش موجود على السيرفر)
-      _attendanceMap.remove(dateStr);
+      final existing = hiveRecord ?? pendingRecord;
+      final hasServerId = (existing?.id != null);
 
-      // لو الـ pending كان save لسه مرفوعش، شيله من Hive كمان
-      // (بس عمليًا هو مش في Hive، موجود في pending بس)
-    }
+      if (hasServerId) {
+        // سجل موجود على السيرفر → pending delete
+        await _hrService.addPendingDelete(
+          companyCode: _companyCode,
+          employeeCode: _selectedEmployee!.code,
+          date: dateStr,
+        );
+      } else {
+        // سجل جديد (لسه مرفوعش) → امسحه من Hive مباشرة + امسح pending
+        await _hrService.removePending(
+          _companyCode,
+          _selectedEmployee!.code,
+          dateStr,
+        );
 
-    if (!mounted) return;
-    setState(() {});
-});
-}
+        // امسح من _attendanceMap (لأنه مش موجود على السيرفر)
+        _attendanceMap.remove(dateStr);
 
+        // لو الـ pending كان save لسه مرفوعش، شيله من Hive كمان
+        // (بس عمليًا هو مش في Hive، موجود في pending بس)
+      }
+
+      if (!mounted) return;
+      setState(() {});
+    });
+  }
 
   // ============================================================
   // خصم مباشر
@@ -772,137 +802,134 @@ return CachePartitions.run(() async {
   // - توفير تعقيد pending adjustments في الـ HRService
   // ============================================================
 
-    // ============================================================
+  // ============================================================
   // إدارة خصومات اليوم (فتح Dialog للعرض/الإضافة/الحذف)
   // ============================================================
 
-    Future<void> _manageDiscounts(String dateStr) async {
-return CachePartitions.run(() async {
+  // يفتح نافذة إدارة خصومات يوم
+  Future<void> _manageDiscounts(String dateStr) async {
+    return CachePartitions.run(() async {
+      if (_selectedEmployee == null) return;
+      if (_isSaving) return;
 
-    if (_selectedEmployee == null) return;
-    if (_isSaving) return;
+      // ⭐ فحص الصلاحية
+      if (!PermissionsService().canAddDirectDiscount) {
+        _showSnackBar(
+          "ليس لديك صلاحية الخصم المباشر",
+          AppTheme.dangerFor(context),
+        );
+        return;
+      }
 
-    // ⭐ فحص الصلاحية
-    if (!PermissionsService().canAddDirectDiscount) {
-      _showSnackBar(
-        "ليس لديك صلاحية الخصم المباشر",
-        AppTheme.dangerFor(context),
-      );
-      return;
-    }
+      final dailyRate = _selectedEmployee!.salary / 30;
+      final currentDiscounts = _getDayDiscounts(dateStr);
 
-    final dailyRate = _selectedEmployee!.salary / 30;
-    final currentDiscounts = _getDayDiscounts(dateStr);
-
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => _ManageDiscountsDialog(
-        dateStr: dateStr,
-        month: _getMonthName(_selectedMonth),
-        dailyRate: dailyRate,
-        initialDiscounts: currentDiscounts,
-        onAdd: (days, reason) => _saveDiscount(
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => _ManageDiscountsDialog(
           dateStr: dateStr,
-          days: days,
-          reason: reason,
+          month: _getMonthName(_selectedMonth),
+          dailyRate: dailyRate,
+          initialDiscounts: currentDiscounts,
+          onAdd: (days, reason) => _saveDiscount(
+            dateStr: dateStr,
+            days: days,
+            reason: reason,
+          ),
+          onDelete: (id) => _deleteDiscount(id),
+          onReload: () async => _getDayDiscounts(dateStr),
         ),
-        onDelete: (id) => _deleteDiscount(id),
-        onReload: () async => _getDayDiscounts(dateStr),
-      ),
-    );
+      );
 
-    if (!mounted) return;
-    setState(() {});
-});
-}
-
+      if (!mounted) return;
+      setState(() {});
+    });
+  }
 
   // ============================================================
   // حفظ خصم جديد بتاريخ محدد
   // ============================================================
 
+  // يحفظ خصمًا ليوم محدد
   Future<bool> _saveDiscount({
     required String dateStr,
     required double days,
     required String reason,
   }) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_selectedEmployee == null) return false;
 
-    if (_selectedEmployee == null) return false;
+      final dailyRate = _selectedEmployee!.salary / 30;
+      final amount = dailyRate * days;
 
-    final dailyRate = _selectedEmployee!.salary / 30;
-    final amount = dailyRate * days;
+      final adj = HRAdjustmentModel(
+        companyCode: _companyCode,
+        branchCode: _selectedEmployee!.branchCode,
+        employeeCode: _selectedEmployee!.code,
+        month: _monthStr(_selectedMonth),
+        date: dateStr, // ⭐ مربوط باليوم
+        type: 'deduction',
+        amount: amount,
+        reason: reason.isEmpty ? _buildDiscountReason(days) : reason,
+        status: 'approved',
+      );
 
-    final adj = HRAdjustmentModel(
-      companyCode: _companyCode,
-      branchCode: _selectedEmployee!.branchCode,
-      employeeCode: _selectedEmployee!.code,
-      month: _monthStr(_selectedMonth),
-      date: dateStr,  // ⭐ مربوط باليوم
-      type: 'deduction',
-      amount: amount,
-      reason: reason.isEmpty ? _buildDiscountReason(days) : reason,
-      status: 'approved',
-    );
+      final saveResult = await _hrService.saveAdjustment(model: adj);
 
-    final saveResult = await _hrService.saveAdjustment(model: adj);
+      if (saveResult['success'] != true) {
+        print('❌ [save discount] ${saveResult['error']}');
+        return false;
+      }
 
-    if (saveResult['success'] != true) {
-      print('❌ [save discount] ${saveResult['error']}');
-      return false;
-    }
+      // إعادة تحميل الخصومات
+      await _reloadAdjustments();
 
-    // إعادة تحميل الخصومات
-    await _reloadAdjustments();
+      // ⭐ إبطال كاش التقرير
+      await _reportService.invalidateCache(
+        companyCode: _companyCode,
+        employeeCode: _selectedEmployee!.code,
+        month: _monthStr(_selectedMonth),
+      );
 
-    // ⭐ إبطال كاش التقرير
-    await _reportService.invalidateCache(
-      companyCode: _companyCode,
-      employeeCode: _selectedEmployee!.code,
-      month: _monthStr(_selectedMonth),
-    );
-
-    return true;
-});
-}
-
+      return true;
+    });
+  }
 
   // ============================================================
   // حذف خصم
   // ============================================================
 
+  // يحذف خصمًا
   Future<bool> _deleteDiscount(int id) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_selectedEmployee == null) return false;
 
-    if (_selectedEmployee == null) return false;
+      final ok = await _hrService.deleteAdjustment(
+        companyCode: _companyCode,
+        adjustmentId: id,
+      );
 
-    final ok = await _hrService.deleteAdjustment(
-      companyCode: _companyCode,
-      adjustmentId: id,
-    );
+      if (!ok) return false;
 
-    if (!ok) return false;
+      // إعادة تحميل الخصومات
+      await _reloadAdjustments();
 
-    // إعادة تحميل الخصومات
-    await _reloadAdjustments();
+      // إبطال كاش التقرير
+      await _reportService.invalidateCache(
+        companyCode: _companyCode,
+        employeeCode: _selectedEmployee!.code,
+        month: _monthStr(_selectedMonth),
+      );
 
-    // إبطال كاش التقرير
-    await _reportService.invalidateCache(
-      companyCode: _companyCode,
-      employeeCode: _selectedEmployee!.code,
-      month: _monthStr(_selectedMonth),
-    );
-
-    return true;
-});
-}
-
-
+      return true;
+    });
+  }
 
   // ============================================================
   // ⭐ Helpers — إدارة الخصومات على مستوى اليوم
   // ============================================================
 
+  // يعيد خصومات يوم محدد
   /// إرجاع خصومات اليوم المحدد
   List<HRAdjustmentModel> _getDayDiscounts(String dateStr) {
     return _monthAdjustments
@@ -910,32 +937,30 @@ return CachePartitions.run(() async {
         .toList();
   }
 
-
+  // يعيد تحميل تسويات الشهر
   /// إعادة تحميل خصومات الشهر من السيرفر
   Future<void> _reloadAdjustments() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_selectedEmployee == null) return;
 
-    if (_selectedEmployee == null) return;
+      final all = await _hrService.getAdjustmentsForMonth(
+        companyCode: _companyCode,
+        month: _monthStr(_selectedMonth),
+        branchCode: _selectedEmployee!.branchCode,
+      );
 
-    final all = await _hrService.getAdjustmentsForMonth(
-      companyCode: _companyCode,
-      month: _monthStr(_selectedMonth),
-      branchCode: _selectedEmployee!.branchCode,
-    );
+      if (!mounted) return;
 
-    if (!mounted) return;
-
-    setState(() {
-      _monthAdjustments = all
-          .where((a) =>
-              a.employeeCode == _selectedEmployee!.code &&
-              a.isDeduction)
-          .toList();
+      setState(() {
+        _monthAdjustments = all
+            .where((a) =>
+                a.employeeCode == _selectedEmployee!.code && a.isDeduction)
+            .toList();
+      });
     });
-});
-}
+  }
 
-
+  // يبني سبب الخصم من عدد الأيام
   /// بناء سبب الخصم من عدد الأيام
   String _buildDiscountReason(double days) {
     if (days == 1) return 'خصم يوم';
@@ -956,65 +981,63 @@ return CachePartitions.run(() async {
   //   - لو المستخدم قفل التطبيق → retryAllPending يرفعها لما يرجع
   // ============================================================
 
+  // يحفظ كل التعديلات المعلقة
   Future<void> _saveAll() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_selectedEmployee == null) return;
+      if (!_hasUnsavedChanges) return;
+      if (_isSaving) return;
 
-    if (_selectedEmployee == null) return;
-    if (!_hasUnsavedChanges) return;
-    if (_isSaving) return;
+      if (!_canSaveChanges) {
+        _showSnackBar(
+          "ليس لديك صلاحية حفظ التعديلات",
+          AppTheme.dangerFor(context),
+        );
+        return;
+      }
 
-    if (!_canSaveChanges) {
+      final pendingCount = _pendingCount;
+
+      // 1) Optimistic local save: نمسك الـ effective map
+      final effective = _getEffectiveMap();
+      setState(() {
+        _attendanceMap = effective;
+      });
+
+      // 2) الرفع في الخلفية + onCompleted يعيد تحميل الخريطة
+      //    (عشان id السجلات يتحدّث ويبقى الحذف شغال بعد كده)
+      unawaited(_hrService.commitPendingFast(
+        companyCode: _companyCode,
+        employeeCode: _selectedEmployee!.code,
+        onCompleted: () {
+          if (mounted) {
+            _loadMonthData(showLoader: false);
+          }
+        },
+      ));
+
+      // 3) امسح كاش التقرير
+      unawaited(_reportService.invalidateCache(
+        companyCode: _companyCode,
+        employeeCode: _selectedEmployee!.code,
+      ));
+
+      // 4) تحديث الـ UI
+      setState(() {});
+
+      // 5) الرسالة
       _showSnackBar(
-        "ليس لديك صلاحية حفظ التعديلات",
-        AppTheme.dangerFor(context),
+        pendingCount > 1 ? "تم حفظ $pendingCount تعديل ✅" : "تم الحفظ ✅",
+        AppTheme.successStrongFor(context),
       );
-      return;
-    }
-
-    final pendingCount = _pendingCount;
-
-    // 1) Optimistic local save: نمسك الـ effective map
-    final effective = _getEffectiveMap();
-    setState(() {
-      _attendanceMap = effective;
     });
-
-    // 2) الرفع في الخلفية + onCompleted يعيد تحميل الخريطة
-    //    (عشان id السجلات يتحدّث ويبقى الحذف شغال بعد كده)
-    unawaited(_hrService.commitPendingFast(
-      companyCode: _companyCode,
-      employeeCode: _selectedEmployee!.code,
-      onCompleted: () {
-        if (mounted) {
-          _loadMonthData(showLoader: false);
-        }
-      },
-    ));
-
-    // 3) امسح كاش التقرير
-    unawaited(_reportService.invalidateCache(
-      companyCode: _companyCode,
-      employeeCode: _selectedEmployee!.code,
-    ));
-
-    // 4) تحديث الـ UI
-    setState(() {});
-
-    // 5) الرسالة
-    _showSnackBar(
-      pendingCount > 1
-          ? "تم حفظ $pendingCount تعديل ✅"
-          : "تم الحفظ ✅",
-      AppTheme.successStrongFor(context),
-    );
-});
-}
-
+  }
 
   // ============================================================
   // SnackBar helper
   // ============================================================
 
+  // يعرض رسالة سريعة بالنص واللون المحددين
   void _showSnackBar(String message, Color color) {
     if (!mounted) return;
 
@@ -1030,13 +1053,12 @@ return CachePartitions.run(() async {
     );
   }
 
-
-
   // ============================================================
   // build
   // ============================================================
 
-    @override
+  // يبني واجهة العنصر ويعيد شجرة العناصر
+  @override
   Widget build(BuildContext context) {
     // ⭐ فحص صلاحية فتح الصفحة
     if (!PermissionsService().canOpenAttendancePage) {
@@ -1046,16 +1068,15 @@ return CachePartitions.run(() async {
     return PopScope(
       canPop: !_hasUnsavedChanges,
       onPopInvoked: (didPop) async {
-return CachePartitions.run(() async {
+        return CachePartitions.run(() async {
+          if (didPop) return;
 
-        if (didPop) return;
-
-        final canProceed = await _confirmSaveIfNeeded();
-        if (canProceed && mounted) {
-          Navigator.pop(context);
-        }
-});
-},
+          final canProceed = await _confirmSaveIfNeeded();
+          if (canProceed && mounted) {
+            Navigator.pop(context);
+          }
+        });
+      },
       child: Scaffold(
         extendBodyBehindAppBar: true,
         appBar: AppBar(
@@ -1078,7 +1099,6 @@ return CachePartitions.run(() async {
               Stack(
                 clipBehavior: Clip.none,
                 children: [
-
                   IconButton(
                     icon: Icon(
                       _hasUnsavedChanges
@@ -1125,7 +1145,7 @@ return CachePartitions.run(() async {
                 ],
               ),
 
-                        // زر التحديث من السيرفر
+            // زر التحديث من السيرفر
             IconButton(
               icon: Icon(
                 Icons.refresh_rounded,
@@ -1162,11 +1182,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Empty state (مفيش موظفين)
   // ============================================================
 
+  // يبني حالة العرض الفارغة
   Widget _buildEmptyState() {
     return Center(
       child: Column(
@@ -1200,11 +1220,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // المحتوى (Header + أيام الشهر في ListView واحد)
   // ============================================================
 
+  // يبني المحتوى القابل للتمرير لأيام الشهر
   Widget _buildScrollableContent() {
     final daysCount = _daysInMonth(_selectedMonth);
 
@@ -1232,11 +1252,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Header (Dropdown + Month + Stats)
   // ============================================================
 
+  // يبني رأس الشاشة
   Widget _buildHeader() {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
@@ -1352,12 +1372,12 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // الإحصائيات
   // ============================================================
 
-    Widget _buildStatsRow() {
+  // يبني صف إحصائيات الشهر
+  Widget _buildStatsRow() {
     final canSeeAmounts = PermissionsService().canViewSalaryAmounts;
 
     return GlassCard(
@@ -1403,8 +1423,8 @@ return CachePartitions.run(() async {
     );
   }
 
-
-    Widget _buildStatChip(String label, String value, Color color) {
+  // يبني شريحة إحصائية بعنوان وقيمة ولون
+  Widget _buildStatChip(String label, String value, Color color) {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
       constraints: const BoxConstraints(minWidth: 60),
@@ -1439,8 +1459,6 @@ return CachePartitions.run(() async {
     );
   }
 
-
-
   // ============================================================
   // بطاقة اليوم
   //
@@ -1456,6 +1474,7 @@ return CachePartitions.run(() async {
   // - نقطة برتقالية صغيرة بجانب اسم اليوم
   // ============================================================
 
+  // يبني بطاقة يوم واحد
   Widget _buildDayCard(DateTime date) {
     final dateStr = _dateStr(date);
     final effective = _getEffectiveMap();
@@ -1469,7 +1488,7 @@ return CachePartitions.run(() async {
           _selectedEmployee!.code,
           dateStr,
         );
-        // ⭐ جديد: خصومات اليوم
+    // ⭐ جديد: خصومات اليوم
     final dayDiscounts = _getDayDiscounts(dateStr);
     final hasDiscount = dayDiscounts.isNotEmpty;
     final totalDiscountAmount =
@@ -1626,7 +1645,7 @@ return CachePartitions.run(() async {
           // ============================================
           // الأوقات / الحالة
           // ============================================
-                    Expanded(
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
@@ -1705,7 +1724,7 @@ return CachePartitions.run(() async {
             ),
           ),
 
-                    // ============================================
+          // ============================================
           // الأزرار (تظهر في كل يوم غير مستقبلي + حسب الصلاحيات)
           // ============================================
           if (showActions) ...[
@@ -1719,9 +1738,8 @@ return CachePartitions.run(() async {
                     ? AppTheme.successFor(context).withValues(alpha: 0.4)
                     : AppTheme.successFor(context),
                 tooltip: isComplete ? 'مكتمل' : 'تسجيل اليوم',
-                onTap: isComplete
-                    ? null
-                    : () => _quickRecordAttendance(dateStr),
+                onTap:
+                    isComplete ? null : () => _quickRecordAttendance(dateStr),
               ),
 
             // إدخال / تعديل
@@ -1760,16 +1778,15 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // ⭐ Badge صغير لعرض الخصم على بطاقة اليوم
   // ============================================================
 
-    Widget _buildDiscountBadge(double totalAmount) {
+  // يبني شارة الخصم
+  Widget _buildDiscountBadge(double totalAmount) {
     final canSeeAmounts = PermissionsService().canViewSalaryAmounts;
-    final label = canSeeAmounts
-        ? 'خصم ${totalAmount.toStringAsFixed(0)}'
-        : 'خصم';
+    final label =
+        canSeeAmounts ? 'خصم ${totalAmount.toStringAsFixed(0)}' : 'خصم';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
@@ -1800,11 +1817,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // زر أيقونة صغير (helper)
   // ============================================================
 
+  // يبني زر أيقونة صغير
   Widget _iconBtn({
     required IconData icon,
     required Color color,
@@ -1830,6 +1847,7 @@ return CachePartitions.run(() async {
   }
 
   // ⭐ شاشة "لا صلاحية"
+  // يبني شاشة تعذّر الوصول لعدم توفر الصلاحية
   Widget _buildNoPermissionScreen(String permission) {
     return Scaffold(
       extendBodyBehindAppBar: true,
@@ -1882,32 +1900,43 @@ return CachePartitions.run(() async {
       ),
     );
   }
-
 }
-
 
 // ============================================================
 // Dialog 1: اختيار الشهر
 // ============================================================
 
+// نافذة اختيار الشهر
 class _MonthPickerDialog extends StatefulWidget {
   final DateTime initial;
   const _MonthPickerDialog({required this.initial});
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<_MonthPickerDialog> createState() => _MonthPickerDialogState();
 }
 
-
+// حالة الويدجت _MonthPickerDialog: تدير بيانات الشاشة وتفاعلاتها
 class _MonthPickerDialogState extends State<_MonthPickerDialog> {
   late int _year;
   late int _month;
 
   static const List<String> _months = [
-    'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
-    'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر',
+    'يناير',
+    'فبراير',
+    'مارس',
+    'أبريل',
+    'مايو',
+    'يونيو',
+    'يوليو',
+    'أغسطس',
+    'سبتمبر',
+    'أكتوبر',
+    'نوفمبر',
+    'ديسمبر',
   ];
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
@@ -1915,6 +1944,7 @@ class _MonthPickerDialogState extends State<_MonthPickerDialog> {
     _month = widget.initial.month;
   }
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
@@ -2008,8 +2038,7 @@ class _MonthPickerDialogState extends State<_MonthPickerDialog> {
           ),
         ),
         TextButton(
-          onPressed: () =>
-              Navigator.pop(context, DateTime(_year, _month, 1)),
+          onPressed: () => Navigator.pop(context, DateTime(_year, _month, 1)),
           child: Text(
             'اختيار',
             style: TextStyle(
@@ -2024,9 +2053,6 @@ class _MonthPickerDialogState extends State<_MonthPickerDialog> {
   }
 }
 
-
-
-
 // ============================================================
 // Dialog: إدارة الخصومات (عرض + إضافة + حذف)
 //
@@ -2039,6 +2065,7 @@ class _MonthPickerDialogState extends State<_MonthPickerDialog> {
 //    (الـ dialog مسؤول عن UI + state فقط)
 // ============================================================
 
+// نافذة إدارة خصومات اليوم
 class _ManageDiscountsDialog extends StatefulWidget {
   /// تاريخ اليوم (YYYY-MM-DD)
   final String dateStr;
@@ -2074,12 +2101,12 @@ class _ManageDiscountsDialog extends StatefulWidget {
     required this.onReload,
   });
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
-  State<_ManageDiscountsDialog> createState() =>
-      _ManageDiscountsDialogState();
+  State<_ManageDiscountsDialog> createState() => _ManageDiscountsDialogState();
 }
 
-
+// حالة الويدجت _ManageDiscountsDialog: تدير بيانات الشاشة وتفاعلاتها
 class _ManageDiscountsDialogState extends State<_ManageDiscountsDialog> {
   // ============================================================
   // State
@@ -2095,12 +2122,14 @@ class _ManageDiscountsDialogState extends State<_ManageDiscountsDialog> {
   // Lifecycle
   // ============================================================
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
     _discounts = List.from(widget.initialDiscounts);
   }
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     _daysCtrl.dispose();
@@ -2112,8 +2141,13 @@ class _ManageDiscountsDialogState extends State<_ManageDiscountsDialog> {
   // Getters
   // ============================================================
 
+  // يحسب عدد أيام الخصم المدخل
   double get _days => double.tryParse(_daysCtrl.text) ?? 0;
+
+  // يحسب مبلغ الخصم الجديد
   double get _newAmount => widget.dailyRate * _days;
+
+  // يحسب إجمالي الخصومات
   double get _totalAmount =>
       _discounts.fold<double>(0.0, (sum, d) => sum + d.amount);
 
@@ -2121,154 +2155,153 @@ class _ManageDiscountsDialogState extends State<_ManageDiscountsDialog> {
   // Handlers
   // ============================================================
 
+  // ينفذ إضافة العنصر الجديد
   Future<void> _handleAdd() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_days <= 0) return;
+      if (_isProcessing) return;
 
-    if (_days <= 0) return;
-    if (_isProcessing) return;
+      setState(() {
+        _isProcessing = true;
+        _errorMessage = null;
+      });
 
-    setState(() {
-      _isProcessing = true;
-      _errorMessage = null;
-    });
+      final reason = _reasonCtrl.text.trim();
 
-    final reason = _reasonCtrl.text.trim();
+      try {
+        final ok = await widget.onAdd(_days, reason);
 
-    try {
-      final ok = await widget.onAdd(_days, reason);
-
-      if (!mounted) return;
-
-      if (ok) {
-        // إعادة تحميل القائمة من الـ parent
-        final updated = await widget.onReload();
         if (!mounted) return;
 
-        setState(() {
-          _discounts = updated;
-          _isProcessing = false;
-        });
+        if (ok) {
+          // إعادة تحميل القائمة من الـ parent
+          final updated = await widget.onReload();
+          if (!mounted) return;
 
-        // تصفير الفورم
-        _daysCtrl.text = '1';
-        _reasonCtrl.clear();
-      } else {
+          setState(() {
+            _discounts = updated;
+            _isProcessing = false;
+          });
+
+          // تصفير الفورم
+          _daysCtrl.text = '1';
+          _reasonCtrl.clear();
+        } else {
+          setState(() {
+            _isProcessing = false;
+            _errorMessage = 'فشل حفظ الخصم. حاول مرة أخرى.';
+          });
+        }
+      } catch (e) {
+        if (!mounted) return;
         setState(() {
           _isProcessing = false;
-          _errorMessage = 'فشل حفظ الخصم. حاول مرة أخرى.';
+          _errorMessage = 'خطأ: $e';
         });
       }
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _isProcessing = false;
-        _errorMessage = 'خطأ: $e';
-      });
-    }
-});
-}
+    });
+  }
 
-
+  // ينفذ حذف العنصر
   Future<void> _handleDelete(HRAdjustmentModel discount) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (discount.id == null) return;
+      if (_isProcessing) return;
 
-    if (discount.id == null) return;
-    if (_isProcessing) return;
-
-    // تأكيد الحذف
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.dialogBackground(context),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(15),
-        ),
-        title: Text(
-          'حذف الخصم',
-          style: TextStyle(
-            color: AppTheme.textMainFor(context),
-            fontFamily: 'Cairo',
-            fontWeight: FontWeight.bold,
+      // تأكيد الحذف
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppTheme.dialogBackground(context),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(15),
           ),
-        ),
-        content: Text(
-          PermissionsService().canViewSalaryAmounts
-              ? 'سيتم حذف "${discount.reason}" '
-                  'بقيمة ${discount.amount.toStringAsFixed(2)} ج.م.'
-              : 'سيتم حذف "${discount.reason}".',
-          style: TextStyle(
-            color: AppTheme.textMutedFor(context),
-            fontFamily: 'Cairo',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(
-              'إلغاء',
-              style: TextStyle(
-                color: AppTheme.textMutedFor(context),
-                fontFamily: 'Cairo',
-              ),
+          title: Text(
+            'حذف الخصم',
+            style: TextStyle(
+              color: AppTheme.textMainFor(context),
+              fontFamily: 'Cairo',
+              fontWeight: FontWeight.bold,
             ),
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(
-              'حذف',
-              style: TextStyle(
-                color: AppTheme.dangerFor(context),
-                fontFamily: 'Cairo',
-                fontWeight: FontWeight.bold,
-              ),
+          content: Text(
+            PermissionsService().canViewSalaryAmounts
+                ? 'سيتم حذف "${discount.reason}" '
+                    'بقيمة ${discount.amount.toStringAsFixed(2)} ج.م.'
+                : 'سيتم حذف "${discount.reason}".',
+            style: TextStyle(
+              color: AppTheme.textMutedFor(context),
+              fontFamily: 'Cairo',
             ),
           ),
-        ],
-      ),
-    );
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(
+                'إلغاء',
+                style: TextStyle(
+                  color: AppTheme.textMutedFor(context),
+                  fontFamily: 'Cairo',
+                ),
+              ),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(
+                'حذف',
+                style: TextStyle(
+                  color: AppTheme.dangerFor(context),
+                  fontFamily: 'Cairo',
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
 
-    if (confirmed != true) return;
-    if (!mounted) return;
-
-    setState(() {
-      _isProcessing = true;
-      _errorMessage = null;
-    });
-
-    try {
-      final ok = await widget.onDelete(discount.id!);
-
+      if (confirmed != true) return;
       if (!mounted) return;
 
-      if (ok) {
-        final updated = await widget.onReload();
+      setState(() {
+        _isProcessing = true;
+        _errorMessage = null;
+      });
+
+      try {
+        final ok = await widget.onDelete(discount.id!);
+
         if (!mounted) return;
 
+        if (ok) {
+          final updated = await widget.onReload();
+          if (!mounted) return;
+
+          setState(() {
+            _discounts = updated;
+            _isProcessing = false;
+          });
+        } else {
+          setState(() {
+            _isProcessing = false;
+            _errorMessage = 'فشل حذف الخصم. حاول مرة أخرى.';
+          });
+        }
+      } catch (e) {
+        if (!mounted) return;
         setState(() {
-          _discounts = updated;
           _isProcessing = false;
-        });
-      } else {
-        setState(() {
-          _isProcessing = false;
-          _errorMessage = 'فشل حذف الخصم. حاول مرة أخرى.';
+          _errorMessage = 'خطأ: $e';
         });
       }
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _isProcessing = false;
-        _errorMessage = 'خطأ: $e';
-      });
-    }
-});
-}
-
+    });
+  }
 
   // ============================================================
   // BUILD
   // ============================================================
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
@@ -2321,8 +2354,7 @@ return CachePartitions.run(() async {
       ),
       actions: [
         TextButton(
-          onPressed:
-              _isProcessing ? null : () => Navigator.pop(context),
+          onPressed: _isProcessing ? null : () => Navigator.pop(context),
           child: Text(
             'إغلاق',
             style: TextStyle(
@@ -2336,11 +2368,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // بطاقة المعلومات (التاريخ + الشهر + قيمة اليوم)
   // ============================================================
 
+  // يبني بطاقة المعلومات
   Widget _buildInfoCard() {
     return Container(
       padding: const EdgeInsets.all(10),
@@ -2373,7 +2405,7 @@ return CachePartitions.run(() async {
               ),
             ],
           ),
-                    // ⭐ يظهر "قيمة اليوم" فقط لو عنده صلاحية رؤية المبالغ
+          // ⭐ يظهر "قيمة اليوم" فقط لو عنده صلاحية رؤية المبالغ
           if (PermissionsService().canViewSalaryAmounts) ...[
             const SizedBox(height: 4),
             Row(
@@ -2400,11 +2432,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // قسم الخصومات الموجودة
   // ============================================================
 
+  // يبني قسم الخصومات الموجودة
   Widget _buildExistingDiscountsSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2427,7 +2459,7 @@ return CachePartitions.run(() async {
                 fontWeight: FontWeight.bold,
               ),
             ),
-                        const Spacer(),
+            const Spacer(),
             // ⭐ الإجمالي يظهر فقط لو عنده صلاحية
             if (PermissionsService().canViewSalaryAmounts)
               Container(
@@ -2459,11 +2491,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // صف خصم واحد
   // ============================================================
 
+  // يبني صف خصم واحد
   Widget _buildDiscountRow(HRAdjustmentModel discount) {
     return Container(
       margin: const EdgeInsets.only(bottom: 6),
@@ -2490,9 +2522,7 @@ return CachePartitions.run(() async {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  discount.reason.isNotEmpty
-                      ? discount.reason
-                      : 'خصم',
+                  discount.reason.isNotEmpty ? discount.reason : 'خصم',
                   style: TextStyle(
                     color: AppTheme.textMainFor(context),
                     fontFamily: 'Cairo',
@@ -2502,7 +2532,7 @@ return CachePartitions.run(() async {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                                // ⭐ المبلغ يظهر فقط لو عنده صلاحية
+                // ⭐ المبلغ يظهر فقط لو عنده صلاحية
                 if (PermissionsService().canViewSalaryAmounts)
                   Text(
                     '${discount.amount.toStringAsFixed(2)} ج.م',
@@ -2524,9 +2554,7 @@ return CachePartitions.run(() async {
               color: AppTheme.dangerFor(context),
               size: 18,
             ),
-            onPressed: _isProcessing
-                ? null
-                : () => _handleDelete(discount),
+            onPressed: _isProcessing ? null : () => _handleDelete(discount),
             tooltip: 'حذف',
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(),
@@ -2536,11 +2564,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // قسم إضافة خصم جديد
   // ============================================================
 
+  // يبني قسم إضافة خصم جديد
   Widget _buildAddNewSection() {
     return Container(
       padding: const EdgeInsets.all(10),
@@ -2579,8 +2607,7 @@ return CachePartitions.run(() async {
           // عدد الأيام
           TextField(
             controller: _daysCtrl,
-            keyboardType:
-                const TextInputType.numberWithOptions(decimal: true),
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
             enabled: !_isProcessing,
             onChanged: (v) => setState(() {}),
             decoration: InputDecoration(
@@ -2685,7 +2712,7 @@ return CachePartitions.run(() async {
           // Badge القيمة الحية + زر إضافة
           Row(
             children: [
-                            // Badge القيمة (يظهر فقط لو عنده صلاحية رؤية المبالغ)
+              // Badge القيمة (يظهر فقط لو عنده صلاحية رؤية المبالغ)
               if (PermissionsService().canViewSalaryAmounts)
                 Expanded(
                   child: Container(
@@ -2728,15 +2755,12 @@ return CachePartitions.run(() async {
                 ),
 
               // ⭐ لو مفيش صلاحية، الزر ياخد المساحة كلها
-              if (!PermissionsService().canViewSalaryAmounts)
-                const Spacer(),
+              if (!PermissionsService().canViewSalaryAmounts) const Spacer(),
               const SizedBox(width: 8),
 
               // زر الإضافة
               ElevatedButton.icon(
-                onPressed: (_isProcessing || _days <= 0)
-                    ? null
-                    : _handleAdd,
+                onPressed: (_isProcessing || _days <= 0) ? null : _handleAdd,
                 icon: _isProcessing
                     ? SizedBox(
                         width: 14,
@@ -2774,11 +2798,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // صندوق الخطأ
   // ============================================================
 
+  // يبني صندوق رسالة الخطأ
   Widget _buildErrorBox() {
     return Container(
       padding: const EdgeInsets.all(8),
@@ -2812,11 +2836,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Helper: تسمية عدد الأيام
   // ============================================================
 
+  // يعيد وصف عدد أيام الخصم نصًا
   String _daysLabel(double v) {
     if (v == 0.25) return 'ربع يوم';
     if (v == 0.5) return 'نصف يوم';
@@ -2848,11 +2872,11 @@ return CachePartitions.run(() async {
 // 9. ⭐ Dialog إدارة الخصومات (عرض + إضافة + حذف بدون إغلاق)
 // ============================================================
 
-
 // ============================================================
 // Dialog 3: إدخال / تعديل الحضور
 // ============================================================
 
+// نافذة تعديل حضور يوم
 class _EditAttendanceDialog extends StatefulWidget {
   final HRAttendanceModel? existing;
   final String companyCode;
@@ -2874,17 +2898,19 @@ class _EditAttendanceDialog extends StatefulWidget {
     required this.flexibleHours,
   });
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<_EditAttendanceDialog> createState() => _EditAttendanceDialogState();
 }
 
-
+// حالة الويدجت _EditAttendanceDialog: تدير بيانات الشاشة وتفاعلاتها
 class _EditAttendanceDialogState extends State<_EditAttendanceDialog> {
   late String _status;
   late String _checkIn;
   late String _checkOut;
   late TextEditingController _notesCtrl;
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
@@ -2900,40 +2926,41 @@ class _EditAttendanceDialogState extends State<_EditAttendanceDialog> {
     );
   }
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     _notesCtrl.dispose();
     super.dispose();
   }
 
+  // يفتح نافذة اختيار الوقت
   Future<void> _pickTime({required bool isCheckIn}) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      final current = isCheckIn ? _checkIn : _checkOut;
+      final parts = current.split(':');
+      final initH = int.tryParse(parts.isNotEmpty ? parts[0] : '9') ?? 9;
+      final initM = int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0;
 
-    final current = isCheckIn ? _checkIn : _checkOut;
-    final parts = current.split(':');
-    final initH = int.tryParse(parts.isNotEmpty ? parts[0] : '9') ?? 9;
-    final initM = int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0;
+      final picked = await showTimePicker(
+        context: context,
+        initialTime: TimeOfDay(hour: initH, minute: initM),
+      );
 
-    final picked = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay(hour: initH, minute: initM),
-    );
+      if (picked != null) {
+        final str = '${picked.hour.toString().padLeft(2, '0')}:'
+            '${picked.minute.toString().padLeft(2, '0')}';
+        setState(() {
+          if (isCheckIn) {
+            _checkIn = str;
+          } else {
+            _checkOut = str;
+          }
+        });
+      }
+    });
+  }
 
-    if (picked != null) {
-      final str =
-          '${picked.hour.toString().padLeft(2, '0')}:'
-          '${picked.minute.toString().padLeft(2, '0')}';
-      setState(() {
-        if (isCheckIn) {
-          _checkIn = str;
-        } else {
-          _checkOut = str;
-        }
-      });
-    }
-});
-}
-
+  // يحوّل الوقت النصي إلى دقائق
   int _timeToMinutes(String time) {
     final parts = time.split(':');
     if (parts.length != 2) return 0;
@@ -2942,6 +2969,7 @@ return CachePartitions.run(() async {
     return h * 60 + m;
   }
 
+  // يحسب دقائق التأخير
   int _calcLate(String checkIn) {
     if (widget.flexibleHours) return 0;
     final actual = _timeToMinutes(checkIn);
@@ -2951,6 +2979,7 @@ return CachePartitions.run(() async {
         : 0;
   }
 
+  // يحسب دقائق الوقت الإضافي
   int _calcOver(String checkOut) {
     if (widget.flexibleHours) return 0;
     final actual = _timeToMinutes(checkOut);
@@ -2958,6 +2987,7 @@ return CachePartitions.run(() async {
     return actual > expected ? actual - expected : 0;
   }
 
+  // يحسب دقائق الانصراف المبكر
   int _calcEarly(String checkOut) {
     if (widget.flexibleHours) return 0;
     final actual = _timeToMinutes(checkOut);
@@ -2965,6 +2995,7 @@ return CachePartitions.run(() async {
     return actual < expected ? expected - actual : 0;
   }
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     final showTimes = _status == 'present' || _status == 'late';
@@ -3061,8 +3092,7 @@ return CachePartitions.run(() async {
                   ),
                 ),
               ],
-              onChanged: (v) =>
-                  setState(() => _status = v ?? 'present'),
+              onChanged: (v) => setState(() => _status = v ?? 'present'),
               style: TextStyle(
                 fontFamily: 'Cairo',
                 color: AppTheme.textMainFor(context),

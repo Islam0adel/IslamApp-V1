@@ -1,5 +1,5 @@
+// frontend/lib/views/dashboard/daily_history_page.dart
 import '../../services/cache_partitions.dart';
-// lib/views/dashboard/daily_history_page.dart
 import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
@@ -16,10 +16,12 @@ import '../../services/permissions_service.dart'; // ✅ استيراد خدمة
 import '../../services/export_service.dart';
 // import '../../core/constants.dart'; // ✅ استيراد الثوابت لـ LAST_SYNC_DAILY
 
+// صفحة سجل اليومية
 class DailyHistoryPage extends StatefulWidget {
   final String companyCode;
   final String? userName;
-  final String? selectedBranchCode; // 🌟 التعديل هنا: استقبال الكود بدلاً من الاسم
+  final String?
+      selectedBranchCode; // 🌟 التعديل هنا: استقبال الكود بدلاً من الاسم
 
   const DailyHistoryPage({
     super.key,
@@ -28,10 +30,12 @@ class DailyHistoryPage extends StatefulWidget {
     this.selectedBranchCode,
   });
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<DailyHistoryPage> createState() => _DailyHistoryPageState();
 }
 
+// حالة الويدجت DailyHistoryPage: تدير بيانات الشاشة وتفاعلاتها
 class _DailyHistoryPageState extends State<DailyHistoryPage> {
   final DailyService _dailyService = DailyService();
   DateTime _fromDate = DateTime.now().subtract(const Duration(days: 7));
@@ -52,8 +56,7 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
   VoidCallback? _boxListener;
   bool _isUpdating = false; // ✅ متغير علم لمنع التحديث المتكرر
 
-
-
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
@@ -64,44 +67,51 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
         _fetchData();
       }
     };
-    CachePartitions.box('daily_transactions_box').listenable().addListener(_boxListener!);
+    CachePartitions.box('daily_transactions_box')
+        .listenable()
+        .addListener(_boxListener!);
     _initialize();
   }
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     if (_boxListener != null) {
-      CachePartitions.box('daily_transactions_box').listenable().removeListener(_boxListener!);
+      CachePartitions.box('daily_transactions_box')
+          .listenable()
+          .removeListener(_boxListener!);
     }
     super.dispose();
   }
 
+  // يهيّئ البيانات والصلاحيات
   Future<void> _initialize() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_isInitializing) return;
+      _isInitializing = true;
 
-    if (_isInitializing) return;
-    _isInitializing = true;
+      // ✅ قراءة البيانات من Hive مباشرة (بدون مزامنة)
+      // المزامنة تتم مركزياً في main.dart (عند بدء التشغيل، تسجيل الدخول، أو إعادة اتصال WebSocket)
+      // هذا يضمن:
+      // 1. سرعة عرض الصفحة (لا انتظار لتحميل البيانات)
+      // 2. عدم تكرار استدعاءات المزامنة من عدة صفحات
+      // 3. تحديث تلقائي عند تغيير Hive عبر المستمع (_boxListener)
 
-    // ✅ قراءة البيانات من Hive مباشرة (بدون مزامنة)
-    // المزامنة تتم مركزياً في main.dart (عند بدء التشغيل، تسجيل الدخول، أو إعادة اتصال WebSocket)
-    // هذا يضمن:
-    // 1. سرعة عرض الصفحة (لا انتظار لتحميل البيانات)
-    // 2. عدم تكرار استدعاءات المزامنة من عدة صفحات
-    // 3. تحديث تلقائي عند تغيير Hive عبر المستمع (_boxListener)
+      final Box dailyBox = CachePartitions.box('daily_transactions_box');
+      bool hasLocalData = dailyBox.values
+          .any((tx) => tx is Map && tx['company_code'] == widget.companyCode);
 
-    final Box dailyBox = CachePartitions.box('daily_transactions_box');
-    bool hasLocalData = dailyBox.values.any((tx) => tx is Map && tx['company_code'] == widget.companyCode);
+      // ✅ إذا لم تكن هناك بيانات محلية، نعرض رسالة "لا توجد بيانات" بدلاً من تحميلها
+      // (سيتم تحميل البيانات من main.dart في الخلفية)
+      if (!hasLocalData) {
+        print(
+            "ℹ️ لا توجد بيانات محلية في الهيستوري، سيتم تحميلها من main.dart");
+      }
 
-    // ✅ إذا لم تكن هناك بيانات محلية، نعرض رسالة "لا توجد بيانات" بدلاً من تحميلها
-    // (سيتم تحميل البيانات من main.dart في الخلفية)
-    if (!hasLocalData) {
-      print("ℹ️ لا توجد بيانات محلية في الهيستوري، سيتم تحميلها من main.dart");
-    }
-
-    // ✅ جلب التحديثات التزايدية من السيرفر باستخدام وقت آخر مزامنة
-    // ملاحظة: هذا الكود تم تعليقه لأنه يتم تنفيذه في main.dart
-    // لكننا نتركه للتوافق مع الكود القديم وللتذكير بالآلية
-    /*
+      // ✅ جلب التحديثات التزايدية من السيرفر باستخدام وقت آخر مزامنة
+      // ملاحظة: هذا الكود تم تعليقه لأنه يتم تنفيذه في main.dart
+      // لكننا نتركه للتوافق مع الكود القديم وللتذكير بالآلية
+      /*
     final prefs = await SharedPreferences.getInstance();
     final lastSyncKey = '${ApiConstants.LAST_SYNC_DAILY}${widget.companyCode}';
     final lastSyncTime = prefs.getString(lastSyncKey);
@@ -117,72 +127,80 @@ return CachePartitions.run(() async {
     }
     */
 
-    // ✅ التحقق قبل _fetchData
-    if (!mounted) {
+      // ✅ التحقق قبل _fetchData
+      if (!mounted) {
+        _isInitializing = false;
+        return;
+      }
+
+      // ✅ عرض البيانات المخزنة محلياً فوراً (بدون انتظار)
+      _fetchData();
       _isInitializing = false;
-      return;
-    }
+    });
+  }
 
-    // ✅ عرض البيانات المخزنة محلياً فوراً (بدون انتظار)
-    _fetchData();
-    _isInitializing = false;
-});
-}
-
+  // يجلب بيانات اليومية
   void _fetchData() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      // ✅ منع التنفيذ إذا كان الـ Widget غير موجود أو قيد التحديث
+      if (!mounted || _isUpdating) return;
 
-    // ✅ منع التنفيذ إذا كان الـ Widget غير موجود أو قيد التحديث
-    if (!mounted || _isUpdating) return;
+      _isUpdating = true;
+      setState(() => _isLoading = true);
+      try {
+        final data = await _dailyService.getTransactionsHistory(
+          widget.companyCode,
+          DateFormat('yyyy-MM-dd').format(_fromDate),
+          DateFormat('yyyy-MM-dd').format(_toDate),
+          branchCode: widget.selectedBranchCode,
+        );
 
-    _isUpdating = true;
-    setState(() => _isLoading = true);
-    try {
-      final data = await _dailyService.getTransactionsHistory(
-        widget.companyCode,
-        DateFormat('yyyy-MM-dd').format(_fromDate),
-        DateFormat('yyyy-MM-dd').format(_toDate),
-        branchCode: widget.selectedBranchCode,
-      );
-
-      // ✅ التحقق قبل تحديث الحالة
-      if (!mounted) {
-        _isUpdating = false;
-        return;
+        // ✅ التحقق قبل تحديث الحالة
+        if (!mounted) {
+          _isUpdating = false;
+          return;
+        }
+        setState(() {
+          _historyData = data
+              .map<Map<String, dynamic>>(
+                  (item) => Map<String, dynamic>.from(item))
+              .toList();
+          _isLoading = false;
+          _isUpdating = false;
+        });
+      } catch (e) {
+        // ✅ التحقق قبل تحديث الحالة في حالة الخطأ
+        if (!mounted) {
+          _isUpdating = false;
+          return;
+        }
+        setState(() {
+          _isLoading = false;
+          _isUpdating = false;
+        });
+        print("خطأ في جلب التاريخ: $e");
       }
-      setState(() {
-        _historyData = data.map<Map<String, dynamic>>((item) => Map<String, dynamic>.from(item)).toList();
-        _isLoading = false;
-        _isUpdating = false;
-      });
-    } catch (e) {
-      // ✅ التحقق قبل تحديث الحالة في حالة الخطأ
-      if (!mounted) {
-        _isUpdating = false;
-        return;
-      }
-      setState(() {
-        _isLoading = false;
-        _isUpdating = false;
-      });
-      print("خطأ في جلب التاريخ: $e");
-    }
-});
-}
+    });
+  }
 
   // 🌟 دالة مساعدة لجلب اسم الفرع من الكود الخاص به لعرضه للمستخدم
+  // يعيد اسم الفرع من الكود
   String _getBranchName(String? code) {
     if (code == null || code == 'all' || code == '') return 'كل الفروع';
     final Box codingBox = CachePartitions.box('coding_box');
-    final rawData = codingBox.get("${widget.companyCode}_branches", defaultValue: []);
-    for(var item in rawData) {
-      if(item['code']?.toString() == code.toString()) return item['name']?.toString() ?? "فرع غير معروف";
+    final rawData =
+        codingBox.get("${widget.companyCode}_branches", defaultValue: []);
+    for (var item in rawData) {
+      if (item['code']?.toString() == code.toString())
+        return item['name']?.toString() ?? "فرع غير معروف";
     }
     return "فرع غير معروف";
   }
 
   // دالة لفلترة وترتيب البيانات
-  List<Map<String, dynamic>> _applyFiltersAndSort(List<Map<String, dynamic>> list) {
+  // يطبّق التصفية والترتيب على القائمة
+  List<Map<String, dynamic>> _applyFiltersAndSort(
+      List<Map<String, dynamic>> list) {
     List<Map<String, dynamic>> filteredList = List.from(list);
 
     // 1️⃣ تطبيق فلتر التصنيفات
@@ -223,6 +241,7 @@ return CachePartitions.run(() async {
   }
 
   // حساب إجمالي المبلغ للبيانات المعروضة
+  // يحسب إجمالي القائمة
   double _calculateTotal(List<Map<String, dynamic>> list) {
     double total = 0.0;
     for (var item in list) {
@@ -232,6 +251,7 @@ return CachePartitions.run(() async {
   }
 
   // عرض مربع حوار لاختيار التصنيفات
+  // يعرض نافذة التصفية
   void _showFilterDialog(List<Map<String, dynamic>> currentData) {
     // استخراج جميع التصنيفات الفريدة
     Set<String> allCategories = {};
@@ -241,7 +261,8 @@ return CachePartitions.run(() async {
     }
 
     if (allCategories.isEmpty) {
-      _showSnackBar("لا توجد تصنيفات لعرضها في النطاق الزمني الحالي", AppTheme.warningOrangeFor(context));
+      _showSnackBar("لا توجد تصنيفات لعرضها في النطاق الزمني الحالي",
+          AppTheme.warningOrangeFor(context));
       return;
     }
 
@@ -272,7 +293,8 @@ return CachePartitions.run(() async {
                               tempSelected = Set.from(allCategories);
                             });
                           },
-                          child: const Text('تحديد الكل', style: TextStyle(fontFamily: 'Cairo')),
+                          child: const Text('تحديد الكل',
+                              style: TextStyle(fontFamily: 'Cairo')),
                         ),
                         const SizedBox(width: 10),
                         TextButton(
@@ -281,7 +303,8 @@ return CachePartitions.run(() async {
                               tempSelected.clear();
                             });
                           },
-                          child: const Text('إلغاء الكل', style: TextStyle(fontFamily: 'Cairo')),
+                          child: const Text('إلغاء الكل',
+                              style: TextStyle(fontFamily: 'Cairo')),
                         ),
                       ],
                     ),
@@ -292,7 +315,8 @@ return CachePartitions.run(() async {
                         shrinkWrap: true,
                         children: allCategories.toList().map((category) {
                           return CheckboxListTile(
-                            title: Text(category, style: const TextStyle(fontFamily: 'Cairo')),
+                            title: Text(category,
+                                style: const TextStyle(fontFamily: 'Cairo')),
                             value: tempSelected.contains(category),
                             onChanged: (bool? checked) {
                               setStateDialog(() {
@@ -315,7 +339,8 @@ return CachePartitions.run(() async {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context),
-                  child: const Text('إلغاء', style: TextStyle(fontFamily: 'Cairo')),
+                  child: const Text('إلغاء',
+                      style: TextStyle(fontFamily: 'Cairo')),
                 ),
                 ElevatedButton(
                   onPressed: () {
@@ -324,7 +349,8 @@ return CachePartitions.run(() async {
                     });
                     Navigator.pop(context);
                   },
-                  child: const Text('تطبيق', style: TextStyle(fontFamily: 'Cairo')),
+                  child: const Text('تطبيق',
+                      style: TextStyle(fontFamily: 'Cairo')),
                 ),
               ],
             );
@@ -334,146 +360,175 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يصدّر السجل إلى ملف PDF
   Future<void> _exportToPDF(List<Map<String, dynamic>> currentData) async {
-return CachePartitions.run(() async {
-
-    if (!PermissionsService().canExport) {
-      _showSnackBar("ليس لديك صلاحية للتصدير", AppTheme.warningOrangeFor(context));
-      return;
-    }
-
-    if (currentData.isEmpty) {
-      _showSnackBar("لا توجد بيانات لتصديرها", AppTheme.warningOrangeFor(context));
-      return;
-    }
-
-    try {
-      // حساب الإجمالي
-      double total = _calculateTotal(currentData);
-
-      // تجهيز العناوين والمفاتيح (نفس المستخدمة في Excel)
-      List<String> headers = ["رقم الإذن", "المبلغ", "البيان", "التصنيف", "التاريخ", "الفرع", "الموظف", "الخزينة"];
-      List<String> keys = ["serial", "amount", "statement", "category", "date", "branch_name", "employee", "treasury"];
-
-      // تحويل البيانات لتحل محل branch_code باسم الفرع
-      List<Map<String, dynamic>> exportData = currentData.map((row) {
-        return {
-          ...row,
-          "branch_name": _getBranchName(row['branch_code']?.toString()),
-          "treasury": _getTreasuryName(row['treasury']),
-        };
-      }).toList();
-
-      await ExportService.exportToPDF(
-        data: exportData,
-        title: "سجل الحركات",
-        headers: headers,
-        keys: keys,
-        totalAmount: total,
-        branchName: _getBranchName(widget.selectedBranchCode),
-        date: "من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}",
-        summary: null, // لا نحتاج summary هنا لأننا نمرر totalAmount
-      );
-
-      _showSnackBar("تم تصدير PDF بنجاح", AppTheme.successStrongFor(context));
-    } catch (e) {
-      _showSnackBar("فشل التصدير: $e", AppTheme.dangerStrongFor(context));
-    }
-});
-}
-
-  Future<void> _exportToExcel(List<Map<String, dynamic>> currentData) async {
-return CachePartitions.run(() async {
-
-    // ✅ التحقق من صلاحية التصدير
-    if (!PermissionsService().canExport) {
-      _showSnackBar("ليس لديك صلاحية لتصدير البيانات", AppTheme.warningOrangeFor(context));
-      return;
-    }
-
-    if (currentData.isEmpty) {
-      _showSnackBar("لا توجد بيانات لتصديرها", AppTheme.warningOrangeFor(context));
-      return;
-    }
-
-    try {
-      String formattedDate =
-          "${DateTime.now().day}-${DateTime.now().month}-${DateTime.now().year}";
-      String fileName = "تقرير_اليومية_$formattedDate.xlsx";
-      var excel = excel_lib.Excel.createExcel();
-
-      String defaultSheet = excel.tables.keys.first;
-      excel.rename(defaultSheet, 'Daily_Records');
-      excel_lib.Sheet sheetObject = excel['Daily_Records'];
-
-      for (var table in excel.tables.keys.toList()) {
-        if (table != 'Daily_Records') {
-          excel.delete(table);
-        }
+    return CachePartitions.run(() async {
+      if (!PermissionsService().canExport) {
+        _showSnackBar(
+            "ليس لديك صلاحية للتصدير", AppTheme.warningOrangeFor(context));
+        return;
       }
 
-      // 🌟 إضافة كل الأعمدة الجديدة لملف الإكسيل
-      sheetObject.appendRow([
-        excel_lib.TextCellValue("رقم الإذن"),
-        excel_lib.TextCellValue("المبلغ"),
-        excel_lib.TextCellValue("البيان"),
-        excel_lib.TextCellValue("التصنيف"),
-        excel_lib.TextCellValue("التاريخ"),
-        excel_lib.TextCellValue("الفرع"),  // 👈 إضافة جديدة
-        excel_lib.TextCellValue("الموظف"), // 👈 إضافة جديدة
-        excel_lib.TextCellValue("الخزينة"), // ✅ إضافة عمود الخزينة
-      ]);
-
-      for (var row in currentData) {
-        sheetObject.appendRow([
-          excel_lib.TextCellValue(row['serial']?.toString() ?? ""),
-          excel_lib.TextCellValue(row['amount']?.toString() ?? "0"),
-          excel_lib.TextCellValue(row['statement'] ?? ""),
-          excel_lib.TextCellValue(row['category'] ?? ""),
-          excel_lib.TextCellValue(row['date'] ?? ""),
-          excel_lib.TextCellValue(_getBranchName(row['branch_code']?.toString())), // 🌟 التعديل هنا
-          excel_lib.TextCellValue(row['employee'] ?? "غير معروف"), // 👈 إضافة جديدة
-          excel_lib.TextCellValue(_getTreasuryName(row['treasury'])), // ✅ إضافة الخزينة
-        ]);
+      if (currentData.isEmpty) {
+        _showSnackBar(
+            "لا توجد بيانات لتصديرها", AppTheme.warningOrangeFor(context));
+        return;
       }
 
-      var fileBytes = excel.encode();
-      if (fileBytes == null) return;
+      try {
+        // حساب الإجمالي
+        double total = _calculateTotal(currentData);
 
-      if (identical(0, 0.0)) {
-        final blob = html.Blob([
-          fileBytes
-        ], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        final url = html.Url.createObjectUrlFromBlob(blob);
-        final anchor = html.AnchorElement(href: url)
-          ..setAttribute("download", fileName)
-          ..style.display = "none";
-        html.document.body?.append(anchor);
-        anchor.click();
-        anchor.remove();
-        html.Url.revokeObjectUrl(url);
-        _showSnackBar("تم تحميل $fileName بنجاح", AppTheme.successStrongFor(context));
-      } else {
-        String? selectedPath = await FilePicker.platform.saveFile(
-          dialogTitle: 'اختر مكان حفظ ملف الإكسيل',
-          fileName: fileName,
-          type: FileType.custom,
-          allowedExtensions: ['xlsx'],
+        // تجهيز العناوين والمفاتيح (نفس المستخدمة في Excel)
+        List<String> headers = [
+          "رقم الإذن",
+          "المبلغ",
+          "البيان",
+          "التصنيف",
+          "التاريخ",
+          "الفرع",
+          "الموظف",
+          "الخزينة"
+        ];
+        List<String> keys = [
+          "serial",
+          "amount",
+          "statement",
+          "category",
+          "date",
+          "branch_name",
+          "employee",
+          "treasury"
+        ];
+
+        // تحويل البيانات لتحل محل branch_code باسم الفرع
+        List<Map<String, dynamic>> exportData = currentData.map((row) {
+          return {
+            ...row,
+            "branch_name": _getBranchName(row['branch_code']?.toString()),
+            "treasury": _getTreasuryName(row['treasury']),
+          };
+        }).toList();
+
+        await ExportService.exportToPDF(
+          data: exportData,
+          title: "سجل الحركات",
+          headers: headers,
+          keys: keys,
+          totalAmount: total,
+          branchName: _getBranchName(widget.selectedBranchCode),
+          date:
+              "من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}",
+          summary: null, // لا نحتاج summary هنا لأننا نمرر totalAmount
         );
 
-        if (selectedPath != null) {
-          if (!selectedPath.endsWith('.xlsx')) selectedPath += '.xlsx';
-          final file = File(selectedPath);
-          await file.writeAsBytes(fileBytes);
-          _showSnackBar("تم حفظ الملف في: $selectedPath", AppTheme.successStrongFor(context));
-        }
+        _showSnackBar("تم تصدير PDF بنجاح", AppTheme.successStrongFor(context));
+      } catch (e) {
+        _showSnackBar("فشل التصدير: $e", AppTheme.dangerStrongFor(context));
       }
-    } catch (e) {
-      _showSnackBar("فشل التصدير: $e", AppTheme.dangerStrongFor(context));
-    }
-});
-}
+    });
+  }
 
+  // يصدّر السجل إلى ملف Excel
+  Future<void> _exportToExcel(List<Map<String, dynamic>> currentData) async {
+    return CachePartitions.run(() async {
+      // ✅ التحقق من صلاحية التصدير
+      if (!PermissionsService().canExport) {
+        _showSnackBar("ليس لديك صلاحية لتصدير البيانات",
+            AppTheme.warningOrangeFor(context));
+        return;
+      }
+
+      if (currentData.isEmpty) {
+        _showSnackBar(
+            "لا توجد بيانات لتصديرها", AppTheme.warningOrangeFor(context));
+        return;
+      }
+
+      try {
+        String formattedDate =
+            "${DateTime.now().day}-${DateTime.now().month}-${DateTime.now().year}";
+        String fileName = "تقرير_اليومية_$formattedDate.xlsx";
+        var excel = excel_lib.Excel.createExcel();
+
+        String defaultSheet = excel.tables.keys.first;
+        excel.rename(defaultSheet, 'Daily_Records');
+        excel_lib.Sheet sheetObject = excel['Daily_Records'];
+
+        for (var table in excel.tables.keys.toList()) {
+          if (table != 'Daily_Records') {
+            excel.delete(table);
+          }
+        }
+
+        // 🌟 إضافة كل الأعمدة الجديدة لملف الإكسيل
+        sheetObject.appendRow([
+          excel_lib.TextCellValue("رقم الإذن"),
+          excel_lib.TextCellValue("المبلغ"),
+          excel_lib.TextCellValue("البيان"),
+          excel_lib.TextCellValue("التصنيف"),
+          excel_lib.TextCellValue("التاريخ"),
+          excel_lib.TextCellValue("الفرع"), // 👈 إضافة جديدة
+          excel_lib.TextCellValue("الموظف"), // 👈 إضافة جديدة
+          excel_lib.TextCellValue("الخزينة"), // ✅ إضافة عمود الخزينة
+        ]);
+
+        for (var row in currentData) {
+          sheetObject.appendRow([
+            excel_lib.TextCellValue(row['serial']?.toString() ?? ""),
+            excel_lib.TextCellValue(row['amount']?.toString() ?? "0"),
+            excel_lib.TextCellValue(row['statement'] ?? ""),
+            excel_lib.TextCellValue(row['category'] ?? ""),
+            excel_lib.TextCellValue(row['date'] ?? ""),
+            excel_lib.TextCellValue(_getBranchName(
+                row['branch_code']?.toString())), // 🌟 التعديل هنا
+            excel_lib.TextCellValue(
+                row['employee'] ?? "غير معروف"), // 👈 إضافة جديدة
+            excel_lib.TextCellValue(
+                _getTreasuryName(row['treasury'])), // ✅ إضافة الخزينة
+          ]);
+        }
+
+        var fileBytes = excel.encode();
+        if (fileBytes == null) return;
+
+        if (identical(0, 0.0)) {
+          final blob = html.Blob([
+            fileBytes
+          ], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+          final url = html.Url.createObjectUrlFromBlob(blob);
+          final anchor = html.AnchorElement(href: url)
+            ..setAttribute("download", fileName)
+            ..style.display = "none";
+          html.document.body?.append(anchor);
+          anchor.click();
+          anchor.remove();
+          html.Url.revokeObjectUrl(url);
+          _showSnackBar(
+              "تم تحميل $fileName بنجاح", AppTheme.successStrongFor(context));
+        } else {
+          String? selectedPath = await FilePicker.platform.saveFile(
+            dialogTitle: 'اختر مكان حفظ ملف الإكسيل',
+            fileName: fileName,
+            type: FileType.custom,
+            allowedExtensions: ['xlsx'],
+          );
+
+          if (selectedPath != null) {
+            if (!selectedPath.endsWith('.xlsx')) selectedPath += '.xlsx';
+            final file = File(selectedPath);
+            await file.writeAsBytes(fileBytes);
+            _showSnackBar("تم حفظ الملف في: $selectedPath",
+                AppTheme.successStrongFor(context));
+          }
+        }
+      } catch (e) {
+        _showSnackBar("فشل التصدير: $e", AppTheme.dangerStrongFor(context));
+      }
+    });
+  }
+
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     // ✅ التحقق من صلاحية المعاينة
@@ -481,7 +536,9 @@ return CachePartitions.run(() async {
       return Scaffold(
         extendBodyBehindAppBar: true,
         appBar: AppBar(
-          title: Text("سجل الحركات", style: TextStyle(fontFamily: 'Cairo', color: AppTheme.textMainFor(context))),
+          title: Text("سجل الحركات",
+              style: TextStyle(
+                  fontFamily: 'Cairo', color: AppTheme.textMainFor(context))),
           backgroundColor: AppTheme.appBarBg,
           elevation: 0,
         ),
@@ -489,13 +546,17 @@ return CachePartitions.run(() async {
           decoration: BoxDecoration(
             gradient: LinearGradient(
               colors: AppTheme.dashGradientMain(context),
-              begin: Alignment.topLeft, end: Alignment.bottomRight,
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
             ),
           ),
           child: Center(
             child: Text(
               "ليس لديك صلاحية لعرض سجل الحركات",
-              style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo', fontSize: 16),
+              style: TextStyle(
+                  color: AppTheme.textSoftFor(context),
+                  fontFamily: 'Cairo',
+                  fontSize: 16),
             ),
           ),
         ),
@@ -509,14 +570,13 @@ return CachePartitions.run(() async {
     return PopScope(
       canPop: false,
       onPopInvoked: (didPop) async {
-return CachePartitions.run(() async {
-
-        if (didPop) return;
-        if (context.mounted) {
-          Navigator.pop(context);
-        }
-});
-},
+        return CachePartitions.run(() async {
+          if (didPop) return;
+          if (context.mounted) {
+            Navigator.pop(context);
+          }
+        });
+      },
       child: ValueListenableBuilder(
         valueListenable: dailyBox.listenable(),
         builder: (context, Box box, child) {
@@ -526,34 +586,33 @@ return CachePartitions.run(() async {
           String endStr = DateFormat('yyyy-MM-dd').format(_toDate);
 
           for (var item in box.values) {
-  if (item is! Map) continue;
+            if (item is! Map) continue;
 
-  // السجل المحذوف لا يظهر في الواجهة
-  if (item['is_deleted'] == true) continue;
+            // السجل المحذوف لا يظهر في الواجهة
+            if (item['is_deleted'] == true) continue;
 
-  if (item['company_code'] != widget.companyCode) {
-    continue;
-  }
+            if (item['company_code'] != widget.companyCode) {
+              continue;
+            }
 
-  if (widget.selectedBranchCode != null &&
-      widget.selectedBranchCode != "all" &&
-      widget.selectedBranchCode != "") {
-    if (item['branch_code']?.toString() !=
-        widget.selectedBranchCode) {
-      continue;
-    }
-  }
+            if (widget.selectedBranchCode != null &&
+                widget.selectedBranchCode != "all" &&
+                widget.selectedBranchCode != "") {
+              if (item['branch_code']?.toString() !=
+                  widget.selectedBranchCode) {
+                continue;
+              }
+            }
 
-  final String txDate =
-      item['date']?.toString() ?? "";
+            final String txDate = item['date']?.toString() ?? "";
 
-  if (txDate.compareTo(startStr) >= 0 &&
-      txDate.compareTo(endStr) <= 0) {
-    displayList.add(
-      Map<String, dynamic>.from(item),
-    );
-  }
-}
+            if (txDate.compareTo(startStr) >= 0 &&
+                txDate.compareTo(endStr) <= 0) {
+              displayList.add(
+                Map<String, dynamic>.from(item),
+              );
+            }
+          }
 
           // 2. تطبيق الفلتر والترتيب (أبجدي حسب التصنيف)
           displayList = _applyFiltersAndSort(displayList);
@@ -566,17 +625,24 @@ return CachePartitions.run(() async {
                 children: [
                   const Text(
                     "سجل الحركات",
-                    style: TextStyle(fontFamily: 'Cairo', fontSize: 16, fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                        fontFamily: 'Cairo',
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold),
                   ),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                     decoration: BoxDecoration(
                       color: GlassStyle.accentFill10For(context),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
                       _getBranchName(widget.selectedBranchCode),
-                      style: TextStyle(fontFamily: 'Cairo', fontSize: 12, color: AppTheme.accentFor(context)),
+                      style: TextStyle(
+                          fontFamily: 'Cairo',
+                          fontSize: 12,
+                          color: AppTheme.accentFor(context)),
                     ),
                   ),
                 ],
@@ -602,7 +668,8 @@ return CachePartitions.run(() async {
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(
                             color: _selectedCategories.isNotEmpty
-                                ? GlassStyle.warningOrangeSoftBorder60For(context)
+                                ? GlassStyle.warningOrangeSoftBorder60For(
+                                    context)
                                 : GlassStyle.extraPurpleBorder30For(context),
                           ),
                         ),
@@ -635,10 +702,12 @@ return CachePartitions.run(() async {
                         decoration: BoxDecoration(
                           color: GlassStyle.fill12For(context),
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: GlassStyle.successBorder40For(context)),
+                          border: Border.all(
+                              color: GlassStyle.successBorder40For(context)),
                         ),
                         child: IconButton(
-                          icon: Icon(Icons.file_download, color: AppTheme.successFor(context), size: 22),
+                          icon: Icon(Icons.file_download,
+                              color: AppTheme.successFor(context), size: 22),
                           onPressed: () {
                             _exportToExcel(displayList);
                           },
@@ -659,10 +728,12 @@ return CachePartitions.run(() async {
                         decoration: BoxDecoration(
                           color: GlassStyle.fill12For(context),
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: GlassStyle.dangerBorder40For(context)),
+                          border: Border.all(
+                              color: GlassStyle.dangerBorder40For(context)),
                         ),
                         child: IconButton(
-                          icon: Icon(Icons.picture_as_pdf, color: AppTheme.dangerFor(context), size: 22),
+                          icon: Icon(Icons.picture_as_pdf,
+                              color: AppTheme.dangerFor(context), size: 22),
                           onPressed: () {
                             _exportToPDF(displayList);
                           },
@@ -696,7 +767,8 @@ return CachePartitions.run(() async {
                         Expanded(
                           child: _isLoading
                               ? Center(
-                                  child: CircularProgressIndicator(color: AppTheme.textMainFor(context)))
+                                  child: CircularProgressIndicator(
+                                      color: AppTheme.textMainFor(context)))
                               : displayList.isEmpty
                                   ? Center(
                                       child: Text(
@@ -717,14 +789,18 @@ return CachePartitions.run(() async {
                                     ),
                         ),
                         // ✅ عرض إجمالي المبلغ (يظهر فقط عند وجود فلتر تصنيفات)
-                        if (displayList.isNotEmpty && _selectedCategories.isNotEmpty)
+                        if (displayList.isNotEmpty &&
+                            _selectedCategories.isNotEmpty)
                           Container(
-                            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                            margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            padding: const EdgeInsets.symmetric(
+                                vertical: 12, horizontal: 16),
+                            margin: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
                             decoration: BoxDecoration(
                               color: GlassStyle.fill08For(context),
                               borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: GlassStyle.accentBorder30For(context)),
+                              border: Border.all(
+                                  color: GlassStyle.accentBorder30For(context)),
                             ),
                             child: Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -761,6 +837,7 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يبني مرشحات التاريخ
   Widget _buildDateFilters() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -787,26 +864,28 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يبني زر اختيار التاريخ
   Widget _datePickerBtn(
       String label, DateTime date, Function(DateTime?) onPick) {
     return InkWell(
       onTap: () async {
-return CachePartitions.run(() async {
-
-        DateTime? p = await showDatePicker(
-          context: context,
-          initialDate: date,
-          firstDate: DateTime(2020),
-          lastDate: DateTime(2101),
-        );
-        if (p != null) onPick(p);
-});
-},
+        return CachePartitions.run(() async {
+          DateTime? p = await showDatePicker(
+            context: context,
+            initialDate: date,
+            firstDate: DateTime(2020),
+            lastDate: DateTime(2101),
+          );
+          if (p != null) onPick(p);
+        });
+      },
       child: Column(
         children: [
           Text(label,
               style: TextStyle(
-                  color: AppTheme.textMutedFor(context), fontSize: 10, fontFamily: 'Cairo')),
+                  color: AppTheme.textMutedFor(context),
+                  fontSize: 10,
+                  fontFamily: 'Cairo')),
           Text(DateFormat('yyyy-MM-dd').format(date),
               style: TextStyle(
                   color: AppTheme.textMainFor(context),
@@ -817,12 +896,14 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يبني رأس الجدول
   Widget _buildTableHeader() {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
-          color: GlassStyle.fill10For(context), borderRadius: BorderRadius.circular(8)),
+          color: GlassStyle.fill10For(context),
+          borderRadius: BorderRadius.circular(8)),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center, // ✅ توسيط الأعمدة
         children: [
@@ -867,6 +948,7 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يبني صف بيانات
   Widget _buildDataRow(Map<String, dynamic> item) {
     return InkWell(
       onTap: () => _showOptionsModal(item),
@@ -874,7 +956,9 @@ return CachePartitions.run(() async {
         padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
         margin: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
-          border: Border(bottom: BorderSide(color: GlassStyle.line10For(context), width: 0.5)),
+          border: Border(
+              bottom:
+                  BorderSide(color: GlassStyle.line10For(context), width: 0.5)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -914,7 +998,8 @@ return CachePartitions.run(() async {
                     child: Text("${item['date'] ?? ''}",
                         textAlign: TextAlign.center,
                         style: TextStyle(
-                            color: AppTheme.textMutedFor(context), fontSize: 10))),
+                            color: AppTheme.textMutedFor(context),
+                            fontSize: 10))),
               ],
             ),
 
@@ -929,7 +1014,8 @@ return CachePartitions.run(() async {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.numbers, color: AppTheme.warningOrangeFor(context), size: 12),
+                      Icon(Icons.numbers,
+                          color: AppTheme.warningOrangeFor(context), size: 12),
                       const SizedBox(width: 4),
                       Text(
                         "اذن: ${item['serial'] ?? ''}",
@@ -947,7 +1033,8 @@ return CachePartitions.run(() async {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Icon(Icons.account_balance,
-                          color: AppTheme.extraPurpleDeepFor(context), size: 12),
+                          color: AppTheme.extraPurpleDeepFor(context),
+                          size: 12),
                       const SizedBox(width: 4),
                       Text(
                         "${_getTreasuryName(item['treasury'])}",
@@ -988,7 +1075,10 @@ return CachePartitions.run(() async {
                       const SizedBox(width: 4),
                       Text(
                         "${_getBranchName(item['branch_code']?.toString())}",
-                        style: TextStyle(color: AppTheme.textFaintFor(context), fontSize: 9, fontFamily: 'Cairo'),
+                        style: TextStyle(
+                            color: AppTheme.textFaintFor(context),
+                            fontSize: 9,
+                            fontFamily: 'Cairo'),
                       ),
                     ],
                   ),
@@ -1001,38 +1091,43 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يفتح الحركة للتعديل
   void _editTransaction(Map<String, dynamic> item) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      // 🌟 منع التعديل لحركات التحويل المزدوجة لحماية الأرصدة
+      if (item['category'] == 'تحويل خزائن') {
+        _showSnackBar(
+            "لا يمكن تعديل إذن التحويل المزدوج! الرجاء حذفه وإنشاء تحويل جديد.",
+            AppTheme.warningOrangeFor(context));
+        return;
+      }
 
-    // 🌟 منع التعديل لحركات التحويل المزدوجة لحماية الأرصدة
-    if (item['category'] == 'تحويل خزائن') {
-      _showSnackBar("لا يمكن تعديل إذن التحويل المزدوج! الرجاء حذفه وإنشاء تحويل جديد.", AppTheme.warningOrangeFor(context));
-      return;
-    }
-
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => DailyPage(
-          companyCode: widget.companyCode,
-          editItem: item,
-          userName: widget.userName,
-          selectedBranchCode: item['branch_code']?.toString() ?? widget.selectedBranchCode,
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => DailyPage(
+            companyCode: widget.companyCode,
+            editItem: item,
+            userName: widget.userName,
+            selectedBranchCode:
+                item['branch_code']?.toString() ?? widget.selectedBranchCode,
+          ),
         ),
-      ),
-    );
-    // ✅ بعد العودة من التعديل، نعيد تحميل البيانات
-    _fetchData();
-});
-}
+      );
+      // ✅ بعد العودة من التعديل، نعيد تحميل البيانات
+      _fetchData();
+    });
+  }
 
+  // يعرض نافذة خيارات الحركة
   void _showOptionsModal(Map<String, dynamic> item) {
     bool canEdit = PermissionsService().canEditTransaction;
     bool canDelete = PermissionsService().canDeleteTransaction;
 
     // إذا لم تكن هناك صلاحية للتعديل ولا للحذف، نخرج بدون عرض القائمة
     if (!canEdit && !canDelete) {
-      _showSnackBar("ليس لديك صلاحية لتعديل أو حذف الحركات", AppTheme.warningOrangeFor(context));
+      _showSnackBar("ليس لديك صلاحية لتعديل أو حذف الحركات",
+          AppTheme.warningOrangeFor(context));
       return;
     }
 
@@ -1047,10 +1142,13 @@ return CachePartitions.run(() async {
           // ✅ خيار التعديل يظهر فقط إذا كانت الصلاحية موجودة
           if (canEdit)
             ListTile(
-              leading: Icon(Icons.edit, color: AppTheme.warningOrangeFor(context), size: 20),
+              leading: Icon(Icons.edit,
+                  color: AppTheme.warningOrangeFor(context), size: 20),
               title: Text("تعديل الإذن",
                   style: TextStyle(
-                      color: AppTheme.textMainFor(context), fontFamily: 'Cairo', fontSize: 14)),
+                      color: AppTheme.textMainFor(context),
+                      fontFamily: 'Cairo',
+                      fontSize: 14)),
               onTap: () {
                 Navigator.pop(context);
                 _editTransaction(item);
@@ -1059,10 +1157,13 @@ return CachePartitions.run(() async {
           // ✅ خيار الحذف يظهر فقط إذا كانت الصلاحية موجودة
           if (canDelete)
             ListTile(
-              leading: Icon(Icons.delete, color: AppTheme.dangerStrongFor(context), size: 20),
+              leading: Icon(Icons.delete,
+                  color: AppTheme.dangerStrongFor(context), size: 20),
               title: Text("حذف الإذن",
                   style: TextStyle(
-                      color: AppTheme.textMainFor(context), fontFamily: 'Cairo', fontSize: 14)),
+                      color: AppTheme.textMainFor(context),
+                      fontFamily: 'Cairo',
+                      fontSize: 14)),
               onTap: () {
                 Navigator.pop(context);
                 _confirmDelete(item);
@@ -1074,15 +1175,19 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يطلب تأكيد الحذف ثم ينفذه
   void _confirmDelete(Map<String, dynamic> item) {
     // ✅ التحقق من صلاحية الحذف مرة أخرى قبل التأكيد
     if (!PermissionsService().canDeleteTransaction) {
-      _showSnackBar("ليس لديك صلاحية للحذف", AppTheme.warningOrangeFor(context));
+      _showSnackBar(
+          "ليس لديك صلاحية للحذف", AppTheme.warningOrangeFor(context));
       return;
     }
 
     if (item['category'] == 'تحويل خزائن') {
-      _showSnackBar('تحويلات الخزائن تُدار من القسم المستقل، ولا تُحذف كأذون يومية.', AppTheme.warningOrangeFor(context));
+      _showSnackBar(
+          'تحويلات الخزائن تُدار من القسم المستقل، ولا تُحذف كأذون يومية.',
+          AppTheme.warningOrangeFor(context));
       return;
     }
 
@@ -1090,41 +1195,51 @@ return CachePartitions.run(() async {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: AppTheme.dialogBackground(context),
-        title: Text("تأكيد الحذف", style: TextStyle(color: AppTheme.textMainFor(context), fontFamily: 'Cairo', fontSize: 15)),
+        title: Text("تأكيد الحذف",
+            style: TextStyle(
+                color: AppTheme.textMainFor(context),
+                fontFamily: 'Cairo',
+                fontSize: 15)),
         content: Text(
           "حذف إذن رقم ${item['serial']}؟",
-          style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo', fontSize: 13),
+          style: TextStyle(
+              color: AppTheme.textSoftFor(context),
+              fontFamily: 'Cairo',
+              fontSize: 13),
         ),
         actions: [
           TextButton(
             onPressed: () async {
-return CachePartitions.run(() async {
+              return CachePartitions.run(() async {
+                try {
+                  // 1. حذف الإذن الأساسي الذي ضغط عليه المستخدم
+                  await _dailyService.deleteTransaction(
+                      widget.companyCode,
+                      item['serial'] ?? 0,
+                      item['branch_code']?.toString() ?? "1");
 
-              try {
-                // 1. حذف الإذن الأساسي الذي ضغط عليه المستخدم
-                await _dailyService.deleteTransaction(
-                    widget.companyCode, item['serial'] ?? 0, item['branch_code']?.toString() ?? "1");
-
-
-                if (mounted) {
-                  Navigator.pop(context);
-                  _showSnackBar(
-                    "تم حذف الإذن بنجاح وتحديث الأرصدة محلياً",
-                    AppTheme.successStrongFor(context)
-                  );
-                  // ✅ إعادة تحميل البيانات بعد الحذف
-                  _fetchData();
+                  if (mounted) {
+                    Navigator.pop(context);
+                    _showSnackBar("تم حذف الإذن بنجاح وتحديث الأرصدة محلياً",
+                        AppTheme.successStrongFor(context));
+                    // ✅ إعادة تحميل البيانات بعد الحذف
+                    _fetchData();
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    Navigator.pop(context);
+                    _showSnackBar("فشل الحذف: ${e.toString()}",
+                        AppTheme.dangerStrongFor(context));
+                  }
                 }
-              } catch (e) {
-                if (mounted) {
-                  Navigator.pop(context);
-                  _showSnackBar("فشل الحذف: ${e.toString()}", AppTheme.dangerStrongFor(context));
-                }
-              }
-
-});
-},
-            child: Text("حذف", style: TextStyle(color: AppTheme.dangerFor(context), fontFamily: 'Cairo', fontSize: 13, fontWeight: FontWeight.bold)),
+              });
+            },
+            child: Text("حذف",
+                style: TextStyle(
+                    color: AppTheme.dangerFor(context),
+                    fontFamily: 'Cairo',
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -1132,11 +1247,13 @@ return CachePartitions.run(() async {
   }
 
   // 🌟 دالة مساعدة لجلب اسم الخزينة من الحقل المخزن
+  // يعيد اسم الخزينة
   String _getTreasuryName(String? treasury) {
     if (treasury == null || treasury.isEmpty) return 'غير محدد';
     return treasury; // الحقل يخزن الاسم مباشرة
   }
 
+  // يعرض رسالة سريعة بالنص واللون المحددين
   void _showSnackBar(String m, Color c) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(m,

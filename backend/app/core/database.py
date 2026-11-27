@@ -1,3 +1,4 @@
+# backend/app/core/database.py
 import os
 from dotenv import load_dotenv
 from pathlib import Path
@@ -7,6 +8,7 @@ from sqlalchemy.pool import AsyncAdaptedQueuePool
 from sqlalchemy import text
 from app.core.pool_health import install_asyncpg_pool_health_check
 
+# إعداد الاتصال بقاعدة البيانات: مسار .env ورابط الاتصال وإنشاء الـengine
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 ENV_PATH = Path(r"D:\IslamApp-V1\.env")
 load_dotenv(dotenv_path=ENV_PATH)
@@ -54,6 +56,8 @@ AsyncSessionLocal = async_sessionmaker(
 
 Base = declarative_base()
 
+
+# يفتح جلسة قاعدة بيانات لكل طلب ويقفلها بعده
 async def get_db():
     async with AsyncSessionLocal() as session:
         try:
@@ -61,6 +65,8 @@ async def get_db():
         finally:
             await session.close()
 
+
+# ينشئ الجداول ويضيف الأعمدة الناقصة عند بدء التشغيل
 async def create_tables():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

@@ -18,6 +18,7 @@ from app.core.database import create_tables, AsyncSessionLocal
 from app.core.models import Company
 from sqlalchemy import select
 
+# تطبيق FastAPI الرئيسي وإعداد الـCORS
 app = FastAPI(title="IslamApp V1.0 API")
 app.middleware("http")(authenticate_http_request)
 
@@ -30,7 +31,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # ========== دالة إنشاء الشركة الافتراضية ==========
+# ينشئ الشركة الافتراضية لو مش موجودة
 async def create_default_company():
     async with AsyncSessionLocal() as db:
         stmt = select(Company).where(Company.code == "01")
@@ -46,7 +49,9 @@ async def create_default_company():
             await db.commit()
             print("✅ تم إنشاء الشركة الافتراضية في Neon: 01 - اسلام")
 
+
 # ========== إنشاء الجداول والبيانات الافتراضية عند بدء التشغيل ==========
+# حدث بدء التشغيل: ينشئ الجداول والشركة الافتراضية ويطبّق الفيدات لو ناقصة
 @app.on_event("startup")
 async def startup():
     await create_tables()
@@ -61,6 +66,7 @@ async def startup():
         asyncio.create_task(feed_migrator.run_background())
 
 
+# معالج خطأ الفيد غير المطبّق: يرد بدل 500 ويخلّي التطبيق يرجع للتزامن القديم
 @app.exception_handler(FeedNotApplied)
 async def feed_not_applied_handler(request, exc):
     # The v2 feed migration is missing or failed on this database: never a 500.
@@ -78,7 +84,9 @@ async def feed_not_applied_handler(request, exc):
         "scope": "",
     })
 
+
 # ========== ربط المسارات (Routes) ==========
+# ربط كل مجموعات المسارات (routes) بالتطبيق
 app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 app.include_router(transactions.router, prefix="/transactions", tags=["Transactions"])
 app.include_router(coding.router, prefix="/coding", tags=["Coding"])
@@ -100,6 +108,9 @@ app.include_router(hr.router, prefix="/hr", tags=["HR"])
 # ⭐ ترتيب مهم: راوتر التحويلات قبل التجاري حتى تصل /commercial/transfers/* للوحدة الجديدة
 app.include_router(transfers.router, prefix="/commercial", tags=["Stock Transfers"])
 app.include_router(commercial.router, prefix="/commercial", tags=["Sales, Returns and Customer Payments"])
+
+
+# مسار الصفحة الرئيسية لفحص إن السيرفر شغال
 @app.get("/")
 async def root():
     return {
@@ -109,4 +120,6 @@ async def root():
         "sync": "WebSocket enabled"
     }
 
+
+# ربط مسارات تحويلات الخزائن
 app.include_router(treasury_transfers.router, prefix="/treasury-transfers", tags=["Treasury Transfers"])

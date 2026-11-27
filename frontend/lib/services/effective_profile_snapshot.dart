@@ -1,20 +1,33 @@
+// frontend/lib/services/effective_profile_snapshot.dart
 import 'dart:convert';
 import 'company_permission_policy.dart';
 import 'branch_scope.dart';
 
+// لقطة الملف الفعلي لحساب وشركة محددين
 /// An effective scope returned for one authenticated account and company.
 class EffectiveProfileSnapshot {
   EffectiveProfileSnapshot._(this.data);
   final Map<String, dynamic> data;
+
+  // يحسب مفتاح تخزين اللقطة
   static String cacheKey(String uid, String company) =>
       'effective_profile_${jsonEncode([uid, company])}';
+
+  // يحسب مفتاح التحقق المعلق
   static String pendingKey(String uid, String company) =>
       '${cacheKey(uid, company)}_verification';
+
+  // يحدد هل سياسة الشركة مفعّلة
   bool get active => data['company_policy_active'] == true;
+
+  // يعيد خريطة الصلاحيات
   Map<String, dynamic> get permissions =>
       Map<String, dynamic>.from(data['permissions']);
+
+  // يعيد دور المستخدم
   String get role => data['role'] as String;
 
+  // يحلل استجابة الخادم إلى لقطة
   static EffectiveProfileSnapshot parse(
     dynamic raw, {
     required String uid,

@@ -1,3 +1,4 @@
+// frontend/lib/services/journal_save_client.dart
 import 'dart:async';
 import 'dart:convert';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -5,10 +6,13 @@ import '../core/constants.dart';
 import 'auth_http.dart';
 import 'journal_save_intent.dart';
 
+// استثناء فشل حفظ القيد
 class JournalSaveFailure implements Exception {
   final int? statusCode;
   final bool canReplace;
   const JournalSaveFailure({this.statusCode, this.canReplace = false});
+
+  // يعيد رسالة الفشل للعرض
   @override
   String toString() {
     if (statusCode == 403)
@@ -21,12 +25,14 @@ class JournalSaveFailure implements Exception {
   }
 }
 
+// حالة إرسال قيد جارٍ
 class _JournalFlight {
   final String payload;
   final Future<Map<String, dynamic>> future;
   _JournalFlight(this.payload, this.future);
 }
 
+// عميل حفظ القيود: إرسال في المقدمة وليس طابور غير متصل
 /// A foreground submission, not an automatic offline queue. The server receipt
 /// is authoritative. Only an uncertain or previously preserved attempt uses GET.
 class JournalSaveClient {
@@ -34,14 +40,21 @@ class JournalSaveClient {
   final JournalIntentStore store;
   JournalSaveClient({JournalIntentStore? store})
       : store = store ?? JournalIntentStore();
+
+  // يعيد عنوان قيود الخادم
   String get _base => '${ApiConstants.baseUrl}/transactions';
+
+  // يحدد هل مالك النية هو المستخدم الحالي
   bool _sameOwner(JournalSaveIntent intent) =>
       FirebaseAuth.instance.currentUser?.uid == intent.ownerUid;
+
+  // يتحقق من أن النية تخص المستخدم الحالي
   void _guard(JournalSaveIntent intent) {
     if (!_sameOwner(intent))
       throw StateError('تغيّر الحساب. لم تُرسل محاولة باسم حساب آخر.');
   }
 
+  // يرسل القيد إلى الخادم
   Future<Map<String, dynamic>> submit(JournalSaveIntent intent,
       {required Future<bool> Function(Map<String, dynamic>) applySnapshot}) {
     _guard(intent);
@@ -62,6 +75,7 @@ class JournalSaveClient {
     return future;
   }
 
+  // يفك ترميز استجابة الخادم
   Map<String, dynamic> _decode(String body) {
     final value = jsonDecode(body);
     if (value is! Map || value['status'] != 'success') {
@@ -70,6 +84,7 @@ class JournalSaveClient {
     return Map<String, dynamic>.from(value);
   }
 
+  // يتحقق من السجل المرتجع مقابل النية
   void _verifyRecord(Map<String, dynamic> result, JournalSaveIntent intent) {
     if (result['available'] == false && result['committed'] == true) return;
     final record = result['record'];
@@ -83,6 +98,7 @@ class JournalSaveClient {
     }
   }
 
+  // يستعلم عن حالة القيد في الخادم
   Future<Map<String, dynamic>?> _status(JournalSaveIntent intent) async {
     _guard(intent);
     final uri = Uri.parse(
@@ -103,6 +119,7 @@ class JournalSaveClient {
     return result;
   }
 
+  // ينفذ إرسال القيد الفعلي
   Future<Map<String, dynamic>> _submit(JournalSaveIntent intent,
       Future<bool> Function(Map<String, dynamic>) applySnapshot) async {
     final old = await store.load(

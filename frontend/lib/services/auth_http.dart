@@ -1,3 +1,4 @@
+// frontend/lib/services/auth_http.dart
 import 'work_pool.dart';
 import 'cache_partitions.dart';
 import 'read_authorization_snapshot.dart';
@@ -6,10 +7,13 @@ import 'dart:convert';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 
+// عميل HTTP موحد يرفق رمز Firebase تلقائيًا بكل طلب
 /// عميل HTTP موحد يرفق Firebase ID token تلقائيًا بكل طلب API.
 /// يستخدم التوكن الحالي، ويترك Firebase يجدده عند الحاجة بدل فرض التجديد مع كل طلب.
 class AuthHttp {
   static final _requests = WorkPool(5);
+
+  // يجدول تنفيذ العمل بعد التحقق من المستخدم الحالي
   static Future<T> _scheduled<T>(Future<T> Function() work) async {
     final user = FirebaseAuth.instance.currentUser;
     final epoch = ReadAuthorizationEpoch.value;
@@ -27,6 +31,7 @@ class AuthHttp {
     });
   }
 
+  // يبني ترويسات الطلب ومنها رمز المصادقة
   static Future<Map<String, String>> _headers(
       Map<String, String>? headers) async {
     CachePartitions.checkBoundWork();
@@ -48,6 +53,7 @@ class AuthHttp {
     return result;
   }
 
+  // ينفذ طلب HTTP بالطريقة والعنوان المحددين
   static Future<http.Response> _request(String method, Uri url,
       {Map<String, String>? headers, Object? body, Encoding? encoding}) async {
     return _scheduled(() async {
@@ -75,14 +81,21 @@ class AuthHttp {
     });
   }
 
+  // ينفذ طلب GET
   static Future<http.Response> get(Uri url, {Map<String, String>? headers}) =>
       _request('GET', url, headers: headers);
+
+  // ينفذ طلب POST
   static Future<http.Response> post(Uri url,
           {Map<String, String>? headers, Object? body, Encoding? encoding}) =>
       _request('POST', url, headers: headers, body: body, encoding: encoding);
+
+  // ينفذ طلب PUT
   static Future<http.Response> put(Uri url,
           {Map<String, String>? headers, Object? body, Encoding? encoding}) =>
       _request('PUT', url, headers: headers, body: body, encoding: encoding);
+
+  // ينفذ طلب DELETE
   static Future<http.Response> delete(Uri url,
           {Map<String, String>? headers, Object? body, Encoding? encoding}) =>
       _request('DELETE', url, headers: headers, body: body, encoding: encoding);

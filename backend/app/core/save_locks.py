@@ -1,3 +1,4 @@
+# backend/app/core/save_locks.py
 """Transaction-scoped save locks, shared across PostgreSQL workers.
 
 Locks protect record identity and existing per-branch serial allocation. They
@@ -9,11 +10,13 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
+# يحوّل أجزاء المورد لمفتاح نصي ثابت للقفل
 def _key(parts):
     encoded = json.dumps(parts, ensure_ascii=False, separators=(",", ":")).encode()
     return int.from_bytes(hashlib.sha256(encoded).digest()[:8], "big", signed=True)
 
 
+# يقفل موارد الحفظ في المعاملة عشان العمليات المتزامنة تتسلسل
 async def lock_save(db, *resources):
     # Non-persistent route doubles do not have a database transaction to lock.
     if not isinstance(db, AsyncSession):

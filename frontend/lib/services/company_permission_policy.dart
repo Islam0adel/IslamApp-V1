@@ -1,18 +1,25 @@
+// frontend/lib/services/company_permission_policy.dart
 import 'page_visibility.dart';
 // Company-ceiling operations shared by effective authorization and review.
 // This creates no grants and does not select a legacy activation policy.
 import 'permission_hierarchy.dart';
 
+// نوع يمثل صلاحية واحدة (فئة ومفتاح)
 typedef PermissionRight = ({String category, String key});
 
+// نتيجة فحص تعيين الصلاحيات (خارج الشركة أو التفويض)
 class AssignmentCheck {
   const AssignmentCheck(this.outsideCompany, this.outsideDelegation);
   final Set<PermissionRight> outsideCompany;
   final Set<PermissionRight> outsideDelegation;
+
+  // يحدد هل التعيين مسموح
   bool get allowed => outsideCompany.isEmpty && outsideDelegation.isEmpty;
 }
 
+// سياسة صلاحيات الشركة المعتمدة
 class CompanyPermissionPolicy {
+  // يتحقق من صحة خريطة الصلاحيات
   static void validateMap(dynamic value) {
     if (value is! Map) throw ArgumentError('permissions must be an object');
     for (final section in value.entries) {
@@ -31,6 +38,7 @@ class CompanyPermissionPolicy {
     }
   }
 
+  // يستخرج مجموعة الصلاحيات الممنوحة من القيمة
   static Set<PermissionRight> grants(dynamic value) {
     final result = <PermissionRight>{};
     if (value is! Map) return result;
@@ -55,6 +63,7 @@ class CompanyPermissionPolicy {
     return result;
   }
 
+  // يحوّل المجموعة إلى خريطة صلاحيات كاملة
   static Map<String, Map<String, bool>> materialize(
       Set<PermissionRight> rights) {
     final result = <String, Map<String, bool>>{};
@@ -64,8 +73,9 @@ class CompanyPermissionPolicy {
     return result;
   }
 
+  // يحسب الصلاحيات الفعلية بعد تطبيق سقف الشركة
   static Map<String, Map<String, bool>> effectivePermissions(
-          dynamic ceiling, dynamic operating) {
+      dynamic ceiling, dynamic operating) {
     final result = materialize(grants(ceiling).intersection(grants(operating)));
     final general = operating is Map ? operating['صلاحيات عامة'] : null;
     for (final key in PageVisibility.keys) {
@@ -76,6 +86,7 @@ class CompanyPermissionPolicy {
     return result;
   }
 
+  // يفحص تعيين الصلاحيات المقترح
   static AssignmentCheck checkAssignment(
       {required dynamic companyCeiling,
       required dynamic delegablePermissions,
@@ -88,9 +99,12 @@ class CompanyPermissionPolicy {
     final changes =
         previous.difference(proposed).union(proposed.difference(previous));
     for (final key in PageVisibility.keys) {
-      final before = previousPermissions is Map ? previousPermissions['صلاحيات عامة'] : null;
+      final before = previousPermissions is Map
+          ? previousPermissions['صلاحيات عامة']
+          : null;
       final after = proposedPermissions['صلاحيات عامة'];
-      if ((before is Map ? before[key] : null) != (after is Map ? after[key] : null)) {
+      if ((before is Map ? before[key] : null) !=
+          (after is Map ? after[key] : null)) {
         changes.add((category: 'صلاحيات عامة', key: key));
       }
     }

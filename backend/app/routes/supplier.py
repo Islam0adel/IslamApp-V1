@@ -16,19 +16,21 @@ from typing import Optional
 import datetime
 import logging
 
-
+# راوتر الموردين
 router = APIRouter()
 
 
 _CATEGORY = "حسابات الموردين"
 
 
+# يتأكد إن المستخدم عنده أي صلاحية من المفاتيح المطلوبة
 def _require_any(request: Request, keys):
     return require_any_section_permission(
         request, [(_CATEGORY, key) for key in keys]
     )
 
 
+# يتحقق إن الفرع مسموح للمستخدم
 def _check_branch(profile: dict, branch_code) -> None:
     allowed = allowed_branches_for_profile(profile)
     if allowed and branch_code and str(branch_code) not in allowed:
@@ -36,6 +38,9 @@ def _check_branch(profile: dict, branch_code) -> None:
             status_code=403,
             detail="ليس لديك صلاحية على هذا الفرع",
         )
+
+
+# ضبط تسجيل الأحداث (logger) للملف
 logger = logging.getLogger(__name__)
 
 
@@ -43,6 +48,8 @@ logger = logging.getLogger(__name__)
 # Helper
 # ============================================================
 
+
+# يفحص هل المشاهد يقدر يشوف التكلفة والأسعار
 def _viewer_may_costs(request) -> bool:
     """نفس حقوق التكلفة الثلاثة: التكويد/سعر الشراء أو عرض سعر
     الجملة في المبيعات أو رصيد المخزون."""
@@ -59,11 +66,13 @@ def _viewer_may_costs(request) -> bool:
 # الفاتورة لجهاز من لا يملك الحق، ويُخفى في الواجهة بدل أي صفر
 # مضلل. القيمة الصحيحة محفوظة على الخادم وتُحسب منها التسويات
 # لأصحاب الحق فقط.
+# حقول الأسعار والإجماليات اللي بتتخفي عن اللي ملوش حق
 _SUPPLIER_COST_ITEM_FIELDS = ("price", "total", "discountAmount",
                               "discountRate")
 _SUPPLIER_COST_DOC_FIELDS = ("total_amount",)
 
 
+# يحوّل معاملة المورد إلى JSON مع إخفاء الأسعار لمن ملوش حق
 def serialize_supplier(
     doc: SupplierRecord,
     action: str | None = None,
@@ -117,6 +126,8 @@ def serialize_supplier(
 #    إضافة أو تحديث
 # ============================================================
 
+
+# مسار حفظ معاملة مورد (إضافة أو تعديل)
 @router.post("/save")
 async def save_supplier_transaction(
     request: Request,
@@ -491,6 +502,8 @@ async def save_supplier_transaction(
 # المحذوف لا يظهر
 # ============================================================
 
+
+# مسار قائمة معاملات الموردين
 @router.get("/list/{company_code}")
 async def list_supplier_transactions(
     request: Request,
@@ -578,6 +591,8 @@ async def list_supplier_transactions(
 # المحذوفات لا يتم استبعادها.
 # ============================================================
 
+
+# مسار فيد v2 لتغييرات الموردين (تجريبي)
 @router.get("/changes-v2/{company_code}")
 async def get_supplier_changes_v2(
     request: Request,
@@ -618,6 +633,7 @@ async def get_supplier_changes_v2(
     return out
 
 
+# مسار التغييرات منذ آخر مزامنة للموردين
 @router.get("/changes/{company_code}")
 async def get_supplier_changes(
     request: Request,
@@ -730,6 +746,8 @@ async def get_supplier_changes(
 # Soft Delete
 # ============================================================
 
+
+# مسار حذف معاملة مورد
 @router.delete(
     "/delete/{company_code}/{doc_id}"
 )

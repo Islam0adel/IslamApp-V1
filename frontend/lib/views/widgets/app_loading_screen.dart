@@ -1,14 +1,17 @@
-// lib/views/widgets/app_loading_screen.dart
+// frontend/lib/views/widgets/app_loading_screen.dart
 
 import 'package:flutter/material.dart';
 
+// شاشة تحميل التطبيق
 class AppLoadingScreen extends StatefulWidget {
   const AppLoadingScreen({super.key});
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<AppLoadingScreen> createState() => _AppLoadingScreenState();
 }
 
+// حالة الويدجت AppLoadingScreen: تدير بيانات الشاشة وتفاعلاتها
 class _AppLoadingScreenState extends State<AppLoadingScreen>
     with TickerProviderStateMixin {
   static const String _appName = 'Islam App';
@@ -18,6 +21,7 @@ class _AppLoadingScreenState extends State<AppLoadingScreen>
   late AnimationController _dotsFadeController;
   late AnimationController _dotsPulseController;
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
@@ -51,6 +55,7 @@ class _AppLoadingScreenState extends State<AppLoadingScreen>
     });
   }
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     _logoController.dispose();
@@ -60,6 +65,7 @@ class _AppLoadingScreenState extends State<AppLoadingScreen>
     super.dispose();
   }
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -124,6 +130,7 @@ class _AppLoadingScreenState extends State<AppLoadingScreen>
   }
 
   // ⭐ النص: كل حرف ينزل من فوق بتأخير 100ms
+  // يبني نص اسم التطبيق
   Widget _buildText() {
     final letters = _appName.split('');
     final nonSpaceIndices = <int>[];
@@ -148,8 +155,7 @@ class _AppLoadingScreenState extends State<AppLoadingScreen>
           animation: _textController,
           builder: (context, _) {
             final t = _textController.value;
-            final progress =
-                ((t - startFraction) / duration).clamp(0.0, 1.0);
+            final progress = ((t - startFraction) / duration).clamp(0.0, 1.0);
             final eased = Curves.easeOutBack.transform(progress);
             final translateY = (1 - eased) * -80;
 
@@ -175,6 +181,7 @@ class _AppLoadingScreenState extends State<AppLoadingScreen>
   }
 
   // ⭐ النقط: مسافات ثابتة (12px) بـ SizedBox بين كل نقطة
+  // يبني نقاط التحميل
   Widget _buildDots() {
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -191,6 +198,7 @@ class _AppLoadingScreenState extends State<AppLoadingScreen>
     );
   }
 
+  // يبني نقطة تحميل واحدة
   Widget _buildDot(int index) {
     // ⭐ حجم ثابت 20x20 — الـ scale بيتحرك جوه ومش بيأثر على المسافات
     const double containerSize = 20;

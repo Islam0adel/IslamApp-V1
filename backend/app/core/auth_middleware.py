@@ -18,10 +18,10 @@ from app.core.request_context import current_user_context
 from app.core.branch_scope import active_operating_branches
 from app.core.company_policy_store import active_policy_configuration, effective_policy_profile, CompanyReviewRequired
 
-
 # ============================================================
 # ⭐ SUPER_ADMIN_EMAILS (من .env) — للتحقق الفوري
 # ============================================================
+# قائمة إيميلات السوبر أدمن (أدمن المنصة) من متغيرات البيئة
 SUPER_ADMIN_EMAILS = {
     e.strip().lower()
     for e in os.getenv("SUPER_ADMIN_EMAILS", "").split(",")
@@ -41,6 +41,7 @@ _JOB_CODE_TO_ROLE = {
 }
 
 
+# يحدد الدور الفعلي للمستخدم من بروفايله
 def _effective_role(profile: Dict[str, Any]) -> str:
     """
     يحسب الدور الفعلي:
@@ -65,6 +66,7 @@ def _effective_role(profile: Dict[str, Any]) -> str:
 # Cache
 # ============================================================
 
+# كاش البروفايلات في الذاكرة لتقليل الاستعلامات
 _PROFILE_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
 _COMPANY_CACHE: Dict[str, tuple[float, bool]] = {}
 _CACHE_SECONDS = 15
@@ -89,10 +91,12 @@ _COMPANY_PATH_PREFIXES = (
 )
 
 
+# يمسح كاش بيانات الشركة بعد أي تعديل عليها
 def invalidate_company_cache(company_code: str) -> None:
     _COMPANY_CACHE.pop(str(company_code), None)
 
 
+# يبطل كاش بروفايل مستخدم فورًا بعد تعديل صلاحياته أو حالته
 def invalidate_profile_cache(email: str) -> None:
     """إبطال الكاش فور تعديل الصلاحيات/الحالة حتى يسري التغيير
     في أول طلب تالٍ بدلاً من انتظار انتهاء مدة الكاش."""
@@ -101,10 +105,12 @@ def invalidate_profile_cache(email: str) -> None:
     _PROFILE_CACHE.pop(str(email or "").strip().lower(), None)
 
 
+# يرجّع رقم نسخة إبطال البروفايلات لمعرفة إذا حصل تغيير
 def profile_invalidation_revision() -> int:
     return _PROFILE_INVALIDATION
 
 
+# يجيب بروفايل المستخدم من الكاش أو من قاعدة البيانات
 def _profile_for(email: str, uid: str, *, force_refresh: bool = False) -> Optional[Dict[str, Any]]:
     now = time.monotonic()
     cached = _PROFILE_CACHE.get(email)
@@ -123,6 +129,7 @@ def _profile_for(email: str, uid: str, *, force_refresh: bool = False) -> Option
     return data
 
 
+# يفحص هل الشركة نشطة (مع كاش قصير)
 async def _company_is_active(company_code: str) -> bool:
     now = time.monotonic()
     cached = _COMPANY_CACHE.get(company_code)
@@ -136,6 +143,7 @@ async def _company_is_active(company_code: str) -> bool:
     return active
 
 
+# يحدد هل المستخدم يتجاوز فحص الصلاحيات (أدمن المنصة فقط أو أدمن قديم قبل التفعيل)
 def can_bypass_permissions(profile: Dict[str, Any]) -> bool:
     """Only platform admin, or legacy company admin before reviewed activation."""
     role = _effective_role(profile)
@@ -144,6 +152,7 @@ def can_bypass_permissions(profile: Dict[str, Any]) -> bool:
     )
 
 
+# يحسب الفروع المسموحة للمستخدم من سياسة الشركة أو من بروفايله
 def _allowed_branches(profile: Dict[str, Any]) -> list[str]:
     if profile.get('company_policy_active') is True:
         # Projected requests normally arrive prevalidated. Direct consumers
@@ -159,6 +168,7 @@ def _allowed_branches(profile: Dict[str, Any]) -> list[str]:
     return ["all"]
 
 
+# يرجّع الفروع المسموحة للمستخدم (None = كل الفروع)
 def allowed_branches_for_profile(profile: Dict[str, Any]) -> Optional[list[str]]:
     """None = كل الفروع مسموحة، list = فروع محددة."""
     role = _effective_role(profile)
@@ -174,10 +184,13 @@ def allowed_branches_for_profile(profile: Dict[str, Any]) -> Optional[list[str]]
 # Middleware
 # ============================================================
 
+
+# الـmiddleware الرئيسي اللي بيتحقق من تسجيل الدخول لكل طلب HTTP
 async def authenticate_http_request(request: Request, call_next):
     return await _authenticate_http_request(request, call_next)
 
 
+# التنفيذ الفعلي لفحص الهوية والصلاحيات وتمرير الطلب للراوت
 async def _authenticate_http_request(request: Request, call_next):
     if (
         request.method == "OPTIONS"
@@ -203,6 +216,7 @@ async def _authenticate_http_request(request: Request, call_next):
             if not isinstance(register_data, dict):
                 raise ValueError("Invalid registration body")
 
+            # يعيد تمرير جسم طلب التسجيل بعد قراءته مرة
             async def receive_register_body():
                 return {"type": "http.request", "body": raw_body, "more_body": False}
             request._receive = receive_register_body
@@ -329,6 +343,7 @@ async def _authenticate_http_request(request: Request, call_next):
             except (UnicodeDecodeError, json.JSONDecodeError):
                 body = {}
 
+        # يعيد تمرير جسم الطلب بعد قراءته مرة عشان الراوت يقدر يقراه
         async def receive_body():
             return {"type": "http.request", "body": raw_body, "more_body": False}
         request._receive = receive_body

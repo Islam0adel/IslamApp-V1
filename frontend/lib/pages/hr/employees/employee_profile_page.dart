@@ -1,5 +1,5 @@
+// frontend/lib/pages/hr/employees/employee_profile_page.dart
 import '../../../services/cache_partitions.dart';
-// lib/pages/hr/employees/employee_profile_page.dart
 
 import 'dart:async';
 
@@ -15,7 +15,7 @@ import '../../../services/permissions_service.dart';
 import '../../hr/vacations_page.dart';
 import 'employee_form_page.dart';
 
-
+// صفحة الملف الشخصي للموظف
 /// صفحة بروفايل الموظف الشامل
 ///
 /// 5 تبويبات:
@@ -36,11 +36,12 @@ class EmployeeProfilePage extends StatefulWidget {
     required this.employeeCode,
   });
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<EmployeeProfilePage> createState() => _EmployeeProfilePageState();
 }
 
-
+// حالة الويدجت EmployeeProfilePage: تدير بيانات الشاشة وتفاعلاتها
 class _EmployeeProfilePageState extends State<EmployeeProfilePage>
     with TickerProviderStateMixin {
   // ============================================================
@@ -49,7 +50,6 @@ class _EmployeeProfilePageState extends State<EmployeeProfilePage>
 
   final EmployeeService _employeeService = EmployeeService();
   final HRService _hrService = HRService();
-
 
   // ============================================================
   // State (Models بدل Map)
@@ -69,21 +69,20 @@ class _EmployeeProfilePageState extends State<EmployeeProfilePage>
 
   StreamSubscription? _hiveSubscription;
 
-
   // ============================================================
   // Lifecycle
   // ============================================================
 
-    @override
+  // يهيّئ حالة الشاشة عند إنشائها
+  @override
   void initState() {
     super.initState();
     _selectedMonth = _currentMonth();
     _tabController = TabController(length: 5, vsync: this);
 
     // ⭐ WebSocket auto-update: راقب تغييرات Hive
-    _hiveSubscription = CachePartitions.box('coding_box')
-        .watch()
-        .listen((event) {
+    _hiveSubscription =
+        CachePartitions.box('coding_box').watch().listen((event) {
       // تحديث فقط لو التغيير متعلق بهذا الموظف أو HR
       if (!mounted || _isLoading) return;
       final key = event.key?.toString() ?? '';
@@ -97,155 +96,151 @@ class _EmployeeProfilePageState extends State<EmployeeProfilePage>
     _loadProfile();
   }
 
-    @override
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
+  @override
   void dispose() {
     _hiveSubscription?.cancel();
     _tabController.dispose();
     super.dispose();
   }
 
-
+  // يعيد الشهر الحالي بصيغة نصية
   String _currentMonth() {
     final now = DateTime.now();
     return '${now.year}-${now.month.toString().padLeft(2, '0')}';
   }
 
-
   // ============================================================
   // Load profile
   // ============================================================
 
-    Future<void> _loadProfile({bool showLoader = true}) async {
-return CachePartitions.run(() async {
-
-    if (showLoader) {
-      setState(() {
-        _isLoading = true;
-        _error = null;
-      });
-    }
-
-    try {
-      // 1) الموظف (Hive أولاً)
-      final employees = await _employeeService.getEmployeesList(
-        companyCode: widget.companyCode,
-      );
-
-      EmployeeModel? employee;
-      for (final e in employees) {
-        if (e.code == widget.employeeCode) {
-          employee = e;
-          break;
-        }
+  // يحمّل بيانات الملف الشخصي
+  Future<void> _loadProfile({bool showLoader = true}) async {
+    return CachePartitions.run(() async {
+      if (showLoader) {
+        setState(() {
+          _isLoading = true;
+          _error = null;
+        });
       }
 
-      if (employee == null) {
+      try {
+        // 1) الموظف (Hive أولاً)
+        final employees = await _employeeService.getEmployeesList(
+          companyCode: widget.companyCode,
+        );
+
+        EmployeeModel? employee;
+        for (final e in employees) {
+          if (e.code == widget.employeeCode) {
+            employee = e;
+            break;
+          }
+        }
+
+        if (employee == null) {
+          setState(() {
+            _isLoading = false;
+            _error = 'الموظف غير موجود';
+          });
+          return;
+        }
+
+        // 2) الحضور (Hive أولاً + server fallback)
+        final attendanceMap = await _hrService.getEmployeeMonthAttendance(
+          companyCode: widget.companyCode,
+          employeeCode: widget.employeeCode,
+          month: _selectedMonth,
+        );
+
+        // 3) الإجازات (Hive أولاً)
+        final vacations = await _hrService.getVacations(
+          companyCode: widget.companyCode,
+          branchCode: employee.branchCode,
+          employeeCode: widget.employeeCode,
+        );
+
+        // 4) التسويات (Hive أولاً)
+        final adjustments = await _hrService.getEmployeeAdjustments(
+          companyCode: widget.companyCode,
+          employeeCode: widget.employeeCode,
+          month: _selectedMonth,
+        );
+
+        // 5) الإعدادات (Hive أولاً)
+        final settings = await _hrService.getEmployeeSettings(
+          companyCode: widget.companyCode,
+          employeeCode: widget.employeeCode,
+        );
+
+        if (!mounted) return;
+
+        setState(() {
+          _employeeModel = employee;
+          _attendanceMap = attendanceMap;
+          _vacationsList = vacations;
+          _adjustmentsList = adjustments;
+          _settingsModel = settings;
+          _isLoading = false;
+          _error = null;
+        });
+      } catch (e) {
+        if (!mounted) return;
         setState(() {
           _isLoading = false;
-          _error = 'الموظف غير موجود';
+          _error = 'خطأ: $e';
         });
-        return;
       }
+    });
+  }
 
-      // 2) الحضور (Hive أولاً + server fallback)
-      final attendanceMap = await _hrService.getEmployeeMonthAttendance(
-        companyCode: widget.companyCode,
-        employeeCode: widget.employeeCode,
-        month: _selectedMonth,
+  // يفتح نافذة اختيار الشهر
+  Future<void> _pickMonth() async {
+    return CachePartitions.run(() async {
+      final now = DateTime.now();
+      final picked = await showDatePicker(
+        context: context,
+        initialDate: now,
+        firstDate: DateTime(2020),
+        lastDate: DateTime(2030),
+        initialDatePickerMode: DatePickerMode.year,
+        helpText: 'اختر الشهر',
       );
 
-      // 3) الإجازات (Hive أولاً)
-      final vacations = await _hrService.getVacations(
-        companyCode: widget.companyCode,
-        branchCode: employee.branchCode,
-        employeeCode: widget.employeeCode,
-      );
+      if (picked != null) {
+        setState(() {
+          _selectedMonth =
+              '${picked.year}-${picked.month.toString().padLeft(2, '0')}';
+        });
+        _loadProfile();
+      }
+    });
+  }
 
-      // 4) التسويات (Hive أولاً)
-      final adjustments = await _hrService.getEmployeeAdjustments(
-        companyCode: widget.companyCode,
-        employeeCode: widget.employeeCode,
-        month: _selectedMonth,
-      );
+  // يفتح نموذج تعديل الموظف
+  Future<void> _openEditForm() async {
+    return CachePartitions.run(() async {
+      if (_employeeModel == null) return;
 
-      // 5) الإعدادات (Hive أولاً)
-      final settings = await _hrService.getEmployeeSettings(
-        companyCode: widget.companyCode,
-        employeeCode: widget.employeeCode,
-      );
-
-      if (!mounted) return;
-
-      setState(() {
-        _employeeModel = employee;
-        _attendanceMap = attendanceMap;
-        _vacationsList = vacations;
-        _adjustmentsList = adjustments;
-        _settingsModel = settings;
-        _isLoading = false;
-        _error = null;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _isLoading = false;
-        _error = 'خطأ: $e';
-      });
-    }
-});
-}
-
-
-    Future<void> _pickMonth() async {
-return CachePartitions.run(() async {
-
-    final now = DateTime.now();
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: now,
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2030),
-      initialDatePickerMode: DatePickerMode.year,
-      helpText: 'اختر الشهر',
-    );
-
-    if (picked != null) {
-      setState(() {
-        _selectedMonth =
-            '${picked.year}-${picked.month.toString().padLeft(2, '0')}';
-      });
-      _loadProfile();
-    }
-});
-}
-
-
-
-    Future<void> _openEditForm() async {
-return CachePartitions.run(() async {
-
-    if (_employeeModel == null) return;
-
-    final result = await Navigator.push<bool>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => EmployeeFormPage(
-          companyCode: widget.companyCode,
-          employee: _employeeModel,
+      final result = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => EmployeeFormPage(
+            companyCode: widget.companyCode,
+            employee: _employeeModel,
+          ),
         ),
-      ),
-    );
+      );
 
-    if (result == true) _loadProfile();
-});
-}
-
-
+      if (result == true) _loadProfile();
+    });
+  }
 
   // ============================================================
   // Build
   // ============================================================
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     // فحص الصلاحية
@@ -312,7 +307,7 @@ return CachePartitions.run(() async {
     );
   }
 
-
+  // يبني حالة الخطأ مع زر إعادة المحاولة
   Widget _buildErrorState() {
     return Center(
       child: Column(
@@ -348,7 +343,7 @@ return CachePartitions.run(() async {
     );
   }
 
-
+  // يبني محتوى الشاشة الرئيسي
   Widget _buildContent() {
     return Column(
       children: [
@@ -414,11 +409,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Header
   // ============================================================
 
+  // يبني رأس الملف الشخصي
   Widget _buildProfileHeader() {
     final emp = _employeeModel;
     final name = emp?.name ?? '—';
@@ -510,7 +505,7 @@ return CachePartitions.run(() async {
     );
   }
 
-
+  // يبني شارة الحالة
   Widget _buildStatusBadge(String status) {
     final color = _statusColor(status);
     final label = _statusLabel(status);
@@ -534,7 +529,7 @@ return CachePartitions.run(() async {
     );
   }
 
-
+  // يبني شريحة صغيرة بأيقونة ونص
   Widget _buildSmallChip(IconData icon, String text) {
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -553,12 +548,12 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Stats card
   // ============================================================
 
-    Widget _buildStatsCard() {
+  // يبني بطاقة الإحصائيات
+  Widget _buildStatsCard() {
     final att = _attendanceMap ?? {};
 
     int present = 0;
@@ -579,21 +574,31 @@ return CachePartitions.run(() async {
       padding: const EdgeInsets.all(10),
       child: Row(
         children: [
-          Expanded(child: _buildStatChip('حاضر', '$present', AppTheme.successFor(context))),
+          Expanded(
+              child: _buildStatChip(
+                  'حاضر', '$present', AppTheme.successFor(context))),
           const SizedBox(width: 4),
-          Expanded(child: _buildStatChip('غائب', '$absent', AppTheme.dangerFor(context))),
+          Expanded(
+              child: _buildStatChip(
+                  'غائب', '$absent', AppTheme.dangerFor(context))),
           const SizedBox(width: 4),
-          Expanded(child: _buildStatChip('إجازة', '$vacation', AppTheme.extraTealFor(context))),
+          Expanded(
+              child: _buildStatChip(
+                  'إجازة', '$vacation', AppTheme.extraTealFor(context))),
           const SizedBox(width: 4),
-          Expanded(child: _buildStatChip('تأخير', '${lateMin}د', AppTheme.warningOrangeSoftFor(context))),
+          Expanded(
+              child: _buildStatChip('تأخير', '${lateMin}د',
+                  AppTheme.warningOrangeSoftFor(context))),
           const SizedBox(width: 4),
-          Expanded(child: _buildStatChip('إضافي', '${overtimeMin}د', AppTheme.accentFor(context))),
+          Expanded(
+              child: _buildStatChip(
+                  'إضافي', '${overtimeMin}د', AppTheme.accentFor(context))),
         ],
       ),
     );
   }
 
-
+  // يبني شريحة إحصائية بعنوان وقيمة ولون
   Widget _buildStatChip(String label, String value, Color color) {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
@@ -628,12 +633,12 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Tab 1: Basic data
   // ============================================================
 
-    Widget _buildBasicTab() {
+  // يبني تبويب البيانات الأساسية
+  Widget _buildBasicTab() {
     final emp = _employeeModel;
     if (emp == null) {
       return const Center(child: Text('لا توجد بيانات'));
@@ -676,7 +681,8 @@ return CachePartitions.run(() async {
             _row('الفرع', _branchName(emp.branchCode)),
             // ⭐ الراتب يظهر لو canSeeEmployeeSalary
             if (PermissionsService().canSeeEmployeeSalary(widget.employeeCode))
-              _row('الراتب',
+              _row(
+                  'الراتب',
                   emp.salary > 0
                       ? '${emp.salary.toStringAsFixed(2)} ج.م'
                       : '—'),
@@ -712,7 +718,7 @@ return CachePartitions.run(() async {
     );
   }
 
-
+  // يبني قسم معلومات بعنوان وأيقونة
   Widget _buildInfoSection({
     required IconData icon,
     required String title,
@@ -753,7 +759,7 @@ return CachePartitions.run(() async {
     );
   }
 
-
+  // يبني صفًا بعنوان وقيمة
   Widget _row(String label, dynamic value) {
     final str = value?.toString() ?? '';
     final display = str.isEmpty ? '—' : str;
@@ -790,12 +796,12 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Tab 2: Attendance
   // ============================================================
 
-    Widget _buildAttendanceTab() {
+  // يبني تبويب الحضور
+  Widget _buildAttendanceTab() {
     final att = _attendanceMap ?? {};
     final records = att.values.toList()
       ..sort((a, b) => a.date.compareTo(b.date));
@@ -879,8 +885,8 @@ return CachePartitions.run(() async {
     );
   }
 
-
-    Widget _buildAttendanceRow(HRAttendanceModel record) {
+  // يبني صف سجل حضور
+  Widget _buildAttendanceRow(HRAttendanceModel record) {
     final date = record.date;
     final status = record.status;
     final checkIn = record.checkIn;
@@ -968,12 +974,12 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Tab 3: Vacations
   // ============================================================
 
-    Widget _buildVacationsTab() {
+  // يبني تبويب الإجازات
+  Widget _buildVacationsTab() {
     final vacations = _vacationsList ?? [];
 
     return ListView(
@@ -1081,8 +1087,8 @@ return CachePartitions.run(() async {
     );
   }
 
-
-    Widget _buildVacationRow(HRVacationModel v) {
+  // يبني صف إجازة
+  Widget _buildVacationRow(HRVacationModel v) {
     final date = v.date;
     final name = v.name;
     final isWeekly = v.type == 'weekly';
@@ -1125,12 +1131,12 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Tab 4: Adjustments
   // ============================================================
 
-    Widget _buildAdjustmentsTab() {
+  // يبني تبويب التسويات
+  Widget _buildAdjustmentsTab() {
     final records = _adjustmentsList ?? [];
 
     double bonuses = 0;
@@ -1170,9 +1176,7 @@ return CachePartitions.run(() async {
                   Expanded(
                     child: _buildSummaryTile(
                       'مكافآت',
-                      canSeeAmounts
-                          ? '${_formatAmount(bonuses)} ج.م'
-                          : '—',
+                      canSeeAmounts ? '${_formatAmount(bonuses)} ج.م' : '—',
                       AppTheme.successFor(context),
                     ),
                   ),
@@ -1180,9 +1184,7 @@ return CachePartitions.run(() async {
                   Expanded(
                     child: _buildSummaryTile(
                       'خصومات',
-                      canSeeAmounts
-                          ? '${_formatAmount(deductions)} ج.م'
-                          : '—',
+                      canSeeAmounts ? '${_formatAmount(deductions)} ج.م' : '—',
                       AppTheme.dangerFor(context),
                     ),
                   ),
@@ -1190,9 +1192,7 @@ return CachePartitions.run(() async {
                   Expanded(
                     child: _buildSummaryTile(
                       'سلف',
-                      canSeeAmounts
-                          ? '${_formatAmount(loans)} ج.م'
-                          : '—',
+                      canSeeAmounts ? '${_formatAmount(loans)} ج.م' : '—',
                       AppTheme.warningOrangeSoftFor(context),
                     ),
                   ),
@@ -1228,7 +1228,7 @@ return CachePartitions.run(() async {
     );
   }
 
-
+  // يبني مربع ملخص بعنوان وقيمة
   Widget _buildSummaryTile(String label, String value, Color color) {
     return Container(
       padding: const EdgeInsets.all(8),
@@ -1262,8 +1262,8 @@ return CachePartitions.run(() async {
     );
   }
 
-
-    Widget _buildAdjustmentRow(HRAdjustmentModel adj, bool canSeeAmounts) {
+  // يبني صف تسوية
+  Widget _buildAdjustmentRow(HRAdjustmentModel adj, bool canSeeAmounts) {
     final type = adj.type;
     final reason = adj.reason;
     final amount = adj.amount;
@@ -1279,9 +1279,8 @@ return CachePartitions.run(() async {
         : (type == 'deduction'
             ? Icons.remove_circle_rounded
             : Icons.request_quote_rounded);
-    final typeLabel = type == 'bonus'
-        ? 'مكافأة'
-        : (type == 'deduction' ? 'خصم' : 'سلفة');
+    final typeLabel =
+        type == 'bonus' ? 'مكافأة' : (type == 'deduction' ? 'خصم' : 'سلفة');
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -1339,12 +1338,12 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Tab 5: Settings
   // ============================================================
 
-    Widget _buildSettingsTab() {
+  // يبني تبويب الإعدادات
+  Widget _buildSettingsTab() {
     final settings = _settingsModel;
     if (settings == null) {
       return const Center(child: Text('لا توجد إعدادات'));
@@ -1360,10 +1359,8 @@ return CachePartitions.run(() async {
           items: [
             _row('وقت الحضور', settings.defaultCheckIn),
             _row('وقت الانصراف', settings.defaultCheckOut),
-            _row('مرونة المواعيد',
-                settings.flexibleHours ? 'نعم' : 'لا'),
-            _row('الشهر 30 يوم',
-                settings.useFixedMonthDays ? 'نعم' : 'لا'),
+            _row('مرونة المواعيد', settings.flexibleHours ? 'نعم' : 'لا'),
+            _row('الشهر 30 يوم', settings.useFixedMonthDays ? 'نعم' : 'لا'),
           ],
         ),
         const SizedBox(height: 12),
@@ -1412,8 +1409,8 @@ return CachePartitions.run(() async {
     );
   }
 
-
-    Widget _buildDelayRulesCard() {
+  // يبني بطاقة قواعد التأخير
+  Widget _buildDelayRulesCard() {
     final rules = _settingsModel?.delayRules ?? {};
 
     if (rules.isEmpty) {
@@ -1432,7 +1429,8 @@ return CachePartitions.run(() async {
               Container(
                 padding: const EdgeInsets.all(5),
                 decoration: BoxDecoration(
-                  color: AppTheme.warningOrangeSoftFor(context).withValues(alpha: 0.15),
+                  color: AppTheme.warningOrangeSoftFor(context)
+                      .withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Icon(
@@ -1485,11 +1483,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Helpers
   // ============================================================
 
+  // يبني بطاقة فارغة برسالة
   Widget _buildEmptyCard(String message) {
     return GlassCard(
       padding: const EdgeInsets.all(20),
@@ -1507,14 +1505,14 @@ return CachePartitions.run(() async {
     );
   }
 
-
+  // يعيد وصف الجنس بالعربية
   String _genderLabel(String? g) {
     if (g == 'male') return 'ذكر';
     if (g == 'female') return 'أنثى';
     return '';
   }
 
-
+  // يعيد وصف نوع العقد بالعربية
   String _contractLabel(String? c) {
     switch (c) {
       case 'permanent':
@@ -1528,7 +1526,7 @@ return CachePartitions.run(() async {
     }
   }
 
-
+  // يعيد اسم الحالة بالعربية
   String _statusLabel(String status) {
     switch (status) {
       case 'active':
@@ -1544,7 +1542,7 @@ return CachePartitions.run(() async {
     }
   }
 
-
+  // يعيد لون الحالة
   Color _statusColor(String status) {
     switch (status) {
       case 'active':
@@ -1560,7 +1558,7 @@ return CachePartitions.run(() async {
     }
   }
 
-
+  // يعيد وصف حالة الحضور بالعربية
   String _attendanceStatusLabel(String status) {
     switch (status) {
       case 'present':
@@ -1578,7 +1576,7 @@ return CachePartitions.run(() async {
     }
   }
 
-
+  // يعيد لون حالة الحضور
   Color _attendanceStatusColor(String status) {
     switch (status) {
       case 'present':
@@ -1596,7 +1594,7 @@ return CachePartitions.run(() async {
     }
   }
 
-
+  // يعيد اسم الفرع من الكود
   String _branchName(String? code) {
     if (code == null || code.isEmpty) return '';
 
@@ -1614,7 +1612,7 @@ return CachePartitions.run(() async {
     return code;
   }
 
-
+  // يعيد اسم يوم الإجازة الأسبوعية
   String _weeklyDayLabel(dynamic value) {
     if (value == null) return 'لا يوجد';
     final n = int.tryParse(value.toString());
@@ -1622,7 +1620,7 @@ return CachePartitions.run(() async {
     return HRConstants.weekdayNamesAr[n];
   }
 
-
+  // ينسّق التاريخ للعرض
   String _formatDate(dynamic value) {
     if (value == null) return '';
     final s = value.toString();
@@ -1635,14 +1633,16 @@ return CachePartitions.run(() async {
     }
   }
 
-
+  // ينسّق المبلغ للعرض
   String _formatAmount(dynamic value) {
     if (value == null) return '0.00';
-    final n = value is num ? value.toDouble() : double.tryParse(value.toString()) ?? 0.0;
+    final n = value is num
+        ? value.toDouble()
+        : double.tryParse(value.toString()) ?? 0.0;
     return n.toStringAsFixed(2);
   }
 
-
+  // يبني شاشة تعذّر الوصول لعدم توفر الصلاحية
   Widget _buildNoPermissionScreen() {
     return Scaffold(
       extendBodyBehindAppBar: true,
@@ -1696,4 +1696,3 @@ return CachePartitions.run(() async {
     );
   }
 }
-

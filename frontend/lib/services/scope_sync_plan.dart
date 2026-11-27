@@ -1,5 +1,7 @@
+// frontend/lib/services/scope_sync_plan.dart
 import 'company_permission_policy.dart';
 
+// خطة مزامنة تغيّر النطاق
 /// Disposable server snapshots only. Pending queues are never reset here.
 class ScopeSyncPlan {
   static const all = {
@@ -44,11 +46,14 @@ class ScopeSyncPlan {
       'hr'
     },
   };
+
+  // يحدد هل النطاقان متطابقان
   static bool sameScope(List<String>? a, List<String>? b) {
     if (a == null || b == null) return a == null && b == null;
     return a.toSet().length == b.toSet().length && a.toSet().containsAll(b);
   }
 
+  // يحدد الوحدات المتأثرة بين نطاقين
   static Set<String> between(
       {required Map<String, dynamic>? before,
       required Map<String, dynamic>? after,
@@ -77,6 +82,7 @@ class ScopeSyncPlan {
     return modules;
   }
 
+  // يعيد مفاتيح المؤشرات للوحدات
   static Set<String> cursorKeys(String company, Set<String> modules) => {
         for (final module in modules)
           ...switch (module) {

@@ -1,4 +1,4 @@
-// lib/views/auth/complete_registration_screen.dart
+// frontend/lib/views/auth/complete_registration_screen.dart
 
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
@@ -6,6 +6,7 @@ import '../../views/widgets/glass_card.dart';
 import '../../services/api_service.dart';
 import 'verify_email_screen.dart';
 
+// شاشة إكمال التسجيل
 class CompleteRegistrationScreen extends StatefulWidget {
   final String? phoneNumber;
   final String userName;
@@ -24,11 +25,13 @@ class CompleteRegistrationScreen extends StatefulWidget {
     this.prefilledEmail,
   });
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<CompleteRegistrationScreen> createState() =>
       _CompleteRegistrationScreenState();
 }
 
+// حالة شاشة إكمال التسجيل
 class _CompleteRegistrationScreenState
     extends State<CompleteRegistrationScreen> {
   final _emailController = TextEditingController();
@@ -41,6 +44,7 @@ class _CompleteRegistrationScreenState
   bool _isLoading = false;
   bool _showPassword = false;
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
@@ -52,6 +56,7 @@ class _CompleteRegistrationScreenState
     }
   }
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     _emailController.dispose();
@@ -63,6 +68,7 @@ class _CompleteRegistrationScreenState
     super.dispose();
   }
 
+  // يرسل بيانات التسجيل
   Future<void> _handleSubmit() async {
     final email = _emailController.text.trim();
     final password = _passwordController.text;
@@ -146,6 +152,7 @@ class _CompleteRegistrationScreenState
     }
   }
 
+  // يعرض رسالة سريعة بالنص واللون المحددين
   void _showSnackBar(String msg, Color color) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -159,6 +166,7 @@ class _CompleteRegistrationScreenState
     );
   }
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -172,8 +180,7 @@ class _CompleteRegistrationScreenState
         ),
         child: SafeArea(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(
-                horizontal: 20, vertical: 20),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
             child: Column(
               children: [
                 // Back button
@@ -284,8 +291,8 @@ class _CompleteRegistrationScreenState
                             color: AppTheme.textSoftFor(context),
                             size: 20,
                           ),
-                          onPressed: () => setState(
-                              () => _showPassword = !_showPassword),
+                          onPressed: () =>
+                              setState(() => _showPassword = !_showPassword),
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -324,17 +331,16 @@ class _CompleteRegistrationScreenState
                         child: _isLoading
                             ? Center(
                                 child: CircularProgressIndicator(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onPrimary,
+                                  color:
+                                      Theme.of(context).colorScheme.onPrimary,
                                 ),
                               )
                             : ElevatedButton(
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor:
                                       AppTheme.authActionBackground(context),
-                                  padding: const EdgeInsets.symmetric(
-                                      vertical: 15),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 15),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(15),
                                   ),
@@ -344,9 +350,8 @@ class _CompleteRegistrationScreenState
                                   'إنشاء الحساب',
                                   style: TextStyle(
                                     fontSize: 17,
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onPrimary,
+                                    color:
+                                        Theme.of(context).colorScheme.onPrimary,
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
@@ -385,6 +390,7 @@ class _CompleteRegistrationScreenState
     );
   }
 
+  // يبني صف معلومات بأيقونة وعنوان وقيمة
   Widget _buildInfoRow(IconData icon, String label, String value) {
     return Row(
       children: [
@@ -415,6 +421,7 @@ class _CompleteRegistrationScreenState
     );
   }
 
+  // يبني حقل إدخال بأيقونة
   Widget _buildField({
     required IconData icon,
     required String label,

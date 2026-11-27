@@ -1,11 +1,15 @@
+// frontend/lib/services/journal_cache.dart
 import 'dart:convert';
 import 'package:hive_flutter/hive_flutter.dart';
 
+// فئة مفاتيح ذاكرة القيود: الهوية هي الشركة والفرع والرقم التسلسلي
 /// Journal identity is company + branch + serial. Legacy keys lacked company.
 class JournalCache {
+  // يبني مفتاح القيد
   static String key(String company, String branch, String serial) =>
       '${company}_journal_${jsonEncode([branch, serial])}';
 
+  // يحدد هل القيد يخص الشركة
   static bool belongsToCompany(dynamic key, dynamic value, String company) {
     if (value is Map && value.containsKey('company_code')) {
       return value['company_code']?.toString() == company;
@@ -13,6 +17,7 @@ class JournalCache {
     return key.toString().startsWith('${company}_balances_');
   }
 
+  // يحدد هل النسخة المحلية مطابقة للواردة
   /// True only when [local] is provably the same stored version as [incoming]:
   /// both carry a parseable `updated_at`, the instants are equal, and every business
   /// field matches. Missing stamps or different content never count as the same version.
@@ -22,13 +27,17 @@ class JournalCache {
     final b = _stamp(incoming['updated_at']);
     if (a == null || b == null || a != b) return false;
     const skip = {'action', 'is_deleted', 'updated_at'};
-    final keys = <String>{...local.keys.map((k) => k.toString()), ...incoming.keys.map((k) => k.toString())}..removeAll(skip);
+    final keys = <String>{
+      ...local.keys.map((k) => k.toString()),
+      ...incoming.keys.map((k) => k.toString())
+    }..removeAll(skip);
     for (final k in keys) {
       if (local[k]?.toString() != incoming[k]?.toString()) return false;
     }
     return (local['is_deleted'] == true) == (incoming['is_deleted'] == true);
   }
 
+  // يحوّل قيمة إلى ختم وقت
   static DateTime? _stamp(Object? v) {
     if (v == null) return null;
     final t = v.toString();
@@ -36,12 +45,15 @@ class JournalCache {
     return DateTime.tryParse(z ? t : '${t}Z')?.toUtc();
   }
 
+  // يحفظ القيد إذا لم يكن أقدم من المحفوظ
   /// Writes [row] unless the stored copy is provably the same version or provably newer.
   /// Missing or unparseable stamps on either side never skip a write.
   /// Returns 'applied', 'same' or 'stale'.
-  static Future<String> putIfNotOlder(Box box, Map<String, dynamic> row, {String? expectedCompany}) async {
+  static Future<String> putIfNotOlder(Box box, Map<String, dynamic> row,
+      {String? expectedCompany}) async {
     final company = row['company_code']?.toString() ?? '';
-    final local = box.get(key(company, row['branch_code']?.toString() ?? '1', row['serial']?.toString() ?? ''));
+    final local = box.get(key(company, row['branch_code']?.toString() ?? '1',
+        row['serial']?.toString() ?? ''));
     if (isSameVersion(local, row)) return 'same';
     if (local is Map) {
       final a = _stamp(local['updated_at']);
@@ -52,32 +64,46 @@ class JournalCache {
     return 'applied';
   }
 
+  // يحفظ القيد في الصندوق
   static Future<void> put(Box box, Map<String, dynamic> row,
       {String? expectedCompany}) async {
     final company = row['company_code']?.toString() ?? '';
     final branch = row['branch_code']?.toString() ?? '1';
     final serial = row['serial']?.toString() ?? '';
-    if (company.isEmpty || serial.isEmpty ||
+    if (company.isEmpty ||
+        serial.isEmpty ||
         (expectedCompany != null && expectedCompany != company)) {
-      throw StateError('Journal cache identity does not match the current company');
+      throw StateError(
+          'Journal cache identity does not match the current company');
     }
     final target = key(company, branch, serial);
     final legacy = 'branch_${branch}_$serial';
     final old = box.get(legacy);
-    final removeLegacy = old is Map && old['company_code']?.toString() == company;
+    final removeLegacy =
+        old is Map && old['company_code']?.toString() == company;
     // Replace the legacy value in the same write batch so listeners never
     // calculate a duplicated balance from old and new identities.
-    await box.putAll({if (removeLegacy) legacy: <String, dynamic>{}, target: Map<String, dynamic>.from(row)});
+    await box.putAll({
+      if (removeLegacy) legacy: <String, dynamic>{},
+      target: Map<String, dynamic>.from(row)
+    });
     if (removeLegacy) await box.delete(legacy);
   }
 
+  // يحذف قيود شركة من الصندوق
   static Future<void> deleteCompany(Box box, String company) async {
-    final keys = box.keys.where((key) => belongsToCompany(key, box.get(key), company)).toList();
+    final keys = box.keys
+        .where((key) => belongsToCompany(key, box.get(key), company))
+        .toList();
     await box.deleteAll(keys);
   }
 
-  static Future<void> delete(Box box, {
-    required String company, required String branch, required String serial,
+  // يحذف قيدًا محددًا
+  static Future<void> delete(
+    Box box, {
+    required String company,
+    required String branch,
+    required String serial,
   }) async {
     final target = key(company, branch, serial);
     final legacy = 'branch_${branch}_$serial';
@@ -98,8 +124,11 @@ class JournalCache {
   /// safety limit (5000 deletes inside 14 days).
   static const ledgerMaxAge = Duration(days: 14);
   static const _ledgerMax = 5000;
+
+  // يبني مفتاح سجل الحذف للشركة
   static String ledgerKey(String company) => 'last_sync_daily_deleted_$company';
 
+  // يقرأ سجل الحذف من النص
   static Map<String, String> readLedger(String? raw) {
     if (raw == null || raw.isEmpty) return {};
     try {
@@ -109,12 +138,15 @@ class JournalCache {
     }
   }
 
-  static String writeLedger(Map<String, String> m, String id, String stamp, {DateTime? now}) {
+  // يكتب سجل الحذف ويعيده نصًا
+  static String writeLedger(Map<String, String> m, String id, String stamp,
+      {DateTime? now}) {
     final out = Map<String, String>.from(m);
     out[id] = stamp;
     final ref = (now ?? DateTime.now()).toUtc();
     out.removeWhere((k, v) {
-      final t = DateTime.tryParse(v.endsWith('Z') || v.contains('+') ? v : '${v}Z');
+      final t =
+          DateTime.tryParse(v.endsWith('Z') || v.contains('+') ? v : '${v}Z');
       return t != null && ref.difference(t.toUtc()) > ledgerMaxAge;
     });
     if (out.length > _ledgerMax) {

@@ -1,128 +1,133 @@
-import '../../services/cache_partitions.dart';
 // frontend/lib/views/dashboard/reset_page.dart
+import '../../services/cache_partitions.dart';
 import 'package:flutter/material.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../core/theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/reset_data_service.dart';
 
+// صفحة إعادة ضبط البيانات
 class ResetPage extends StatefulWidget {
   const ResetPage({super.key});
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<ResetPage> createState() => _ResetPageState();
 }
 
+// حالة الويدجت ResetPage: تدير بيانات الشاشة وتفاعلاتها
 class _ResetPageState extends State<ResetPage> {
   bool _isLoading = false;
   String _companyCode = '';
   final ResetDataService _resetService = ResetDataService();
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
     _loadCompanyCode();
   }
 
+  // يحمّل رمز الشركة
   Future<void> _loadCompanyCode() async {
-return CachePartitions.run(() async {
-
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _companyCode = prefs.getString('company_code') ?? '';
+    return CachePartitions.run(() async {
+      final prefs = await SharedPreferences.getInstance();
+      setState(() {
+        _companyCode = prefs.getString('company_code') ?? '';
+      });
     });
-});
-}
+  }
 
+  // ينفّذ إعادة الضبط بعد التأكيد
   Future<void> _resetWithConfirmation(
     String title,
     Future<void> Function() resetAction,
   ) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_companyCode.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'لم يتم العثور على كود الشركة',
+              style: TextStyle(fontFamily: 'Cairo'),
+            ),
+            backgroundColor: AppTheme.warningOrangeFor(context),
+          ),
+        );
+        return;
+      }
 
-    if (_companyCode.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'لم يتم العثور على كود الشركة',
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(
+            title,
+            style: const TextStyle(fontFamily: 'Cairo'),
+          ),
+          content: const Text(
+            'سيتم حذف جميع البيانات المحلية وإعادة تحميلها من الخادم. هل أنت متأكد؟',
             style: TextStyle(fontFamily: 'Cairo'),
           ),
-          backgroundColor: AppTheme.warningOrangeFor(context),
-        ),
-      );
-      return;
-    }
-
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(
-          title,
-          style: const TextStyle(fontFamily: 'Cairo'),
-        ),
-        content: const Text(
-          'سيتم حذف جميع البيانات المحلية وإعادة تحميلها من الخادم. هل أنت متأكد؟',
-          style: TextStyle(fontFamily: 'Cairo'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text(
-              'إلغاء',
-              style: TextStyle(fontFamily: 'Cairo'),
-            ),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.dangerStrongFor(context),
-            ),
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(
-              'تأكيد',
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onPrimary,
-                fontFamily: 'Cairo',
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text(
+                'إلغاء',
+                style: TextStyle(fontFamily: 'Cairo'),
               ),
             ),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm != true) return;
-
-    setState(() => _isLoading = true);
-    try {
-      await resetAction();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'تم إعادة التعيين بنجاح',
-              style: TextStyle(fontFamily: 'Cairo'),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.dangerStrongFor(context),
+              ),
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(
+                'تأكيد',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onPrimary,
+                  fontFamily: 'Cairo',
+                ),
+              ),
             ),
-            backgroundColor: AppTheme.successStrongFor(context),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'فشل إعادة التعيين: $e',
-              style: TextStyle(fontFamily: 'Cairo'),
-            ),
-            backgroundColor: AppTheme.dangerStrongFor(context),
-          ),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
-});
-}
+          ],
+        ),
+      );
 
+      if (confirm != true) return;
+
+      setState(() => _isLoading = true);
+      try {
+        await resetAction();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'تم إعادة التعيين بنجاح',
+                style: TextStyle(fontFamily: 'Cairo'),
+              ),
+              backgroundColor: AppTheme.successStrongFor(context),
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'فشل إعادة التعيين: $e',
+                style: TextStyle(fontFamily: 'Cairo'),
+              ),
+              backgroundColor: AppTheme.dangerStrongFor(context),
+            ),
+          );
+        }
+      } finally {
+        if (mounted) setState(() => _isLoading = false);
+      }
+    });
+  }
+
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -231,6 +236,7 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يبني زر إعادة الضبط
   Widget _buildResetButton({
     required IconData icon,
     required String label,

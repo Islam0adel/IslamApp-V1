@@ -1,5 +1,6 @@
-// lib/models/inventory_model.dart
+// frontend/lib/models/inventory_model.dart
 
+// نموذج صنف في المخزون
 class InventoryItem {
   String code;
   String name;
@@ -26,6 +27,7 @@ class InventoryItem {
   // To Map
   // ============================================================
 
+  // يحوّل الكائن إلى خريطة (Map) جاهزة للتخزين أو الإرسال
   Map<String, dynamic> toMap() => {
         'code': code,
         'name': name,
@@ -40,6 +42,7 @@ class InventoryItem {
   // From Map
   // ============================================================
 
+  // ينشئ كائنًا من خريطة بيانات قادمة من الخادم أو التخزين المحلي
   factory InventoryItem.fromMap(Map<String, dynamic> map) {
     return InventoryItem(
       code: map['code']?.toString() ?? '',
@@ -57,6 +60,7 @@ class InventoryItem {
 // Inventory Model
 // ============================================================
 
+// نموذج حركة المخزون
 class InventoryModel {
   String companyCode;
   String branchCode;
@@ -102,6 +106,7 @@ class InventoryModel {
   // To Map
   // ============================================================
 
+  // يحوّل الكائن إلى خريطة (Map) جاهزة للتخزين أو الإرسال
   Map<String, dynamic> toMap() => {
         'company_code': companyCode,
         'branch_code': branchCode,
@@ -122,6 +127,7 @@ class InventoryModel {
   // From Map
   // ============================================================
 
+  // ينشئ كائنًا من خريطة بيانات قادمة من الخادم أو التخزين المحلي
   factory InventoryModel.fromMap(Map<String, dynamic> map) {
     final List<InventoryItem> parsedItems = [];
 
@@ -175,6 +181,7 @@ class InventoryModel {
 // Helpers
 // ============================================================
 
+// يحوّل قيمة ديناميكية إلى عدد عشري بأمان
 double _toDouble(dynamic value) {
   if (value is num) return value.toDouble();
 
@@ -184,6 +191,7 @@ double _toDouble(dynamic value) {
       0.0;
 }
 
+// يحوّل قيمة ديناميكية إلى عدد صحيح يقبل القيمة الفارغة
 int? _toIntNullable(dynamic value) {
   if (value == null) return null;
 
@@ -193,6 +201,7 @@ int? _toIntNullable(dynamic value) {
   return int.tryParse(value.toString());
 }
 
+// يحوّل قيمة ديناميكية إلى قيمة منطقية بأمان
 bool _toBool(dynamic value) {
   if (value is bool) return value;
 

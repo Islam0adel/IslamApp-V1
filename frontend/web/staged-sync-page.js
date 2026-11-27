@@ -1,7 +1,11 @@
-// web/staged-sync-page.js
+// frontend/web/staged-sync-page.js
 // Page side of the staged-sync store (same IndexedDB the service worker uses).
+// كائن stagedSync على نافذة الصفحة: يقرأ ويمسح التغييرات المؤقتة التي خزّنها الـservice worker
 window.stagedSync = (function () {
+  // اسم قاعدة IndexedDB المشتركة مع الـservice worker
   const DB = "islam_staged_sync";
+
+  // يفتح قاعدة IndexedDB
   function open() {
     return new Promise((res, rej) => {
       const r = indexedDB.open(DB, 1);
@@ -13,6 +17,8 @@ window.stagedSync = (function () {
       r.onerror = () => rej(r.error);
     });
   }
+
+  // يشغّل طلب على مخزن في القاعدة ويعيد نتيجته
   function rq(db, store, mode, fn) {
     return new Promise((res, rej) => {
       const t = db.transaction(store, mode);
@@ -21,14 +27,20 @@ window.stagedSync = (function () {
       t.onerror = () => rej(t.error);
     });
   }
+
+  // يمسح الدفعات القديمة ويُبقي المطلوب فقط
   async function purge(db, keep) {
     const keys = await rq(db, "batches", "readonly", (s) => s.getAllKeys());
     const drop = (keys || []).filter((k) => !keep || !(String(k).startsWith(keep + "|") || String(k).startsWith("tt:" + keep + "|") || String(k).startsWith("cd:" + keep + "|") || String(k).startsWith("em:" + keep + "|") || String(k).startsWith("sp:" + keep + "|") || String(k).startsWith("sl:" + keep + "|") || String(k).startsWith("iv:" + keep + "|") || String(k).startsWith("c1:" + keep + "|") || String(k).startsWith("c2:" + keep + "|") || String(k).startsWith("c3:" + keep + "|") || String(k).startsWith("c4:" + keep + "|") || String(k).startsWith("c5:" + keep + "|") || String(k).startsWith("c6:" + keep + "|") || String(k).startsWith("c7:" + keep + "|") || String(k).startsWith("c8:" + keep + "|")));
     if (drop.length) await rq(db, "batches", "readwrite", (s) => { drop.forEach((k) => s.delete(k)); return null; });
   }
+
   // Startup prefetch: runs while Flutter boots. The first read() of this page load may use it (once);
   // any write drops it. peekCount() answers "is anything staged for this scope" without a new read.
+  // قراءة مسبقة للدفعات تبدأ عند فتح الصفحة
   let pre = null;
+
+  // يقرأ كل الدفعات المخزّنة
   async function readAll() {
     const db = await open();
     const keys = ((await rq(db, "batches", "readonly", (s) => s.getAllKeys())) || []).slice().sort();
@@ -38,6 +50,7 @@ window.stagedSync = (function () {
   }
   try { pre = readAll(); pre.catch(() => {}); } catch (e) { pre = null; }
   return {
+    // يعيد عدد الدفعات المنتظرة لنطاق معين (أو -1 إذا لم تكن جاهزة)
     async peekCount(scopeKey) {
       if (!pre) return -1;
       try {
@@ -47,6 +60,7 @@ window.stagedSync = (function () {
     },
     // metaJson: {scopeKey, baseUrl, company, token, tokenExp(ms), appCursor(ISO)}
     // Also deletes every batch that belongs to a different scope.
+    // ينشر بيانات النطاق (المستخدم والرمز والمؤشر) للـservice worker
     async publish(metaJson) {
       pre = null;
       const db = await open();
@@ -74,6 +88,7 @@ window.stagedSync = (function () {
     },
     // Owner-scoped clear: drops the staged scope only when it belongs to this uid and company.
     // A different account's staged data (or an unreadable scope with another owner) is left alone.
+    // يمسح دفعات المستخدم والشركة لليومية
     async clearFor(uid, company) {
       pre = null;
       const db = await open();
@@ -84,6 +99,7 @@ window.stagedSync = (function () {
       return true;
     },
     // Drops only the treasury module batches (read right for treasury transfers was lost).
+    // يمسح دفعات الخزائن للمستخدم والشركة
     async clearTreasury(uid, company) {
       pre = null;
       const db = await open();
@@ -95,6 +111,7 @@ window.stagedSync = (function () {
       return true;
     },
     // Drops only the coding catalog batches (coding read right or cost right was lost).
+    // يمسح دفعات الكودنج للمستخدم والشركة
     async clearCoding(uid, company) {
       pre = null;
       const db = await open();
@@ -105,6 +122,7 @@ window.stagedSync = (function () {
       if (drop.length) await rq(db, "batches", "readwrite", (s) => { drop.forEach((k) => s.delete(k)); return null; });
       return true;
     },
+    // يمسح كل الدفعات المخزّنة
     async clearAll() {
       pre = null;
       const db = await open();
@@ -112,6 +130,7 @@ window.stagedSync = (function () {
       await purge(db, null);
       return true;
     },
+    // يقرأ دفعات اليومية للنطاق
     async read(scopeKey) {
       if (pre) {
         const p = pre;
@@ -129,6 +148,7 @@ window.stagedSync = (function () {
       return JSON.stringify(out);
     },
     // Treasury module batches (key prefix "tt:"), kept apart from the daily reader.
+    // يقرأ دفعات الخزائن للنطاق
     async readTreasury(scopeKey) {
       pre = null;
       const db = await open();
@@ -138,6 +158,7 @@ window.stagedSync = (function () {
         out.push(await rq(db, "batches", "readonly", (s) => s.get(k)));
       return JSON.stringify(out);
     },
+    // يقرأ دفعات الكودنج للنطاق
     async readCoding(scopeKey) {
       pre = null;
       const db = await open();
@@ -147,6 +168,7 @@ window.stagedSync = (function () {
         out.push(await rq(db, "batches", "readonly", (s) => s.get(k)));
       return JSON.stringify(out);
     },
+    // يزيل دفعات كودنج معينة بعد دمجها
     async removeCoding(scopeKey, idsJson) {
       pre = null;
       const db = await open();
@@ -155,6 +177,7 @@ window.stagedSync = (function () {
       return true;
     },
     // Drops only the employee batches (employees read right, HR or salary right was lost).
+    // يمسح دفعات الموظفين للمستخدم والشركة
     async clearEmployees(uid, company) {
       pre = null;
       const db = await open();
@@ -165,6 +188,7 @@ window.stagedSync = (function () {
       if (drop.length) await rq(db, "batches", "readwrite", (s) => { drop.forEach((k) => s.delete(k)); return null; });
       return true;
     },
+    // يقرأ دفعات الموظفين للنطاق
     async readEmployees(scopeKey) {
       pre = null;
       const db = await open();
@@ -174,6 +198,7 @@ window.stagedSync = (function () {
         out.push(await rq(db, "batches", "readonly", (s) => s.get(k)));
       return JSON.stringify(out);
     },
+    // يزيل دفعات موظفين معينة بعد دمجها
     async removeEmployees(scopeKey, idsJson) {
       pre = null;
       const db = await open();
@@ -182,6 +207,7 @@ window.stagedSync = (function () {
       return true;
     },
     // Drops only the supplier batches (supplier read right or cost right was lost).
+    // يمسح دفعات الموردين للمستخدم والشركة
     async clearSupplier(uid, company) {
       pre = null;
       const db = await open();
@@ -192,6 +218,7 @@ window.stagedSync = (function () {
       if (drop.length) await rq(db, "batches", "readwrite", (s) => { drop.forEach((k) => s.delete(k)); return null; });
       return true;
     },
+    // يقرأ دفعات الموردين للنطاق
     async readSupplier(scopeKey) {
       pre = null;
       const db = await open();
@@ -201,6 +228,7 @@ window.stagedSync = (function () {
         out.push(await rq(db, "batches", "readonly", (s) => s.get(k)));
       return JSON.stringify(out);
     },
+    // يزيل دفعات موردين معينة بعد دمجها
     async removeSupplier(scopeKey, idsJson) {
       pre = null;
       const db = await open();
@@ -209,6 +237,7 @@ window.stagedSync = (function () {
       return true;
     },
     // Drops only the inventory batches (inventory read right or cost right was lost).
+    // يمسح دفعات المخزون للمستخدم والشركة
     async clearInventory(uid, company) {
       pre = null;
       const db = await open();
@@ -219,6 +248,7 @@ window.stagedSync = (function () {
       if (drop.length) await rq(db, "batches", "readwrite", (s) => { drop.forEach((k) => s.delete(k)); return null; });
       return true;
     },
+    // يقرأ دفعات المخزون للنطاق
     async readInventory(scopeKey) {
       pre = null;
       const db = await open();
@@ -228,6 +258,7 @@ window.stagedSync = (function () {
         out.push(await rq(db, "batches", "readonly", (s) => s.get(k)));
       return JSON.stringify(out);
     },
+    // يزيل دفعات مخزون معينة بعد دمجها
     async removeInventory(scopeKey, idsJson) {
       pre = null;
       const db = await open();
@@ -236,6 +267,7 @@ window.stagedSync = (function () {
       return true;
     },
     // Commercial feeds (sales c1:, returns c2:, customer payments c3:, transfers c4:): one generic set.
+    // يمسح دفعات قسم تجاري أو موارد بشرية حسب البادئة
     async clearCommercial(uid, company, pfx) {
       pre = null;
       const db = await open();
@@ -246,6 +278,7 @@ window.stagedSync = (function () {
       if (drop.length) await rq(db, "batches", "readwrite", (s) => { drop.forEach((k) => s.delete(k)); return null; });
       return true;
     },
+    // يقرأ دفعات قسم تجاري أو موارد بشرية حسب البادئة
     async readCommercial(scopeKey, pfx) {
       pre = null;
       const db = await open();
@@ -255,6 +288,7 @@ window.stagedSync = (function () {
         out.push(await rq(db, "batches", "readonly", (s) => s.get(k)));
       return JSON.stringify(out);
     },
+    // يزيل دفعات تجارية معينة بعد دمجها
     async removeCommercial(scopeKey, pfx, idsJson) {
       pre = null;
       const db = await open();
@@ -263,6 +297,7 @@ window.stagedSync = (function () {
       return true;
     },
     // Drops only the settlement batches (settlement read right or cost right was lost).
+    // يمسح دفعات التسويات للمستخدم والشركة
     async clearSettlement(uid, company) {
       pre = null;
       const db = await open();
@@ -273,6 +308,7 @@ window.stagedSync = (function () {
       if (drop.length) await rq(db, "batches", "readwrite", (s) => { drop.forEach((k) => s.delete(k)); return null; });
       return true;
     },
+    // يقرأ دفعات التسويات للنطاق
     async readSettlement(scopeKey) {
       pre = null;
       const db = await open();
@@ -282,6 +318,7 @@ window.stagedSync = (function () {
         out.push(await rq(db, "batches", "readonly", (s) => s.get(k)));
       return JSON.stringify(out);
     },
+    // يزيل دفعات تسويات معينة بعد دمجها
     async removeSettlement(scopeKey, idsJson) {
       pre = null;
       const db = await open();
@@ -289,6 +326,7 @@ window.stagedSync = (function () {
       await rq(db, "batches", "readwrite", (s) => { ids.forEach((i) => s.delete("sl:" + scopeKey + "|" + i)); return null; });
       return true;
     },
+    // يزيل دفعات خزائن معينة بعد دمجها
     async removeTreasury(scopeKey, idsJson) {
       pre = null;
       const db = await open();
@@ -296,6 +334,7 @@ window.stagedSync = (function () {
       await rq(db, "batches", "readwrite", (s) => { ids.forEach((i) => s.delete("tt:" + scopeKey + "|" + i)); return null; });
       return true;
     },
+    // يزيل دفعات اليومية المعينة بعد دمجها
     async remove(scopeKey, idsJson) {
       pre = null;
       const db = await open();
@@ -303,6 +342,7 @@ window.stagedSync = (function () {
       await rq(db, "batches", "readwrite", (s) => { ids.forEach((i) => s.delete(scopeKey + "|" + i)); return null; });
       return true;
     },
+    // يسجّل فشل تطبيق دفعة ويعيد عدد مرات الفشل
     async recordFailure(scopeKey, id) {
       const db = await open();
       const key = "fail|" + scopeKey + "|" + id;

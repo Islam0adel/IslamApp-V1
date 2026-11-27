@@ -1,3 +1,4 @@
+# backend/app/core/permission_policy.py
 """Pure permission-set operations for the approved company-ceiling model.
 
 This module neither activates a
@@ -9,9 +10,11 @@ from app.core.page_visibility import PAGE_VISIBILITY_KEYS
 
 from app.core.permission_hierarchy import ADD_TO_EDIT
 
+# نوع الحق: زوج (التصنيف، المفتاح)
 Right = tuple[str, str]
 
 
+# يتحقق من صحة خريطة الصلاحيات المقترحة قبل الحفظ
 def validate_permission_map(value) -> None:
     """Validate a proposed write. Runtime reads instead fail closed per key."""
     if not isinstance(value, dict):
@@ -24,6 +27,7 @@ def validate_permission_map(value) -> None:
                 raise ValueError('permission values must be named booleans')
 
 
+# يحوّل الخريطة لمجموعة حقوق صريحة مع احتساب تعديل = إضافة
 def grants(value) -> frozenset[Right]:
     """Explicit true rights plus only the declared edit-to-add implications."""
     result = set()
@@ -40,6 +44,7 @@ def grants(value) -> frozenset[Right]:
     return frozenset(result)
 
 
+# يعيد بناء خريطة الصلاحيات من مجموعة الحقوق
 def materialize(rights) -> dict[str, dict[str, bool]]:
     result = {}
     for category, key in sorted(rights):
@@ -47,6 +52,7 @@ def materialize(rights) -> dict[str, dict[str, bool]]:
     return result
 
 
+# يحسب الصلاحيات الفعلية من سقف الشركة وصلاحيات التشغيل
 def effective_permissions(company_ceiling, operating_permissions) -> dict:
     """Neither a role nor the delegation map supplies an operating grant."""
     result = materialize(grants(company_ceiling) & grants(operating_permissions))
@@ -57,16 +63,19 @@ def effective_permissions(company_ceiling, operating_permissions) -> dict:
     return result
 
 
+# نتيجة فحص تعيين الصلاحيات (خارج سقف الشركة أو خارج التفويض)
 @dataclass(frozen=True)
 class AssignmentCheck:
     outside_company: frozenset[Right]
     outside_delegation: frozenset[Right]
 
+    # خاصية بترجّع هل التعيين مسموح
     @property
     def allowed(self) -> bool:
         return not self.outside_company and not self.outside_delegation
 
 
+# يفحص خريطة بديلة من غير ما يقص حقوق أو يمنح غيرها بشكل صامت
 def check_assignment(*, company_ceiling, delegable_permissions,
                      previous_permissions, proposed_permissions,
                      check_delegation: bool = True) -> AssignmentCheck:

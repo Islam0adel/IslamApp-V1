@@ -1,3 +1,4 @@
+# backend/app/core/branch_catalog.py
 """Company-local catalog across both supported branch storage representations.
 
 Reads only. Does not create branches, migrate records or assign account scope.
@@ -7,6 +8,7 @@ from sqlalchemy import select
 from app.core.models import Branch, CodingRecord
 
 
+# يجيب قائمة فروع الشركة (ممكن يقفل الصفوف للتعديل)
 async def company_branch_catalog(session, company_code, *, lock=False):
     legacy = select(Branch.code, Branch.name).where(Branch.company_code == company_code).order_by(Branch.id)
     coded = select(CodingRecord.code, CodingRecord.name).where(

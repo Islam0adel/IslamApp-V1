@@ -1,5 +1,5 @@
+// frontend/lib/views/dashboard/inventory_history_page.dart
 import '../../services/cache_partitions.dart';
-// lib/views/dashboard/inventory_history_page.dart
 
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
@@ -14,6 +14,7 @@ import '../../services/permissions_service.dart';
 import '../../services/export_service.dart';
 import 'inventory_page.dart';
 
+// صفحة سجل الجرد
 class InventoryHistoryPage extends StatefulWidget {
   final String companyCode;
   final String? selectedBranchCode;
@@ -26,10 +27,12 @@ class InventoryHistoryPage extends StatefulWidget {
     this.branchName,
   });
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<InventoryHistoryPage> createState() => _InventoryHistoryPageState();
 }
 
+// حالة الويدجت InventoryHistoryPage: تدير بيانات الشاشة وتفاعلاتها
 class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
   final InventoryService _inventoryService = InventoryService();
 
@@ -61,6 +64,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
   // Init / Dispose
   // ============================================================
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
@@ -71,6 +75,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
     _initialize();
   }
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     if (_inventoryBoxListener != null) {
@@ -81,6 +86,7 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
     super.dispose();
   }
 
+  // يستجيب لتغيّر صندوق الجرد
   void _onInventoryBoxChanged() {
     if (mounted) _loadData();
   }
@@ -89,60 +95,63 @@ class _InventoryHistoryPageState extends State<InventoryHistoryPage> {
   // التهيئة
   // ============================================================
 
+  // يهيّئ البيانات والصلاحيات
   Future<void> _initialize() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_isInitializing) return;
+      _isInitializing = true;
 
-    if (_isInitializing) return;
-    _isInitializing = true;
+      await _loadDropdowns();
+      await _loadData();
 
-    await _loadDropdowns();
-    await _loadData();
+      if (!mounted) return;
 
-    if (!mounted) return;
-
-    setState(() {
-      _isLoading = false;
-      _isInitializing = false;
+      setState(() {
+        _isLoading = false;
+        _isInitializing = false;
+      });
     });
-});
-}
+  }
 
   // ============================================================
   // تحميل المخازن
   // ============================================================
 
+  // يحمّل خيارات القوائم المنسدلة
   Future<void> _loadDropdowns() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      final box = CachePartitions.box('coding_box');
+      _stores = [
+        {'code': 'all', 'name': 'كل المخازن'}
+      ];
 
-    final box = CachePartitions.box('coding_box');
-    _stores = [{'code': 'all', 'name': 'كل المخازن'}];
+      final raw = box.get(
+        '${widget.companyCode}_stores',
+        defaultValue: [],
+      );
 
-    final raw = box.get(
-      '${widget.companyCode}_stores',
-      defaultValue: [],
-    );
+      if (raw is List) {
+        for (final item in raw) {
+          if (item is! Map) continue;
 
-    if (raw is List) {
-      for (final item in raw) {
-        if (item is! Map) continue;
+          final code = item['code']?.toString() ?? '';
+          final name = item['name']?.toString() ?? '';
 
-        final code = item['code']?.toString() ?? '';
-        final name = item['name']?.toString() ?? '';
+          if (code.isEmpty || name.isEmpty) continue;
 
-        if (code.isEmpty || name.isEmpty) continue;
-
-        _stores.add({'code': code, 'name': name});
+          _stores.add({'code': code, 'name': name});
+        }
       }
-    }
 
-    if (mounted) setState(() {});
-});
-}
+      if (mounted) setState(() {});
+    });
+  }
 
   // ============================================================
   // هل المستخدم على كل الفروع؟
   // ============================================================
 
+  // يحدد هل الفروع كلها محددة
   bool get _isAllBranches {
     final code = widget.selectedBranchCode?.trim();
 
@@ -157,111 +166,113 @@ return CachePartitions.run(() async {
   // تحميل البيانات
   // ============================================================
 
+  // يحمّل بيانات الشاشة
   Future<void> _loadData() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (!mounted) return;
+      setState(() => _isLoading = true);
 
-    if (!mounted) return;
-    setState(() => _isLoading = true);
+      try {
+        final box = CachePartitions.box('inventory_box');
+        final List<InventoryModel> all = [];
 
-    try {
-      final box = CachePartitions.box('inventory_box');
-      final List<InventoryModel> all = [];
+        for (final key in box.keys) {
+          final raw = box.get(key);
+          if (raw is! List) continue;
 
-      for (final key in box.keys) {
-        final raw = box.get(key);
-        if (raw is! List) continue;
+          for (final item in raw) {
+            if (item is! Map || item['is_deleted'] == true) continue;
 
-        for (final item in raw) {
-          if (item is! Map || item['is_deleted'] == true) continue;
+            if (item['company_code']?.toString() != widget.companyCode) {
+              continue;
+            }
 
-          if (item['company_code']?.toString() != widget.companyCode) {
-            continue;
-          }
-
-          try {
-            all.add(
-              InventoryModel.fromMap(
-                Map<String, dynamic>.from(item),
-              ),
-            );
-          } catch (e) {
-            debugPrint('⚠️ فشل تحويل عنصر الجرد: $e');
+            try {
+              all.add(
+                InventoryModel.fromMap(
+                  Map<String, dynamic>.from(item),
+                ),
+              );
+            } catch (e) {
+              debugPrint('⚠️ فشل تحويل عنصر الجرد: $e');
+            }
           }
         }
+
+        if (!_isAllBranches) {
+          all.removeWhere(
+            (inv) => inv.branchCode != widget.selectedBranchCode,
+          );
+        }
+
+        if (_filterStoreCode != null && _filterStoreCode != 'all') {
+          all.removeWhere(
+            (inv) => inv.storeCode != _filterStoreCode,
+          );
+        }
+
+        if (_filterDate != null && _filterDate!.isNotEmpty) {
+          all.removeWhere(
+            (inv) => inv.date != _filterDate,
+          );
+        }
+
+        all.sort((a, b) {
+          final dateCompare = b.date.compareTo(a.date);
+          if (dateCompare != 0) return dateCompare;
+          return (b.serial ?? 0).compareTo(a.serial ?? 0);
+        });
+
+        if (!mounted) return;
+
+        setState(() {
+          _inventories = all;
+          _isLoading = false;
+        });
+      } catch (e) {
+        debugPrint('❌ خطأ في تحميل الجردات: $e');
+
+        if (mounted) {
+          setState(() => _isLoading = false);
+        }
       }
-
-      if (!_isAllBranches) {
-        all.removeWhere(
-          (inv) => inv.branchCode != widget.selectedBranchCode,
-        );
-      }
-
-      if (_filterStoreCode != null && _filterStoreCode != 'all') {
-        all.removeWhere(
-          (inv) => inv.storeCode != _filterStoreCode,
-        );
-      }
-
-      if (_filterDate != null && _filterDate!.isNotEmpty) {
-        all.removeWhere(
-          (inv) => inv.date != _filterDate,
-        );
-      }
-
-      all.sort((a, b) {
-        final dateCompare = b.date.compareTo(a.date);
-        if (dateCompare != 0) return dateCompare;
-        return (b.serial ?? 0).compareTo(a.serial ?? 0);
-      });
-
-      if (!mounted) return;
-
-      setState(() {
-        _inventories = all;
-        _isLoading = false;
-      });
-    } catch (e) {
-      debugPrint('❌ خطأ في تحميل الجردات: $e');
-
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
-});
-}
+    });
+  }
 
   // ============================================================
   // تحديث من السيرفر
   // ============================================================
 
+  // يحدّث البيانات من الخادم
   Future<void> _refreshFromServer() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (!mounted) return;
 
-    if (!mounted) return;
+      setState(() => _isLoading = true);
 
-    setState(() => _isLoading = true);
+      try {
+        await _inventoryService.syncChangesFromServer(widget.companyCode);
+        await _loadData();
 
-    try {
-      await _inventoryService.syncChangesFromServer(widget.companyCode);
-      await _loadData();
-
-      if (mounted) {
-        _showSnackBar('تم تحديث الجرد بنجاح', AppTheme.successStrongFor(context));
+        if (mounted) {
+          _showSnackBar(
+              'تم تحديث الجرد بنجاح', AppTheme.successStrongFor(context));
+        }
+      } catch (e) {
+        if (mounted) {
+          _showSnackBar('فشل التحديث: $e', AppTheme.dangerStrongFor(context));
+        }
+      } finally {
+        if (mounted) setState(() => _isLoading = false);
       }
-    } catch (e) {
-      if (mounted) {
-        _showSnackBar('فشل التحديث: $e', AppTheme.dangerStrongFor(context));
-      }
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
-});
-}
+    });
+  }
 
   // ============================================================
   // أسماء الفرع والمخزن والشركة
   // ============================================================
 
+  // يعيد اسم الفرع من الكود
   String _getBranchName(String? code) {
     if (code == null ||
         code.isEmpty ||
@@ -290,6 +301,7 @@ return CachePartitions.run(() async {
     return 'فرع غير معروف';
   }
 
+  // يعيد اسم المخزن من الكود
   String _getStoreName(String? code) {
     if (code == null || code.isEmpty || code == 'all') {
       return 'كل المخازن';
@@ -303,37 +315,41 @@ return CachePartitions.run(() async {
     return found['name'] ?? code;
   }
 
+  // يعيد اسم الشركة من الكود
   Future<String> _getCompanyName() async {
-return CachePartitions.run(() async {
-
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('company_name') ?? 'شركتي';
-});
-}
+    return CachePartitions.run(() async {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString('company_name') ?? 'شركتي';
+    });
+  }
 
   // ============================================================
   // تنسيق الأرقام
   // ============================================================
 
+  // ينسّق الكمية للعرض
   String _formatQuantity(double value) {
     return NumberFormat('#,##0.##', 'en_US').format(value);
   }
 
+  // ينسّق المبلغ كعملة للعرض
   String _formatCurrency(double value) {
     return NumberFormat('#,##0.00', 'en_US').format(value);
   }
 
+  // يحسب إجمالي كمية الجرد
   double _getTotalQuantity(InventoryModel inv) {
     return inv.items.fold<double>(
-  0.0,
-  (sum, item) => sum + item.quantity,
-);
+      0.0,
+      (sum, item) => sum + item.quantity,
+    );
   }
 
   // ============================================================
   // تفاصيل / تعديل / حذف
   // ============================================================
 
+  // يعرض تفاصيل الجرد
   void _showInventoryDetails(InventoryModel model) {
     setState(() {
       _selectedInventory = model;
@@ -341,6 +357,7 @@ return CachePartitions.run(() async {
     });
   }
 
+  // يعود إلى القائمة
   void _goBackToList() {
     setState(() {
       _showDetails = false;
@@ -348,6 +365,7 @@ return CachePartitions.run(() async {
     });
   }
 
+  // يفتح الجرد للتعديل
   void _editInventory(InventoryModel model) {
     Navigator.push(
       context,
@@ -360,6 +378,7 @@ return CachePartitions.run(() async {
     ).then((_) => _loadData());
   }
 
+  // يطلب تأكيد الحذف ثم ينفذه
   void _confirmDelete(InventoryModel model) {
     showDialog(
       context: context,
@@ -389,29 +408,29 @@ return CachePartitions.run(() async {
           ),
           TextButton(
             onPressed: () async {
-return CachePartitions.run(() async {
+              return CachePartitions.run(() async {
+                Navigator.pop(ctx);
 
-              Navigator.pop(ctx);
+                if (model.docId == null) {
+                  _showSnackBar(
+                      'رقم الجرد غير موجود', AppTheme.dangerStrongFor(context));
+                  return;
+                }
 
-              if (model.docId == null) {
-                _showSnackBar('رقم الجرد غير موجود', AppTheme.dangerStrongFor(context));
-                return;
-              }
+                final deleted = await _inventoryService.deleteInventory(
+                  widget.companyCode,
+                  model.docId!,
+                );
 
-              final deleted = await _inventoryService.deleteInventory(
-                widget.companyCode,
-                model.docId!,
-              );
-
-              if (deleted) {
-                _showSnackBar('تم الحذف بنجاح', AppTheme.successStrongFor(context));
-                await _loadData();
-              } else {
-                _showSnackBar('فشل الحذف', AppTheme.dangerStrongFor(context));
-              }
-
-});
-},
+                if (deleted) {
+                  _showSnackBar(
+                      'تم الحذف بنجاح', AppTheme.successStrongFor(context));
+                  await _loadData();
+                } else {
+                  _showSnackBar('فشل الحذف', AppTheme.dangerStrongFor(context));
+                }
+              });
+            },
             child: Text(
               'حذف',
               style: TextStyle(color: AppTheme.dangerStrongFor(context)),
@@ -426,261 +445,273 @@ return CachePartitions.run(() async {
   // تجهيز بيانات التصدير
   // ============================================================
 
+  // يعيد بيانات أصناف الجرد للتصدير
   List<Map<String, dynamic>> _getItemExportData(
     InventoryModel inv,
   ) {
     // أعمدة الجملة بيانات تكلفة: لا تُصدَّر لمن لا يملك حقها.
     final bool canCost = PermissionsService().canViewCostPrices;
-    return inv.items.map(
-      (item) => {
-        'الكود': item.code,
-        'الصنف': item.name,
-        'الكمية': item.quantity,
-        if (canCost) 'سعر الجملة': item.wholesalePrice,
-        if (canCost) 'قيمة الجملة': item.wholesaleValue,
-        'سعر البيع': item.retailPrice,
-        'قيمة البيع': item.retailValue,
-      },
-    ).toList();
+    return inv.items
+        .map(
+          (item) => {
+            'الكود': item.code,
+            'الصنف': item.name,
+            'الكمية': item.quantity,
+            if (canCost) 'سعر الجملة': item.wholesalePrice,
+            if (canCost) 'قيمة الجملة': item.wholesaleValue,
+            'سعر البيع': item.retailPrice,
+            'قيمة البيع': item.retailValue,
+          },
+        )
+        .toList();
   }
 
   // ============================================================
   // تصدير إذن واحد Excel
   // ============================================================
 
+  // يصدّر جردًا واحدًا إلى Excel
   Future<void> _exportSingleExcel(InventoryModel inv) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      try {
+        final companyName = await _getCompanyName();
+        final branchName = _getBranchName(inv.branchCode);
+        final data = _getItemExportData(inv);
 
-    try {
-      final companyName = await _getCompanyName();
-      final branchName = _getBranchName(inv.branchCode);
-      final data = _getItemExportData(inv);
+        await ExportService.exportToExcel(
+          data,
+          'جرد_${inv.date}_${inv.serial ?? ''}',
+          _itemHeaders,
+          _itemHeaders,
+          companyName: companyName,
+          branchName: branchName,
+          storeName: _getStoreName(inv.storeCode),
+          serial: inv.serial?.toString(),
+          date: inv.date,
+          summary: {
+            'إجمالي الكمية': _getTotalQuantity(inv),
+            'إجمالي الجملة': inv.totalWholesale,
+            'إجمالي البيع': inv.totalRetail,
+          },
+        );
 
-      await ExportService.exportToExcel(
-        data,
-        'جرد_${inv.date}_${inv.serial ?? ''}',
-        _itemHeaders,
-        _itemHeaders,
-        companyName: companyName,
-        branchName: branchName,
-        storeName: _getStoreName(inv.storeCode),
-        serial: inv.serial?.toString(),
-        date: inv.date,
-        summary: {
-          'إجمالي الكمية': _getTotalQuantity(inv),
-          'إجمالي الجملة': inv.totalWholesale,
-          'إجمالي البيع': inv.totalRetail,
-        },
-      );
-
-      _showSnackBar('تم تصدير الإذن بنجاح', AppTheme.successStrongFor(context));
-    } catch (e) {
-      _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
-    }
-});
-}
+        _showSnackBar(
+            'تم تصدير الإذن بنجاح', AppTheme.successStrongFor(context));
+      } catch (e) {
+        _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
+      }
+    });
+  }
 
   // ============================================================
   // تصدير إذن واحد PDF
   // ============================================================
 
+  // يصدّر جردًا واحدًا إلى PDF
   Future<void> _exportSinglePDF(InventoryModel inv) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      try {
+        final companyName = await _getCompanyName();
+        final branchName = _getBranchName(inv.branchCode);
+        final data = _getItemExportData(inv);
 
-    try {
-      final companyName = await _getCompanyName();
-      final branchName = _getBranchName(inv.branchCode);
-      final data = _getItemExportData(inv);
+        await ExportService.exportToPDF(
+          data: data,
+          title: 'تقرير جرد المخزون',
+          headers: _itemHeaders,
+          keys: _itemHeaders,
+          companyName: companyName,
+          branchName: branchName,
+          storeName: _getStoreName(inv.storeCode),
+          serial: inv.serial?.toString(),
+          date: inv.date,
+          summary: {
+            'totalQuantity': _getTotalQuantity(inv),
+            'totalWholesale': inv.totalWholesale,
+            'totalRetail': inv.totalRetail,
+          },
+          totalAmount: inv.totalWholesale,
+        );
 
-      await ExportService.exportToPDF(
-        data: data,
-        title: 'تقرير جرد المخزون',
-        headers: _itemHeaders,
-        keys: _itemHeaders,
-        companyName: companyName,
-        branchName: branchName,
-        storeName: _getStoreName(inv.storeCode),
-        serial: inv.serial?.toString(),
-        date: inv.date,
-        summary: {
-          'totalQuantity': _getTotalQuantity(inv),
-          'totalWholesale': inv.totalWholesale,
-          'totalRetail': inv.totalRetail,
-        },
-        totalAmount: inv.totalWholesale,
-      );
-
-      _showSnackBar('تم تصدير الإذن بنجاح', AppTheme.successStrongFor(context));
-    } catch (e) {
-      _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
-    }
-});
-}
+        _showSnackBar(
+            'تم تصدير الإذن بنجاح', AppTheme.successStrongFor(context));
+      } catch (e) {
+        _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
+      }
+    });
+  }
 
   // ============================================================
   // تصدير كل الجردات Excel
   // ============================================================
 
+  // يصدّر كل الجرود إلى Excel
   Future<void> _exportAllExcel() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_inventories.isEmpty) {
+        _showSnackBar(
+            'لا توجد بيانات للتصدير', AppTheme.warningOrangeFor(context));
+        return;
+      }
 
-    if (_inventories.isEmpty) {
-      _showSnackBar('لا توجد بيانات للتصدير', AppTheme.warningOrangeFor(context));
-      return;
-    }
+      try {
+        final companyName = await _getCompanyName();
+        final branchName = widget.branchName ??
+            (_isAllBranches
+                ? 'كل الفروع'
+                : _getBranchName(widget.selectedBranchCode));
 
-    try {
-      final companyName = await _getCompanyName();
-      final branchName = widget.branchName ??
-          (_isAllBranches
-              ? 'كل الفروع'
-              : _getBranchName(widget.selectedBranchCode));
+        final data = _inventories
+            .map(
+              (inv) => {
+                'رقم الإذن': inv.serial ?? '',
+                'التاريخ': inv.date,
+                'الفرع': _getBranchName(inv.branchCode),
+                'المخزن': _getStoreName(inv.storeCode),
+                'النوع':
+                    inv.inventoryType == 'general' ? 'جرد عام' : 'جرد محدد',
+                'إجمالي الجملة': inv.totalWholesale,
+                'إجمالي البيع': inv.totalRetail,
+                'عدد الأصناف': inv.items.length,
+                'إجمالي الكميات': _getTotalQuantity(inv),
+              },
+            )
+            .toList();
 
-      final data = _inventories.map(
-        (inv) => {
-          'رقم الإذن': inv.serial ?? '',
-          'التاريخ': inv.date,
-          'الفرع': _getBranchName(inv.branchCode),
-          'المخزن': _getStoreName(inv.storeCode),
-          'النوع': inv.inventoryType == 'general'
-              ? 'جرد عام'
-              : 'جرد محدد',
-          'إجمالي الجملة': inv.totalWholesale,
-          'إجمالي البيع': inv.totalRetail,
-          'عدد الأصناف': inv.items.length,
-          'إجمالي الكميات': _getTotalQuantity(inv),
-        },
-      ).toList();
+        const headers = [
+          'رقم الإذن',
+          'التاريخ',
+          'الفرع',
+          'المخزن',
+          'النوع',
+          'إجمالي الجملة',
+          'إجمالي البيع',
+          'عدد الأصناف',
+          'إجمالي الكميات',
+        ];
 
-      const headers = [
-        'رقم الإذن',
-        'التاريخ',
-        'الفرع',
-        'المخزن',
-        'النوع',
-        'إجمالي الجملة',
-        'إجمالي البيع',
-        'عدد الأصناف',
-        'إجمالي الكميات',
-      ];
+        await ExportService.exportToExcel(
+          data,
+          'الجردات_${DateFormat('yyyy-MM-dd').format(DateTime.now())}',
+          headers,
+          headers,
+          companyName: companyName,
+          branchName: branchName,
+          period: _filterDate ?? 'كل التواريخ',
+          summary: {
+            'إجمالي الكميات': _inventories.fold<double>(
+              0.0,
+              (sum, inv) => sum + _getTotalQuantity(inv),
+            ),
+            'إجمالي الجملة': _inventories.fold<double>(
+              0.0,
+              (sum, inv) => sum + inv.totalWholesale,
+            ),
+            'إجمالي البيع': _inventories.fold<double>(
+              0.0,
+              (sum, inv) => sum + inv.totalRetail,
+            ),
+          },
+        );
 
-      await ExportService.exportToExcel(
-        data,
-        'الجردات_${DateFormat('yyyy-MM-dd').format(DateTime.now())}',
-        headers,
-        headers,
-        companyName: companyName,
-        branchName: branchName,
-        period: _filterDate ?? 'كل التواريخ',
-        summary: {
-          'إجمالي الكميات': _inventories.fold<double>(
-            0.0,
-            (sum, inv) => sum + _getTotalQuantity(inv),
-          ),
-          'إجمالي الجملة': _inventories.fold<double>(
-            0.0,
-            (sum, inv) => sum + inv.totalWholesale,
-          ),
-          'إجمالي البيع': _inventories.fold<double>(
-            0.0,
-            (sum, inv) => sum + inv.totalRetail,
-          ),
-        },
-      );
-
-      _showSnackBar('تم تصدير جميع الجردات بنجاح', AppTheme.successStrongFor(context));
-    } catch (e) {
-      _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
-    }
-});
-}
+        _showSnackBar(
+            'تم تصدير جميع الجردات بنجاح', AppTheme.successStrongFor(context));
+      } catch (e) {
+        _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
+      }
+    });
+  }
 
   // ============================================================
   // تصدير كل الجردات PDF
   // ============================================================
 
+  // يصدّر كل الجرود إلى PDF
   Future<void> _exportAllPDF() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_inventories.isEmpty) {
+        _showSnackBar(
+            'لا توجد بيانات للتصدير', AppTheme.warningOrangeFor(context));
+        return;
+      }
 
-    if (_inventories.isEmpty) {
-      _showSnackBar('لا توجد بيانات للتصدير', AppTheme.warningOrangeFor(context));
-      return;
-    }
+      try {
+        final companyName = await _getCompanyName();
+        final branchName = widget.branchName ??
+            (_isAllBranches
+                ? 'كل الفروع'
+                : _getBranchName(widget.selectedBranchCode));
 
-    try {
-      final companyName = await _getCompanyName();
-      final branchName = widget.branchName ??
-          (_isAllBranches
-              ? 'كل الفروع'
-              : _getBranchName(widget.selectedBranchCode));
+        final data = _inventories
+            .map(
+              (inv) => {
+                'رقم الإذن': inv.serial ?? '',
+                'التاريخ': inv.date,
+                'الفرع': _getBranchName(inv.branchCode),
+                'المخزن': _getStoreName(inv.storeCode),
+                'النوع':
+                    inv.inventoryType == 'general' ? 'جرد عام' : 'جرد محدد',
+                'إجمالي الجملة': inv.totalWholesale,
+                'إجمالي البيع': inv.totalRetail,
+                'عدد الأصناف': inv.items.length,
+                'إجمالي الكميات': _getTotalQuantity(inv),
+              },
+            )
+            .toList();
 
-      final data = _inventories.map(
-        (inv) => {
-          'رقم الإذن': inv.serial ?? '',
-          'التاريخ': inv.date,
-          'الفرع': _getBranchName(inv.branchCode),
-          'المخزن': _getStoreName(inv.storeCode),
-          'النوع': inv.inventoryType == 'general'
-              ? 'جرد عام'
-              : 'جرد محدد',
-          'إجمالي الجملة': inv.totalWholesale,
-          'إجمالي البيع': inv.totalRetail,
-          'عدد الأصناف': inv.items.length,
-          'إجمالي الكميات': _getTotalQuantity(inv),
-        },
-      ).toList();
+        const headers = [
+          'رقم الإذن',
+          'التاريخ',
+          'الفرع',
+          'المخزن',
+          'النوع',
+          'إجمالي الجملة',
+          'إجمالي البيع',
+          'عدد الأصناف',
+          'إجمالي الكميات',
+        ];
 
-      const headers = [
-        'رقم الإذن',
-        'التاريخ',
-        'الفرع',
-        'المخزن',
-        'النوع',
-        'إجمالي الجملة',
-        'إجمالي البيع',
-        'عدد الأصناف',
-        'إجمالي الكميات',
-      ];
-
-      await ExportService.exportToPDF(
-        data: data,
-        title: 'تقرير الجردات المجمعة',
-        headers: headers,
-        keys: headers,
-        companyName: companyName,
-        branchName: branchName,
-        period: _filterDate ?? 'كل التواريخ',
-        summary: {
-          'totalQuantity': _inventories.fold(
-            0.0,
-            (sum, inv) => sum + _getTotalQuantity(inv),
-          ),
-          'totalWholesale': _inventories.fold(
+        await ExportService.exportToPDF(
+          data: data,
+          title: 'تقرير الجردات المجمعة',
+          headers: headers,
+          keys: headers,
+          companyName: companyName,
+          branchName: branchName,
+          period: _filterDate ?? 'كل التواريخ',
+          summary: {
+            'totalQuantity': _inventories.fold(
+              0.0,
+              (sum, inv) => sum + _getTotalQuantity(inv),
+            ),
+            'totalWholesale': _inventories.fold(
+              0.0,
+              (sum, inv) => sum + inv.totalWholesale,
+            ),
+            'totalRetail': _inventories.fold(
+              0.0,
+              (sum, inv) => sum + inv.totalRetail,
+            ),
+          },
+          totalAmount: _inventories.fold<double>(
             0.0,
             (sum, inv) => sum + inv.totalWholesale,
           ),
-          'totalRetail': _inventories.fold(
-            0.0,
-            (sum, inv) => sum + inv.totalRetail,
-          ),
-        },
-        totalAmount: _inventories.fold<double>(
-          0.0,
-          (sum, inv) => sum + inv.totalWholesale,
-        ),
-      );
+        );
 
-      _showSnackBar('تم تصدير جميع الجردات بنجاح', AppTheme.successStrongFor(context));
-    } catch (e) {
-      _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
-    }
-});
-}
+        _showSnackBar(
+            'تم تصدير جميع الجردات بنجاح', AppTheme.successStrongFor(context));
+      } catch (e) {
+        _showSnackBar('فشل التصدير: $e', AppTheme.dangerStrongFor(context));
+      }
+    });
+  }
 
   // ============================================================
   // SnackBar
   // ============================================================
 
+  // يعرض رسالة سريعة بالنص واللون المحددين
   void _showSnackBar(String message, Color color) {
     if (!mounted) return;
 
@@ -701,6 +732,7 @@ return CachePartitions.run(() async {
   // Build
   // ============================================================
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     if (!PermissionsService().canViewInventory) {
@@ -740,13 +772,11 @@ return CachePartitions.run(() async {
         elevation: 0,
         leading: IconButton(
           icon: Icon(Icons.arrow_back, color: AppTheme.textMainFor(context)),
-          onPressed: _showDetails
-              ? _goBackToList
-              : () => Navigator.pop(context),
+          onPressed:
+              _showDetails ? _goBackToList : () => Navigator.pop(context),
         ),
         actions: [
-          if (!_showDetails &&
-              PermissionsService().canExportInventory)
+          if (!_showDetails && PermissionsService().canExportInventory)
             IconButton(
               icon: Icon(
                 Icons.download,
@@ -755,8 +785,7 @@ return CachePartitions.run(() async {
               onPressed: _exportAllExcel,
               tooltip: 'تصدير Excel',
             ),
-          if (!_showDetails &&
-              PermissionsService().canExportInventory)
+          if (!_showDetails && PermissionsService().canExportInventory)
             IconButton(
               icon: Icon(
                 Icons.picture_as_pdf,
@@ -791,8 +820,7 @@ return CachePartitions.run(() async {
                     color: AppTheme.textMainFor(context),
                   ),
                 )
-              : _showDetails &&
-                      _selectedInventory != null
+              : _showDetails && _selectedInventory != null
                   ? _buildDetailsView(
                       _selectedInventory!,
                     )
@@ -806,10 +834,11 @@ return CachePartitions.run(() async {
   // القائمة
   // ============================================================
 
+  // يبني عرض القائمة
   Widget _buildListView() {
     final isMobile = MediaQuery.of(context).size.width < 600;
-    final displayBranchName = widget.branchName ??
-        _getBranchName(widget.selectedBranchCode);
+    final displayBranchName =
+        widget.branchName ?? _getBranchName(widget.selectedBranchCode);
 
     return Column(
       children: [
@@ -854,12 +883,14 @@ return CachePartitions.run(() async {
                       labelText: 'المخزن',
                       isDense: true,
                     ),
-                    items: _stores.map(
-                      (s) => DropdownMenuItem<String?>(
-                        value: s['code'],
-                        child: Text(s['name'] ?? ''),
-                      ),
-                    ).toList(),
+                    items: _stores
+                        .map(
+                          (s) => DropdownMenuItem<String?>(
+                            value: s['code'],
+                            child: Text(s['name'] ?? ''),
+                          ),
+                        )
+                        .toList(),
                     onChanged: (val) {
                       setState(() => _filterStoreCode = val);
                       _loadData();
@@ -874,35 +905,31 @@ return CachePartitions.run(() async {
                     readOnly: true,
                     decoration: const InputDecoration(
                       labelText: 'التاريخ',
-                      suffixIcon:
-                          Icon(Icons.calendar_today),
+                      suffixIcon: Icon(Icons.calendar_today),
                       isDense: true,
                     ),
                     onTap: () async {
-return CachePartitions.run(() async {
+                      return CachePartitions.run(() async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: _filterDate != null
+                              ? DateTime.tryParse(_filterDate!) ??
+                                  DateTime.now()
+                              : DateTime.now(),
+                          firstDate: DateTime(2020),
+                          lastDate: DateTime(2101),
+                        );
 
-                      final picked = await showDatePicker(
-                        context: context,
-                        initialDate: _filterDate != null
-                            ? DateTime.tryParse(_filterDate!) ??
-                                DateTime.now()
-                            : DateTime.now(),
-                        firstDate: DateTime(2020),
-                        lastDate: DateTime(2101),
-                      );
+                        if (picked == null) return;
 
-                      if (picked == null) return;
+                        setState(
+                          () => _filterDate =
+                              DateFormat('yyyy-MM-dd').format(picked),
+                        );
 
-                      setState(
-                        () => _filterDate =
-                            DateFormat('yyyy-MM-dd')
-                                .format(picked),
-                      );
-
-                      _loadData();
-
-});
-},
+                        _loadData();
+                      });
+                    },
                   ),
                 ),
                 IconButton(
@@ -937,8 +964,7 @@ return CachePartitions.run(() async {
                 )
               : ListView.builder(
                   itemCount: _inventories.length,
-                  itemBuilder: (c, i) =>
-                      _buildInventoryCard(
+                  itemBuilder: (c, i) => _buildInventoryCard(
                     _inventories[i],
                     isMobile,
                   ),
@@ -952,6 +978,7 @@ return CachePartitions.run(() async {
   // بطاقة الجرد
   // ============================================================
 
+  // يبني بطاقة جرد
   Widget _buildInventoryCard(
     InventoryModel inv,
     bool isMobile,
@@ -977,8 +1004,7 @@ return CachePartitions.run(() async {
                 children: [
                   CircleAvatar(
                     radius: isMobile ? 16 : 20,
-                    backgroundColor:
-                        GlassStyle.accentFill20For(context),
+                    backgroundColor: GlassStyle.accentFill20For(context),
                     child: Text(
                       '${inv.serial ?? ''}',
                       style: TextStyle(
@@ -991,8 +1017,7 @@ return CachePartitions.run(() async {
                   const SizedBox(width: 10),
                   Expanded(
                     child: Column(
-                      crossAxisAlignment:
-                          CrossAxisAlignment.start,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           '${_getBranchName(inv.branchCode)} - ${_getStoreName(inv.storeCode)}',
@@ -1034,9 +1059,7 @@ return CachePartitions.run(() async {
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
-                      inv.inventoryType == 'general'
-                          ? 'جرد عام'
-                          : 'جرد محدد',
+                      inv.inventoryType == 'general' ? 'جرد عام' : 'جرد محدد',
                       style: TextStyle(
                         color: inv.inventoryType == 'general'
                             ? AppTheme.successFor(context)
@@ -1112,8 +1135,7 @@ return CachePartitions.run(() async {
                       color: AppTheme.accentFor(context),
                       size: 16,
                     ),
-                    onPressed: () =>
-                        _showInventoryDetails(inv),
+                    onPressed: () => _showInventoryDetails(inv),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
                   ),
@@ -1130,6 +1152,7 @@ return CachePartitions.run(() async {
   // Info Chip
   // ============================================================
 
+  // يبني شريحة معلومات بأيقونة ونص
   Widget _buildInfoChip(
     String label,
     String value,
@@ -1177,6 +1200,7 @@ return CachePartitions.run(() async {
   // التفاصيل
   // ============================================================
 
+  // يبني عرض التفاصيل
   Widget _buildDetailsView(
     InventoryModel inv,
   ) {
@@ -1191,15 +1215,13 @@ return CachePartitions.run(() async {
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Column(
-                crossAxisAlignment:
-                    CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
                       Expanded(
                         child: Column(
-                          crossAxisAlignment:
-                              CrossAxisAlignment.start,
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
                               'إذن جرد رقم ${inv.serial ?? ''}',
@@ -1236,9 +1258,7 @@ return CachePartitions.run(() async {
                         ),
                       ),
                       Text(
-                        inv.inventoryType == 'general'
-                            ? 'جرد عام'
-                            : 'جرد محدد',
+                        inv.inventoryType == 'general' ? 'جرد عام' : 'جرد محدد',
                         style: TextStyle(
                           color: inv.inventoryType == 'general'
                               ? AppTheme.successFor(context)
@@ -1297,11 +1317,9 @@ return CachePartitions.run(() async {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
-                      if (PermissionsService()
-                          .canEditInventory)
+                      if (PermissionsService().canEditInventory)
                         TextButton.icon(
-                          onPressed: () =>
-                              _editInventory(inv),
+                          onPressed: () => _editInventory(inv),
                           icon: Icon(
                             Icons.edit,
                             color: AppTheme.warningOrangeFor(context),
@@ -1314,11 +1332,9 @@ return CachePartitions.run(() async {
                             ),
                           ),
                         ),
-                      if (PermissionsService()
-                          .canDeleteInventory)
+                      if (PermissionsService().canDeleteInventory)
                         TextButton.icon(
-                          onPressed: () =>
-                              _confirmDelete(inv),
+                          onPressed: () => _confirmDelete(inv),
                           icon: Icon(
                             Icons.delete,
                             color: AppTheme.dangerStrongFor(context),
@@ -1331,11 +1347,9 @@ return CachePartitions.run(() async {
                             ),
                           ),
                         ),
-                      if (PermissionsService()
-                          .canExportInventory)
+                      if (PermissionsService().canExportInventory)
                         TextButton.icon(
-                          onPressed: () =>
-                              _exportSingleExcel(inv),
+                          onPressed: () => _exportSingleExcel(inv),
                           icon: Icon(
                             Icons.download,
                             color: AppTheme.infoFor(context),
@@ -1347,11 +1361,9 @@ return CachePartitions.run(() async {
                             ),
                           ),
                         ),
-                      if (PermissionsService()
-                          .canExportInventory)
+                      if (PermissionsService().canExportInventory)
                         TextButton.icon(
-                          onPressed: () =>
-                              _exportSinglePDF(inv),
+                          onPressed: () => _exportSinglePDF(inv),
                           icon: Icon(
                             Icons.picture_as_pdf,
                             color: AppTheme.dangerFor(context),
@@ -1374,8 +1386,7 @@ return CachePartitions.run(() async {
             child: Padding(
               padding: const EdgeInsets.all(10),
               child: Column(
-                crossAxisAlignment:
-                    CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     'تفاصيل الأصناف',
@@ -1397,8 +1408,7 @@ return CachePartitions.run(() async {
             child: Padding(
               padding: const EdgeInsets.all(10),
               child: Row(
-                mainAxisAlignment:
-                    MainAxisAlignment.spaceAround,
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
                   _buildTotalBox(
                     'إجمالي الكمية',
@@ -1436,6 +1446,7 @@ return CachePartitions.run(() async {
   // جدول الأصناف
   // ============================================================
 
+  // يبني جدول الأصناف
   Widget _buildItemsTable(
     InventoryModel inv,
     bool isMobile,
@@ -1454,9 +1465,12 @@ return CachePartitions.run(() async {
             Row(
               children: [
                 _tableHeader('#', 30, AppTheme.accentAltFor(context)),
-                _tableHeader('الكود', codeWidth, AppTheme.accentAltFor(context)),
-                _tableHeader('الصنف', nameWidth, AppTheme.accentAltFor(context)),
-                _tableHeader('الكمية', qtyWidth, AppTheme.accentAltFor(context)),
+                _tableHeader(
+                    'الكود', codeWidth, AppTheme.accentAltFor(context)),
+                _tableHeader(
+                    'الصنف', nameWidth, AppTheme.accentAltFor(context)),
+                _tableHeader(
+                    'الكمية', qtyWidth, AppTheme.accentAltFor(context)),
                 _tableHeader(
                   'سعر الجملة',
                   valueWidth,
@@ -1481,65 +1495,65 @@ return CachePartitions.run(() async {
             ),
             const SizedBox(height: 4),
             ...inv.items.asMap().entries.map(
-              (entry) => Row(
-                children: [
-                  _tableCell(
-                    '${entry.key + 1}',
-                    30,
-                    AppTheme.textHintFor(context),
+                  (entry) => Row(
+                    children: [
+                      _tableCell(
+                        '${entry.key + 1}',
+                        30,
+                        AppTheme.textHintFor(context),
+                      ),
+                      _tableCell(
+                        entry.value.code,
+                        codeWidth,
+                        AppTheme.textSoftFor(context),
+                      ),
+                      _tableCell(
+                        entry.value.name,
+                        nameWidth,
+                        AppTheme.textMainFor(context),
+                      ),
+                      _tableCell(
+                        _formatQuantity(
+                          entry.value.quantity,
+                        ),
+                        qtyWidth,
+                        AppTheme.textSoftFor(context),
+                      ),
+                      _tableCell(
+                        PermissionsService().canViewCostPrices
+                            ? _formatCurrency(
+                                entry.value.wholesalePrice,
+                              )
+                            : '—',
+                        valueWidth,
+                        AppTheme.successFor(context),
+                      ),
+                      _tableCell(
+                        PermissionsService().canViewCostPrices
+                            ? _formatCurrency(
+                                entry.value.wholesaleValue,
+                              )
+                            : '—',
+                        valueWidth,
+                        AppTheme.successFor(context),
+                      ),
+                      _tableCell(
+                        _formatCurrency(
+                          entry.value.retailPrice,
+                        ),
+                        valueWidth,
+                        AppTheme.warningFor(context),
+                      ),
+                      _tableCell(
+                        _formatCurrency(
+                          entry.value.retailValue,
+                        ),
+                        valueWidth,
+                        AppTheme.warningFor(context),
+                      ),
+                    ],
                   ),
-                  _tableCell(
-                    entry.value.code,
-                    codeWidth,
-                    AppTheme.textSoftFor(context),
-                  ),
-                  _tableCell(
-                    entry.value.name,
-                    nameWidth,
-                    AppTheme.textMainFor(context),
-                  ),
-                  _tableCell(
-                    _formatQuantity(
-                      entry.value.quantity,
-                    ),
-                    qtyWidth,
-                    AppTheme.textSoftFor(context),
-                  ),
-                  _tableCell(
-                    PermissionsService().canViewCostPrices
-                        ? _formatCurrency(
-                            entry.value.wholesalePrice,
-                          )
-                        : '—',
-                    valueWidth,
-                    AppTheme.successFor(context),
-                  ),
-                  _tableCell(
-                    PermissionsService().canViewCostPrices
-                        ? _formatCurrency(
-                            entry.value.wholesaleValue,
-                          )
-                        : '—',
-                    valueWidth,
-                    AppTheme.successFor(context),
-                  ),
-                  _tableCell(
-                    _formatCurrency(
-                      entry.value.retailPrice,
-                    ),
-                    valueWidth,
-                    AppTheme.warningFor(context),
-                  ),
-                  _tableCell(
-                    _formatCurrency(
-                      entry.value.retailValue,
-                    ),
-                    valueWidth,
-                    AppTheme.warningFor(context),
-                  ),
-                ],
-              ),
-            ),
+                ),
           ],
         ),
       );
@@ -1551,7 +1565,8 @@ return CachePartitions.run(() async {
           children: const [
             Expanded(child: Text('#', textAlign: TextAlign.center)),
             Expanded(child: Text('الكود', textAlign: TextAlign.center)),
-            Expanded(flex: 2, child: Text('الصنف', textAlign: TextAlign.center)),
+            Expanded(
+                flex: 2, child: Text('الصنف', textAlign: TextAlign.center)),
             Expanded(child: Text('الكمية', textAlign: TextAlign.center)),
             Expanded(child: Text('سعر الجملة', textAlign: TextAlign.center)),
             Expanded(child: Text('قيمة الجملة', textAlign: TextAlign.center)),
@@ -1642,6 +1657,7 @@ return CachePartitions.run(() async {
   // إجماليات
   // ============================================================
 
+  // يبني مربع إجمالي
   Widget _buildTotalBox(
     String label,
     String value,
@@ -1670,6 +1686,7 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يبني فاصلًا رأسيًا
   Widget _buildVerticalDivider() {
     return Container(
       width: 1,
@@ -1682,6 +1699,7 @@ return CachePartitions.run(() async {
   // أدوات الجدول
   // ============================================================
 
+  // يبني رأس عمود
   Widget _tableHeader(
     String text,
     double width,
@@ -1702,6 +1720,7 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يبني خلية جدول
   Widget _tableCell(
     String text,
     double width,
@@ -1727,6 +1746,7 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يبني نص الجدول لسطح المكتب
   Widget _tableDesktopText(
     String text,
     Color color,
@@ -1746,6 +1766,7 @@ return CachePartitions.run(() async {
   // Detail Item
   // ============================================================
 
+  // يبني عنصر تفصيل
   Widget _buildDetailItem(
     String label,
     String value,
@@ -1762,8 +1783,7 @@ return CachePartitions.run(() async {
         const SizedBox(width: 4),
         Expanded(
           child: Column(
-            crossAxisAlignment:
-                CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 label,

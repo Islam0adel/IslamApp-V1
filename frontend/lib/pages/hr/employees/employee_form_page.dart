@@ -1,5 +1,5 @@
+// frontend/lib/pages/hr/employees/employee_form_page.dart
 import '../../../services/cache_partitions.dart';
-// lib/pages/hr/employees/employee_form_page.dart
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,7 +10,7 @@ import '../../../services/employee_service.dart';
 import '../../../services/permissions_service.dart';
 import '../../../models/employee_model.dart';
 
-
+// صفحة إضافة أو تعديل موظف
 /// صفحة إضافة / تعديل موظف
 ///
 /// 5 أقسام:
@@ -34,18 +34,18 @@ class EmployeeFormPage extends StatefulWidget {
     this.employee,
   });
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<EmployeeFormPage> createState() => _EmployeeFormPageState();
 }
 
-
+// حالة الويدجت EmployeeFormPage: تدير بيانات الشاشة وتفاعلاتها
 class _EmployeeFormPageState extends State<EmployeeFormPage> {
   // ============================================================
   // Services
   // ============================================================
 
   final EmployeeService _employeeService = EmployeeService();
-
 
   // ============================================================
   // State
@@ -55,10 +55,11 @@ class _EmployeeFormPageState extends State<EmployeeFormPage> {
 
   bool _isSaving = false;
   bool _hasChanges = false;
+
+  // يحدد هل الشاشة في وضع التعديل
   bool get _isEditMode => widget.employee != null;
 
   List<Map<String, String>> _branches = [];
-
 
   // ============================================================
   // Controllers (كل حقل له controller)
@@ -89,7 +90,6 @@ class _EmployeeFormPageState extends State<EmployeeFormPage> {
   final _bankAccountCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
 
-
   // ============================================================
   // Dropdown values
   // ============================================================
@@ -102,11 +102,11 @@ class _EmployeeFormPageState extends State<EmployeeFormPage> {
   DateTime? _hireDate;
   DateTime? _endDate;
 
-
   // ============================================================
   // Lifecycle
   // ============================================================
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
@@ -115,6 +115,7 @@ class _EmployeeFormPageState extends State<EmployeeFormPage> {
     _attachListeners();
   }
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     _codeCtrl.dispose();
@@ -135,31 +136,42 @@ class _EmployeeFormPageState extends State<EmployeeFormPage> {
     super.dispose();
   }
 
-
+  // يربط مستمعي التغيير بالحقول
   void _attachListeners() {
     final controllers = [
-      _codeCtrl, _nameCtrl, _phoneCtrl, _emailCtrl,
-      _nationalIdCtrl, _addressCtrl, _jobTitleCtrl, _departmentCtrl,
-      _salaryCtrl, _userUidCtrl, _userEmailCtrl,
-      _emergencyCtrl, _bankNameCtrl, _bankAccountCtrl, _notesCtrl,
+      _codeCtrl,
+      _nameCtrl,
+      _phoneCtrl,
+      _emailCtrl,
+      _nationalIdCtrl,
+      _addressCtrl,
+      _jobTitleCtrl,
+      _departmentCtrl,
+      _salaryCtrl,
+      _userUidCtrl,
+      _userEmailCtrl,
+      _emergencyCtrl,
+      _bankNameCtrl,
+      _bankAccountCtrl,
+      _notesCtrl,
     ];
     for (final c in controllers) {
       c.addListener(_markChanged);
     }
   }
 
-
+  // يسجّل وجود تعديلات غير محفوظة
   void _markChanged() {
     if (!_hasChanges) {
       setState(() => _hasChanges = true);
     }
   }
 
-
   // ============================================================
   // Load branches
   // ============================================================
 
+  // يحمّل قائمة الفروع من التخزين المحلي
   void _loadBranches() {
     final box = CachePartitions.box('coding_box');
     final key = '${widget.companyCode}_branches';
@@ -177,11 +189,11 @@ class _EmployeeFormPageState extends State<EmployeeFormPage> {
     }
   }
 
-
   // ============================================================
   // Initialize form (edit mode)
   // ============================================================
 
+  // يهيّئ الحقول من بيانات الموظف
   void _initializeForm() {
     final emp = widget.employee;
     if (emp == null) return;
@@ -196,7 +208,7 @@ class _EmployeeFormPageState extends State<EmployeeFormPage> {
     _jobTitleCtrl.text = emp.jobTitle;
     _departmentCtrl.text = emp.department;
     _branchCode = emp.branchCode.isNotEmpty ? emp.branchCode : null;
-        // ⭐ إخفاء قيمة الراتب لو المستخدم مش عنده صلاحية
+    // ⭐ إخفاء قيمة الراتب لو المستخدم مش عنده صلاحية
     final canSeeSalary = PermissionsService().canSeeEmployeeSalary(emp.code);
     _salaryCtrl.text =
         canSeeSalary && emp.salary > 0 ? emp.salary.toString() : '';
@@ -214,7 +226,7 @@ class _EmployeeFormPageState extends State<EmployeeFormPage> {
     _endDate = _parseDate(emp.endDate);
   }
 
-
+  // يحوّل النص إلى تاريخ
   DateTime? _parseDate(String value) {
     if (value.isEmpty) return null;
     try {
@@ -224,231 +236,227 @@ class _EmployeeFormPageState extends State<EmployeeFormPage> {
     }
   }
 
-
+  // يحوّل التاريخ إلى نص
   String _dateToStr(DateTime? date) {
     if (date == null) return '';
     return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
   }
 
-
+  // ينسّق التاريخ للعرض
   String _displayDate(DateTime? date) {
     if (date == null) return '';
     return '${date.year}/${date.month.toString().padLeft(2, '0')}/${date.day.toString().padLeft(2, '0')}';
   }
 
-
   // ============================================================
   // Date picker
   // ============================================================
 
+  // يفتح نافذة اختيار التاريخ
   Future<void> _pickDate({
     required String label,
     required DateTime? current,
     required Function(DateTime?) onPicked,
   }) async {
-return CachePartitions.run(() async {
-
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: current ?? DateTime.now(),
-      firstDate: DateTime(1950),
-      lastDate: DateTime(2100),
-      helpText: label,
-    );
-    if (picked != null) {
-      setState(() {
-        onPicked(picked);
-        _hasChanges = true;
-      });
-    }
-});
-}
-
+    return CachePartitions.run(() async {
+      final picked = await showDatePicker(
+        context: context,
+        initialDate: current ?? DateTime.now(),
+        firstDate: DateTime(1950),
+        lastDate: DateTime(2100),
+        helpText: label,
+      );
+      if (picked != null) {
+        setState(() {
+          onPicked(picked);
+          _hasChanges = true;
+        });
+      }
+    });
+  }
 
   // ============================================================
   // Save
   // ============================================================
 
+  // يتحقق من البيانات ويحفظها
   Future<void> _save() async {
-return CachePartitions.run(() async {
-
-    if (!_formKey.currentState!.validate()) {
-      _showSnackBar(
-        "يرجى تصحيح الأخطاء أولاً",
-        AppTheme.warningOrangeFor(context),
-      );
-      return;
-    }
-
-        final codeTrimmed = _codeCtrl.text.trim();
-
-    // ⭐ فحص تكرار الكود (فقط لو معبأ وفي وضع التعديل أو المستخدم كتبه)
-    if (codeTrimmed.isNotEmpty) {
-      final codeTaken = await _isCodeTaken(codeTrimmed);
-      if (codeTaken) {
+    return CachePartitions.run(() async {
+      if (!_formKey.currentState!.validate()) {
         _showSnackBar(
-          "الكود [$codeTrimmed] مستخدم بالفعل",
-          AppTheme.dangerStrongFor(context),
+          "يرجى تصحيح الأخطاء أولاً",
+          AppTheme.warningOrangeFor(context),
         );
         return;
       }
-    }
 
-    setState(() => _isSaving = true);
+      final codeTrimmed = _codeCtrl.text.trim();
 
-    try {
-      final model = EmployeeModel(
-        code: codeTrimmed,
-        name: _nameCtrl.text.trim(),
-        phone: _phoneCtrl.text.trim(),
-        email: _emailCtrl.text.trim(),
-        nationalId: _nationalIdCtrl.text.trim(),
-        address: _addressCtrl.text.trim(),
-        gender: _gender,
-        birthDate: _dateToStr(_birthDate),
-        jobTitle: _jobTitleCtrl.text.trim(),
-        department: _departmentCtrl.text.trim(),
-        branchCode: _branchCode ?? '',
-        hireDate: _dateToStr(_hireDate),
-        endDate: _dateToStr(_endDate),
-                // ⭐ لو مش عنده صلاحية، نستخدم القيمة الأصلية (في وضع التعديل) أو 0 (في وضع الإضافة)
-        salary: _isEditMode
-            ? (PermissionsService()
-                    .canSeeEmployeeSalary(widget.employee!.code)
-                ? double.tryParse(_salaryCtrl.text.trim()) ?? 0.0
-                : (widget.employee!.salary))   // ← احتفظ بالقيمة الأصلية
-            : (double.tryParse(_salaryCtrl.text.trim()) ?? 0.0),
-        contractType: _contractType,
-        status: _status,
-        userUid: _userUidCtrl.text.trim(),
-        userEmail: _userEmailCtrl.text.trim(),
-        emergencyContact: _emergencyCtrl.text.trim(),
-        bankName: _bankNameCtrl.text.trim(),
-        bankAccount: _bankAccountCtrl.text.trim(),
-        notes: _notesCtrl.text.trim(),
-      );
+      // ⭐ فحص تكرار الكود (فقط لو معبأ وفي وضع التعديل أو المستخدم كتبه)
+      if (codeTrimmed.isNotEmpty) {
+        final codeTaken = await _isCodeTaken(codeTrimmed);
+        if (codeTaken) {
+          _showSnackBar(
+            "الكود [$codeTrimmed] مستخدم بالفعل",
+            AppTheme.dangerStrongFor(context),
+          );
+          return;
+        }
+      }
 
-      final result = await _employeeService.saveEmployee(
-        companyCode: widget.companyCode,
-        model: model,
-      );
+      setState(() => _isSaving = true);
 
-      if (!mounted) return;
-
-      if (result['success'] == true) {
-        _showSnackBar(
-          _isEditMode ? "تم تحديث الموظف" : "تم إضافة الموظف",
-          AppTheme.successStrongFor(context),
+      try {
+        final model = EmployeeModel(
+          code: codeTrimmed,
+          name: _nameCtrl.text.trim(),
+          phone: _phoneCtrl.text.trim(),
+          email: _emailCtrl.text.trim(),
+          nationalId: _nationalIdCtrl.text.trim(),
+          address: _addressCtrl.text.trim(),
+          gender: _gender,
+          birthDate: _dateToStr(_birthDate),
+          jobTitle: _jobTitleCtrl.text.trim(),
+          department: _departmentCtrl.text.trim(),
+          branchCode: _branchCode ?? '',
+          hireDate: _dateToStr(_hireDate),
+          endDate: _dateToStr(_endDate),
+          // ⭐ لو مش عنده صلاحية، نستخدم القيمة الأصلية (في وضع التعديل) أو 0 (في وضع الإضافة)
+          salary: _isEditMode
+              ? (PermissionsService()
+                      .canSeeEmployeeSalary(widget.employee!.code)
+                  ? double.tryParse(_salaryCtrl.text.trim()) ?? 0.0
+                  : (widget.employee!.salary)) // ← احتفظ بالقيمة الأصلية
+              : (double.tryParse(_salaryCtrl.text.trim()) ?? 0.0),
+          contractType: _contractType,
+          status: _status,
+          userUid: _userUidCtrl.text.trim(),
+          userEmail: _userEmailCtrl.text.trim(),
+          emergencyContact: _emergencyCtrl.text.trim(),
+          bankName: _bankNameCtrl.text.trim(),
+          bankAccount: _bankAccountCtrl.text.trim(),
+          notes: _notesCtrl.text.trim(),
         );
-        Navigator.pop(context, true);
-      } else {
+
+        final result = await _employeeService.saveEmployee(
+          companyCode: widget.companyCode,
+          model: model,
+        );
+
+        if (!mounted) return;
+
+        if (result['success'] == true) {
+          _showSnackBar(
+            _isEditMode ? "تم تحديث الموظف" : "تم إضافة الموظف",
+            AppTheme.successStrongFor(context),
+          );
+          Navigator.pop(context, true);
+        } else {
+          setState(() => _isSaving = false);
+          _showSnackBar(
+            "فشل الحفظ: ${result['error'] ?? 'خطأ غير معروف'}",
+            AppTheme.dangerStrongFor(context),
+          );
+        }
+      } catch (e) {
+        if (!mounted) return;
         setState(() => _isSaving = false);
         _showSnackBar(
-          "فشل الحفظ: ${result['error'] ?? 'خطأ غير معروف'}",
+          "خطأ: $e",
           AppTheme.dangerStrongFor(context),
         );
       }
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _isSaving = false);
-      _showSnackBar(
-        "خطأ: $e",
-        AppTheme.dangerStrongFor(context),
-      );
-    }
-});
-}
+    });
+  }
 
-
+  // يتحقق هل كود الموظف مستخدم
   Future<bool> _isCodeTaken(String code) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      try {
+        final list = await _employeeService.getEmployeesList(
+          companyCode: widget.companyCode,
+        );
 
-    try {
-      final list = await _employeeService.getEmployeesList(
-        companyCode: widget.companyCode,
-      );
+        // في وضع التعديل: استثني نفس الموظف
+        final originalCode = widget.employee?.code;
 
-      // في وضع التعديل: استثني نفس الموظف
-      final originalCode = widget.employee?.code;
-
-      for (final e in list) {
-        if (e.code == code && e.code != originalCode) {
-          return true;
+        for (final e in list) {
+          if (e.code == code && e.code != originalCode) {
+            return true;
+          }
         }
+        return false;
+      } catch (_) {
+        // لو فشل التحقق، اسمح بالمحاولة (الباك هيرفض لو مكرر)
+        return false;
       }
-      return false;
-    } catch (_) {
-      // لو فشل التحقق، اسمح بالمحاولة (الباك هيرفض لو مكرر)
-      return false;
-    }
-});
-}
-
+    });
+  }
 
   // ============================================================
   // Cancel
   // ============================================================
 
+  // يلغي التعديل بعد تأكيد المستخدم
   Future<void> _cancel() async {
-return CachePartitions.run(() async {
-
-    if (_hasChanges && !_isSaving) {
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          backgroundColor: AppTheme.dialogBackground(context),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(15),
-          ),
-          title: Text(
-            'تجاهل التعديلات؟',
-            style: TextStyle(
-              color: AppTheme.textMainFor(context),
-              fontFamily: 'Cairo',
-              fontWeight: FontWeight.bold,
+    return CachePartitions.run(() async {
+      if (_hasChanges && !_isSaving) {
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            backgroundColor: AppTheme.dialogBackground(context),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(15),
             ),
-          ),
-          content: Text(
-            'لديك تعديلات لم تُحفظ. هل تريد تجاهلها والعودة؟',
-            style: TextStyle(
-              color: AppTheme.textMutedFor(context),
-              fontFamily: 'Cairo',
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text(
-                'تراجع',
-                style: TextStyle(
-                  color: AppTheme.textMutedFor(context),
-                  fontFamily: 'Cairo',
-                ),
+            title: Text(
+              'تجاهل التعديلات؟',
+              style: TextStyle(
+                color: AppTheme.textMainFor(context),
+                fontFamily: 'Cairo',
+                fontWeight: FontWeight.bold,
               ),
             ),
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: Text(
-                'تجاهل',
-                style: TextStyle(
-                  color: AppTheme.dangerFor(context),
-                  fontFamily: 'Cairo',
-                  fontWeight: FontWeight.bold,
-                ),
+            content: Text(
+              'لديك تعديلات لم تُحفظ. هل تريد تجاهلها والعودة؟',
+              style: TextStyle(
+                color: AppTheme.textMutedFor(context),
+                fontFamily: 'Cairo',
               ),
             ),
-          ],
-        ),
-      );
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: Text(
+                  'تراجع',
+                  style: TextStyle(
+                    color: AppTheme.textMutedFor(context),
+                    fontFamily: 'Cairo',
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: Text(
+                  'تجاهل',
+                  style: TextStyle(
+                    color: AppTheme.dangerFor(context),
+                    fontFamily: 'Cairo',
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
 
-      if (confirmed != true) return;
-    }
+        if (confirmed != true) return;
+      }
 
-    if (mounted) Navigator.pop(context);
-});
-}
+      if (mounted) Navigator.pop(context);
+    });
+  }
 
-
+  // يعرض رسالة سريعة بالنص واللون المحددين
   void _showSnackBar(String message, Color color) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -463,11 +471,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Build
   // ============================================================
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     // فحص الصلاحية
@@ -478,12 +486,11 @@ return CachePartitions.run(() async {
     return PopScope(
       canPop: !_hasChanges || _isSaving,
       onPopInvoked: (didPop) async {
-return CachePartitions.run(() async {
-
-        if (didPop) return;
-        await _cancel();
-});
-},
+        return CachePartitions.run(() async {
+          if (didPop) return;
+          await _cancel();
+        });
+      },
       child: Scaffold(
         extendBodyBehindAppBar: true,
         appBar: AppBar(
@@ -564,11 +571,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Section helpers
   // ============================================================
 
+  // يبني عنوان قسم بأيقونة
   Widget _buildSectionHeader({
     required IconData icon,
     required String title,
@@ -632,7 +639,7 @@ return CachePartitions.run(() async {
     );
   }
 
-
+  // يبني حقل إدخال نصي
   Widget _buildTextField({
     required TextEditingController controller,
     required String label,
@@ -707,7 +714,7 @@ return CachePartitions.run(() async {
     );
   }
 
-
+  // يبني قائمة منسدلة
   Widget _buildDropdown<T>({
     required String label,
     required IconData icon,
@@ -765,7 +772,7 @@ return CachePartitions.run(() async {
     );
   }
 
-
+  // يبني حقل اختيار تاريخ
   Widget _buildDateField({
     required String label,
     required IconData icon,
@@ -837,11 +844,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Section 1: Basic data
   // ============================================================
 
+  // يبني القسم الأول: البيانات الأساسية
   Widget _buildSection1_Basic() {
     return GlassCard(
       padding: const EdgeInsets.all(14),
@@ -856,12 +863,10 @@ return CachePartitions.run(() async {
           ),
           Row(
             children: [
-                            Expanded(
+              Expanded(
                 child: _buildTextField(
                   controller: _codeCtrl,
-                  label: _isEditMode
-                      ? 'الكود'
-                      : 'الكود (تلقائي لو فاضي)',
+                  label: _isEditMode ? 'الكود' : 'الكود (تلقائي لو فاضي)',
                   icon: Icons.qr_code_rounded,
                   enabled: !_isEditMode,
                   hint: _isEditMode ? null : 'اتركه فاضي لتوليده',
@@ -930,11 +935,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Section 2: Personal data
   // ============================================================
 
+  // يبني القسم الثاني: البيانات الشخصية
   Widget _buildSection2_Personal() {
     return GlassCard(
       padding: const EdgeInsets.all(14),
@@ -975,13 +980,12 @@ return CachePartitions.run(() async {
                   items: const [
                     DropdownMenuItem(
                       value: 'male',
-                      child: Text('ذكر',
-                          style: TextStyle(fontFamily: 'Cairo')),
+                      child: Text('ذكر', style: TextStyle(fontFamily: 'Cairo')),
                     ),
                     DropdownMenuItem(
                       value: 'female',
-                      child: Text('أنثى',
-                          style: TextStyle(fontFamily: 'Cairo')),
+                      child:
+                          Text('أنثى', style: TextStyle(fontFamily: 'Cairo')),
                     ),
                   ],
                   onChanged: (v) {
@@ -1023,12 +1027,12 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Section 3: Work data
   // ============================================================
 
-    Widget _buildSection3_Work() {
+  // يبني القسم الثالث: بيانات العمل
+  Widget _buildSection3_Work() {
     // ⭐ هل يقدر يشوف الراتب؟
     final canSeeSalary = _isEditMode
         ? PermissionsService().canSeeEmployeeSalary(widget.employee!.code)
@@ -1101,7 +1105,7 @@ return CachePartitions.run(() async {
                   icon: Icons.attach_money_rounded,
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
-                  enabled: canSeeSalary,   // ⭐
+                  enabled: canSeeSalary, // ⭐
                   validator: (v) {
                     if (!canSeeSalary) return null;
                     if (v == null || v.trim().isEmpty) return null;
@@ -1126,13 +1130,13 @@ return CachePartitions.run(() async {
                   items: const [
                     DropdownMenuItem(
                       value: 'permanent',
-                      child: Text('دائم',
-                          style: TextStyle(fontFamily: 'Cairo')),
+                      child:
+                          Text('دائم', style: TextStyle(fontFamily: 'Cairo')),
                     ),
                     DropdownMenuItem(
                       value: 'temporary',
-                      child: Text('مؤقت',
-                          style: TextStyle(fontFamily: 'Cairo')),
+                      child:
+                          Text('مؤقت', style: TextStyle(fontFamily: 'Cairo')),
                     ),
                     DropdownMenuItem(
                       value: 'part-time',
@@ -1157,23 +1161,22 @@ return CachePartitions.run(() async {
                   items: const [
                     DropdownMenuItem(
                       value: 'active',
-                      child: Text('نشط',
-                          style: TextStyle(fontFamily: 'Cairo')),
+                      child: Text('نشط', style: TextStyle(fontFamily: 'Cairo')),
                     ),
                     DropdownMenuItem(
                       value: 'on_leave',
-                      child: Text('إجازة',
-                          style: TextStyle(fontFamily: 'Cairo')),
+                      child:
+                          Text('إجازة', style: TextStyle(fontFamily: 'Cairo')),
                     ),
                     DropdownMenuItem(
                       value: 'suspended',
-                      child: Text('موقوف',
-                          style: TextStyle(fontFamily: 'Cairo')),
+                      child:
+                          Text('موقوف', style: TextStyle(fontFamily: 'Cairo')),
                     ),
                     DropdownMenuItem(
                       value: 'terminated',
-                      child: Text('منتهي',
-                          style: TextStyle(fontFamily: 'Cairo')),
+                      child:
+                          Text('منتهي', style: TextStyle(fontFamily: 'Cairo')),
                     ),
                   ],
                   onChanged: (v) {
@@ -1233,11 +1236,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Section 4: Firebase link
   // ============================================================
 
+  // يبني القسم الرابع: حساب Firebase
   Widget _buildSection4_Firebase() {
     return GlassCard(
       padding: const EdgeInsets.all(14),
@@ -1275,11 +1278,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Section 5: Additional
   // ============================================================
 
+  // يبني القسم الخامس: بيانات إضافية
   Widget _buildSection5_Additional() {
     return GlassCard(
       padding: const EdgeInsets.all(14),
@@ -1330,11 +1333,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Bottom buttons
   // ============================================================
 
+  // يبني أزرار الحفظ والإلغاء أسفل الشاشة
   Widget _buildBottomButtons() {
     return Row(
       children: [
@@ -1378,15 +1381,11 @@ return CachePartitions.run(() async {
                     ),
                   )
                 : Icon(
-                    _isEditMode
-                        ? Icons.update_rounded
-                        : Icons.save_rounded,
+                    _isEditMode ? Icons.update_rounded : Icons.save_rounded,
                     size: 18,
                   ),
             label: Text(
-              _isSaving
-                  ? 'جاري الحفظ...'
-                  : (_isEditMode ? 'تحديث' : 'حفظ'),
+              _isSaving ? 'جاري الحفظ...' : (_isEditMode ? 'تحديث' : 'حفظ'),
               style: const TextStyle(
                 fontFamily: 'Cairo',
                 fontSize: 14,
@@ -1407,11 +1406,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // No permission screen
   // ============================================================
 
+  // يبني شاشة تعذّر الوصول لعدم توفر الصلاحية
   Widget _buildNoPermissionScreen() {
     return Scaffold(
       extendBodyBehindAppBar: true,

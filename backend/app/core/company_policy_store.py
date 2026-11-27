@@ -1,3 +1,4 @@
+# backend/app/core/company_policy_store.py
 """Store company-policy drafts and project the active policy for consumers.
 
 Reviewed activation is owned by company_policy_review. Draft storage never
@@ -14,19 +15,23 @@ from app.core.branch_scope import validate_branch_scope, active_operating_branch
 from app.core.permission_policy import effective_permissions, grants, validate_permission_map
 
 
+# خطأ تعارض نسخة السياسة (حد غيّرها قبل الحفظ)
 class PolicyConflict(Exception):
     pass
 
 
+# خطأ بيتبعت لما الشركة غير معروفة للسياسة
 class UnknownPolicyCompany(Exception):
     pass
 
 
+# خطأ بيتبعت لما الشركة محتاجة مراجعة سياسة قبل المتابعة
 class CompanyReviewRequired(Exception):
     """New-company business access is held until its explicit review finishes."""
     pass
 
 
+# يتحقق من صحة إعدادات السياسة ويرجّعها منظّمة
 def validate_configuration(value):
     if not isinstance(value, dict) or set(value) != {'company_permissions', 'admin_profiles'}:
         raise ValueError('policy requires company_permissions and admin_profiles')
@@ -51,6 +56,7 @@ def validate_configuration(value):
                 raise ValueError('admin rights cannot exceed the company ceiling')
 
 
+# يطبّق إعدادات السياسة على بروفايل مستخدم ويرجّع البروفايل الناتج
 def policy_profile(profile, configuration, *, role):
     """Pure projector. Callers must supply current source-verified active state.
 
@@ -84,6 +90,7 @@ def policy_profile(profile, configuration, *, role):
     return result
 
 
+# يقرأ سياسة الشركة (المسوّدة والمفعّلة) من قاعدة البيانات
 async def read_policy(session, company_code):
     company = await session.scalar(select(Company).where(Company.code == company_code))
     if company is None:
@@ -105,6 +112,7 @@ async def read_policy(session, company_code):
     }
 
 
+# يحفظ مسوّدة السياسة مع فحص رقم النسخة المتوقع
 async def save_policy_draft(session, company_code, configuration, *, expected_revision, reconciled_active_revision=None):
     """Caller authenticates the program admin. This only commits a draft.
 
@@ -128,7 +136,7 @@ async def save_policy_draft(session, company_code, configuration, *, expected_re
     named_branches = {code for admin in configuration['admin_profiles'].values()
                       for code in admin.get('delegable_branches', []) if code != 'all'}
     if named_branches:
-        current_branches = set(await company_branch_catalog(session,company_code,lock=True))
+        current_branches = set(await company_branch_catalog(session, company_code, lock=True))
         if not named_branches <= current_branches:
             raise ValueError('delegation includes unknown company branches')
     if expected_revision == 0:
@@ -154,6 +162,7 @@ async def save_policy_draft(session, company_code, configuration, *, expected_re
     return await read_policy(session, company_code)
 
 
+# يرجّع إعدادات السياسة المفعّلة للشركة
 async def active_policy_configuration(session, company_code):
     """One current SQL read, with a new-company gate and no negative cache.
 
@@ -176,6 +185,7 @@ async def active_policy_configuration(session, company_code):
     return deepcopy(row[1]), row[2]
 
 
+# يحسب البروفايل الفعلي للمستخدم حسب السياسة ورقم نسختها
 def effective_policy_profile(profile, configuration, revision, *, role):
     result = policy_profile(profile, configuration, role=role)
     result.pop('company_permissions', None)
@@ -191,6 +201,7 @@ def effective_policy_profile(profile, configuration, revision, *, role):
     return result
 
 
+# يحمّل السياسة المفعّلة ويطبّقها على البروفايل
 async def load_effective_policy_profile(session, profile, *, role):
     """Project current SQL policy onto a caller-verified fresh source profile.
 

@@ -1,3 +1,4 @@
+// frontend/lib/views/auth/login_screen.dart
 import '../../services/cache_partitions.dart';
 import '../../core/theme.dart';
 import 'package:flutter/material.dart';
@@ -12,14 +13,18 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../../services/web_loading_helper.dart';
 import '../widgets/app_loading_screen.dart';
 
+// شاشة تسجيل الدخول
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin {
+// حالة الويدجت LoginScreen: تدير بيانات الشاشة وتفاعلاتها
+class _LoginScreenState extends State<LoginScreen>
+    with TickerProviderStateMixin {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
 
@@ -32,6 +37,8 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
   bool _isLoading = false;
   bool _rememberMe = false;
   bool _isSyncing = false;
+
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
@@ -47,6 +54,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     });
   }
 
+  // يحمّل بيانات الدخول المحفوظة
   void _loadSavedCredentials() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
@@ -56,6 +64,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     });
   }
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     _emailNode.dispose();
@@ -64,6 +73,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     super.dispose();
   }
 
+  // ينفذ تسجيل الدخول
   void _handleLogin() async {
     if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
       _showSnackBar('برجاء ملء البيانات', AppTheme.warningOrangeFor(context));
@@ -131,13 +141,15 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
       await prefs.setString('job_code', result['job_code'] ?? '1');
       await prefs.setString('job_title', result['job_title'] ?? '');
       await prefs.setString('role', result['role'] ?? 'employee');
-      await prefs.setString('user_email', result['email'] ?? _emailController.text.trim());
+      await prefs.setString(
+          'user_email', result['email'] ?? _emailController.text.trim());
       // ⭐ branch_code (لمشكلة الفرع)
       if ((result['branch_code'] ?? '').toString().isNotEmpty) {
         await prefs.setString('selected_branch_code', result['branch_code']);
       }
 
-      await CachePartitions.activate(FirebaseAuth.instance.currentUser!.uid, result['company_code'] ?? '');
+      await CachePartitions.activate(
+          FirebaseAuth.instance.currentUser!.uid, result['company_code'] ?? '');
       PermissionsService().resetForCachePartition();
 
       // ⭐ حدّث الدور في PermissionsService فوراً
@@ -195,12 +207,16 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     }
   }
 
+  // يعرض رسالة سريعة بالنص واللون المحددين
   void _showSnackBar(String msg, Color color) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg, textAlign: TextAlign.center), backgroundColor: color),
+      SnackBar(
+          content: Text(msg, textAlign: TextAlign.center),
+          backgroundColor: color),
     );
   }
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -296,17 +312,26 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                                   Checkbox(
                                     value: _rememberMe,
                                     checkColor: AppTheme.checkboxCheck(context),
-                                    activeColor: AppTheme.checkboxActive(context),
-                                    onChanged: (val) => setState(() => _rememberMe = val!),
+                                    activeColor:
+                                        AppTheme.checkboxActive(context),
+                                    onChanged: (val) =>
+                                        setState(() => _rememberMe = val!),
                                   ),
-                                  Text('تذكرني', style: TextStyle(color: AppTheme.textSoftFor(context), fontSize: 13)),
+                                  Text('تذكرني',
+                                      style: TextStyle(
+                                          color: AppTheme.textSoftFor(context),
+                                          fontSize: 13)),
                                 ],
                               ),
                               TextButton(
                                 onPressed: () {
-                                  Navigator.pushNamed(context, '/forgot-password');
+                                  Navigator.pushNamed(
+                                      context, '/forgot-password');
                                 },
-                                child: Text('نسيت كلمة السر؟', style: TextStyle(color: AppTheme.textSoftFor(context), fontSize: 13)),
+                                child: Text('نسيت كلمة السر؟',
+                                    style: TextStyle(
+                                        color: AppTheme.textSoftFor(context),
+                                        fontSize: 13)),
                               ),
                             ],
                           ),
@@ -317,18 +342,33 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                           SizedBox(
                             width: double.infinity,
                             child: _isLoading
-                                ? Center(child: CircularProgressIndicator(color: Theme.of(context).colorScheme.onPrimary))
+                                ? Center(
+                                    child: CircularProgressIndicator(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onPrimary))
                                 : ElevatedButton(
                                     style: ElevatedButton.styleFrom(
-                                      backgroundColor: AppTheme.authActionBackground(context),
-                                      padding: const EdgeInsets.symmetric(vertical: 15),
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                                      side: BorderSide(color: AppTheme.inputBorder(context)),
+                                      backgroundColor:
+                                          AppTheme.authActionBackground(
+                                              context),
+                                      padding: const EdgeInsets.symmetric(
+                                          vertical: 15),
+                                      shape: RoundedRectangleBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(15)),
+                                      side: BorderSide(
+                                          color: AppTheme.inputBorder(context)),
                                     ),
                                     onPressed: _handleLogin,
                                     child: Text(
                                       'دخول',
-                                      style: TextStyle(fontSize: 20, color: Theme.of(context).colorScheme.onPrimary, fontWeight: FontWeight.bold),
+                                      style: TextStyle(
+                                          fontSize: 20,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onPrimary,
+                                          fontWeight: FontWeight.bold),
                                     ),
                                   ),
                           ),
@@ -344,12 +384,18 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Text('ليس لديك حساب؟', style: TextStyle(color: AppTheme.textSoftFor(context))),
+                          Text('ليس لديك حساب؟',
+                              style: TextStyle(
+                                  color: AppTheme.textSoftFor(context))),
                           TextButton(
-                            onPressed: () => Navigator.pushNamed(context, '/register'),
+                            onPressed: () =>
+                                Navigator.pushNamed(context, '/register'),
                             child: Text(
                               'إنشاء حساب جديد',
-                              style: TextStyle(color: Theme.of(context).colorScheme.onPrimary, fontWeight: FontWeight.bold),
+                              style: TextStyle(
+                                  color:
+                                      Theme.of(context).colorScheme.onPrimary,
+                                  fontWeight: FontWeight.bold),
                             ),
                           ),
                         ],
@@ -359,7 +405,10 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                     const SizedBox(height: 40),
                     Text(
                       'executed by Islam Adel',
-                      style: TextStyle(color: AppTheme.textMutedFor(context), fontSize: 12, fontStyle: FontStyle.italic),
+                      style: TextStyle(
+                          color: AppTheme.textMutedFor(context),
+                          fontSize: 12,
+                          fontStyle: FontStyle.italic),
                     ),
                   ],
                 ),
@@ -378,6 +427,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
   }
 
   // دالة بناء الخانات بالأنميشن والتنقل بزر Enter
+  // يبني حقل إدخال متحرك
   Widget _buildAnimatedField({
     required int index,
     required IconData icon,
@@ -391,11 +441,12 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     return AnimatedBuilder(
       animation: _animController,
       builder: (context, child) {
-        final slide = Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero)
-            .animate(CurvedAnimation(
-              parent: _animController,
-              curve: Interval(0.4 + (index * 0.1), 1.0, curve: Curves.easeOut),
-            ));
+        final slide =
+            Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero)
+                .animate(CurvedAnimation(
+          parent: _animController,
+          curve: Interval(0.4 + (index * 0.1), 1.0, curve: Curves.easeOut),
+        ));
 
         return SlideTransition(
           position: slide,
@@ -404,7 +455,8 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
             focusNode: node,
             obscureText: isPass,
             style: TextStyle(color: AppTheme.textMainFor(context)),
-            textInputAction: isLast ? TextInputAction.done : TextInputAction.next,
+            textInputAction:
+                isLast ? TextInputAction.done : TextInputAction.next,
             onSubmitted: (_) {
               if (isLast) {
                 _handleLogin();

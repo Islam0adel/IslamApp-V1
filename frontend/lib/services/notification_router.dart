@@ -1,5 +1,5 @@
+// frontend/lib/services/notification_router.dart
 import 'cache_partitions.dart';
-// lib/services/notification_router.dart
 //
 // يفتح الشاشة المناسبة بناءً على إشعار.
 // يستخدم في:
@@ -31,9 +31,11 @@ import '../pages/hr/attendance_page.dart';
 import '../pages/hr/vacations_page.dart';
 import '../pages/hr/employees/employees_list_page.dart';
 
+// موجّه الإشعارات إلى الشاشات المناسبة
 class NotificationRouter {
   NotificationRouter._();
 
+  // يفتح الشاشة المناسبة للإشعار
   static Future<void> openNotification(
     Map<String, dynamic> notification,
   ) async {
@@ -68,8 +70,7 @@ class NotificationRouter {
     if (companyCode.isEmpty) return;
 
     // ⭐ الفرع: من الإشعار أولاً، وإلا الفرع النشط الحالي
-    final notifBranch =
-        (notification['branch_code'] ?? '').toString().trim();
+    final notifBranch = (notification['branch_code'] ?? '').toString().trim();
     final selectedBranchCode = notifBranch.isNotEmpty
         ? notifBranch
         : (prefs.getString('selected_branch_code') ?? 'all');
@@ -143,6 +144,7 @@ class NotificationRouter {
   // (يتم إضافة _RegistrationRequestsRedirect بعد الفئة)
 
   // ⭐ نفس منطق NotificationsService._canAccessSection
+  // يحدد هل يحق للمستخدم الوصول للقسم
   static bool _canAccessSection(String section) {
     final ps = PermissionsService();
     if (!ps.isLoaded) return false;
@@ -170,15 +172,16 @@ class NotificationRouter {
         return false;
     }
   }
-
 }
 
 // ============================================================
 // Wrapper بسيط يفتح CompanyUsersPage للسوبر أدمن
 // ============================================================
+// ويدجت يعيد توجيه المستخدم إلى طلبات التسجيل
 class _RegistrationRequestsRedirect extends StatelessWidget {
   const _RegistrationRequestsRedirect();
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     // نستخدم FutureBuilder عشان نجيب بيانات الشركة
@@ -200,10 +203,11 @@ class _RegistrationRequestsRedirect extends StatelessWidget {
     );
   }
 
-Future<Map<String, dynamic>> _resolveCompanyInfo() {
-  return Future.value({
-    'company_code': '',
-    'company_name': 'كل الشركات',
-  });
-}
+// يجلب معلومات الشركة
+  Future<Map<String, dynamic>> _resolveCompanyInfo() {
+    return Future.value({
+      'company_code': '',
+      'company_name': 'كل الشركات',
+    });
+  }
 }

@@ -1,3 +1,4 @@
+# backend/app/core/permission_editor.py
 """Current-source permission editor and transactional account-scope writes.
 
 SQL company/policy locks are held across the source transaction. Only that
@@ -16,6 +17,7 @@ from app.core.permission_policy import validate_permission_map, grants, check_as
 from app.core.branch_scope import active_operating_branches, check_branch_assignment
 
 
+# يحافظ على قفل الصلاحيات لحد ما كتابة المصدر والتحديث يخلصوا
 async def finish_mutation(awaitable):
     """Keep authority locks until an in-flight source write and refresh settle.
 
@@ -35,22 +37,27 @@ async def finish_mutation(awaitable):
                 interrupted = True
 
 
+# يشغّل دالة داخل معاملة على مصدر البيانات
 def run_source_transaction(source, callback):
+    # دالة المعاملة اللي بتنفّذ الدالة المطلوبة
     @firestore.transactional
     def operation(transaction):
         return callback(transaction)
     return operation(source.transaction())
 
 
+# يستخرج نسخة المستند (وقت التحديث) لاستخدامها في فحص التعارض
 def _version(snapshot):
     value = getattr(snapshot, 'update_time', None)
     return value.isoformat() if value is not None else None
 
 
+# يفحص هل الحساب نشط
 def _active(profile):
     return profile.get('is_active') is not False and str(profile.get('status', 'active')).lower() not in ('pending', 'suspended')
 
 
+# يحلّل نطاق الموارد البشرية للمستخدم
 def _hr_scope(value):
     if value is None or value == []:
         return None
@@ -60,16 +67,19 @@ def _hr_scope(value):
     return frozenset(value)
 
 
+# يطبّق نطاق الفروع/الموظفين على الحقوق
 def _scoped_rights(rights):
     # Explicit own-HR is independent of the broader branch/employee filter.
     return {right for right in rights if right[0] != 'صلاحيات عامة'
             and right != ('الموارد البشرية', 'canViewOwnHRData')}
 
 
+# يفحص هل الفروع داخل نطاق تفويض المنفذ
 def _inside(branches, delegation):
     return 'all' in delegation or ('all' not in branches and set(branches) <= set(delegation))
 
 
+# يقفل سياسة الشركة للقراءة المتسقة قبل التعديل
 async def _locked_policy(session, company_code, *, allow_initial_review=False):
     company = await session.scalar(select(Company).where(Company.code == company_code).with_for_update())
     if company is None:
@@ -89,6 +99,7 @@ async def _locked_policy(session, company_code, *, allow_initial_review=False):
     return company, configuration, row.active_revision if row is not None else None
 
 
+# يجيب حسابات المنفذ والهدف الحالية وتتحقق منها داخل المعاملة
 def _current_accounts(source, actor, email, company_code, role_resolver, *, transaction=None,
                       configuration=None, company_active=True):
     actor_email = str(actor.get('email', '')).strip().lower()
@@ -134,9 +145,12 @@ def _current_accounts(source, actor, email, company_code, role_resolver, *, tran
     return current, role, target_ref, target_doc, target
 
 
+# يحدد شركة الحساب المراد تعديل صلاحياته
 async def _editor_company(source, actor, email, role_resolver):
     if not email or '/' in email or '\\' in email or email in ('.', '..'):
         raise HTTPException(status_code=400, detail='معرّف الحساب غير صالح')
+
+    # دالة داخلية تتحقق من المنفذ وتحدد الشركة
     def inspect():
         actor_email = str(actor.get('email', '')).strip().lower()
         actor_uid = str(actor.get('uid', ''))
@@ -152,16 +166,20 @@ async def _editor_company(source, actor, email, role_resolver):
             raise HTTPException(status_code=403, detail='غير مصرح بإدارة الصلاحيات')
         if role != 'super_admin':
             company = str(current.get('company_code', ''))
-            if not company: raise HTTPException(status_code=403, detail='الحساب غير مرتبط بشركة')
+            if not company:
+                raise HTTPException(status_code=403, detail='الحساب غير مرتبط بشركة')
             return company
         target = source.collection('users').document(email).get()
-        if not target.exists: raise HTTPException(status_code=404, detail='المستخدم غير موجود')
+        if not target.exists:
+            raise HTTPException(status_code=404, detail='المستخدم غير موجود')
         company = str((target.to_dict() or {}).get('company_code', ''))
-        if not company: raise HTTPException(status_code=409, detail='المستخدم غير مرتبط بشركة')
+        if not company:
+            raise HTTPException(status_code=409, detail='المستخدم غير مرتبط بشركة')
         return company
     return await asyncio.to_thread(inspect)
 
 
+# يقرأ صلاحيات مستخدم معين لعرضها في المحرر
 async def read_permission_editor(session, source, actor, email, role_resolver):
     company_code = await _editor_company(source, actor, email, role_resolver)
     company, configuration, revision = await _locked_policy(session, company_code)
@@ -175,10 +193,11 @@ async def read_permission_editor(session, source, actor, email, role_resolver):
     branch_delegation = ['all'] if role == 'super_admin' else projected.get('delegable_branches', [])
     raw_branches = target.get('allowed_branches')
     target_branches = set(raw_branches) if isinstance(raw_branches, list) and all(isinstance(v, str) for v in raw_branches) else set()
-    if raw_branches == 'all' or (not active and not raw_branches): target_branches = {'all'}
+    if raw_branches == 'all' or (not active and not raw_branches):
+        target_branches = {'all'}
     visible_branches = target_branches | set(branch_delegation)
-    catalog=await company_branch_catalog(session,company_code)
-    branch_choices = [{'code': code, 'name': name} for code,name in catalog.items()
+    catalog = await company_branch_catalog(session, company_code)
+    branch_choices = [{'code': code, 'name': name} for code, name in catalog.items()
         if 'all' in visible_branches or code in visible_branches]
     employee_choices = []
     if not active or role == 'super_admin' or any(right[0] == 'الموارد البشرية' for right in grants(delegation)):
@@ -201,7 +220,7 @@ async def read_permission_editor(session, source, actor, email, role_resolver):
         'profile_version': _version(snapshot), 'company_policy_active': active,
         'company_policy_revision': revision if active else None,
         'source_permissions': deepcopy(target.get('permissions', {})),
-        'permissions': deepcopy(configuration['admin_profiles'].get(str(target.get('uid','')), {}).get('operating_permissions', {})) if active and role_resolver({**target,'email':email}) == 'admin' else deepcopy(target.get('permissions', {})),
+        'permissions': deepcopy(configuration['admin_profiles'].get(str(target.get('uid', '')), {}).get('operating_permissions', {})) if active and role_resolver({**target, 'email':email}) == 'admin' else deepcopy(target.get('permissions', {})),
         'allowed_branches': deepcopy(target.get('allowed_branches')),
         'startup_branch_code': str(target.get('branch_code', '')),
         'hr_viewable_employees': deepcopy(target.get('hr_viewable_employees')),
@@ -210,6 +229,7 @@ async def read_permission_editor(session, source, actor, email, role_resolver):
         'delegable_branches': deepcopy(branch_delegation)}
 
 
+# يغيّر حالة الحساب (مفعّل/موقوف) من محرر الصلاحيات القديم مع فحص التعارض
 async def write_legacy_editor_status(session, source, actor, email, data, role_resolver):
     """Only the legacy permission-editor status control, with source CAS.
 
@@ -220,6 +240,8 @@ async def write_legacy_editor_status(session, source, actor, email, data, role_r
     company, configuration, _ = await _locked_policy(session, code)
     if configuration is not None:
         raise HTTPException(status_code=403, detail='استخدم إدارة المستخدمين لتغيير حالة الحساب')
+
+    # ينفّذ تغيير الحالة داخل معاملة
     def apply(transaction):
         current, role, ref, snapshot, target = _current_accounts(source, actor, email,
             code, role_resolver, transaction=transaction, configuration=None,
@@ -235,6 +257,7 @@ async def write_legacy_editor_status(session, source, actor, email, data, role_r
     return await asyncio.to_thread(run_source_transaction, source, apply)
 
 
+# يحفظ خريطة صلاحيات مستخدم بعد التحقق من السياسة والتفويض
 async def write_permission_editor(session, source, actor, email, data, role_resolver):
     validate_permission_map(data.permissions)
     company_code = await _editor_company(source, actor, email, role_resolver)
@@ -243,7 +266,7 @@ async def write_permission_editor(session, source, actor, email, data, role_reso
     if active and (data.expected_policy_revision != revision or not data.expected_profile_version
                    or not data.expected_target_uid):
         raise HTTPException(status_code=409, detail='حمّل نطاق الصلاحيات الحالي قبل الحفظ')
-    company_branches = set(await company_branch_catalog(session,company_code,lock=True)) if active or data.startup_branch_code is not None else set()
+    company_branches = set(await company_branch_catalog(session, company_code, lock=True)) if active or data.startup_branch_code is not None else set()
     requested_hr = None if data.clear_hr_viewable_employees else data.hr_viewable_employees
     unknown_hr = False
     if active and (requested_hr is not None or data.clear_hr_viewable_employees):
@@ -254,6 +277,7 @@ async def write_permission_editor(session, source, actor, email, data, role_reso
                 Employee.code.in_(wanted)).with_for_update())).all())
             unknown_hr = not wanted <= known
 
+    # ينفّذ كتابة الصلاحيات داخل معاملة
     def apply(transaction):
         current, role, target_ref, snapshot, target = _current_accounts(source, actor, email,
             company_code, role_resolver, transaction=transaction,
@@ -267,7 +291,8 @@ async def write_permission_editor(session, source, actor, email, data, role_reso
         target_role = role_resolver({**target, 'email': email})
         admin_operating = active and target_role == 'admin'
         updates = {'updated_at': firestore.SERVER_TIMESTAMP}
-        if not admin_operating: updates['permissions'] = deepcopy(data.permissions)
+        if not admin_operating:
+            updates['permissions'] = deepcopy(data.permissions)
         if data.allowed_branches is not None:
             updates['allowed_branches'] = list(data.allowed_branches)
         if data.clear_hr_viewable_employees:
@@ -286,7 +311,7 @@ async def write_permission_editor(session, source, actor, email, data, role_reso
             projected = policy_profile(current, configuration, role=role)
             delegation = projected.get('delegable_permissions', {})
             branch_delegation = projected.get('delegable_branches', [])
-            previous = (configuration['admin_profiles'].get(str(target.get('uid','')), {}).get('operating_permissions', {}) if admin_operating else target.get('permissions', {}))
+            previous = (configuration['admin_profiles'].get(str(target.get('uid', '')), {}).get('operating_permissions', {}) if admin_operating else target.get('permissions', {}))
             check = check_assignment(company_ceiling=configuration['company_permissions'],
                 delegable_permissions=delegation, previous_permissions=previous,
                 proposed_permissions=data.permissions, check_delegation=not root)
@@ -329,22 +354,27 @@ async def write_permission_editor(session, source, actor, email, data, role_reso
                     raise HTTPException(status_code=403, detail='تغيير النطاق يوسّع أو يسحب صلاحيات غير مفوضة لك')
             if data.startup_branch_code is not None or changed_branches:
                 startup = str(updates.get('branch_code', target.get('branch_code', ''))).strip()
-                if startup == 'all': startup = ''
+                if startup == 'all':
+                    startup = ''
                 if startup and (startup not in company_branches or ('all' not in after_branches and startup not in after_branches)):
                     raise HTTPException(status_code=400, detail='اختر فرع بداية ضمن الفروع المسموحة')
-                if data.startup_branch_code is not None: updates['branch_code'] = startup
+                if data.startup_branch_code is not None:
+                    updates['branch_code'] = startup
         if not active and data.startup_branch_code is not None:
             startup = data.startup_branch_code.strip()
-            if startup in ('all', 'الكل', 'كل الفروع'): startup = ''
+            if startup in ('all', 'الكل', 'كل الفروع'):
+                startup = ''
             scope = updates.get('allowed_branches', target.get('allowed_branches'))
-            if scope is None or scope == []: scope = ['all']
-            if isinstance(scope, str): scope = [scope]
+            if scope is None or scope == []:
+                scope = ['all']
+            if isinstance(scope, str):
+                scope = [scope]
             if startup and (startup not in company_branches or not isinstance(scope, list)
                     or ('all' not in scope and startup not in scope)):
                 raise HTTPException(status_code=400, detail='اختر فرع بداية ضمن الفروع المسموحة')
             updates['branch_code'] = startup
         transaction.update(target_ref, updates)
-        return {'company_code': company_code, 'company_policy_active': active, '_admin_uid': str(target.get('uid','')) if admin_operating else None}
+        return {'company_code': company_code, 'company_policy_active': active, '_admin_uid': str(target.get('uid', '')) if admin_operating else None}
     result = await asyncio.to_thread(run_source_transaction, source, apply)
     admin_uid = result.pop('_admin_uid', None)
     if admin_uid:

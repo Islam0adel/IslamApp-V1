@@ -1,6 +1,8 @@
+// frontend/lib/services/treasury_cache_scope.dart
 import 'cache_partitions.dart';
 import 'permission_hierarchy.dart';
 
+// نطاق ذاكرة الخزائن المؤقتة
 class TreasuryCacheScope {
   static const recordsBox = 'treasury_transfers_box';
   static const effectsBox = 'treasury_effects_box';
@@ -13,12 +15,17 @@ class TreasuryCacheScope {
     ['التقارير', 'تقرير التدفق النقدي'],
     ['التقارير', 'تحليل الخزائن النقدية'],
   ];
+
+  // يحدد هل يملك المستخدم الصلاحية المحددة
   static bool hasRight(
           Map<String, dynamic>? permissions, String section, String right) =>
       PermissionHierarchy.allows(permissions, section, right);
+
+  // يحدد هل توجد صلاحيات ذات أثر مالي
   static bool hasEffects(Map<String, dynamic>? permissions) =>
       effectRights.any((right) => hasRight(permissions, right[0], right[1]));
 
+  // يطبق نطاق الصلاحيات على ذاكرة الخزائن
   /// Current-owner snapshots only. A permission change never restores old rows.
   static Future<bool> apply(
       {required String company,

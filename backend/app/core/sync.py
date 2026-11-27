@@ -1,3 +1,4 @@
+# backend/app/core/sync.py
 from app.core.auth_middleware import can_bypass_permissions
 # backend/app/core/sync.py
 
@@ -20,6 +21,7 @@ from app.core.hr_audience import HR_EVENTS, HRTarget, message_target, target_all
 from app.core.permissions import has_section_permission
 
 # حقول التكلفة/الراتب التي لا تصل لمن لا يملك حقها عبر البث
+# حقول التكلفة والراتب اللي مش بتوصل لمن ملوش حق عليها
 _COST_FIELDS = ("wholesale_price", "profit_margin", "profit_percent")
 _EMPLOYEE_PRIVATE_FIELDS = (
     "phone", "email", "national_id", "address", "gender", "birth_date",
@@ -36,11 +38,13 @@ _HR_VIEW_KEYS = (
 )
 
 
+# يرجّع دور المستخدم من بروفايله
 def _profile_role(profile: dict) -> str:
     from app.core.auth_middleware import _effective_role
     return _effective_role(profile)
 
 
+# هل مسموح للمستخدم يستقبل بيانات التكلفة عبر WebSocket
 def _ws_can_view_costs(profile: dict) -> bool:
     if can_bypass_permissions(profile):
         return True
@@ -58,6 +62,7 @@ def _ws_can_view_costs(profile: dict) -> bool:
     return False
 
 
+# هل مسموح للمستخدم يستقبل بيانات الموارد البشرية عبر WebSocket
 def _ws_can_view_hr(profile: dict) -> bool:
     if can_bypass_permissions(profile):
         return True
@@ -70,6 +75,7 @@ def _ws_can_view_hr(profile: dict) -> bool:
     return any(section.get(key) is True for key in _HR_VIEW_KEYS)
 
 
+# هل مسموح للمستخدم يستقبل الرواتب عبر WebSocket
 def _ws_can_view_salary(profile: dict) -> bool:
     if can_bypass_permissions(profile):
         return True
@@ -83,6 +89,7 @@ def _ws_can_view_salary(profile: dict) -> bool:
     )
 
 
+# هل المستخدم مسموح له بياناته الشخصية بس
 def _ws_is_own_only(profile: dict) -> bool:
     if can_bypass_permissions(profile):
         return False
@@ -98,6 +105,7 @@ def _ws_is_own_only(profile: dict) -> bool:
     )
 
 
+# يقلّل حمولة الرسالة حسب كل مستلم (يشيل التكلفة والراتب لمن ملوش حق)
 def _strip_payload_for_profile(
     profile: dict, event_type: str, payload: dict, *, hr_target=None
 ) -> dict:
@@ -156,31 +164,36 @@ def _strip_payload_for_profile(
                 if isinstance(it, dict) else it
                 for it in items
             ]
-    personal=own_access(profile,hr_target)
+    personal = own_access(profile, hr_target)
     if event_type == "employee":
         if not _ws_can_view_hr(profile) and not personal:
             if any(field in data for field in _EMPLOYEE_PRIVATE_FIELDS):
                 data = dict(data)
                 for field in _EMPLOYEE_PRIVATE_FIELDS:
                     data.pop(field, None)
-        elif not amounts_allowed(profile,hr_target) and "salary" in data:
+        elif not amounts_allowed(profile, hr_target) and "salary" in data:
             data = dict(data)
             data.pop("salary", None)
-    if event_type=='hr_adjustment' and not amounts_allowed(profile,hr_target) and 'amount' in data:
-        data=dict(data)
-        data.pop('amount',None)
+    if event_type == 'hr_adjustment' and not amounts_allowed(profile, hr_target) and 'amount' in data:
+        data = dict(data)
+        data.pop('amount', None)
     return data
 
 
+# استثناء: هدف التسليم اتغيّر
 class DeliveryTargetChanged(Exception):
+    # يحفظ الهدف اللي اتغيّر
     def __init__(self, target): self.target = target
 
 
+# استثناء: الشركة غير متاحة للتسليم
 class DeliveryCompanyUnavailable(Exception):
+    # يحفظ إعدادات الشركة ورقم نسختها
     def __init__(self, configuration, revision):
         self.configuration, self.revision = configuration, revision
 
 
+# يقرأ سياسة الشركة الحالية للتسليم (قراءة واحدة لكل حدث)
 async def current_delivery_policy(company_code, hr_target=None):
     # One current SQL policy read per company event, not per connected device.
     from sqlalchemy import select
@@ -199,6 +212,7 @@ async def current_delivery_policy(company_code, hr_target=None):
     return configuration, revision
 
 
+# مدير اتصالات WebSocket: يتتبع المتصلين ويبعتلهم التحديثات
 class ConnectionManager:
     """
     مدير اتصالات WebSocket.
@@ -217,6 +231,7 @@ class ConnectionManager:
         └── device E
     """
 
+    # ينشئ المدير ويحدد دالة تحميل السياسة
     def __init__(self, *, policy_loader=None):
         self._policy_loader = policy_loader or current_delivery_policy
         self.active_connections: Dict[
@@ -229,6 +244,7 @@ class ConnectionManager:
     # اتصال جهاز
     # ============================================================
 
+    # يقبل اتصال WebSocket جديد ويسجّله باسم المستخدم والشركة
     async def connect(
         self,
         company_code: str,
@@ -259,6 +275,7 @@ class ConnectionManager:
     # فصل جهاز
     # ============================================================
 
+    # يقفل اتصال ويشيله من القائمة
     def disconnect(
         self,
         company_code: str,
@@ -287,6 +304,7 @@ class ConnectionManager:
             f"company={company_code}"
         )
 
+    # يستبدل بروفايل الاتصال أو يوقف البيانات لحد ما يتجدد
     def replace_user_profile(
         self, company_code: str, email: str, fresh: dict | None,
     ) -> None:
@@ -318,6 +336,7 @@ class ConnectionManager:
                 "_permissions_revision": revision,
             }
 
+    # يتحقق من المستلمين قبل إرسال البيانات مباشرة
     async def _fresh_delivery_profiles(self, company_code, hr_target=None, *, emit_controls=True):
         """Verify the batch immediately before data dispatch.
 
@@ -413,6 +432,7 @@ class ConnectionManager:
     # إرسال تحديث لكل أجهزة الشركة
     # ============================================================
 
+    # يبث رسالة لكل المتصلين المسموح لهم في الشركة
     async def broadcast(
         self,
         company_code: str,
@@ -488,7 +508,7 @@ class ConnectionManager:
                     # قفل افتراضي: نوع حدث غير معروف يصل للمديرين فقط
                     if not can_bypass_permissions(profile):
                         continue
-                elif not own_access(profile,hr_target) and (not branch_visible or not _can_view_section(profile, section,
+                elif not own_access(profile, hr_target) and (not branch_visible or not _can_view_section(profile, section,
                         data_only=True)):
                     continue
                 if hr_target is not None and not target_allowed(profile, hr_target):
@@ -518,6 +538,7 @@ class ConnectionManager:
                     connection
                 )
 
+        # يرسل الدفعة المتحقق منها للمتصلين مع عدم تعطيل الباقي لو واحد بطيء
         async def send_verified(connection, delivery, expected):
             # Dispatch the verified batch together. A slow recipient must not
             # leave later recipients queued behind unrelated network I/O.
@@ -526,7 +547,8 @@ class ConnectionManager:
             try:
                 await connection.send_json(delivery)
                 email = str(expected.get('email', '')).strip().lower()
-                if email: delivered_emails.add(email)
+                if email:
+                    delivered_emails.add(email)
             except Exception:
                 dead_connections.append(connection)
         if pending_frames:
@@ -552,6 +574,7 @@ class ConnectionManager:
     # وفي وقتها حتى بدون صلاحية HR واسعة.
     # ============================================================
 
+    # يبعت نسخة المنفذ من التغيير لأجهزته التانية
     async def _deliver_own_copy(
         self,
         company_code: str,
@@ -586,6 +609,7 @@ class ConnectionManager:
         except Exception as e:
             print(f"⚠️ own-copy delivery failed: {e}")
 
+    # ينبّه الحسابات المرتبطة بموظف بتغيّر الربط من غير كشف بياناته
     async def notify_hr_link_changed(self, company_code: str, targets) -> None:
         """Invalidate old/new linked accounts without disclosing HR content."""
         invalidate_company_recipients(company_code)
@@ -609,6 +633,7 @@ class ConnectionManager:
     # بالفرع أو القسم.
     # ============================================================
 
+    # ينبّه بتغيّر قائمة الشركات
     async def notify_company_directory_changed(self) -> None:
         for company, connections in list(self.active_connections.items()):
             for connection in list(connections):
@@ -621,6 +646,7 @@ class ConnectionManager:
                 except Exception:
                     self.disconnect(company, connection)
 
+    # ينبّه بتغيّر قائمة المستخدمين من غير كشف هوية
     async def notify_user_directory_changed(self, company_code: str) -> None:
         """Identity-free hint, including authorized platform admins elsewhere."""
         company = str(company_code)
@@ -639,6 +665,7 @@ class ConnectionManager:
                 except Exception:
                     self.disconnect(connected_company, connection)
 
+    # يبعت رسالة لمستخدم معين على أجهزته المتصلة
     async def send_to_user(
         self,
         company_code: str,
@@ -676,6 +703,7 @@ class ConnectionManager:
     # عدد الأجهزة المتصلة
     # ============================================================
 
+    # يعدّ اتصالات المستخدم الحالية
     def connection_count(
         self,
         company_code: str,
@@ -693,6 +721,7 @@ class ConnectionManager:
     # هل الشركة عندها أجهزة متصلة؟
     # ============================================================
 
+    # يفحص هل للمستخدم اتصال مفتوح
     def has_connections(
         self,
         company_code: str,
@@ -706,4 +735,5 @@ class ConnectionManager:
 # Global Connection Manager
 # ============================================================
 
+# المدير المشترك المستخدم في كل التطبيق
 manager = ConnectionManager()

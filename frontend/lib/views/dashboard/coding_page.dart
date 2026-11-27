@@ -1,3 +1,4 @@
+// frontend/lib/views/dashboard/coding_page.dart
 import '../../services/cache_partitions.dart';
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
@@ -7,18 +8,26 @@ import '../../models/coding_model.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../../services/permissions_service.dart';
 
+// امتداد يعيد أول عنصر أو null
 extension _CodingFirstOrNull<T> on Iterable<T> {
-  T? get firstOrNull { final iterator = this.iterator; return iterator.moveNext() ? iterator.current : null; }
+  // يعيد أول عنصر في المجموعة أو null
+  T? get firstOrNull {
+    final iterator = this.iterator;
+    return iterator.moveNext() ? iterator.current : null;
+  }
 }
 
+// صفحة إضافة أصناف الترميز
 class CodingPage extends StatefulWidget {
   final String companyCode;
   const CodingPage({super.key, required this.companyCode});
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<CodingPage> createState() => _CodingPageState();
 }
 
+// حالة الويدجت CodingPage: تدير بيانات الشاشة وتفاعلاتها
 class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
   final CodingService _codingService = CodingService();
 
@@ -28,27 +37,38 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _codeController = TextEditingController();
   final TextEditingController _barcodeController = TextEditingController();
-  final TextEditingController _wholesalePriceController = TextEditingController();
+  final TextEditingController _wholesalePriceController =
+      TextEditingController();
   // هل الصنف المفتوح للتعديل موسوم "سعر غير محدد"
   bool _editingCostPending = false;
   final TextEditingController _sellingPriceController = TextEditingController();
-  final TextEditingController _profitMarginController = TextEditingController(text: "0.00");
-  final TextEditingController _profitPercentController = TextEditingController(text: "0.00 %");
-
+  final TextEditingController _profitMarginController =
+      TextEditingController(text: "0.00");
+  final TextEditingController _profitPercentController =
+      TextEditingController(text: "0.00 %");
 
   String _selectedCategory = "items";
   String? _selectedType;
   String? _selectedStoreBranch;
   List<Map<String, String>> _storeBranches = [];
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
-    final rawBranches = CachePartitions.box('coding_box').get('${widget.companyCode}_branches', defaultValue: []);
+    final rawBranches = CachePartitions.box('coding_box')
+        .get('${widget.companyCode}_branches', defaultValue: []);
     if (rawBranches is List) {
-      _storeBranches = rawBranches.whereType<Map>().map((e) => {
-        'code': e['code']?.toString() ?? '', 'name': e['name']?.toString() ?? '',
-      }).where((e) => e['code']!.isNotEmpty && PermissionsService().canAccessBranch(e['code']!)).toList();
+      _storeBranches = rawBranches
+          .whereType<Map>()
+          .map((e) => {
+                'code': e['code']?.toString() ?? '',
+                'name': e['name']?.toString() ?? '',
+              })
+          .where((e) =>
+              e['code']!.isNotEmpty &&
+              PermissionsService().canAccessBranch(e['code']!))
+          .toList();
     }
     _selectedStoreBranch = _storeBranches.firstOrNull?['code'];
     _wholesalePriceController.addListener(_calculateProfit);
@@ -56,6 +76,7 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
     _loadNextCode();
   }
 
+  // يحسب هامش الربح من سعري الجملة والقطاعي
   void _calculateProfit() {
     double wholesale = double.tryParse(_wholesalePriceController.text) ?? 0.0;
     double selling = double.tryParse(_sellingPriceController.text) ?? 0.0;
@@ -70,62 +91,70 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
     }
   }
 
+  // يحمّل كود الترميز التالي
   Future<void> _loadNextCode() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_isEditMode) return;
 
-    if (_isEditMode) return;
+      try {
+        final Box codingBox = CachePartitions.box('coding_box');
+        final String localKey = "${widget.companyCode}_$_selectedCategory";
+        int maxCode = 0;
 
-    try {
-      final Box codingBox = CachePartitions.box('coding_box');
-      final String localKey = "${widget.companyCode}_$_selectedCategory";
-      int maxCode = 0;
+        List<CodingModel> items = [];
 
-            List<CodingModel> items = [];
+        if (codingBox.containsKey(localKey)) {
+          final rawData = codingBox.get(localKey);
+          if (rawData is List) {
+            items = rawData
+                .map((item) =>
+                    CodingModel.fromMap(Map<String, dynamic>.from(item as Map)))
+                .toList();
+          }
+        }
 
-      if (codingBox.containsKey(localKey)) {
-        final rawData = codingBox.get(localKey);
-        if (rawData is List) {
-          items = rawData
-              .map((item) => CodingModel.fromMap(Map<String, dynamic>.from(item as Map)))
-              .toList();
+        if (items.isEmpty) {
+          items = await _codingService.getCodingList(
+            companyCode: widget.companyCode,
+            category: _selectedCategory,
+          );
+        }
+
+        for (var item in items) {
+          int current = int.tryParse(item.code) ?? 0;
+          if (current > maxCode) maxCode = current;
+        }
+      } catch (e) {
+        if (mounted) {
+          setState(() {
+            _codeController.text = "1";
+          });
         }
       }
+    });
+  }
 
-      if (items.isEmpty) {
-        items = await _codingService.getCodingList(
-          companyCode: widget.companyCode,
-          category: _selectedCategory,
-        );
-      }
-
-      for (var item in items) {
-        int current = int.tryParse(item.code) ?? 0;
-        if (current > maxCode) maxCode = current;
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _codeController.text = "1";
-        });
-      }
-    }
-});
-}
-
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     bool canView = PermissionsService().canViewCoding;
     bool canAdd = _canAddSelectedCategory();
-    bool canOpenAny = canView || PermissionsService().canAddCodingItem ||
-        PermissionsService().canAddStore || PermissionsService().canAddBranch ||
-        PermissionsService().canAddSafe || PermissionsService().canAddSupplier ||
-        PermissionsService().canAddCustomer || PermissionsService().canAddPaymentMethod ||
+    bool canOpenAny = canView ||
+        PermissionsService().canAddCodingItem ||
+        PermissionsService().canAddStore ||
+        PermissionsService().canAddBranch ||
+        PermissionsService().canAddSafe ||
+        PermissionsService().canAddSupplier ||
+        PermissionsService().canAddCustomer ||
+        PermissionsService().canAddPaymentMethod ||
         PermissionsService().canAddBank;
 
     if (!canOpenAny) {
       return Scaffold(
         appBar: AppBar(
-          title: Text("شاشة التكويد", style: TextStyle(fontFamily: 'Cairo', color: AppTheme.textMainFor(context))),
+          title: Text("شاشة التكويد",
+              style: TextStyle(
+                  fontFamily: 'Cairo', color: AppTheme.textMainFor(context))),
           backgroundColor: AppTheme.appBarBg,
           elevation: 0,
         ),
@@ -134,13 +163,17 @@ return CachePartitions.run(() async {
           decoration: BoxDecoration(
             gradient: LinearGradient(
               colors: AppTheme.dashGradientMain(context),
-              begin: Alignment.topLeft, end: Alignment.bottomRight,
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
             ),
           ),
           child: Center(
             child: Text(
               "ليس لديك صلاحية للوصول إلى التكويد",
-              style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo', fontSize: 16),
+              style: TextStyle(
+                  color: AppTheme.textSoftFor(context),
+                  fontFamily: 'Cairo',
+                  fontSize: 16),
             ),
           ),
         ),
@@ -150,16 +183,17 @@ return CachePartitions.run(() async {
     return PopScope(
       canPop: false,
       onPopInvoked: (didPop) async {
-return CachePartitions.run(() async {
-
-        if (didPop) return;
-        if (context.mounted) Navigator.pop(context);
-});
-},
+        return CachePartitions.run(() async {
+          if (didPop) return;
+          if (context.mounted) Navigator.pop(context);
+        });
+      },
       child: Scaffold(
         extendBodyBehindAppBar: true,
         appBar: AppBar(
-          title: Text("شاشة التكويد", style: TextStyle(fontFamily: 'Cairo', color: AppTheme.textMainFor(context))),
+          title: Text("شاشة التكويد",
+              style: TextStyle(
+                  fontFamily: 'Cairo', color: AppTheme.textMainFor(context))),
           backgroundColor: AppTheme.appBarBg,
           elevation: 0,
         ),
@@ -169,12 +203,15 @@ return CachePartitions.run(() async {
           decoration: BoxDecoration(
             gradient: LinearGradient(
               colors: AppTheme.dashGradientMain(context),
-              begin: Alignment.topLeft, end: Alignment.bottomRight,
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
             ),
           ),
           child: SafeArea(
             child: _isLoading
-                ? Center(child: CircularProgressIndicator(color: AppTheme.textMainFor(context)))
+                ? Center(
+                    child: CircularProgressIndicator(
+                        color: AppTheme.textMainFor(context)))
                 : SingleChildScrollView(
                     padding: const EdgeInsets.all(15),
                     child: Column(
@@ -182,29 +219,55 @@ return CachePartitions.run(() async {
                         GlassCard(
                           child: Column(
                             children: [
-                              Align(alignment: Alignment.centerRight, child: Text("اختر القسم", style: TextStyle(color: AppTheme.warningFor(context), fontSize: 14, fontFamily: 'Cairo'))),
+                              Align(
+                                  alignment: Alignment.centerRight,
+                                  child: Text("اختر القسم",
+                                      style: TextStyle(
+                                          color: AppTheme.warningFor(context),
+                                          fontSize: 14,
+                                          fontFamily: 'Cairo'))),
                               const SizedBox(height: 15),
                               Wrap(
-                                spacing: 8, runSpacing: 8, alignment: WrapAlignment.center,
+                                spacing: 8,
+                                runSpacing: 8,
+                                alignment: WrapAlignment.center,
                                 children: [
-                                  if (PermissionsService().canViewCoding || PermissionsService().canAddSafe)
-                                    _buildTinyCategory("safes", "الخزائن", Icons.account_balance_wallet),
-                                  if (PermissionsService().canViewCoding || PermissionsService().canAddCodingItem)
-                                    _buildTinyCategory("items", "الأصناف", Icons.inventory_2),
-                                  if (PermissionsService().canViewCoding || PermissionsService().canAddSupplier)
-                                    _buildTinyCategory("suppliers", "الموردين", Icons.local_shipping),
-                                  if (PermissionsService().canViewCoding || PermissionsService().canAddCustomer)
-                                    _buildTinyCategory("customers", "العملاء", Icons.groups),
-                                  if (PermissionsService().canViewCoding || PermissionsService().canAddStore)
-                                    _buildTinyCategory("stores", "المخازن", Icons.store),
-                                  if (PermissionsService().canViewCoding || PermissionsService().canAddCodingItem)
-                                    _buildTinyCategory("types", "التصنيف", Icons.payments),
-                                  if (PermissionsService().canViewCoding || PermissionsService().canAddPaymentMethod)
-                                    _buildTinyCategory("payment_methods", "طرق الدفع", Icons.credit_card),
-                                  if (PermissionsService().canViewCoding || PermissionsService().canAddBank)
-                                    _buildTinyCategory("banks", "البنوك", Icons.account_balance),
-                                  if (PermissionsService().canViewCoding || PermissionsService().canAddBranch)
-                                    _buildTinyCategory("branches", "الفروع", Icons.storefront),
+                                  if (PermissionsService().canViewCoding ||
+                                      PermissionsService().canAddSafe)
+                                    _buildTinyCategory("safes", "الخزائن",
+                                        Icons.account_balance_wallet),
+                                  if (PermissionsService().canViewCoding ||
+                                      PermissionsService().canAddCodingItem)
+                                    _buildTinyCategory(
+                                        "items", "الأصناف", Icons.inventory_2),
+                                  if (PermissionsService().canViewCoding ||
+                                      PermissionsService().canAddSupplier)
+                                    _buildTinyCategory("suppliers", "الموردين",
+                                        Icons.local_shipping),
+                                  if (PermissionsService().canViewCoding ||
+                                      PermissionsService().canAddCustomer)
+                                    _buildTinyCategory(
+                                        "customers", "العملاء", Icons.groups),
+                                  if (PermissionsService().canViewCoding ||
+                                      PermissionsService().canAddStore)
+                                    _buildTinyCategory(
+                                        "stores", "المخازن", Icons.store),
+                                  if (PermissionsService().canViewCoding ||
+                                      PermissionsService().canAddCodingItem)
+                                    _buildTinyCategory(
+                                        "types", "التصنيف", Icons.payments),
+                                  if (PermissionsService().canViewCoding ||
+                                      PermissionsService().canAddPaymentMethod)
+                                    _buildTinyCategory("payment_methods",
+                                        "طرق الدفع", Icons.credit_card),
+                                  if (PermissionsService().canViewCoding ||
+                                      PermissionsService().canAddBank)
+                                    _buildTinyCategory("banks", "البنوك",
+                                        Icons.account_balance),
+                                  if (PermissionsService().canViewCoding ||
+                                      PermissionsService().canAddBranch)
+                                    _buildTinyCategory(
+                                        "branches", "الفروع", Icons.storefront),
                                 ],
                               ),
                             ],
@@ -215,35 +278,74 @@ return CachePartitions.run(() async {
                           GlassCard(
                             child: Column(
                               children: [
-                                _buildField("الاسم / البيان", _nameController, Icons.edit),
+                                _buildField("الاسم / البيان", _nameController,
+                                    Icons.edit),
                                 const SizedBox(height: 10),
-                                _buildField("الكود", _codeController, Icons.qr_code, enabled: true),
+                                _buildField(
+                                    "الكود", _codeController, Icons.qr_code,
+                                    enabled: true),
                                 if (_selectedCategory == "stores") ...[
                                   const SizedBox(height: 10),
                                   DropdownButtonFormField<String>(
-                                    initialValue: _storeBranches.any((e) => e['code'] == _selectedStoreBranch) ? _selectedStoreBranch : null,
-                                    decoration: const InputDecoration(labelText: 'الفرع التابع له المخزن'),
-                                    items: [const DropdownMenuItem(value: '', child: Text('كل الفروع (مخزن عام)')), ..._storeBranches.map((e) => DropdownMenuItem(value: e['code'], child: Text(e['name'] ?? '')))],
-                                    onChanged: (value) => setState(() => _selectedStoreBranch = value),
+                                    initialValue: _storeBranches.any((e) =>
+                                            e['code'] == _selectedStoreBranch)
+                                        ? _selectedStoreBranch
+                                        : null,
+                                    decoration: const InputDecoration(
+                                        labelText: 'الفرع التابع له المخزن'),
+                                    items: [
+                                      const DropdownMenuItem(
+                                          value: '',
+                                          child: Text('كل الفروع (مخزن عام)')),
+                                      ..._storeBranches.map((e) =>
+                                          DropdownMenuItem(
+                                              value: e['code'],
+                                              child: Text(e['name'] ?? '')))
+                                    ],
+                                    onChanged: (value) => setState(
+                                        () => _selectedStoreBranch = value),
                                   ),
                                 ],
                                 if (_selectedCategory == "types") ...[
                                   const SizedBox(height: 10),
                                   DropdownButtonFormField<String>(
                                     initialValue: _selectedType,
-                                    dropdownColor: AppTheme.dropdownBackground(context),
-                                    style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 14, fontFamily: 'Cairo'),
+                                    dropdownColor:
+                                        AppTheme.dropdownBackground(context),
+                                    style: TextStyle(
+                                        color: AppTheme.textMainFor(context),
+                                        fontSize: 14,
+                                        fontFamily: 'Cairo'),
                                     decoration: InputDecoration(
                                       labelText: "نوع التصنيف (وارد / صادر)",
-                                      labelStyle: TextStyle(color: AppTheme.textSoftFor(context), fontSize: 12, fontFamily: 'Cairo'),
-                                      prefixIcon: Icon(Icons.swap_horiz, color: AppTheme.warningFor(context), size: 18),
-                                      filled: true, fillColor: GlassStyle.fill03For(context),
-                                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
-                                      contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                                      labelStyle: TextStyle(
+                                          color: AppTheme.textSoftFor(context),
+                                          fontSize: 12,
+                                          fontFamily: 'Cairo'),
+                                      prefixIcon: Icon(Icons.swap_horiz,
+                                          color: AppTheme.warningFor(context),
+                                          size: 18),
+                                      filled: true,
+                                      fillColor: GlassStyle.fill03For(context),
+                                      border: OutlineInputBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(10),
+                                          borderSide: BorderSide.none),
+                                      contentPadding:
+                                          const EdgeInsets.symmetric(
+                                              vertical: 8, horizontal: 12),
                                     ),
                                     items: const [
-                                      DropdownMenuItem(value: "وارد", child: Text("وارد", style: TextStyle(fontFamily: 'Cairo'))),
-                                      DropdownMenuItem(value: "صادر", child: Text("صادر", style: TextStyle(fontFamily: 'Cairo'))),
+                                      DropdownMenuItem(
+                                          value: "وارد",
+                                          child: Text("وارد",
+                                              style: TextStyle(
+                                                  fontFamily: 'Cairo'))),
+                                      DropdownMenuItem(
+                                          value: "صادر",
+                                          child: Text("صادر",
+                                              style: TextStyle(
+                                                  fontFamily: 'Cairo'))),
                                     ],
                                     onChanged: (val) {
                                       setState(() {
@@ -254,16 +356,26 @@ return CachePartitions.run(() async {
                                 ],
                                 if (_selectedCategory == "items") ...[
                                   const SizedBox(height: 10),
-                                  _buildField("الباركود", _barcodeController, Icons.barcode_reader),
+                                  _buildField("الباركود", _barcodeController,
+                                      Icons.barcode_reader),
                                   const SizedBox(height: 10),
                                   // حقول التكلفة (الجملة/الربح): تُخفى كلياً
                                   // لمن لا يملك حقها — الخادم لا يقبلها منه
                                   // أصلاً، وإظهار حقل يُتجاهَل إدخاله تضليل.
-                                  if (PermissionsService().canViewCostPrices) ...[
+                                  if (PermissionsService()
+                                      .canViewCostPrices) ...[
                                     Row(children: [
-                                      Expanded(child: _buildField("سعر الجملة", _wholesalePriceController, Icons.money)),
+                                      Expanded(
+                                          child: _buildField(
+                                              "سعر الجملة",
+                                              _wholesalePriceController,
+                                              Icons.money)),
                                       const SizedBox(width: 10),
-                                      Expanded(child: _buildField("سعر البيع", _sellingPriceController, Icons.sell)),
+                                      Expanded(
+                                          child: _buildField(
+                                              "سعر البيع",
+                                              _sellingPriceController,
+                                              Icons.sell)),
                                     ]),
                                     if (_editingCostPending)
                                       Padding(
@@ -277,21 +389,29 @@ return CachePartitions.run(() async {
                                           ),
                                         ),
                                       ),
-                                  ]
-                                  else
-                                    _buildField("سعر البيع", _sellingPriceController, Icons.sell),
-                                  if (PermissionsService().canViewCostPrices) ...[
+                                  ] else
+                                    _buildField("سعر البيع",
+                                        _sellingPriceController, Icons.sell),
+                                  if (PermissionsService()
+                                      .canViewCostPrices) ...[
                                     const SizedBox(height: 10),
                                     Row(children: [
-                                      Expanded(child: _buildField("هامش الربح", _profitMarginController, Icons.calculate, enabled: false)),
+                                      Expanded(
+                                          child: _buildField(
+                                              "هامش الربح",
+                                              _profitMarginController,
+                                              Icons.calculate,
+                                              enabled: false)),
                                       const SizedBox(width: 10),
-                                      Expanded(child: _buildField("نسبة الربح", _profitPercentController, Icons.percent, enabled: false)),
+                                      Expanded(
+                                          child: _buildField(
+                                              "نسبة الربح",
+                                              _profitPercentController,
+                                              Icons.percent,
+                                              enabled: false)),
                                     ]),
                                   ],
                                 ],
-
-
-
                                 const SizedBox(height: 20),
                                 _buildActionButtons(),
                               ],
@@ -302,7 +422,10 @@ return CachePartitions.run(() async {
                             padding: EdgeInsets.all(20.0),
                             child: Text(
                               "ليس لديك صلاحية لإضافة أو تعديل التكويدات",
-                              style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo', fontSize: 14),
+                              style: TextStyle(
+                                  color: AppTheme.textSoftFor(context),
+                                  fontFamily: 'Cairo',
+                                  fontSize: 14),
                             ),
                           ),
                       ],
@@ -314,6 +437,7 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يبني شريحة صغيرة لفئة الترميز
   Widget _buildTinyCategory(String cat, String title, IconData icon) {
     bool isSelected = _selectedCategory == cat;
     return InkWell(
@@ -321,7 +445,8 @@ return CachePartitions.run(() async {
         if (_selectedCategory == cat && _isEditMode) return;
         setState(() {
           _selectedCategory = cat;
-          if (cat == 'stores' && _selectedStoreBranch == null) _selectedStoreBranch = _storeBranches.firstOrNull?['code'];
+          if (cat == 'stores' && _selectedStoreBranch == null)
+            _selectedStoreBranch = _storeBranches.firstOrNull?['code'];
           _isEditMode = false;
           _clearControllers();
         });
@@ -330,39 +455,60 @@ return CachePartitions.run(() async {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
-          color: isSelected ? AppTheme.warningFor(context) : GlassStyle.fill05For(context),
+          color: isSelected
+              ? AppTheme.warningFor(context)
+              : GlassStyle.fill05For(context),
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: isSelected ? AppTheme.warningFor(context) : GlassStyle.line10For(context)),
+          border: Border.all(
+              color: isSelected
+                  ? AppTheme.warningFor(context)
+                  : GlassStyle.line10For(context)),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 14, color: isSelected ? AppTheme.onAccentFor(context) : AppTheme.textSoftFor(context)),
+            Icon(icon,
+                size: 14,
+                color: isSelected
+                    ? AppTheme.onAccentFor(context)
+                    : AppTheme.textSoftFor(context)),
             const SizedBox(width: 4),
-            Text(title, style: TextStyle(color: isSelected ? AppTheme.onAccentFor(context) : AppTheme.textMainFor(context), fontSize: 11, fontFamily: 'Cairo')),
+            Text(title,
+                style: TextStyle(
+                    color: isSelected
+                        ? AppTheme.onAccentFor(context)
+                        : AppTheme.textMainFor(context),
+                    fontSize: 11,
+                    fontFamily: 'Cairo')),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildField(String lbl, TextEditingController ctrl, IconData ico, {bool enabled = true}) {
+  // يبني حقل إدخال بعنوان وأيقونة
+  Widget _buildField(String lbl, TextEditingController ctrl, IconData ico,
+      {bool enabled = true}) {
     return TextField(
       controller: ctrl,
       enabled: enabled,
       style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 14),
       decoration: InputDecoration(
         labelText: lbl,
-        labelStyle: TextStyle(color: AppTheme.textSoftFor(context), fontSize: 12),
+        labelStyle:
+            TextStyle(color: AppTheme.textSoftFor(context), fontSize: 12),
         prefixIcon: Icon(ico, color: AppTheme.warningFor(context), size: 18),
         filled: true,
         fillColor: GlassStyle.fill03For(context),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+        border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide.none),
         contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
       ),
     );
   }
 
+  // يبني أزرار الإجراءات
   Widget _buildActionButtons() {
     bool canAdd = PermissionsService().canAddCodingItem;
     bool canView = PermissionsService().canViewCoding;
@@ -374,8 +520,11 @@ return CachePartitions.run(() async {
             child: ElevatedButton.icon(
               onPressed: _handleSave,
               icon: Icon(_isEditMode ? Icons.update : Icons.save, size: 18),
-              label: Text(_isEditMode ? "تحديث" : "حفظ", style: const TextStyle(fontFamily: 'Cairo')),
-              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.warningFor(context), foregroundColor: AppTheme.onAccentFor(context)),
+              label: Text(_isEditMode ? "تحديث" : "حفظ",
+                  style: const TextStyle(fontFamily: 'Cairo')),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.warningFor(context),
+                  foregroundColor: AppTheme.onAccentFor(context)),
             ),
           ),
         if (canView)
@@ -383,8 +532,11 @@ return CachePartitions.run(() async {
             child: ElevatedButton.icon(
               onPressed: _showItemsModal,
               icon: const Icon(Icons.visibility, size: 18),
-              label: const Text("معاينة", style: TextStyle(fontFamily: 'Cairo')),
-              style: ElevatedButton.styleFrom(backgroundColor: GlassStyle.fill10For(context), foregroundColor: Theme.of(context).colorScheme.onPrimary),
+              label:
+                  const Text("معاينة", style: TextStyle(fontFamily: 'Cairo')),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: GlassStyle.fill10For(context),
+                  foregroundColor: Theme.of(context).colorScheme.onPrimary),
             ),
           ),
         IconButton(
@@ -398,149 +550,158 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يتحقق من البيانات ويحفظها
   void _handleSave() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (!_canAddSelectedCategory()) {
+        _showSnackBar(
+            "ليس لديك صلاحية للحفظ", AppTheme.warningOrangeFor(context));
+        return;
+      }
 
-    if (!_canAddSelectedCategory()) {
-      _showSnackBar("ليس لديك صلاحية للحفظ", AppTheme.warningOrangeFor(context));
-      return;
-    }
+      if (_nameController.text.isEmpty) {
+        _showSnackBar("الاسم مطلوب", AppTheme.warningOrangeFor(context));
+        return;
+      }
+      if (_codeController.text.isEmpty) {
+        _showSnackBar("الكود مطلوب", AppTheme.warningOrangeFor(context));
+        return;
+      }
+      if (_selectedCategory == "types" && _selectedType == null) {
+        _showSnackBar("يرجى اختيار نوع التصنيف (وارد/صادر)",
+            AppTheme.warningOrangeFor(context));
+        return;
+      }
+      if (_selectedCategory == "stores" && _selectedStoreBranch == null) {
+        _showSnackBar("يرجى اختيار الفرع التابع له المخزن",
+            AppTheme.warningOrangeFor(context));
+        return;
+      }
 
-    if (_nameController.text.isEmpty) {
-      _showSnackBar("الاسم مطلوب", AppTheme.warningOrangeFor(context));
-      return;
-    }
-    if (_codeController.text.isEmpty) {
-      _showSnackBar("الكود مطلوب", AppTheme.warningOrangeFor(context));
-      return;
-    }
-    if (_selectedCategory == "types" && _selectedType == null) {
-      _showSnackBar("يرجى اختيار نوع التصنيف (وارد/صادر)", AppTheme.warningOrangeFor(context));
-      return;
-    }
-    if (_selectedCategory == "stores" && _selectedStoreBranch == null) {
-      _showSnackBar("يرجى اختيار الفرع التابع له المخزن", AppTheme.warningOrangeFor(context));
-      return;
-    }
+      setState(() => _isLoading = true);
+      try {
+        // ✅ حفظ تكويد عادي
+        double cleanPercent = double.tryParse(
+              _profitPercentController.text.replaceAll('%', '').trim(),
+            ) ??
+            0.0;
 
-    setState(() => _isLoading = true);
-    try {
-            // ✅ حفظ تكويد عادي
-      double cleanPercent = double.tryParse(
-            _profitPercentController.text.replaceAll('%', '').trim(),
-          ) ??
-          0.0;
-
-      // صنف "غير محدد": الصفر الصريح يتطلب تأكيداً واعياً،
-      // والحقل الفارغ حفظٌ عادي يُبقي الصنف بلا سعر.
-      bool confirmZero = false;
-      final wholesaleText = _wholesalePriceController.text.trim();
-      if (_selectedCategory == 'items' &&
-          _editingCostPending &&
-          PermissionsService().canViewCostPrices &&
-          wholesaleText.isNotEmpty &&
-          (double.tryParse(wholesaleText) ?? 0.0) == 0.0) {
-        final confirmed = await showDialog<bool>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text("تأكيد سعر صفري",
-                style: TextStyle(fontFamily: 'Cairo')),
-            content: const Text(
-              "هل سعر شراء هذا الصنف صفر عن قصد؟",
-              style: TextStyle(fontFamily: 'Cairo'),
+        // صنف "غير محدد": الصفر الصريح يتطلب تأكيداً واعياً،
+        // والحقل الفارغ حفظٌ عادي يُبقي الصنف بلا سعر.
+        bool confirmZero = false;
+        final wholesaleText = _wholesalePriceController.text.trim();
+        if (_selectedCategory == 'items' &&
+            _editingCostPending &&
+            PermissionsService().canViewCostPrices &&
+            wholesaleText.isNotEmpty &&
+            (double.tryParse(wholesaleText) ?? 0.0) == 0.0) {
+          final confirmed = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text("تأكيد سعر صفري",
+                  style: TextStyle(fontFamily: 'Cairo')),
+              content: const Text(
+                "هل سعر شراء هذا الصنف صفر عن قصد؟",
+                style: TextStyle(fontFamily: 'Cairo'),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text("إلغاء",
+                      style: TextStyle(fontFamily: 'Cairo')),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text("تأكيد الصفر",
+                      style: TextStyle(fontFamily: 'Cairo')),
+                ),
+              ],
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text("إلغاء",
-                    style: TextStyle(fontFamily: 'Cairo')),
-              ),
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: const Text("تأكيد الصفر",
-                    style: TextStyle(fontFamily: 'Cairo')),
-              ),
-            ],
-          ),
-        );
-        if (confirmed != true) {
-          setState(() => _isLoading = false);
-          return;
+          );
+          if (confirmed != true) {
+            setState(() => _isLoading = false);
+            return;
+          }
+          confirmZero = true;
         }
-        confirmZero = true;
-      }
 
-      final newCodingItem = CodingModel(
-        code: _codeController.text,
-        name: _nameController.text,
-        branchCode: _selectedCategory == 'stores' && (_selectedStoreBranch ?? '').isNotEmpty ? _selectedStoreBranch : null,
-        type: _selectedType ?? "وارد",
-        barcode: _barcodeController.text,
-        wholesalePrice: double.tryParse(wholesaleText) ?? 0.0,
-        sellingPrice: double.tryParse(_sellingPriceController.text) ?? 0.0,
-        profitMargin: double.tryParse(_profitMarginController.text) ?? 0.0,
-        profitPercent: cleanPercent,
-        confirmZeroCost: confirmZero,
-      );
-
-      final result = await _codingService.saveCode(
-        companyCode: widget.companyCode,
-        category: _selectedCategory,
-        model: newCodingItem,
-      );
-
-      if (result['success'] == true) {
-        _showSnackBar(
-          _isEditMode ? "تم التحديث بنجاح" : "تم الحفظ بنجاح",
-          AppTheme.successStrongFor(context),
+        final newCodingItem = CodingModel(
+          code: _codeController.text,
+          name: _nameController.text,
+          branchCode: _selectedCategory == 'stores' &&
+                  (_selectedStoreBranch ?? '').isNotEmpty
+              ? _selectedStoreBranch
+              : null,
+          type: _selectedType ?? "وارد",
+          barcode: _barcodeController.text,
+          wholesalePrice: double.tryParse(wholesaleText) ?? 0.0,
+          sellingPrice: double.tryParse(_sellingPriceController.text) ?? 0.0,
+          profitMargin: double.tryParse(_profitMarginController.text) ?? 0.0,
+          profitPercent: cleanPercent,
+          confirmZeroCost: confirmZero,
         );
-        _clearControllers();
-        _loadNextCode();
-      } else {
-        _showSnackBar(
-          "فشل عملية الحفظ: ${result['error']}",
-          AppTheme.dangerStrongFor(context),
-        );
-      }
-    } catch (e) {
-      _showSnackBar("خطأ: $e", AppTheme.dangerStrongFor(context));
-    } finally {
-      setState(() => _isLoading = false);
-    }
-});
-}
 
+        final result = await _codingService.saveCode(
+          companyCode: widget.companyCode,
+          category: _selectedCategory,
+          model: newCodingItem,
+        );
+
+        if (result['success'] == true) {
+          _showSnackBar(
+            _isEditMode ? "تم التحديث بنجاح" : "تم الحفظ بنجاح",
+            AppTheme.successStrongFor(context),
+          );
+          _clearControllers();
+          _loadNextCode();
+        } else {
+          _showSnackBar(
+            "فشل عملية الحفظ: ${result['error']}",
+            AppTheme.dangerStrongFor(context),
+          );
+        }
+      } catch (e) {
+        _showSnackBar("خطأ: $e", AppTheme.dangerStrongFor(context));
+      } finally {
+        setState(() => _isLoading = false);
+      }
+    });
+  }
+
+  // يعرض نافذة الأصناف المحفوظة
   void _showItemsModal() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (!PermissionsService().canViewCoding) {
+        _showSnackBar(
+            "ليس لديك صلاحية للمعاينة", AppTheme.warningOrangeFor(context));
+        return;
+      }
 
-    if (!PermissionsService().canViewCoding) {
-      _showSnackBar("ليس لديك صلاحية للمعاينة", AppTheme.warningOrangeFor(context));
-      return;
-    }
+      setState(() => _isLoading = true);
+      try {
+        // ✅ معاينة التكويد
+        List<CodingModel> items = await _codingService.getCodingList(
+          companyCode: widget.companyCode,
+          category: _selectedCategory,
+        );
+        setState(() => _isLoading = false);
+        if (!mounted) return;
 
-    setState(() => _isLoading = true);
-    try {
-            // ✅ معاينة التكويد
-      List<CodingModel> items = await _codingService.getCodingList(
-        companyCode: widget.companyCode,
-        category: _selectedCategory,
-      );
-      setState(() => _isLoading = false);
-      if (!mounted) return;
+        showModalBottomSheet(
+          context: context,
+          isScrollControlled: true,
+          backgroundColor: AppTheme.sheetBgTransparent,
+          builder: (ctx) => _buildModal(items),
+        );
+      } catch (e) {
+        setState(() => _isLoading = false);
+        _showSnackBar(
+            "حدث خطأ أثناء المعاينة", AppTheme.dangerStrongFor(context));
+      }
+    });
+  }
 
-      showModalBottomSheet(
-        context: context,
-        isScrollControlled: true,
-        backgroundColor: AppTheme.sheetBgTransparent,
-        builder: (ctx) => _buildModal(items),
-      );
-    } catch (e) {
-      setState(() => _isLoading = false);
-      _showSnackBar("حدث خطأ أثناء المعاينة", AppTheme.dangerStrongFor(context));
-    }
-});
-}
-
+  // يبني محتوى نافذة الأصناف
   Widget _buildModal(List<CodingModel> initialItems) {
     return StatefulBuilder(
       builder: (BuildContext context, StateSetter setModalState) {
@@ -608,34 +769,32 @@ return CachePartitions.run(() async {
                                 color: AppTheme.dangerStrongFor(context),
                               ),
                               onPressed: () async {
-return CachePartitions.run(() async {
-
-                                setState(() => _isLoading = true);
-                                bool isDeleted =
-                                    await _codingService.deleteCode(
-                                  companyCode: widget.companyCode,
-                                  category: _selectedCategory,
-                                  code: initialItems[i].code,
-                                );
-                                setState(() => _isLoading = false);
-                                if (isDeleted) {
-                                  _showSnackBar(
-                                    "تم الحذف بنجاح",
-                                    AppTheme.successStrongFor(context),
+                                return CachePartitions.run(() async {
+                                  setState(() => _isLoading = true);
+                                  bool isDeleted =
+                                      await _codingService.deleteCode(
+                                    companyCode: widget.companyCode,
+                                    category: _selectedCategory,
+                                    code: initialItems[i].code,
                                   );
-                                  setModalState(() {
-                                    initialItems.removeAt(i);
-                                  });
-                                  _loadNextCode();
-                                } else {
-                                  _showSnackBar(
-                                    "فشل الحذف، تحقق من الاتصال",
-                                    AppTheme.dangerStrongFor(context),
-                                  );
-                                }
-
-});
-},
+                                  setState(() => _isLoading = false);
+                                  if (isDeleted) {
+                                    _showSnackBar(
+                                      "تم الحذف بنجاح",
+                                      AppTheme.successStrongFor(context),
+                                    );
+                                    setModalState(() {
+                                      initialItems.removeAt(i);
+                                    });
+                                    _loadNextCode();
+                                  } else {
+                                    _showSnackBar(
+                                      "فشل الحذف، تحقق من الاتصال",
+                                      AppTheme.dangerStrongFor(context),
+                                    );
+                                  }
+                                });
+                              },
                             )
                           : null,
                       onTap: () {
@@ -649,7 +808,8 @@ return CachePartitions.run(() async {
                             _selectedType = initialItems[i].type;
                           }
                           if (_selectedCategory == "stores") {
-                            _selectedStoreBranch = initialItems[i].branchCode ?? '';
+                            _selectedStoreBranch =
+                                initialItems[i].branchCode ?? '';
                           }
                           if (_selectedCategory == "items") {
                             _barcodeController.text = initialItems[i].barcode;
@@ -677,8 +837,7 @@ return CachePartitions.run(() async {
     );
   }
 
-
-
+  // يمسح حقول الإدخال
   void _clearControllers() {
     _nameController.clear();
     _codeController.clear();
@@ -689,12 +848,12 @@ return CachePartitions.run(() async {
     _profitPercentController.text = "0.00 %";
     _selectedType = null;
     _editingCostPending = false;
-    if (_selectedCategory == 'stores') _selectedStoreBranch = _storeBranches.firstOrNull?['code'];
+    if (_selectedCategory == 'stores')
+      _selectedStoreBranch = _storeBranches.firstOrNull?['code'];
     _isEditMode = false;
-
-
   }
 
+  // يحدد هل يحق للمستخدم إضافة الفئة المحددة
   bool _canAddSelectedCategory() {
     final permissions = PermissionsService();
     if (_selectedCategory == 'stores') return permissions.canAddStore;
@@ -702,15 +861,20 @@ return CachePartitions.run(() async {
     if (_selectedCategory == 'safes') return permissions.canAddSafe;
     if (_selectedCategory == 'suppliers') return permissions.canAddSupplier;
     if (_selectedCategory == 'customers') return permissions.canAddCustomer;
-    if (_selectedCategory == 'payment_methods') return permissions.canAddPaymentMethod;
+    if (_selectedCategory == 'payment_methods')
+      return permissions.canAddPaymentMethod;
     if (_selectedCategory == 'banks') return permissions.canAddBank;
     return permissions.canAddCodingItem;
   }
 
-  void _showSnackBar(String m, Color c) => ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(m, textAlign: TextAlign.center), backgroundColor: c),
+  // يعرض رسالة سريعة بالنص واللون المحددين
+  void _showSnackBar(String m, Color c) =>
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text(m, textAlign: TextAlign.center), backgroundColor: c),
       );
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     _nameController.dispose();
@@ -720,8 +884,6 @@ return CachePartitions.run(() async {
     _sellingPriceController.dispose();
     _profitMarginController.dispose();
     _profitPercentController.dispose();
-
-
 
     super.dispose();
   }

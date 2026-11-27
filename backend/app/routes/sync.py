@@ -19,6 +19,8 @@ from app.core.auth_middleware import invalidate_profile_cache, _effective_role, 
 from app.core.company_policy_store import load_effective_policy_profile
 from app.core.sync import manager
 
+
+# يحسب بصمة نصية لبروفايل المستخدم لكشف تغيّر الصلاحيات
 def _profile_signature(data: dict) -> str:
     return json.dumps(
         {
@@ -40,6 +42,7 @@ def _profile_signature(data: dict) -> str:
     )
 
 
+# يفحص هل الشركة نشطة
 async def _company_active(company_code: str) -> bool:
     async with AsyncSessionLocal() as session:
         result = await session.execute(
@@ -49,6 +52,7 @@ async def _company_active(company_code: str) -> bool:
     return bool(company and company.is_active)
 
 
+# يعيد فحص بروفايل الاتصال مرة واحدة ويحدّث الصلاحيات (من غير polling)
 async def refresh_socket_profile(websocket: WebSocket, company_code: str, email: str, uid: str) -> None:
     """One explicit recovery check, never scheduled as an idle polling task."""
     try:
@@ -127,6 +131,8 @@ async def refresh_socket_profile(websocket: WebSocket, company_code: str, email:
             f"company={company_code} | error={e}"
         )
 
+
+# راوتر الاتصال اللحظي (WebSocket)
 router = APIRouter()
 
 
@@ -134,6 +140,8 @@ router = APIRouter()
 # WebSocket
 # ============================================================
 
+
+# مسار WebSocket للتزامن اللحظي بين الأجهزة
 @router.websocket("/ws/{company_code}")
 async def websocket_endpoint(
     websocket: WebSocket,

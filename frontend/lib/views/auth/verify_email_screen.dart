@@ -1,5 +1,5 @@
+// frontend/lib/views/auth/verify_email_screen.dart
 import '../../services/cache_partitions.dart';
-// lib/views/auth/verify_email_screen.dart
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -12,20 +12,24 @@ import '../dashboard/home_page.dart';
 import 'login_screen.dart';
 import '../../main.dart' show initializeGlobalListener;
 
+// شاشة توثيق البريد الإلكتروني
 class VerifyEmailScreen extends StatefulWidget {
   final String email;
   const VerifyEmailScreen({super.key, required this.email});
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<VerifyEmailScreen> createState() => _VerifyEmailScreenState();
 }
 
+// حالة الويدجت VerifyEmailScreen: تدير بيانات الشاشة وتفاعلاتها
 class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
   final _apiService = ApiService();
   bool _isChecking = false;
   bool _isResending = false;
   bool _isCancelling = false;
 
+  // يتحقق من توثيق البريد
   Future<void> _checkVerified() async {
     setState(() => _isChecking = true);
     try {
@@ -47,6 +51,7 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
     }
   }
 
+  // يعيد إرسال رسالة التوثيق
   Future<void> _resendEmail() async {
     setState(() => _isResending = true);
     try {
@@ -62,6 +67,7 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
     }
   }
 
+  // يحفظ التفضيلات وينتقل للشاشة التالية
   Future<void> _savePrefsAndNavigate(Map<String, dynamic> result) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('user_name', result['name'] ?? '');
@@ -77,7 +83,8 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
       await prefs.setString('selected_branch_code', result['branch_code']);
     }
 
-    await CachePartitions.activate(FirebaseAuth.instance.currentUser!.uid, result['company_code'] ?? '');
+    await CachePartitions.activate(
+        FirebaseAuth.instance.currentUser!.uid, result['company_code'] ?? '');
     PermissionsService().resetForCachePartition();
 
     PermissionsService().setRole(result['role']?.toString());
@@ -106,6 +113,7 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
   }
 
   // ⭐ إلغاء التسجيل — يرجع للـ Login
+  // يلغي التسجيل
   Future<void> _cancelRegistration() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -193,6 +201,7 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
     }
   }
 
+  // يعرض رسالة سريعة بالنص واللون المحددين
   void _showSnackBar(String msg, Color color) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -206,6 +215,7 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
     );
   }
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -332,9 +342,8 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
                                   onPressed: _checkVerified,
                                   icon: Icon(
                                     Icons.check_circle_rounded,
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onPrimary,
+                                    color:
+                                        Theme.of(context).colorScheme.onPrimary,
                                   ),
                                   label: Text(
                                     'تحققت بالفعل',

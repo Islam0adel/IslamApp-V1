@@ -1,3 +1,4 @@
+// frontend/lib/views/dashboard/admin_companies_screen.dart
 import '../../services/cache_partitions.dart';
 import '../../services/admin_cache_events.dart';
 import 'company_policy_review_page.dart';
@@ -8,13 +9,16 @@ import '../../services/company_service.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../services/permissions_service.dart';
 
+// شاشة إدارة الشركات للمدير العام
 class AdminCompaniesScreen extends StatefulWidget {
   const AdminCompaniesScreen({super.key});
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<AdminCompaniesScreen> createState() => _AdminCompaniesScreenState();
 }
 
+// حالة الويدجت AdminCompaniesScreen: تدير بيانات الشاشة وتفاعلاتها
 class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
   final CompanyService _service = CompanyService();
   final _codeController = TextEditingController();
@@ -26,6 +30,7 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
   String? _currentCompanyCode;
   bool _isLoading = false;
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
@@ -34,164 +39,169 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
     _refresh();
   }
 
+  // يستجيب لتغيّر دليل الشركات
   void _directoryChanged() {
     if (mounted && PermissionsService().isSuperAdmin) _loadFromHive();
   }
 
+  // يستجيب لتغيّر النطاق أو الصلاحيات
   void _scopeChanged() {
     if (mounted) setState(() {});
   }
 
+  // يحمّل الشركات من التخزين المحلي
   Future<void> _loadFromHive() async {
-return CachePartitions.run(() async {
-
-    // لو Hive فاضي، جيب من السيرفر أول مرة
-    if (!_service.hasSnapshot) {
-      try {
-        await _service.ensureCached();
-        if (mounted) setState(() {});
-      } catch (error) {
-        if (mounted) _showSnackBar(error.toString(), AppTheme.dangerStrongFor(context));
+    return CachePartitions.run(() async {
+      // لو Hive فاضي، جيب من السيرفر أول مرة
+      if (!_service.hasSnapshot) {
+        try {
+          await _service.ensureCached();
+          if (mounted) setState(() {});
+        } catch (error) {
+          if (mounted)
+            _showSnackBar(error.toString(), AppTheme.dangerStrongFor(context));
+        }
       }
-    }
-});
-}
+    });
+  }
 
+  // يحدّث بيانات الشاشة
   Future<void> _refresh() async {
-return CachePartitions.run(() async {
-
-    setState(() => _isLoading = true);
-    try {
-      await _service.fetchAllCompanies();
-    } catch (e) {
-      if (mounted) {
-        _showSnackBar(e.toString(), AppTheme.dangerStrongFor(context));
+    return CachePartitions.run(() async {
+      setState(() => _isLoading = true);
+      try {
+        await _service.fetchAllCompanies();
+      } catch (e) {
+        if (mounted) {
+          _showSnackBar(e.toString(), AppTheme.dangerStrongFor(context));
+        }
+      } finally {
+        if (mounted) setState(() => _isLoading = false);
       }
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
-});
-}
+    });
+  }
 
+  // يضيف شركة جديدة
   Future<void> _addCompany() async {
-return CachePartitions.run(() async {
-
-    if (!_formKey.currentState!.validate()) return;
-    setState(() => _isLoading = true);
-    try {
-      await _service.addCompany(
-        code: _codeController.text.trim(),
-        name: _nameController.text.trim(),
-      );
-      _codeController.clear();
-      _nameController.clear();
-      if (mounted) {
-        _showSnackBar('✅ تم إضافة الشركة بنجاح',
-            AppTheme.successStrongFor(context));
-        Navigator.pop(context);
-      }
-    } catch (e) {
-      if (mounted) {
-        _showSnackBar(e.toString(), AppTheme.dangerStrongFor(context));
-      }
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
-});
-}
-
-  Future<void> _updateCompany() async {
-return CachePartitions.run(() async {
-
-    if (!_editFormKey.currentState!.validate()) return;
-    setState(() => _isLoading = true);
-    try {
-      await _service.updateCompany(
-        oldCode: _currentCompanyCode!,
-        newCode: _editCodeController.text.trim(),
-        newName: _editNameController.text.trim(),
-      );
-      if (mounted) {
-        _showSnackBar('✅ تم تعديل الشركة بنجاح',
-            AppTheme.successStrongFor(context));
-        Navigator.pop(context);
-      }
-    } catch (e) {
-      if (mounted) {
-        _showSnackBar(e.toString(), AppTheme.dangerStrongFor(context));
-      }
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
-});
-}
-
-  Future<void> _deleteCompany(String code) async {
-return CachePartitions.run(() async {
-
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('حذف الشركة',
-            style: TextStyle(fontFamily: 'Cairo')),
-        content: Text(
-            'هل أنت متأكد من حذف شركة "$code"؟\nسيتم حذف جميع بياناتها بالكامل.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('إلغاء')),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.dangerStrongFor(context)),
-            child: Text('حذف',
-                style: TextStyle(color: Theme.of(context).colorScheme.onPrimary)),
-          ),
-        ],
-      ),
-    );
-    if (confirm != true) return;
-
-    setState(() => _isLoading = true);
-    try {
-      await _service.deleteCompany(code: code);
-      if (mounted) {
-        _showSnackBar('🗑️ تم حذف الشركة بنجاح',
-            AppTheme.warningOrangeFor(context));
-      }
-    } catch (e) {
-      if (mounted) {
-        _showSnackBar(e.toString(), AppTheme.dangerStrongFor(context));
-      }
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
-});
-}
-
-  Future<void> _toggleCompany(String code, bool currentStatus) async {
-return CachePartitions.run(() async {
-
-    setState(() => _isLoading = true);
-    try {
-      await _service.toggleCompanyStatus(
-          code: code, isActive: !currentStatus);
-      if (mounted) {
-        _showSnackBar(
-          !currentStatus ? '✅ تم تفعيل الشركة' : '⛔ تم إيقاف الشركة',
-          AppTheme.warningOrangeFor(context),
+    return CachePartitions.run(() async {
+      if (!_formKey.currentState!.validate()) return;
+      setState(() => _isLoading = true);
+      try {
+        await _service.addCompany(
+          code: _codeController.text.trim(),
+          name: _nameController.text.trim(),
         );
+        _codeController.clear();
+        _nameController.clear();
+        if (mounted) {
+          _showSnackBar(
+              '✅ تم إضافة الشركة بنجاح', AppTheme.successStrongFor(context));
+          Navigator.pop(context);
+        }
+      } catch (e) {
+        if (mounted) {
+          _showSnackBar(e.toString(), AppTheme.dangerStrongFor(context));
+        }
+      } finally {
+        if (mounted) setState(() => _isLoading = false);
       }
-    } catch (e) {
-      if (mounted) {
-        _showSnackBar(e.toString(), AppTheme.dangerStrongFor(context));
-      }
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
-});
-}
+    });
+  }
 
+  // يعدّل بيانات الشركة
+  Future<void> _updateCompany() async {
+    return CachePartitions.run(() async {
+      if (!_editFormKey.currentState!.validate()) return;
+      setState(() => _isLoading = true);
+      try {
+        await _service.updateCompany(
+          oldCode: _currentCompanyCode!,
+          newCode: _editCodeController.text.trim(),
+          newName: _editNameController.text.trim(),
+        );
+        if (mounted) {
+          _showSnackBar(
+              '✅ تم تعديل الشركة بنجاح', AppTheme.successStrongFor(context));
+          Navigator.pop(context);
+        }
+      } catch (e) {
+        if (mounted) {
+          _showSnackBar(e.toString(), AppTheme.dangerStrongFor(context));
+        }
+      } finally {
+        if (mounted) setState(() => _isLoading = false);
+      }
+    });
+  }
+
+  // يحذف شركة
+  Future<void> _deleteCompany(String code) async {
+    return CachePartitions.run(() async {
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title:
+              const Text('حذف الشركة', style: TextStyle(fontFamily: 'Cairo')),
+          content: Text(
+              'هل أنت متأكد من حذف شركة "$code"؟\nسيتم حذف جميع بياناتها بالكامل.'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('إلغاء')),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.dangerStrongFor(context)),
+              child: Text('حذف',
+                  style: TextStyle(
+                      color: Theme.of(context).colorScheme.onPrimary)),
+            ),
+          ],
+        ),
+      );
+      if (confirm != true) return;
+
+      setState(() => _isLoading = true);
+      try {
+        await _service.deleteCompany(code: code);
+        if (mounted) {
+          _showSnackBar(
+              '🗑️ تم حذف الشركة بنجاح', AppTheme.warningOrangeFor(context));
+        }
+      } catch (e) {
+        if (mounted) {
+          _showSnackBar(e.toString(), AppTheme.dangerStrongFor(context));
+        }
+      } finally {
+        if (mounted) setState(() => _isLoading = false);
+      }
+    });
+  }
+
+  // يبدّل حالة تفعيل الشركة
+  Future<void> _toggleCompany(String code, bool currentStatus) async {
+    return CachePartitions.run(() async {
+      setState(() => _isLoading = true);
+      try {
+        await _service.toggleCompanyStatus(
+            code: code, isActive: !currentStatus);
+        if (mounted) {
+          _showSnackBar(
+            !currentStatus ? '✅ تم تفعيل الشركة' : '⛔ تم إيقاف الشركة',
+            AppTheme.warningOrangeFor(context),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          _showSnackBar(e.toString(), AppTheme.dangerStrongFor(context));
+        }
+      } finally {
+        if (mounted) setState(() => _isLoading = false);
+      }
+    });
+  }
+
+  // يعرض نافذة إضافة شركة
   void _showAddCompanyDialog() {
     _codeController.clear();
     _nameController.clear();
@@ -209,31 +219,27 @@ return CachePartitions.run(() async {
                 controller: _codeController,
                 decoration:
                     const InputDecoration(labelText: 'كود الشركة (مثال: 02)'),
-                validator: (v) =>
-                    v!.trim().isEmpty ? 'مطلوب' : null,
+                validator: (v) => v!.trim().isEmpty ? 'مطلوب' : null,
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _nameController,
-                decoration:
-                    const InputDecoration(labelText: 'اسم الشركة'),
-                validator: (v) =>
-                    v!.trim().isEmpty ? 'مطلوب' : null,
+                decoration: const InputDecoration(labelText: 'اسم الشركة'),
+                validator: (v) => v!.trim().isEmpty ? 'مطلوب' : null,
               ),
             ],
           ),
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('إلغاء')),
-          ElevatedButton(
-              onPressed: _addCompany, child: const Text('حفظ')),
+              onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+          ElevatedButton(onPressed: _addCompany, child: const Text('حفظ')),
         ],
       ),
     );
   }
 
+  // يعرض نافذة تعديل شركة
   void _showEditCompanyDialog(String code, String name) {
     _currentCompanyCode = code;
     _editCodeController.text = code;
@@ -242,8 +248,8 @@ return CachePartitions.run(() async {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('تعديل الشركة',
-            style: TextStyle(fontFamily: 'Cairo')),
+        title:
+            const Text('تعديل الشركة', style: TextStyle(fontFamily: 'Cairo')),
         content: Form(
           key: _editFormKey,
           child: Column(
@@ -251,29 +257,22 @@ return CachePartitions.run(() async {
             children: [
               TextFormField(
                 controller: _editCodeController,
-                decoration:
-                    const InputDecoration(labelText: 'كود الشركة'),
-                validator: (v) =>
-                    v!.trim().isEmpty ? 'مطلوب' : null,
+                decoration: const InputDecoration(labelText: 'كود الشركة'),
+                validator: (v) => v!.trim().isEmpty ? 'مطلوب' : null,
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _editNameController,
-                decoration:
-                    const InputDecoration(labelText: 'اسم الشركة'),
-                validator: (v) =>
-                    v!.trim().isEmpty ? 'مطلوب' : null,
+                decoration: const InputDecoration(labelText: 'اسم الشركة'),
+                validator: (v) => v!.trim().isEmpty ? 'مطلوب' : null,
               ),
             ],
           ),
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('إلغاء')),
-          ElevatedButton(
-              onPressed: _updateCompany,
-              child: const Text('تحديث')),
+              onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+          ElevatedButton(onPressed: _updateCompany, child: const Text('تحديث')),
           const SizedBox(width: 8),
           ElevatedButton(
             onPressed: () {
@@ -291,12 +290,14 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يعرض رسالة سريعة بالنص واللون المحددين
   void _showSnackBar(String msg, Color color) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(msg), backgroundColor: color),
     );
   }
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     // ⭐ حماية: السوبر أدمن فقط
@@ -367,8 +368,7 @@ return CachePartitions.run(() async {
                       onPressed: _isLoading ? null : _showAddCompanyDialog,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppTheme.accentDeep,
-                        padding:
-                            const EdgeInsets.symmetric(vertical: 14),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
@@ -401,11 +401,11 @@ return CachePartitions.run(() async {
                                 final company = companies[index];
                                 final code = company['code']?.toString() ?? '';
                                 final name = company['name']?.toString() ?? '';
-                                final isActive =
-                                    company['is_active'] != false;
+                                final isActive = company['is_active'] != false;
 
                                 return GestureDetector(
-                                  onTap: () => _showEditCompanyDialog(code, name),
+                                  onTap: () =>
+                                      _showEditCompanyDialog(code, name),
                                   child: GlassCard(
                                     margin: const EdgeInsets.only(bottom: 12),
                                     child: ListTile(
@@ -418,7 +418,8 @@ return CachePartitions.run(() async {
                                       title: Text(
                                         name,
                                         style: TextStyle(
-                                            color: AppTheme.textMainFor(context)),
+                                            color:
+                                                AppTheme.textMainFor(context)),
                                       ),
                                       subtitle: Text(
                                         isActive ? '🟢 نشطة' : '🔴 موقوفة',
@@ -428,17 +429,36 @@ return CachePartitions.run(() async {
                                               : AppTheme.dangerFor(context),
                                         ),
                                       ),
-                                      trailing: Row(mainAxisSize: MainAxisSize.min,children:[
-                                        IconButton(tooltip:'مراجعة صلاحيات الشركة',icon:const Icon(Icons.admin_panel_settings_outlined),onPressed:_isLoading?null:()=>Navigator.push(context,MaterialPageRoute(builder:(_)=>CompanyPolicyReviewPage(companyCode:code,companyName:name)))),
-                                        Switch(
-                                        value: isActive,
-                                        onChanged: _isLoading
-                                            ? null
-                                            : (_) =>
-                                                _toggleCompany(code, isActive),
-                                        activeThumbColor:
-                                            AppTheme.successStrongFor(context),
-                                      )]),
+                                      trailing: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            IconButton(
+                                                tooltip:
+                                                    'مراجعة صلاحيات الشركة',
+                                                icon: const Icon(Icons
+                                                    .admin_panel_settings_outlined),
+                                                onPressed: _isLoading
+                                                    ? null
+                                                    : () => Navigator.push(
+                                                        context,
+                                                        MaterialPageRoute(
+                                                            builder: (_) =>
+                                                                CompanyPolicyReviewPage(
+                                                                    companyCode:
+                                                                        code,
+                                                                    companyName:
+                                                                        name)))),
+                                            Switch(
+                                              value: isActive,
+                                              onChanged: _isLoading
+                                                  ? null
+                                                  : (_) => _toggleCompany(
+                                                      code, isActive),
+                                              activeThumbColor:
+                                                  AppTheme.successStrongFor(
+                                                      context),
+                                            )
+                                          ]),
                                     ),
                                   ),
                                 );
@@ -455,6 +475,7 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     PermissionsService().removeListener(_scopeChanged);

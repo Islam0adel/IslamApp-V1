@@ -1,3 +1,4 @@
+# backend/app/routes/supplier_settlement.py
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
@@ -15,19 +16,21 @@ from typing import Optional
 import datetime
 import logging
 
-
+# راوتر تسويات الموردين
 router = APIRouter()
 
 
 _CATEGORY = "تسويات الموردين"
 
 
+# يتأكد إن المستخدم عنده أي صلاحية من المفاتيح المطلوبة
 def _require_any(request: Request, keys):
     return require_any_section_permission(
         request, [(_CATEGORY, key) for key in keys]
     )
 
 
+# يتحقق إن الفرع مسموح للمستخدم
 def _check_branch(profile: dict, branch_code) -> None:
     allowed = allowed_branches_for_profile(profile)
     if allowed and branch_code and str(branch_code) not in allowed:
@@ -35,6 +38,9 @@ def _check_branch(profile: dict, branch_code) -> None:
             status_code=403,
             detail="ليس لديك صلاحية على هذا الفرع",
         )
+
+
+# ضبط تسجيل الأحداث (logger) للملف
 logger = logging.getLogger(__name__)
 
 
@@ -42,6 +48,8 @@ logger = logging.getLogger(__name__)
 # Helper
 # ============================================================
 
+
+# يحوّل التسوية إلى JSON
 def serialize_settlement(
     doc: SupplierSettlementRecord,
     action: str | None = None,
@@ -77,6 +85,8 @@ def serialize_settlement(
 # 1. حفظ / تعديل تسوية
 # ============================================================
 
+
+# مسار حفظ تسوية مورد (إضافة أو تعديل)
 @router.post("/save")
 async def save_settlement(
     request: Request,
@@ -355,6 +365,8 @@ async def save_settlement(
 # 2. جلب التسويات
 # ============================================================
 
+
+# مسار قائمة تسويات الموردين
 @router.get("/list/{company_code}")
 async def list_settlements(
     request: Request,
@@ -435,6 +447,8 @@ async def list_settlements(
 # 3. المزامنة التزايدية
 # ============================================================
 
+
+# مسار فيد v2 لتغييرات التسويات (تجريبي)
 @router.get("/changes-v2/{company_code}")
 async def get_settlement_changes_v2(
     request: Request,
@@ -476,6 +490,7 @@ async def get_settlement_changes_v2(
     return out
 
 
+# مسار التغييرات منذ آخر مزامنة للتسويات
 @router.get("/changes/{company_code}")
 async def get_settlement_changes(
     request: Request,
@@ -560,6 +575,8 @@ async def get_settlement_changes(
 # 4. حذف تسوية
 # ============================================================
 
+
+# مسار حذف تسوية مورد
 @router.delete("/delete/{company_code}/{doc_id}")
 async def delete_settlement(
     request: Request,

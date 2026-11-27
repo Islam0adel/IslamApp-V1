@@ -1,5 +1,8 @@
+// frontend/lib/services/employee_identity.dart
 // Explicit employee/account links. A UID is authoritative when present.
+// فئة مطابقة هوية الموظف مع صفوف البيانات
 class EmployeeIdentity {
+  // يحدد هل الصف يخص المستخدم والبريد المحددين
   static bool matches(Map row, {required String uid, required String email}) {
     if (row['is_deleted'] == true) return false;
     final linkedUid = (row['user_uid'] ?? '').toString();
@@ -9,6 +12,7 @@ class EmployeeIdentity {
     return email.trim().isNotEmpty && linkedEmail == email.trim().toLowerCase();
   }
 
+  // يستخرج كود الموظف من الصفوف المطابقة
   static String? resolveCode(Iterable rows,
       {required String uid, required String email}) {
     final active = rows

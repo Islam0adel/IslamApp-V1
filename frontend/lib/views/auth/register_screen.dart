@@ -1,3 +1,4 @@
+// frontend/lib/views/auth/register_screen.dart
 // import '../../core/theme.dart';
 // import 'package:flutter/material.dart';
 // import '../../views/widgets/glass_card.dart';

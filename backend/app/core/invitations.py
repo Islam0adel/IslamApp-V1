@@ -1,3 +1,4 @@
+# backend/app/core/invitations.py
 """Create an invitation or approve an application as one source transaction.
 
 Current SQL policy/company/branch locks cover the source commit. Identifier
@@ -15,6 +16,7 @@ from app.core.account_management import ACTIONS
 from app.core.company_policy_store import policy_profile
 
 
+# ينشئ دعوة مستخدم جديد بالدور والفروع بعد التحقق من صلاحيات المنفذ
 async def create_invitation(session, source, actor, data, resolver, role_codes, role_titles,
                             legacy_defaults, validate_username, request_id=None):
     _, initial, role = await asyncio.to_thread(verified_actor, source, actor, resolver)
@@ -22,27 +24,33 @@ async def create_invitation(session, source, actor, data, resolver, role_codes, 
     if request_id is not None:
         valid_id(request_id)
         snapshot = await asyncio.to_thread(source.collection('registration_requests').document(request_id).get)
-        if not snapshot.exists: raise HTTPException(status_code=404, detail='الطلب غير موجود')
+        if not snapshot.exists:
+            raise HTTPException(status_code=404, detail='الطلب غير موجود')
         request_value = snapshot.to_dict() or {}
     requested_company = str((request_value or {}).get('company_code') or data.company_code or '').strip()
     code = requested_company if role == 'super_admin' else str(initial.get('company_code', ''))
-    if not code: raise HTTPException(status_code=400, detail='اختر الشركة')
+    if not code:
+        raise HTTPException(status_code=400, detail='اختر الشركة')
     action = 'approve' if request_id else 'add'
     company, configuration, _ = await authority._locked_policy(session, code, allow_initial_review=role == 'super_admin')
     if not allowed(initial, role, configuration, ACTIONS[action]):
         raise HTTPException(status_code=403, detail='لا توجد صلاحية لتنفيذ الإجراء')
-    branches = set(await company_branch_catalog(session,code,lock=True))
+    branches = set(await company_branch_catalog(session, code, lock=True))
 
+    # دالة داخلية تنفّذ إنشاء الدعوة داخل معاملة
     def mutate(transaction):
         current, role, actor_email, actor_uid = current_actor(source, actor, resolver, configuration, company, action, transaction)
-        if not company.is_active: raise HTTPException(status_code=403, detail='الشركة موقوفة')
+        if not company.is_active:
+            raise HTTPException(status_code=403, detail='الشركة موقوفة')
         application_ref, application = None, None
         if request_id:
             application_ref = source.collection('registration_requests').document(request_id)
             snapshot = application_ref.get(transaction=transaction)
             application = snapshot.to_dict() if snapshot.exists else None
-            if not isinstance(application, dict): raise HTTPException(status_code=404, detail='الطلب غير موجود')
-            if application.get('status') != 'pending': raise HTTPException(status_code=409, detail='تمت مراجعة الطلب بالفعل')
+            if not isinstance(application, dict):
+                raise HTTPException(status_code=404, detail='الطلب غير موجود')
+            if application.get('status') != 'pending':
+                raise HTTPException(status_code=409, detail='تمت مراجعة الطلب بالفعل')
             application_company = str(application.get('company_code') or '').strip()
             if (application_company and application_company != code) or (role != 'super_admin' and application_company != code):
                 raise HTTPException(status_code=403, detail='الطلب غير مرتبط بهذه الشركة')
@@ -60,9 +68,11 @@ async def create_invitation(session, source, actor, data, resolver, role_codes, 
         if phone and not re.fullmatch(r'[0-9]{8,15}', phone):
             raise HTTPException(status_code=400, detail='رقم الموبايل غير صحيح')
         username = '' if application is not None else str(data.username or '').strip().lower()
-        if username: username = validate_username(username)
+        if username:
+            username = validate_username(username)
         branch = str(data.branch_code or '').strip()
-        if branch in ('all', '', 'الكل', 'كل الفروع'): branch = ''
+        if branch in ('all', '', 'الكل', 'كل الفروع'):
+            branch = ''
         if branch and branch not in branches:
             raise HTTPException(status_code=400, detail='الفرع غير موجود في الشركة')
         assigned = [branch] if branch else ['all']
@@ -73,7 +83,8 @@ async def create_invitation(session, source, actor, data, resolver, role_codes, 
         users = source.collection('users')
         # Read exact legacy keys and all matching identifiers before any write.
         ids = {email, 'email_' + email.replace('@', '_at_').replace('/', '_')}
-        if phone: ids.add('phone_' + phone)
+        if phone:
+            ids.add('phone_' + phone)
         for key in ids:
             if users.document(key).get(transaction=transaction).exists:
                 raise HTTPException(status_code=409, detail='يوجد حساب بنفس بيانات الدعوة')
@@ -88,8 +99,10 @@ async def create_invitation(session, source, actor, data, resolver, role_codes, 
             'email_verified': False, 'requires_email_verification': True,
             'invitation_version': 1,
             'created_by_admin': actor_email, 'created_by_uid': actor_uid, 'created_at': firestore.SERVER_TIMESTAMP}
-        if username: value['username'] = username
-        if request_id: value['from_registration_request'] = request_id
+        if username:
+            value['username'] = username
+        if request_id:
+            value['from_registration_request'] = request_id
         ref = users.document(email)
         transaction.set(ref, value)
         if application_ref is not None:

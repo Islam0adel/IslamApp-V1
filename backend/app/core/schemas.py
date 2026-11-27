@@ -1,3 +1,4 @@
+# backend/app/core/schemas.py
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -7,6 +8,8 @@ from datetime import datetime
 # التكويد
 # ============================================================
 
+
+# نموذج بيانات سجل الكودنج
 class CodingModel(BaseModel):
     company_code: str
     category: str
@@ -32,6 +35,8 @@ class CodingModel(BaseModel):
 # اليوميات
 # ============================================================
 
+
+# نموذج بيانات معاملة اليومية
 class TransactionModel(BaseModel):
     company_code: str
     serial: int
@@ -62,6 +67,8 @@ class TransactionModel(BaseModel):
 # يستخدمه الـBackend في changes / WebSocket.
 # ============================================================
 
+
+# نموذج مزامنة معاملة اليومية (استجابة)
 class TransactionSyncModel(BaseModel):
     id: int
 
@@ -96,6 +103,8 @@ class TransactionSyncModel(BaseModel):
 # الجرد
 # ============================================================
 
+
+# نموذج صنف داخل المخزون
 class InventoryItemModel(BaseModel):
     code: str
     name: str
@@ -109,6 +118,7 @@ class InventoryItemModel(BaseModel):
     retailValue: float
 
 
+# نموذج حفظ سجل مخزون
 class InventoryModel(BaseModel):
     company_code: str
     branch_code: str
@@ -135,6 +145,8 @@ class InventoryModel(BaseModel):
 # نموذج استجابة/مزامنة الجرد
 # ============================================================
 
+
+# نموذج مزامنة سجل المخزون
 class InventorySyncModel(BaseModel):
     id: int
 
@@ -167,6 +179,8 @@ class InventorySyncModel(BaseModel):
 # الموردين
 # ============================================================
 
+
+# نموذج صنف داخل معاملة مورد
 class SupplierItemModel(BaseModel):
     code: str
     name: str
@@ -182,6 +196,7 @@ class SupplierItemModel(BaseModel):
     total: float
 
 
+# نموذج حفظ معاملة مورد
 class SupplierTransactionModel(BaseModel):
     company_code: str
     branch_code: str
@@ -212,6 +227,8 @@ class SupplierTransactionModel(BaseModel):
 # تسويات الموردين
 # ============================================================
 
+
+# نموذج حفظ تسوية مورد
 class SupplierSettlementModel(BaseModel):
     company_code: str
     branch_code: str
@@ -236,6 +253,7 @@ class SupplierSettlementModel(BaseModel):
     unlink_daily: bool = False
 
 
+# نموذج مزامنة تسوية المورد
 class SupplierSettlementSyncModel(BaseModel):
     id: int
 
@@ -267,6 +285,8 @@ class SupplierSettlementSyncModel(BaseModel):
 # نموذج استجابة/مزامنة الموردين
 # ============================================================
 
+
+# نموذج مزامنة سجل المورد
 class SupplierSyncModel(BaseModel):
     id: int
 
@@ -305,6 +325,8 @@ class SupplierSyncModel(BaseModel):
 # نموذج التكويد للمزامنة
 # ============================================================
 
+
+# نموذج مزامنة سجل الكودنج
 class CodingSyncModel(BaseModel):
     id: int
 
@@ -337,6 +359,8 @@ class CodingSyncModel(BaseModel):
 # نماذج إضافية للصلاحيات
 # ============================================================
 
+
+# نموذج تحديث صلاحيات مستخدم
 class PermissionsUpdateModel(BaseModel):
     email: str
 
@@ -350,6 +374,7 @@ class PermissionsUpdateModel(BaseModel):
     ] = None
 
 
+# نموذج فاتورة مبيعات
 class SaleModel(BaseModel):
     id: str
     company_code: str
@@ -372,6 +397,7 @@ class SaleModel(BaseModel):
     base_updated_at: Optional[str] = None
 
 
+# نموذج مرتجع مبيعات
 class SaleReturnModel(BaseModel):
     id: str
     company_code: str
@@ -393,6 +419,7 @@ class SaleReturnModel(BaseModel):
     base_updated_at: Optional[str] = None
 
 
+# نموذج دفعة عميل
 class CustomerPaymentModel(BaseModel):
     id: str
     company_code: str
@@ -408,6 +435,7 @@ class CustomerPaymentModel(BaseModel):
     base_updated_at: Optional[str] = None
 
 
+# نموذج تحويل مخزني
 class StockTransferModel(BaseModel):
     id: str
     company_code: str
@@ -427,11 +455,14 @@ class StockTransferModel(BaseModel):
 # نماذج إضافية للشركات
 # ============================================================
 
+
+# نموذج إنشاء شركة
 class CompanyModel(BaseModel):
     code: str
     name: str
 
 
+# نموذج تعديل بيانات شركة (كودها القديم والجديد)
 class CompanyUpdateModel(BaseModel):
     old_code: str
 
@@ -445,6 +476,8 @@ class CompanyUpdateModel(BaseModel):
 # الموظفين (Employees)
 # ============================================================
 
+
+# نموذج حفظ موظف
 class EmployeeModel(BaseModel):
     """
     نموذج حفظ/تعديل الموظف
@@ -485,6 +518,7 @@ class EmployeeModel(BaseModel):
     meta: Optional[Dict[str, Any]] = None
 
 
+# نموذج مزامنة موظف
 class EmployeeSyncModel(BaseModel):
     """
     نموذج استجابة/مزامنة الموظف
@@ -530,6 +564,8 @@ class EmployeeSyncModel(BaseModel):
 # الموارد البشرية (HR)
 # ============================================================
 
+
+# نموذج حفظ أو تعديل حضور
 class HRAttendanceModel(BaseModel):
     """نموذج حفظ/تعديل الحضور"""
     company_code: str
@@ -548,6 +584,7 @@ class HRAttendanceModel(BaseModel):
     notes: Optional[str] = None
 
 
+# نموذج استجابة ومزامنة الحضور
 class HRAttendanceSyncModel(BaseModel):
     """نموذج استجابة/مزامنة الحضور"""
     id: int
@@ -572,6 +609,7 @@ class HRAttendanceSyncModel(BaseModel):
     action: Optional[str] = None
 
 
+# نموذج حفظ أو تعديل إجازة
 class HRVacationModel(BaseModel):
     """نموذج حفظ/تعديل إجازة"""
     company_code: str
@@ -582,6 +620,7 @@ class HRVacationModel(BaseModel):
     type: Optional[str] = "official"        # official / weekly
 
 
+# نموذج استجابة ومزامنة الإجازة
 class HRVacationSyncModel(BaseModel):
     """نموذج استجابة/مزامنة إجازة"""
     id: int
@@ -598,6 +637,7 @@ class HRVacationSyncModel(BaseModel):
     action: Optional[str] = None
 
 
+# نموذج حفظ أو تعديل تسوية مالية
 class HRAdjustmentModel(BaseModel):
     """نموذج حفظ/تعديل تسوية مالية"""
     company_code: str
@@ -612,6 +652,7 @@ class HRAdjustmentModel(BaseModel):
     status: Optional[str] = "approved"
 
 
+# نموذج استجابة ومزامنة التسوية
 class HRAdjustmentSyncModel(BaseModel):
     """نموذج استجابة/مزامنة تسوية"""
     id: int
@@ -632,6 +673,7 @@ class HRAdjustmentSyncModel(BaseModel):
     action: Optional[str] = None
 
 
+# نموذج إعدادات الموارد البشرية للشركة
 class HRSettingsModel(BaseModel):
     """نموذج إعدادات HR"""
     company_code: str
@@ -646,6 +688,8 @@ class HRSettingsModel(BaseModel):
 # تقرير الراتب الشهري (Response)
 # ============================================================
 
+
+# بند واحد في كشف الراتب
 class HRAdjustmentLine(BaseModel):
     """بند واحد في كشف الراتب"""
     type: str  # base / bonus / deduction / loan / overtime / absence / late
@@ -653,6 +697,7 @@ class HRAdjustmentLine(BaseModel):
     amount: float
 
 
+# نموذج تقرير الراتب الشهري الكامل
 class HRSalaryReportModel(BaseModel):
     """تقرير راتب شهري كامل"""
     company_code: str
@@ -692,6 +737,8 @@ class HRSalaryReportModel(BaseModel):
 # إعدادات الموظف HR
 # ============================================================
 
+
+# نموذج إعدادات الموارد البشرية لموظف
 class HREmployeeSettingsModel(BaseModel):
     company_code: str
     employee_code: str
@@ -700,12 +747,13 @@ class HREmployeeSettingsModel(BaseModel):
     default_check_out: Optional[str] = "17:00"
     flexible_hours: Optional[bool] = False
     delay_rules: Optional[Dict[str, float]] = None
-    use_fixed_month_days: Optional[bool] = True  
+    use_fixed_month_days: Optional[bool] = True
 
 
 # ============================================================
 # FCM Device Registration
 # ============================================================
+# نموذج تسجيل جهاز لإشعارات النظام
 class FcmDeviceModel(BaseModel):
     """تسجيل جهاز لإشعارات النظام"""
     fcm_token: str

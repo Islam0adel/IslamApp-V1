@@ -1,6 +1,6 @@
+// frontend/lib/services/supplier_settlement_service.dart
 import 'cache_partitions.dart';
 import 'journal_cache.dart';
-// lib/services/supplier_settlement_service.dart
 
 import 'dart:convert';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -13,16 +13,21 @@ import 'read_authorization_snapshot.dart';
 import 'staged_changes.dart';
 import 'sync_read_access.dart';
 
+// خدمة تسويات الموردين: تحفظ التسويات محليًا وتزامنها مع الخادم
 class SupplierSettlementService {
   final String baseUrl = ApiConstants.baseUrl;
+
+  // يعيد صندوق التسويات المحلي
   Box get _box => CachePartitions.box('supplier_settlement_box');
 
+  // ينشئ معرّف ربط جديدًا للتسوية
   String newLinkId() => 'supplier-${DateTime.now().microsecondsSinceEpoch}';
 
   // ============================================================
   // هل الفرع = كل الفروع؟
   // ============================================================
 
+  // يحدد هل المقصود كل الفروع
   bool _isAllBranches(String? branchCode) =>
       branchCode == null ||
       branchCode.isEmpty ||
@@ -36,41 +41,41 @@ class SupplierSettlementService {
   // لو الفرع = all يتم حساب كل الفروع.
   // ============================================================
 
+  // يحسب إجمالي تسويات المورد
   Future<double> getSupplierSettlementTotal(
     String companyCode,
     String branchCode,
     String supplierName,
   ) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      double total = 0.0;
 
-    double total = 0.0;
+      for (final key in _box.keys) {
+        final raw = _box.get(key);
+        if (raw is! List) continue;
 
-    for (final key in _box.keys) {
-      final raw = _box.get(key);
-      if (raw is! List) continue;
+        for (final item in raw) {
+          final map = _toMap(item);
 
-      for (final item in raw) {
-        final map = _toMap(item);
+          if (map.isEmpty || map['is_deleted'] == true) continue;
+          if (map['company_code']?.toString() != companyCode) continue;
 
-        if (map.isEmpty || map['is_deleted'] == true) continue;
-        if (map['company_code']?.toString() != companyCode) continue;
+          if (!_isAllBranches(branchCode) &&
+              map['branch_code']?.toString() != branchCode) {
+            continue;
+          }
 
-        if (!_isAllBranches(branchCode) &&
-            map['branch_code']?.toString() != branchCode) {
-          continue;
+          if (map['supplier_name']?.toString() != supplierName) {
+            continue;
+          }
+
+          total += _toDouble(map['amount']);
         }
-
-        if (map['supplier_name']?.toString() != supplierName) {
-          continue;
-        }
-
-        total += _toDouble(map['amount']);
       }
-    }
 
-    return total;
-});
-}
+      return total;
+    });
+  }
 
   // ============================================================
   // السيريال التالي
@@ -80,208 +85,9 @@ return CachePartitions.run(() async {
 
   // lib/services/supplier_settlement_service.dart
 
-int _getNextSerial(String companyCode, String branchCode) {
-  int maxSerial = 0;
-
-  for (final key in _box.keys) {
-    final raw = _box.get(key);
-    if (raw is! List) continue;
-
-    for (final item in raw) {
-      final map = _toMap(item);
-      if (map.isEmpty) continue; // تشمل السجلات المحذوفة
-
-      if (map['company_code']?.toString() != companyCode ||
-          map['branch_code']?.toString() != branchCode) {
-        continue;
-      }
-
-      final serial = _toInt(map['serial']);
-      if (serial > maxSerial) maxSerial = serial;
-    }
-  }
-
-  return maxSerial + 1;
-}
-
-  // ============================================================
-  // حفظ تسوية
-  // ============================================================
-
-  Future<Map<String, dynamic>> saveSettlement(
-    SupplierSettlementModel model,
-  ) async {
-return CachePartitions.run(() async {
-
-    try {
-      // --------------------------------------------------------
-      // التأكد من رقم الإذن
-      // --------------------------------------------------------
-
-      if (model.serial <= 0) {
-        model.serial = _getNextSerial(
-          model.companyCode,
-          model.branchCode,
-        );
-      }
-
-      // --------------------------------------------------------
-      // تحديث وقت التعديل
-      // --------------------------------------------------------
-
-      model.updatedAt = DateTime.now();
-
-      // --------------------------------------------------------
-      // إرسال للسيرفر
-      // --------------------------------------------------------
-
-      final response = await AuthHttp.post(
-        Uri.parse('$baseUrl/supplier-settlement/save'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(model.toMap()),
-      );
-
-      if (response.statusCode != 200) {
-        return {
-          'success': false,
-          'error':
-              'HTTP ${response.statusCode}: ${response.body}',
-        };
-      }
-
-      final result = jsonDecode(response.body)
-          as Map<String, dynamic>;
-
-      final docId = result['doc_id']?.toString() ?? '';
-
-      if (docId.isEmpty) {
-        return {
-          'success': false,
-          'error': 'السيرفر لم يرجع doc_id',
-        };
-      }
-
-      // --------------------------------------------------------
-      // حفظ doc_id
-      // --------------------------------------------------------
-
-      model.docId = docId;
-
-      // لو السيرفر رجع serial نستخدمه
-      if (result['serial'] is num) {
-        model.serial = (result['serial'] as num).toInt();
-      }
-      if (model.unlinkDaily) model.linkId = null;
-
-      // --------------------------------------------------------
-      // حفظ محلي
-      // --------------------------------------------------------
-
-      await _saveLocal(model);
-
-final linkedRaw = result['linked_transaction'];
-      if (linkedRaw is Map) {
-        final linked = Map<String, dynamic>.from(linkedRaw);
-        final dailyBox = CachePartitions.box('daily_transactions_box');
-        for (final oldKey in dailyBox.keys.toList()) {
-          final old = dailyBox.get(oldKey);
-          if (old is Map && old['company_code']?.toString() == model.companyCode && old['link_id']?.toString() == linked['link_id']?.toString()) {
-            await dailyBox.delete(oldKey);
-          }
-        }
-        if (linked['is_deleted'] != true) {
-          await JournalCache.put(dailyBox, linked, expectedCompany: model.companyCode);
-        }
-
-        final String targetBranch =
-            linked['branch_code']?.toString() ?? model.branchCode;
-        await DailyService().getDailySummaryLocal(
-          model.companyCode,
-          branchCode: targetBranch,
-        );
-        if (!_isAllBranches(targetBranch)) {
-          await DailyService().getDailySummaryLocal(
-            model.companyCode,
-            branchCode: 'all',
-          );
-        }
-      }
-
-      return {
-        'success': true,
-        'doc_id': model.docId,
-        'serial': model.serial,
-        'action':
-            result['action']?.toString() ?? 'insert',
-      };
-    } catch (e) {
-      return {
-        'success': false,
-        'error': e.toString(),
-      };
-    }
-});
-}
-
-  // ============================================================
-  // حفظ محلي
-  // ============================================================
-
-  Future<void> _saveLocal(
-    SupplierSettlementModel model,
-  ) async {
-return CachePartitions.run(() async {
-
-    final key =
-        '${model.companyCode}_${model.branchCode}_${model.date}';
-
-    List<Map<String, dynamic>> list = [];
-
-    final raw = _box.get(key);
-
-    if (raw is List) {
-      list = raw
-          .whereType<Map>()
-          .map(_toMap)
-          .where((e) => e.isNotEmpty && e['is_deleted'] != true)
-          .toList();
-    }
-
-    final item = _toMap(model.toMap());
-
-    item['doc_id'] = model.docId;
-    item['serial'] = model.serial;
-    item['employee'] = model.employee;
-    item['is_deleted'] = false;
-
-    list.removeWhere(
-      (e) =>
-          e['doc_id']?.toString() ==
-          model.docId?.toString(),
-    );
-
-    list.add(item);
-
-    await _box.put(key, list);
-});
-}
-
-  // ============================================================
-  // جلب التسويات
-  //
-  // all = كل الفروع
-  // ============================================================
-
-  Future<List<SupplierSettlementModel>> getSettlements({
-    required String companyCode,
-    String? branchCode,
-    String? supplierName,
-    String? startDate,
-    String? endDate,
-  }) async {
-return CachePartitions.run(() async {
-
-    final List<SupplierSettlementModel> result = [];
+// يحسب الرقم التسلسلي التالي
+  int _getNextSerial(String companyCode, String branchCode) {
+    int maxSerial = 0;
 
     for (final key in _box.keys) {
       final raw = _box.get(key);
@@ -289,258 +95,467 @@ return CachePartitions.run(() async {
 
       for (final item in raw) {
         final map = _toMap(item);
+        if (map.isEmpty) continue; // تشمل السجلات المحذوفة
 
-        if (map.isEmpty || map['is_deleted'] == true) continue;
-        if (map['company_code']?.toString() != companyCode) continue;
-
-        if (!_isAllBranches(branchCode) &&
+        if (map['company_code']?.toString() != companyCode ||
             map['branch_code']?.toString() != branchCode) {
           continue;
         }
 
-        if (supplierName != null &&
-            supplierName.isNotEmpty &&
-            map['supplier_name']?.toString() != supplierName) {
-          continue;
-        }
-
-        final date = map['date']?.toString() ?? '';
-
-        if (startDate != null &&
-            date.compareTo(startDate) < 0) {
-          continue;
-        }
-
-        if (endDate != null &&
-            date.compareTo(endDate) > 0) {
-          continue;
-        }
-
-        try {
-          result.add(
-            SupplierSettlementModel.fromMap(map),
-          );
-        } catch (e) {
-          print(
-            '⚠️ خطأ في تحويل التسوية: $e',
-          );
-        }
+        final serial = _toInt(map['serial']);
+        if (serial > maxSerial) maxSerial = serial;
       }
     }
 
-    result.sort((a, b) {
-      final dateCompare = b.date.compareTo(a.date);
+    return maxSerial + 1;
+  }
 
-      if (dateCompare != 0) return dateCompare;
+  // ============================================================
+  // حفظ تسوية
+  // ============================================================
 
-      return b.serial.compareTo(a.serial);
+  // يحفظ تسوية مورد جديدة أو معدّلة
+  Future<Map<String, dynamic>> saveSettlement(
+    SupplierSettlementModel model,
+  ) async {
+    return CachePartitions.run(() async {
+      try {
+        // --------------------------------------------------------
+        // التأكد من رقم الإذن
+        // --------------------------------------------------------
+
+        if (model.serial <= 0) {
+          model.serial = _getNextSerial(
+            model.companyCode,
+            model.branchCode,
+          );
+        }
+
+        // --------------------------------------------------------
+        // تحديث وقت التعديل
+        // --------------------------------------------------------
+
+        model.updatedAt = DateTime.now();
+
+        // --------------------------------------------------------
+        // إرسال للسيرفر
+        // --------------------------------------------------------
+
+        final response = await AuthHttp.post(
+          Uri.parse('$baseUrl/supplier-settlement/save'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(model.toMap()),
+        );
+
+        if (response.statusCode != 200) {
+          return {
+            'success': false,
+            'error': 'HTTP ${response.statusCode}: ${response.body}',
+          };
+        }
+
+        final result = jsonDecode(response.body) as Map<String, dynamic>;
+
+        final docId = result['doc_id']?.toString() ?? '';
+
+        if (docId.isEmpty) {
+          return {
+            'success': false,
+            'error': 'السيرفر لم يرجع doc_id',
+          };
+        }
+
+        // --------------------------------------------------------
+        // حفظ doc_id
+        // --------------------------------------------------------
+
+        model.docId = docId;
+
+        // لو السيرفر رجع serial نستخدمه
+        if (result['serial'] is num) {
+          model.serial = (result['serial'] as num).toInt();
+        }
+        if (model.unlinkDaily) model.linkId = null;
+
+        // --------------------------------------------------------
+        // حفظ محلي
+        // --------------------------------------------------------
+
+        await _saveLocal(model);
+
+        final linkedRaw = result['linked_transaction'];
+        if (linkedRaw is Map) {
+          final linked = Map<String, dynamic>.from(linkedRaw);
+          final dailyBox = CachePartitions.box('daily_transactions_box');
+          for (final oldKey in dailyBox.keys.toList()) {
+            final old = dailyBox.get(oldKey);
+            if (old is Map &&
+                old['company_code']?.toString() == model.companyCode &&
+                old['link_id']?.toString() == linked['link_id']?.toString()) {
+              await dailyBox.delete(oldKey);
+            }
+          }
+          if (linked['is_deleted'] != true) {
+            await JournalCache.put(dailyBox, linked,
+                expectedCompany: model.companyCode);
+          }
+
+          final String targetBranch =
+              linked['branch_code']?.toString() ?? model.branchCode;
+          await DailyService().getDailySummaryLocal(
+            model.companyCode,
+            branchCode: targetBranch,
+          );
+          if (!_isAllBranches(targetBranch)) {
+            await DailyService().getDailySummaryLocal(
+              model.companyCode,
+              branchCode: 'all',
+            );
+          }
+        }
+
+        return {
+          'success': true,
+          'doc_id': model.docId,
+          'serial': model.serial,
+          'action': result['action']?.toString() ?? 'insert',
+        };
+      } catch (e) {
+        return {
+          'success': false,
+          'error': e.toString(),
+        };
+      }
     });
+  }
 
-    return result;
-});
-}
+  // ============================================================
+  // حفظ محلي
+  // ============================================================
+
+  // يحفظ التسوية في التخزين المحلي
+  Future<void> _saveLocal(
+    SupplierSettlementModel model,
+  ) async {
+    return CachePartitions.run(() async {
+      final key = '${model.companyCode}_${model.branchCode}_${model.date}';
+
+      List<Map<String, dynamic>> list = [];
+
+      final raw = _box.get(key);
+
+      if (raw is List) {
+        list = raw
+            .whereType<Map>()
+            .map(_toMap)
+            .where((e) => e.isNotEmpty && e['is_deleted'] != true)
+            .toList();
+      }
+
+      final item = _toMap(model.toMap());
+
+      item['doc_id'] = model.docId;
+      item['serial'] = model.serial;
+      item['employee'] = model.employee;
+      item['is_deleted'] = false;
+
+      list.removeWhere(
+        (e) => e['doc_id']?.toString() == model.docId?.toString(),
+      );
+
+      list.add(item);
+
+      await _box.put(key, list);
+    });
+  }
+
+  // ============================================================
+  // جلب التسويات
+  //
+  // all = كل الفروع
+  // ============================================================
+
+  // يجلب تسويات الموردين
+  Future<List<SupplierSettlementModel>> getSettlements({
+    required String companyCode,
+    String? branchCode,
+    String? supplierName,
+    String? startDate,
+    String? endDate,
+  }) async {
+    return CachePartitions.run(() async {
+      final List<SupplierSettlementModel> result = [];
+
+      for (final key in _box.keys) {
+        final raw = _box.get(key);
+        if (raw is! List) continue;
+
+        for (final item in raw) {
+          final map = _toMap(item);
+
+          if (map.isEmpty || map['is_deleted'] == true) continue;
+          if (map['company_code']?.toString() != companyCode) continue;
+
+          if (!_isAllBranches(branchCode) &&
+              map['branch_code']?.toString() != branchCode) {
+            continue;
+          }
+
+          if (supplierName != null &&
+              supplierName.isNotEmpty &&
+              map['supplier_name']?.toString() != supplierName) {
+            continue;
+          }
+
+          final date = map['date']?.toString() ?? '';
+
+          if (startDate != null && date.compareTo(startDate) < 0) {
+            continue;
+          }
+
+          if (endDate != null && date.compareTo(endDate) > 0) {
+            continue;
+          }
+
+          try {
+            result.add(
+              SupplierSettlementModel.fromMap(map),
+            );
+          } catch (e) {
+            print(
+              '⚠️ خطأ في تحويل التسوية: $e',
+            );
+          }
+        }
+      }
+
+      result.sort((a, b) {
+        final dateCompare = b.date.compareTo(a.date);
+
+        if (dateCompare != 0) return dateCompare;
+
+        return b.serial.compareTo(a.serial);
+      });
+
+      return result;
+    });
+  }
 
   // ============================================================
   // حذف تسوية
   // ============================================================
 
+  // يحذف تسوية مورد
   Future<bool> deleteSettlement(
-  String companyCode,
-  String docId,
-) async {
-return CachePartitions.run(() async {
+    String companyCode,
+    String docId,
+  ) async {
+    return CachePartitions.run(() async {
+      try {
+        String? linkedDailyId;
+        for (final raw
+            in _box.values.whereType<List>().expand((items) => items)) {
+          if (raw is Map && raw['doc_id']?.toString() == docId) {
+            linkedDailyId = raw['link_id']?.toString();
+            break;
+          }
+        }
+        final response = await AuthHttp.delete(
+          Uri.parse(
+            '$baseUrl/supplier-settlement/delete/'
+            '$companyCode/$docId',
+          ),
+        );
 
-  try {
-    String? linkedDailyId;
-    for (final raw in _box.values.whereType<List>().expand((items) => items)) {
-      if (raw is Map && raw['doc_id']?.toString() == docId) {
-        linkedDailyId = raw['link_id']?.toString();
-        break;
-      }
-    }
-    final response = await AuthHttp.delete(
-      Uri.parse(
-        '$baseUrl/supplier-settlement/delete/'
-        '$companyCode/$docId',
-      ),
-    );
-
-    if (response.statusCode != 200) {
-      print(
-        '❌ فشل حذف التسوية: ${response.statusCode}',
-      );
-      return false;
-    }
-
-    // ============================================================
-    // Soft Delete محلياً
-    // ============================================================
-
-    final keys = _box.keys.toList();
-
-    for (final key in keys) {
-      final raw = _box.get(key);
-      if (raw is! List) continue;
-
-      final List<Map<String, dynamic>> updated = [];
-      bool found = false;
-
-      for (final item in raw) {
-        final map = _toMap(item);
-
-        if (map.isEmpty) continue;
-
-        if (map['doc_id']?.toString() == docId.toString()) {
-          found = true;
-
-          // ✅ نحتفظ به مع علامة محذوف
-          map['is_deleted'] = true;
-          map['updated_at'] = DateTime.now().toUtc().toIso8601String();
-
-          updated.add(map);
-          continue;
+        if (response.statusCode != 200) {
+          print(
+            '❌ فشل حذف التسوية: ${response.statusCode}',
+          );
+          return false;
         }
 
-        if (map['is_deleted'] == true) {
-          continue;
+        // ============================================================
+        // Soft Delete محلياً
+        // ============================================================
+
+        final keys = _box.keys.toList();
+
+        for (final key in keys) {
+          final raw = _box.get(key);
+          if (raw is! List) continue;
+
+          final List<Map<String, dynamic>> updated = [];
+          bool found = false;
+
+          for (final item in raw) {
+            final map = _toMap(item);
+
+            if (map.isEmpty) continue;
+
+            if (map['doc_id']?.toString() == docId.toString()) {
+              found = true;
+
+              // ✅ نحتفظ به مع علامة محذوف
+              map['is_deleted'] = true;
+              map['updated_at'] = DateTime.now().toUtc().toIso8601String();
+
+              updated.add(map);
+              continue;
+            }
+
+            if (map['is_deleted'] == true) {
+              continue;
+            }
+
+            updated.add(map);
+          }
+
+          if (!found) continue;
+
+          if (updated.isEmpty) {
+            await _box.delete(key);
+          } else {
+            await _box.put(key, updated);
+          }
+
+          break;
         }
 
-        updated.add(map);
-      }
-
-      if (!found) continue;
-
-      if (updated.isEmpty) {
-        await _box.delete(key);
-      } else {
-        await _box.put(key, updated);
-      }
-
-      break;
-    }
-
-    if (linkedDailyId != null && linkedDailyId.isNotEmpty) {
-      final dailyBox = CachePartitions.box('daily_transactions_box');
-      for (final key in dailyBox.keys.toList()) {
-        final raw = dailyBox.get(key);
-        if (raw is Map && raw['company_code']?.toString() == companyCode && raw['link_id']?.toString() == linkedDailyId) {
-          await dailyBox.delete(key);
+        if (linkedDailyId != null && linkedDailyId.isNotEmpty) {
+          final dailyBox = CachePartitions.box('daily_transactions_box');
+          for (final key in dailyBox.keys.toList()) {
+            final raw = dailyBox.get(key);
+            if (raw is Map &&
+                raw['company_code']?.toString() == companyCode &&
+                raw['link_id']?.toString() == linkedDailyId) {
+              await dailyBox.delete(key);
+            }
+          }
         }
-      }
-    }
 
-    return true;
-  } catch (e) {
-    print(
-      '❌ خطأ حذف التسوية: $e',
-    );
-    return false;
+        return true;
+      } catch (e) {
+        print(
+          '❌ خطأ حذف التسوية: $e',
+        );
+        return false;
+      }
+    });
   }
-
-});
-}
 
   // ============================================================
   // Full Sync
   // ============================================================
 
+  // يجلب كل تسويات الموردين من الخادم
   Future<void> fetchAllSettlements(
     String companyCode, {
     bool replace = false,
   }) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      final v2Candidate = await _captureV2(companyCode);
 
-    final v2Candidate = await _captureV2(companyCode);
-
-    try {
-      final response = await AuthHttp.get(
-        Uri.parse(
-          '$baseUrl/supplier-settlement/list/$companyCode',
-        ),
-      );
-
-      if (response.statusCode != 200) {
-        throw Exception(
-          'فشل تحميل التسويات: '
-          '${response.statusCode}: '
-          '${response.body}',
-        );
-      }
-
-      final List<dynamic> data =
-          jsonDecode(response.body);
-
-      // --------------------------------------------------------
-      // نضع فقط السجلات النشطة.
-      // --------------------------------------------------------
-
-      final models = <SupplierSettlementModel>[];
-      for (final raw in data) {
-        final map = _toMap(raw);
-
-        if (map.isEmpty || map['is_deleted'] == true) {
-          continue;
-        }
-
-        map['is_deleted'] = false;
-
-        models.add(SupplierSettlementModel.fromMap(map));
-      }
-
-      // Epoch reconcile: replace this company's cached lists with the server copy. The old lists are
-      // kept in memory and put back if a write fails, so a failed reconcile never leaves a half list.
-      final Map<dynamic, dynamic> snapshot = {};
-      if (replace) {
-        final prefix = '${companyCode}_';
-        for (final k in _box.keys.toList()) {
-          if (k.toString().startsWith(prefix)) {
-            snapshot[k] = _box.get(k);
-            await _box.delete(k);
-          }
-        }
-      }
       try {
-        for (final model in models) {
-          await _saveLocal(model);
+        final response = await AuthHttp.get(
+          Uri.parse(
+            '$baseUrl/supplier-settlement/list/$companyCode',
+          ),
+        );
+
+        if (response.statusCode != 200) {
+          throw Exception(
+            'فشل تحميل التسويات: '
+            '${response.statusCode}: '
+            '${response.body}',
+          );
         }
-      } catch (_) {
+
+        final List<dynamic> data = jsonDecode(response.body);
+
+        // --------------------------------------------------------
+        // نضع فقط السجلات النشطة.
+        // --------------------------------------------------------
+
+        final models = <SupplierSettlementModel>[];
+        for (final raw in data) {
+          final map = _toMap(raw);
+
+          if (map.isEmpty || map['is_deleted'] == true) {
+            continue;
+          }
+
+          map['is_deleted'] = false;
+
+          models.add(SupplierSettlementModel.fromMap(map));
+        }
+
+        // Epoch reconcile: replace this company's cached lists with the server copy. The old lists are
+        // kept in memory and put back if a write fails, so a failed reconcile never leaves a half list.
+        final Map<dynamic, dynamic> snapshot = {};
         if (replace) {
+          final prefix = '${companyCode}_';
           for (final k in _box.keys.toList()) {
-            if (k.toString().startsWith('${companyCode}_')) await _box.delete(k);
-          }
-          for (final e in snapshot.entries) {
-            await _box.put(e.key, e.value);
+            if (k.toString().startsWith(prefix)) {
+              snapshot[k] = _box.get(k);
+              await _box.delete(k);
+            }
           }
         }
+        try {
+          for (final model in models) {
+            await _saveLocal(model);
+          }
+        } catch (_) {
+          if (replace) {
+            for (final k in _box.keys.toList()) {
+              if (k.toString().startsWith('${companyCode}_'))
+                await _box.delete(k);
+            }
+            for (final e in snapshot.entries) {
+              await _box.put(e.key, e.value);
+            }
+          }
+          rethrow;
+        }
+
+        print(
+          '✅ تم FULL SYNC للتسويات '
+          '(${data.length} سجل)',
+        );
+        await _commitV2(companyCode, v2Candidate);
+      } catch (e) {
+        print(
+          '❌ فشل FULL SYNC للتسويات: $e',
+        );
         rethrow;
       }
-
-      print(
-        '✅ تم FULL SYNC للتسويات '
-        '(${data.length} سجل)',
-      );
-      await _commitV2(companyCode, v2Candidate);
-    } catch (e) {
-      print(
-        '❌ فشل FULL SYNC للتسويات: $e',
-      );
-      rethrow;
-    }
-});
-}
+    });
+  }
 
   // ============================================================
   // Staged feed (/supplier-settlement/changes-v2) checkpoint + merge
   // ============================================================
 
   static void Function(String company)? onCheckpointChanged;
-  static String v2CursorKey(String c) => '${ApiConstants.LAST_SYNC_SETTLEMENT}${c}_v2';
-  static String v2ScopeKey(String c) => '${ApiConstants.LAST_SYNC_SETTLEMENT}${c}_v2scope';
-  static String v2EpochKey(String c) => '${ApiConstants.LAST_SYNC_SETTLEMENT}${c}_v2epoch';
 
-  Future<({String cursor, String scope, String epoch})?> _captureV2(String company) async {
+  // يعيد مفتاح مؤشر النسخة الثانية للمزامنة
+  static String v2CursorKey(String c) =>
+      '${ApiConstants.LAST_SYNC_SETTLEMENT}${c}_v2';
+
+  // يعيد مفتاح نطاق النسخة الثانية للمزامنة
+  static String v2ScopeKey(String c) =>
+      '${ApiConstants.LAST_SYNC_SETTLEMENT}${c}_v2scope';
+
+  // يعيد مفتاح عهد النسخة الثانية للمزامنة
+  static String v2EpochKey(String c) =>
+      '${ApiConstants.LAST_SYNC_SETTLEMENT}${c}_v2epoch';
+
+  // يلتقط مؤشر المزامنة ونطاقه وعهده قبل الجلب
+  Future<({String cursor, String scope, String epoch})?> _captureV2(
+      String company) async {
     try {
-      final r = await AuthHttp.get(Uri.parse('$baseUrl/supplier-settlement/changes-v2/$company?cursor=latest'))
+      final r = await AuthHttp.get(Uri.parse(
+              '$baseUrl/supplier-settlement/changes-v2/$company?cursor=latest'))
           .timeout(const Duration(seconds: 5));
       if (r.statusCode != 200) return null;
       final m = jsonDecode(r.body);
@@ -550,13 +565,19 @@ return CachePartitions.run(() async {
           m['scope'] is! String ||
           (m['next_cursor'] as String).isEmpty ||
           (m['scope'] as String).isEmpty) return null;
-      return (cursor: m['next_cursor'] as String, scope: m['scope'] as String, epoch: (m['epoch'] ?? '').toString());
+      return (
+        cursor: m['next_cursor'] as String,
+        scope: m['scope'] as String,
+        epoch: (m['epoch'] ?? '').toString()
+      );
     } catch (_) {
       return null;
     }
   }
 
-  Future<void> _commitV2(String company, ({String cursor, String scope, String epoch})? cand) async {
+  // يثبّت المؤشر الملتقط بعد نجاح التطبيق
+  Future<void> _commitV2(String company,
+      ({String cursor, String scope, String epoch})? cand) async {
     if (cand == null) return;
     try {
       final prefs = await CachePartitions.preferences();
@@ -569,7 +590,9 @@ return CachePartitions.run(() async {
     } catch (_) {}
   }
 
-  Future<({String cursor, String scope})?> stagedCheckpoint(String company) async {
+  // يعيد نقطة تحقق للعمل المرحلي للشركة
+  Future<({String cursor, String scope})?> stagedCheckpoint(
+      String company) async {
     try {
       final allowed = SyncReadAccess.allows('settlement');
       final prefs = await CachePartitions.preferences();
@@ -583,6 +606,7 @@ return CachePartitions.run(() async {
     }
   }
 
+  // يطبق دفعة مرحلية واحدة من استجابة التغييرات
   /// Applies one /supplier-settlement/changes-v2 response fetched by the service worker while the app was
   /// closed. Applied only when it continues exactly from the stored cursor and scope, under the
   /// settlement read right held NOW. Returns true when applied.
@@ -606,7 +630,9 @@ return CachePartitions.run(() async {
           final raw = _box.get(key);
           if (raw is! List) continue;
           for (final v in raw) {
-            if (v is Map) localStamp[v['doc_id']?.toString() ?? ''] = StagedChanges.stamp(v['updated_at']);
+            if (v is Map)
+              localStamp[v['doc_id']?.toString() ?? ''] =
+                  StagedChanges.stamp(v['updated_at']);
           }
         }
         final scopeBefore = PermissionsService().effectiveScopeSignature();
@@ -624,18 +650,25 @@ return CachePartitions.run(() async {
           fresh.add(m);
         }
         if (fresh.isNotEmpty) {
-          if (!SyncReadAccess.allows('settlement') || epoch != ReadAuthorizationEpoch.value) return false;
+          if (!SyncReadAccess.allows('settlement') ||
+              epoch != ReadAuthorizationEpoch.value) return false;
           await _applyChanges(company, fresh);
         }
         if (!SyncReadAccess.allows('settlement') ||
             PermissionsService().effectiveScopeSignature() != scopeBefore) {
           // Scope (rights, branches, role, policy) moved while writing: take back this batch's rows.
-          final written = {for (final m in fresh) if (m['action'] != 'delete') m['doc_id']?.toString()};
+          final written = {
+            for (final m in fresh)
+              if (m['action'] != 'delete') m['doc_id']?.toString()
+          };
           if (written.isNotEmpty) {
             for (final key in _box.keys.toList()) {
               final raw = _box.get(key);
               if (raw is! List) continue;
-              final keep = raw.where((e) => !(e is Map && written.contains(e['doc_id']?.toString()))).toList();
+              final keep = raw
+                  .where((e) =>
+                      !(e is Map && written.contains(e['doc_id']?.toString())))
+                  .toList();
               if (keep.length == raw.length) continue;
               if (keep.isEmpty) {
                 await _box.delete(key);
@@ -646,7 +679,8 @@ return CachePartitions.run(() async {
           }
           return false;
         }
-        await prefs.setString(v2CursorKey(company), decoded['next_cursor'] as String);
+        await prefs.setString(
+            v2CursorKey(company), decoded['next_cursor'] as String);
         try {
           onCheckpointChanged?.call(company);
         } catch (_) {}
@@ -663,6 +697,7 @@ return CachePartitions.run(() async {
 
   // lib/services/supplier_settlement_service.dart
 
+  // يطبق قائمة تغييرات على التسويات المحلية
   /// Applies a list of settlement changes (update/delete/tombstone) to the cached lists. Shared by the
   /// live incremental sync and by staged batches.
   Future<void> _applyChanges(String companyCode, List<dynamic> changes) async {
@@ -766,90 +801,91 @@ return CachePartitions.run(() async {
 
       print('✅ تم تحديث التسوية [$docId] في المفتاح [$newKey]');
     }
-
   }
 
-Future<void> syncChangesFromServer(
-  String companyCode, [
-  String? lastSync,
-]) async {
-return CachePartitions.run(() async {
+// يزامن تغييرات التسويات من الخادم
+  Future<void> syncChangesFromServer(
+    String companyCode, [
+    String? lastSync,
+  ]) async {
+    return CachePartitions.run(() async {
+      final prefs = await CachePartitions.preferences();
+      final String lastSyncKey =
+          '${ApiConstants.LAST_SYNC_SETTLEMENT}$companyCode';
+      final String? savedLastSync = lastSync ?? prefs.getString(lastSyncKey);
 
-  final prefs = await CachePartitions.preferences();
-  final String lastSyncKey =
-      '${ApiConstants.LAST_SYNC_SETTLEMENT}$companyCode';
-  final String? savedLastSync = lastSync ?? prefs.getString(lastSyncKey);
+      // ==========================================================
+      // جهاز جديد → Full Sync
+      // ==========================================================
 
-  // ==========================================================
-  // جهاز جديد → Full Sync
-  // ==========================================================
+      if (savedLastSync == null || savedLastSync.isEmpty) {
+        print('📥 التسويات: لا يوجد lastSync → FULL SYNC');
+        await fetchAllSettlements(companyCode);
+        await prefs.setString(
+          lastSyncKey,
+          DateTime.now().toUtc().toIso8601String(),
+        );
+        return;
+      }
 
-  if (savedLastSync == null || savedLastSync.isEmpty) {
-    print('📥 التسويات: لا يوجد lastSync → FULL SYNC');
-    await fetchAllSettlements(companyCode);
-    await prefs.setString(
-      lastSyncKey,
-      DateTime.now().toUtc().toIso8601String(),
-    );
-    return;
+      try {
+        final v2Candidate = await _captureV2(companyCode);
+        final String? storedEpoch = prefs.getString(v2EpochKey(companyCode));
+        if (v2Candidate != null &&
+            storedEpoch != null &&
+            storedEpoch != v2Candidate.epoch) {
+          print('📥 التسويات: feed epoch changed → FULL SYNC');
+          final startedAt = DateTime.now().toUtc();
+          await fetchAllSettlements(companyCode, replace: true);
+          await prefs.setString(lastSyncKey, startedAt.toIso8601String());
+          return;
+        }
+        final DateTime syncStartedAt = DateTime.now().toUtc();
+        DateTime since = DateTime.parse(savedLastSync).toUtc();
+        since = since.subtract(const Duration(minutes: 1));
+
+        final response = await AuthHttp.get(
+          Uri.parse(
+            '$baseUrl/supplier-settlement/changes/$companyCode'
+            '?since=${since.toIso8601String()}',
+          ),
+        );
+
+        if (response.statusCode != 200) {
+          throw Exception(
+            'فشل مزامنة التسويات: ${response.statusCode}: ${response.body}',
+          );
+        }
+
+        final List<dynamic> changes = jsonDecode(response.body);
+
+        await _applyChanges(companyCode, changes);
+
+        // ========================================================
+        // تحديث lastSync فقط بعد نجاح الكل
+        // ========================================================
+
+        await prefs.setString(
+          lastSyncKey,
+          syncStartedAt.toIso8601String(),
+        );
+        await _commitV2(companyCode, v2Candidate);
+
+        print(
+          '✅ تمت مزامنة ${changes.length} تحديث للتسويات (Incremental Sync)',
+        );
+      } catch (e) {
+        print('❌ فشل مزامنة التسويات: $e');
+        rethrow;
+      }
+    });
   }
-
-  try {
-    final v2Candidate = await _captureV2(companyCode);
-    final String? storedEpoch = prefs.getString(v2EpochKey(companyCode));
-    if (v2Candidate != null && storedEpoch != null && storedEpoch != v2Candidate.epoch) {
-      print('📥 التسويات: feed epoch changed → FULL SYNC');
-      final startedAt = DateTime.now().toUtc();
-      await fetchAllSettlements(companyCode, replace: true);
-      await prefs.setString(lastSyncKey, startedAt.toIso8601String());
-      return;
-    }
-    final DateTime syncStartedAt = DateTime.now().toUtc();
-    DateTime since = DateTime.parse(savedLastSync).toUtc();
-    since = since.subtract(const Duration(minutes: 1));
-
-    final response = await AuthHttp.get(
-      Uri.parse(
-        '$baseUrl/supplier-settlement/changes/$companyCode'
-        '?since=${since.toIso8601String()}',
-      ),
-    );
-
-    if (response.statusCode != 200) {
-      throw Exception(
-        'فشل مزامنة التسويات: ${response.statusCode}: ${response.body}',
-      );
-    }
-
-    final List<dynamic> changes = jsonDecode(response.body);
-
-    await _applyChanges(companyCode, changes);
-
-    // ========================================================
-    // تحديث lastSync فقط بعد نجاح الكل
-    // ========================================================
-
-    await prefs.setString(
-      lastSyncKey,
-      syncStartedAt.toIso8601String(),
-    );
-    await _commitV2(companyCode, v2Candidate);
-
-    print(
-      '✅ تمت مزامنة ${changes.length} تحديث للتسويات (Incremental Sync)',
-    );
-  } catch (e) {
-    print('❌ فشل مزامنة التسويات: $e');
-    rethrow;
-  }
-
-});
-}
 
   // ============================================================
   // Helpers
   // ============================================================
 
+  // يحوّل القيمة إلى خريطة نصية
   Map<String, dynamic> _toMap(dynamic value) {
     if (value is Map<String, dynamic>) {
       return Map<String, dynamic>.from(value);
@@ -858,11 +894,10 @@ return CachePartitions.run(() async {
     if (value is Map) {
       return Map<String, dynamic>.from(
         value.map(
-          (key, value) =>
-              MapEntry(
-                key.toString(),
-                value,
-              ),
+          (key, value) => MapEntry(
+            key.toString(),
+            value,
+          ),
         ),
       );
     }
@@ -870,6 +905,7 @@ return CachePartitions.run(() async {
     return {};
   }
 
+  // يحوّل قيمة ديناميكية إلى عدد عشري بأمان
   double _toDouble(dynamic value) {
     if (value is num) {
       return value.toDouble();
@@ -881,6 +917,7 @@ return CachePartitions.run(() async {
         0.0;
   }
 
+  // يحوّل قيمة ديناميكية إلى عدد صحيح بأمان
   int _toInt(dynamic value) {
     if (value is num) {
       return value.toInt();

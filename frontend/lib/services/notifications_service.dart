@@ -1,3 +1,4 @@
+// frontend/lib/services/notifications_service.dart
 import 'cache_partitions.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -9,6 +10,7 @@ import '../core/constants.dart';
 import 'auth_http.dart';
 import 'permissions_service.dart';
 
+// خدمة الإشعارات المحلية: تعمل كذاكرة سريعة وتزامن مع الخادم
 /// الإشعارات المحلية تعمل كذاكرة سريعة، بينما Neon هو مصدر سجل الإشعارات وإعداداتها.
 class NotificationsService {
   static final NotificationsService instance = NotificationsService._();
@@ -17,7 +19,10 @@ class NotificationsService {
   static const String _boxName = 'notifications_box';
   static const String _settingsBoxName = 'notification_settings_box';
 
+  // يعيد صندوق الإشعارات المحلي
   Box get _box => CachePartitions.box(_boxName);
+
+  // يعيد صندوق إعدادات الإشعارات
   Box get _settings => CachePartitions.box(_settingsBoxName);
 
   static const Map<String, String> _sections = {
@@ -89,6 +94,7 @@ class NotificationsService {
     'hr_adjustments'
   };
 
+  // يحدد هل المستخدم يرى إشعارات الموارد البشرية الخاصة به فقط
   bool get _ownHROnly {
     final ps = PermissionsService();
     return ps.canViewOwnHRData &&
@@ -100,6 +106,7 @@ class NotificationsService {
             ps.canViewBranchSalaryReport);
   }
 
+  // يحدد هل إشعار الموارد البشرية يخص المستخدم نفسه
   bool _isOwnHRItem(Map item) {
     final scope = item['notification_scope'];
     final ps = PermissionsService();
@@ -111,6 +118,7 @@ class NotificationsService {
         (scope['employee_code'] ?? '').toString().isNotEmpty;
   }
 
+  // يحدد هل يُسمح بإشعار الموارد البشرية
   bool _hrItemAllowed(Map item) {
     if (!_hrSections.contains(item['section'])) return true;
     if (_hrAuthorizationPending || !PermissionsService().hrNotificationsEnabled)
@@ -126,6 +134,7 @@ class NotificationsService {
     return true;
   }
 
+  // يبطل إشعارات الموارد البشرية عند تغيّر التفويض
   Future<int> invalidateHRAuthorization(
       {required String companyCode, required String uid}) async {
     return CachePartitions.run(() async {
@@ -151,12 +160,14 @@ class NotificationsService {
     });
   }
 
+  // ينهي تحديث تفويض الموارد البشرية
   bool finishHRAuthorization(int generation) {
     if (generation != _hrAuthorizationGeneration) return false;
     _hrAuthorizationPending = false;
     return true;
   }
 
+  // يحدد هل الطلب ما زال صالحًا
   bool _requestIsCurrent(String company, String uid, int scope) =>
       uid.isNotEmpty &&
       FirebaseAuth.instance.currentUser?.uid == uid &&
@@ -166,6 +177,7 @@ class NotificationsService {
       !_hrAuthorizationPending &&
       scope == _scopeVersion;
 
+  // يحدد هل يُسمح بالإشعار
   bool _itemIsAllowed(Map item, String company, String uid) {
     if (!PermissionsService().canShowNotifications) return false;
     if ((item['company_code'] ?? '').toString() != company) return false;
@@ -184,6 +196,7 @@ class NotificationsService {
 
   // Uses today's existing section predicates, not a new entitlement policy.
   // A revoked notification is disposable cache, never an unsent user edit.
+  // يزيل الإشعارات غير المسموح بها من الذاكرة
   Future<int> purgeInaccessibleCache({
     required String companyCode,
     required String? ownerUid,
@@ -227,11 +240,13 @@ class NotificationsService {
     });
   }
 
+  // يحدد هل المستلم هو نفسه
   bool _sameRecipient(dynamic item, String company, String uid) =>
       item is Map &&
       item['recipient_uid'] == uid &&
       item['company_code'] == company;
 
+  // يحدد هل الإشعار مفعّل للقسم والإجراء
   bool _enabled(String section, String action) {
     const commercialSections = {
       'sales',
@@ -246,6 +261,7 @@ class NotificationsService {
         _settings.get('event_$action', defaultValue: true) == true;
   }
 
+  // يعالج حدث مزامنة وارد
   Future<void> handleSyncEvent(Map<String, dynamic> event) async {
     return CachePartitions.run(() async {
       final receivedScope = _scopeVersion;
@@ -378,6 +394,7 @@ class NotificationsService {
     });
   }
 
+  // يعيد وصف الحقل للعرض
   String _detailLabel(String key) =>
       const {
         'name': 'الاسم', 'supplier_name': 'المورد', 'statement': 'البيان',
@@ -391,6 +408,7 @@ class NotificationsService {
       key;
 
   // ⭐ Helper موحد لفحص صلاحية الوصول للقسم
+  // يحدد هل يحق للمستخدم الوصول للقسم
   bool _canAccessSection(String section) {
     final ps = PermissionsService();
     switch (section) {
@@ -435,6 +453,7 @@ class NotificationsService {
 
   Completer<void>? _refreshEnqueued;
 
+  // يبدأ تحديث الأولوية للشركة
   /// Reserve the first history HTTP slot before business pulls start. Waits
   /// only for enqueue (and the existing bounded settings wait), not download.
   Future<void> startPriorityRefresh({required String companyCode}) async {
@@ -443,6 +462,7 @@ class NotificationsService {
     if (enqueued != null) await enqueued.future;
   }
 
+  // يحدّث الإشعارات من الخادم
   Future<void> refreshFromServer({String? companyCode}) {
     final company = companyCode ?? _companyCode;
     if (company == null || company.isEmpty) return Future<void>.value();
@@ -474,6 +494,7 @@ class NotificationsService {
   }
 
   // تحديث مخصص للإشعارات غير المقروءة فقط، دون تحريك مؤشر المزامنة التزايدية.
+  // يحدّث عدد غير المقروء من الخادم
   Future<void> refreshUnreadFromServer({String? companyCode}) async {
     return CachePartitions.run(() async {
       final company = companyCode ?? _companyCode;
@@ -524,6 +545,7 @@ class NotificationsService {
     });
   }
 
+  // يجلب الإشعارات من الخادم ويخزنها
   Future<void> _refreshFromServer(
       String company, String uid, int scope, Completer<void> enqueued) async {
     return CachePartitions.run(() async {
@@ -611,11 +633,14 @@ class NotificationsService {
 
   final settingsChanges = ValueNotifier<int>(0);
   bool _settingsLoaded = false;
+
+  // يضمن تحميل الإعدادات
   Future<void> ensureSettings() async {
     if (_settingsLoad != null) await _settingsLoad;
     if (!_settingsLoaded) await loadSettingsFromServer();
   }
 
+  // يحمّل الإعدادات من الخادم
   Future<void> loadSettingsFromServer({bool force = false}) {
     if (_settingsRequest != null) {
       if (force) _settingsRefreshPending = true;
@@ -635,6 +660,7 @@ class NotificationsService {
     });
   }
 
+  // ينفذ تحميل الإعدادات من الخادم
   Future<void> _loadSettingsFromServer() async {
     return CachePartitions.run(() async {
       final company = _companyCode;
@@ -681,6 +707,7 @@ class NotificationsService {
   //    في _sectionNames (زي HR)، هيتبعت للسيرفر تلقائي.
   // ============================================================
 
+  // يحفظ الإعدادات في الخادم
   Future<void> _saveRemoteSettings() async {
     return CachePartitions.run(() async {
       try {
@@ -706,6 +733,7 @@ class NotificationsService {
     });
   }
 
+  // يعيد الإشعارات المسموح بها
   List<Map<String, dynamic>> getNotifications({String? companyCode}) {
     if (!PermissionsService().isLoaded ||
         !PermissionsService().canShowNotifications) return [];
@@ -736,11 +764,13 @@ class NotificationsService {
     return items;
   }
 
+  // يعيد عدد الإشعارات غير المقروءة
   int unreadCount({String? companyCode}) =>
       getNotifications(companyCode: companyCode)
           .where((e) => e['read'] != true)
           .length;
 
+  // يعلّم إشعارًا كمقروء
   Future<void> markRead(String id) async {
     return CachePartitions.run(() async {
       final entry = _findEntry(id);
@@ -761,6 +791,7 @@ class NotificationsService {
     });
   }
 
+  // يبحث عن إشعار بالمعرّف
   MapEntry<dynamic, dynamic>? _findEntry(String id) {
     for (final entry in _box.toMap().entries) {
       if (entry.value is Map) {
@@ -775,6 +806,7 @@ class NotificationsService {
     return null;
   }
 
+  // يعلّم كل الإشعارات كمقروءة
   Future<void> markAllRead({String? companyCode}) async {
     return CachePartitions.run(() async {
       final targetCompany = companyCode ?? _companyCode;
@@ -796,6 +828,7 @@ class NotificationsService {
   }
 
   // ⭐ حذف إشعار واحد (by event_key أو server_id)
+  // يحذف إشعارًا
   Future<void> deleteNotification({required String notificationId}) async {
     return CachePartitions.run(() async {
       final entry = _findEntry(notificationId);
@@ -822,6 +855,7 @@ class NotificationsService {
     });
   }
 
+  // يمسح الإشعارات
   Future<void> clear({String? companyCode}) async {
     return CachePartitions.run(() async {
       final targetCompany = companyCode ?? _companyCode;
@@ -836,9 +870,11 @@ class NotificationsService {
     });
   }
 
+  // يعيد مدة الاحتفاظ بالإشعارات بالأيام
   int get retentionDays =>
       (_settings.get('retention_days', defaultValue: 90) as num).toInt();
 
+  // يضبط مدة الاحتفاظ بالإشعارات
   Future<void> setRetentionDays(int days) async {
     return CachePartitions.run(() async {
       await _settings.put('retention_days', days);
@@ -847,6 +883,7 @@ class NotificationsService {
     });
   }
 
+  // يزيل الإشعارات المنتهية
   Future<void> _purgeExpired() async {
     return CachePartitions.run(() async {
       final days = retentionDays;
@@ -863,6 +900,7 @@ class NotificationsService {
     });
   }
 
+  // يفعّل أو يعطّل إشعارات قسم
   Future<void> setSectionEnabled(String section, bool value) async {
     return CachePartitions.run(() async {
       final keys = section == 'commercial'
@@ -880,6 +918,7 @@ class NotificationsService {
     });
   }
 
+  // يفعّل أو يعطّل إشعارات حدث
   Future<void> setEventEnabled(String event, bool value) async {
     return CachePartitions.run(() async {
       await _settings.put('event_$event', value);
@@ -887,6 +926,7 @@ class NotificationsService {
     });
   }
 
+  // يحدد هل إشعارات القسم مفعّلة
   bool sectionEnabled(String section) {
     if (section == 'commercial') {
       return const [
@@ -900,9 +940,11 @@ class NotificationsService {
     return _settings.get('enabled_$section', defaultValue: true) == true;
   }
 
+  // يحدد هل إشعارات الحدث مفعّلة
   bool eventEnabled(String event) =>
       _settings.get('event_$event', defaultValue: true) == true;
 
+  // يعيد ضبط الإعدادات ويحمّلها
   Future<void> _resetAndLoadSettings() async {
     return CachePartitions.run(() async {
       for (final key in _sectionNames.keys) {
@@ -920,6 +962,7 @@ class NotificationsService {
   // ⭐ App Badge (الشارة الحمراء على أيقونة التطبيق)
   // ============================================================
 
+  // يحدّث رقم شارة التطبيق
   /// تحديث شارة العدد على أيقونة التطبيق
   /// (تعمل فقط على PWA المثبتة — Chrome/Edge/Safari)
   Future<void> syncAppBadge(int count) async {
@@ -932,6 +975,7 @@ class NotificationsService {
   // (debounce عشان تتنادى مرة واحدة حتى لو حصلت عمليات كتير)
   Timer? _badgeDebounceTimer;
 
+  // يحدّث الشارة للشركة
   Future<void> _syncBadgeForCompany(String? companyCode) async {
     return CachePartitions.run(() async {
       _badgeDebounceTimer?.cancel();
@@ -951,6 +995,7 @@ class NotificationsService {
     });
   }
 
+  // يربط الخدمة بالشركة قبل عمل المقبس
   /// Bind before socket work. A later Home mount must not reset that same work.
   bool bindCompany(String companyCode) {
     final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
@@ -982,6 +1027,7 @@ class NotificationsService {
   String? _boundUid;
   Object? _boundSettingsIdentity;
 
+  // يضبط الشركة الحالية
   void setCompany(String companyCode) {
     if (!bindCompany(companyCode)) return;
     _settingsLoad = _resetAndLoadSettings();

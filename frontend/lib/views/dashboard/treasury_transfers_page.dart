@@ -1,3 +1,4 @@
+// frontend/lib/views/dashboard/treasury_transfers_page.dart
 import '../../services/cache_partitions.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -6,119 +7,129 @@ import '../../services/permissions_service.dart';
 import '../../services/treasury_transfer_service.dart';
 import 'treasury_transfer_page.dart';
 
+// صفحة معاينة التحويلات بين الخزائن
 class TreasuryTransfersPage extends StatefulWidget {
   final String companyCode;
   final String? branchCode;
   final String? userName;
   const TreasuryTransfersPage(
       {super.key, required this.companyCode, this.branchCode, this.userName});
+
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<TreasuryTransfersPage> createState() => _TreasuryTransfersPageState();
 }
 
+// حالة الويدجت TreasuryTransfersPage: تدير بيانات الشاشة وتفاعلاتها
 class _TreasuryTransfersPageState extends State<TreasuryTransfersPage> {
   final _service = TreasuryTransferService();
   StreamSubscription<BoxEvent>? _subscription;
   bool _busy = false;
   String? _error;
+
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
     if (CachePartitions.isBoxOpen(TreasuryTransferService.recordsBox)) {
-      _subscription =
-          CachePartitions.box(TreasuryTransferService.recordsBox).watch().listen((_) {
+      _subscription = CachePartitions.box(TreasuryTransferService.recordsBox)
+          .watch()
+          .listen((_) {
         if (mounted) setState(() {});
       });
     }
-    if (!_service.hasSnapshot(TreasuryTransferService.recordsBox, widget.companyCode)) {
+    if (!_service.hasSnapshot(
+        TreasuryTransferService.recordsBox, widget.companyCode)) {
       _refresh(force: false);
     }
   }
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     _subscription?.cancel();
     super.dispose();
   }
 
+  // يحدّث بيانات الشاشة
   Future<void> _refresh({bool force = true}) async {
-return CachePartitions.run(() async {
-
-    if (_busy) return;
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      if (force) {
-        await _service.sync(widget.companyCode);
-      } else {
-        await _service.ensureCached(widget.companyCode);
+    return CachePartitions.run(() async {
+      if (_busy) return;
+      setState(() {
+        _busy = true;
+        _error = null;
+      });
+      try {
+        if (force) {
+          await _service.sync(widget.companyCode);
+        } else {
+          await _service.ensureCached(widget.companyCode);
+        }
+      } catch (_) {
+        if (mounted)
+          _error = 'تعذر التحديث. المعروض آخر بيانات محفوظة، أعد المحاولة.';
       }
-    } catch (_) {
-      if (mounted)
-        _error = 'تعذر التحديث. المعروض آخر بيانات محفوظة، أعد المحاولة.';
-    }
-    if (mounted) setState(() => _busy = false);
-});
-}
+      if (mounted) setState(() => _busy = false);
+    });
+  }
 
+  // يفتح التحويل للعرض أو التعديل
   Future<void> _open([Map<String, dynamic>? record]) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      await Navigator.push(
+          context,
+          MaterialPageRoute(
+              builder: (_) => TreasuryTransferPage(
+                  companyCode: widget.companyCode,
+                  selectedBranchCode:
+                      record?['branch_code']?.toString() ?? widget.branchCode,
+                  userName: widget.userName,
+                  editItem: record)));
+      if (mounted) setState(() {});
+    });
+  }
 
-    await Navigator.push(
-        context,
-        MaterialPageRoute(
-            builder: (_) => TreasuryTransferPage(
-                companyCode: widget.companyCode,
-                selectedBranchCode:
-                    record?['branch_code']?.toString() ?? widget.branchCode,
-                userName: widget.userName,
-                editItem: record)));
-    if (mounted) setState(() {});
-});
-}
-
+  // يحذف تحويلًا
   Future<void> _delete(Map<String, dynamic> record) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      final agreed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+                  title: const Text('حذف التحويل؟'),
+                  content: Text(
+                      'تحويل ${record['serial']} بقيمة ${record['amount']} من ${record['from_treasury']} إلى ${record['to_treasury']}. سيتم عكس أثره على الخزينتين.'),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text('إلغاء')),
+                    TextButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        child: const Text('حذف'))
+                  ]));
+      if (agreed != true ||
+          !mounted ||
+          !PermissionsService().canDeleteTreasuryTransfer) return;
+      setState(() => _busy = true);
+      try {
+        final result = await _service.delete(record);
+        if (mounted)
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text(result['refresh_pending'] == true
+                  ? 'تم الحذف، لكن تحديث الأرصدة لم يكتمل. اضغط تحديث.'
+                  : 'تم حذف التحويل وعكس أثره.')));
+      } catch (_) {
+        if (mounted)
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text(
+                  'لم يتم تأكيد الحذف. حدّث البيانات قبل إعادة المحاولة.')));
+      }
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    });
+  }
 
-    final agreed = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-                title: const Text('حذف التحويل؟'),
-                content: Text(
-                    'تحويل ${record['serial']} بقيمة ${record['amount']} من ${record['from_treasury']} إلى ${record['to_treasury']}. سيتم عكس أثره على الخزينتين.'),
-                actions: [
-                  TextButton(
-                      onPressed: () => Navigator.pop(context, false),
-                      child: const Text('إلغاء')),
-                  TextButton(
-                      onPressed: () => Navigator.pop(context, true),
-                      child: const Text('حذف'))
-                ]));
-    if (agreed != true ||
-        !mounted ||
-        !PermissionsService().canDeleteTreasuryTransfer) return;
-    setState(() => _busy = true);
-    try {
-      final result = await _service.delete(record);
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(result['refresh_pending'] == true
-                ? 'تم الحذف، لكن تحديث الأرصدة لم يكتمل. اضغط تحديث.'
-                : 'تم حذف التحويل وعكس أثره.')));
-    } catch (_) {
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content:
-                Text('لم يتم تأكيد الحذف. حدّث البيانات قبل إعادة المحاولة.')));
-    }
-    if (mounted) {
-      setState(() => _busy = false);
-    }
-});
-}
-
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
       animation: PermissionsService(),

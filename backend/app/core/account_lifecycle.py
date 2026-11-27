@@ -1,3 +1,4 @@
+# backend/app/core/account_lifecycle.py
 """Account lifecycle actions use current source authority, not cached roles."""
 import asyncio
 from fastapi import HTTPException
@@ -8,12 +9,14 @@ from app.core.account_management import ACTIONS
 from app.core.permission_directory import verified_actor
 
 
+# يتأكد إن المعرّف نص صالح ومفيهوش مسافات أو شرطة مائلة
 def valid_id(value):
     if not isinstance(value, str) or not value or value != value.strip() or '/' in value or '\\' in value:
         raise HTTPException(status_code=400, detail='معرف غير صالح')
     return value
 
 
+# يتحقق من المنفذ الحالي ودوره وصلاحيته للإجراء داخل المعاملة
 def current_actor(source, actor, resolver, configuration, company, action, transaction):
     email = str(actor.get('email', '')).strip().lower()
     uid = str(actor.get('uid', ''))
@@ -31,6 +34,7 @@ def current_actor(source, actor, resolver, configuration, company, action, trans
     return profile, role, email, uid
 
 
+# يرفض طلب تسجيل لسه معلّق، مع فحص حالة الطلب والمنفذ في نفس الوقت
 async def reject_request(session, source, actor, request_id, resolver):
     """Reject only a still-pending request, with actor/request CAS together.
 
@@ -46,6 +50,7 @@ async def reject_request(session, source, actor, request_id, resolver):
         if not allowed(initial, initial_role, configuration, ACTIONS['reject']):
             raise HTTPException(status_code=403, detail='لا توجد صلاحية لرفض الطلبات')
 
+    # دالة داخلية تغيّر حالة الطلب إلى مرفوض داخل المعاملة
     def mutate(transaction):
         _, role, email, uid = current_actor(source, actor, resolver, configuration, company, 'reject', transaction)
         ref = source.collection('registration_requests').document(request_id)
@@ -65,6 +70,7 @@ async def reject_request(session, source, actor, request_id, resolver):
     return await asyncio.to_thread(authority.run_source_transaction, source, mutate)
 
 
+# ينفّذ حذف الحساب أو إعادة ضبطه مع علامة إعادة محاولة وتثبيت الـUID
 async def destructive_account(session, source, actor, target_id, action, resolver, auth, notify):
     """Source-held delete/reset, with a durable retry marker and UID pin.
 
@@ -86,6 +92,7 @@ async def destructive_account(session, source, actor, target_id, action, resolve
     company, configuration, _ = await authority._locked_policy(session, code)
     operation_id = uuid4().hex
 
+    # يجهّز العملية: يتحقق من المنفذ والهدف ويسجّل علامة المحاولة
     def prepare(transaction):
         _, role, email, uid = current_actor(source, actor, resolver, configuration, company, action, transaction)
         ref = source.collection('users').document(target_id)
@@ -116,6 +123,7 @@ async def destructive_account(session, source, actor, target_id, action, resolve
     await notify(code, target_id)
     target_uid = marker['uid']
     if target_uid:
+        # يمسح هوية الحساب من نظام المصادقة
         def remove_identity():
             try:
                 identity = auth.get_user(target_uid)
@@ -145,6 +153,7 @@ async def destructive_account(session, source, actor, target_id, action, resolve
             employee.user_email = str(target.get('email') or target_id) if action == 'reset' else ''
         await session.flush()
 
+    # يختم العملية داخل المعاملة بعد نجاح مسح الهوية
     def finalize(transaction):
         current_actor(source, actor, resolver, configuration, company, action, transaction)
         ref = source.collection('users').document(target_id)

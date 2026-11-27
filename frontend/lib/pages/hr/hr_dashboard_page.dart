@@ -1,14 +1,14 @@
+// frontend/lib/pages/hr/hr_dashboard_page.dart
 import 'dart:convert';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../services/sync_read_access.dart';
 import '../../services/read_authorization_snapshot.dart';
 import '../../views/widgets/visibility_page_shell.dart';
 import '../../services/cache_partitions.dart';
-// lib/pages/hr/hr_dashboard_page.dart
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../../services/permissions_service.dart';  // ⭐ جديد
+import '../../services/permissions_service.dart'; // ⭐ جديد
 import '../../core/theme.dart';
 import '../../core/hr_constants.dart';
 import '../../views/widgets/glass_card.dart';
@@ -19,6 +19,8 @@ import 'vacations_page.dart';
 import 'report_page.dart';
 import 'employees/employees_list_page.dart';
 import 'branch_salaries_page.dart';
+
+// لوحة تحكم الموارد البشرية
 /// لوحة تحكم الموارد البشرية
 ///
 /// - إحصائيات اليوم (حاضر / غائب / متأخر / إجازة)
@@ -30,11 +32,12 @@ import 'branch_salaries_page.dart';
 class HRDashboardPage extends StatefulWidget {
   const HRDashboardPage({super.key});
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<HRDashboardPage> createState() => _HRDashboardPageState();
 }
 
-
+// حالة الويدجت HRDashboardPage: تدير بيانات الشاشة وتفاعلاتها
 class _HRDashboardPageState extends State<HRDashboardPage> {
   // ============================================================
   // Services
@@ -42,7 +45,6 @@ class _HRDashboardPageState extends State<HRDashboardPage> {
 
   final EmployeeService _employeeService = EmployeeService();
   final HRService _hrService = HRService();
-
 
   // ============================================================
   // State
@@ -59,11 +61,11 @@ class _HRDashboardPageState extends State<HRDashboardPage> {
   int _lateToday = 0;
   int _vacationToday = 0;
 
-
   // ============================================================
   // Lifecycle
   // ============================================================
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
@@ -73,7 +75,6 @@ class _HRDashboardPageState extends State<HRDashboardPage> {
     ReadAuthorizationEpoch.changes.addListener(_permissionsChanged);
     _loadStats();
   }
-
 
   // ============================================================
   // Load stats
@@ -85,26 +86,44 @@ class _HRDashboardPageState extends State<HRDashboardPage> {
   // ============================================================
 
   String? _statsOwner;
+
+  // يحدد هل مالك الإحصائيات هو المستخدم الحالي
   bool get _sameOwner => _statsOwner == FirebaseAuth.instance.currentUser?.uid;
   int _loadGeneration = 0;
   bool _statsRunning = false;
   bool _statsPending = false;
   SharedPreferences? _statsPreferences;
   String? _statsScope;
+
+  // يعيد نطاق الإحصائيات الحالي
   String get _currentStatsScope {
     final user = FirebaseAuth.instance.currentUser;
     final permissions = PermissionsService();
     return jsonEncode([
-      user?.uid, user?.email,
+      user?.uid,
+      user?.email,
       _statsPreferences?.getString('company_code'),
-      CachePartitions.generation, CachePartitions.isReady,
-      ReadAuthorizationEpoch.value, permissions.isLoaded,
-      permissions.hrCoverageScope, permissions.currentEmployeeCode,
-      permissions.canShowHR, _mayReadEmployees, _mayReadAttendance,
+      CachePartitions.generation,
+      CachePartitions.isReady,
+      ReadAuthorizationEpoch.value,
+      permissions.isLoaded,
+      permissions.hrCoverageScope,
+      permissions.currentEmployeeCode,
+      permissions.canShowHR,
+      _mayReadEmployees,
+      _mayReadAttendance,
     ]);
   }
-  bool get _mayReadEmployees => _sameOwner && SyncReadAccess.allows('employees');
-  bool get _mayReadAttendance => _sameOwner && SyncReadAccess.allows('attendance');
+
+  // يحدد هل يحق للمستخدم قراءة الموظفين
+  bool get _mayReadEmployees =>
+      _sameOwner && SyncReadAccess.allows('employees');
+
+  // يحدد هل يحق للمستخدم قراءة الحضور
+  bool get _mayReadAttendance =>
+      _sameOwner && SyncReadAccess.allows('attendance');
+
+  // يستجيب لتغيّر الصلاحيات
   void _permissionsChanged() {
     if (!mounted) return;
     final next = _currentStatsScope;
@@ -123,6 +142,8 @@ class _HRDashboardPageState extends State<HRDashboardPage> {
     });
     if (CachePartitions.isReady) _loadStats();
   }
+
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     _loadGeneration++;
@@ -131,6 +152,7 @@ class _HRDashboardPageState extends State<HRDashboardPage> {
     super.dispose();
   }
 
+  // يحمّل إحصائيات اللوحة
   Future<void> _loadStats() async {
     if (!mounted) return;
     _statsPending = true;
@@ -149,102 +171,107 @@ class _HRDashboardPageState extends State<HRDashboardPage> {
     }
   }
 
+  // يقرأ الإحصائيات من التخزين المحلي
   Future<void> _readStats() async {
-return CachePartitions.run(() async {
-
-    final generation = ++_loadGeneration;
-    final readEmployees = _mayReadEmployees;
-    final readAttendance = _mayReadAttendance;
-    if (!readEmployees && !readAttendance) {
-      if (mounted) setState(() => _isLoading = false);
-      return;
-    }
-    setState(() {
-      _isLoading = true;
-      _employeesLoaded = false;
-      _attendanceLoaded = false;
-    });
-
-    try {
-      final scope = await ReadAuthorizationSnapshot.capture();
-      final prefs = await SharedPreferences.getInstance();
-      scope.check();
-      if (!mounted || generation != _loadGeneration) return;
-      _statsPreferences = prefs;
-      _companyCode = prefs.getString('company_code') ?? '';
-      _statsScope = _currentStatsScope;
-      if (_companyCode.isEmpty) {
-        setState(() => _isLoading = false);
+    return CachePartitions.run(() async {
+      final generation = ++_loadGeneration;
+      final readEmployees = _mayReadEmployees;
+      final readAttendance = _mayReadAttendance;
+      if (!readEmployees && !readAttendance) {
+        if (mounted) setState(() => _isLoading = false);
         return;
       }
-
-      var employeeCount = 0;
-      var employeesLoaded = false;
-      var attendanceLoaded = false;
-      if (readEmployees) {
-        try {
-          final employees = await _employeeService.getEmployeesList(companyCode: _companyCode, throwOnError: true);
-          scope.check();
-          employeeCount = employees.length;
-          employeesLoaded = true;
-        } catch (e) {
-          scope.check();
-          debugPrint('Employee statistics unavailable: $e');
-        }
-      }
-      scope.check();
-      if (!mounted || generation != _loadGeneration) return;
-      var present = 0, absent = 0, late = 0, vacation = 0;
-      if (readAttendance) {
-        try {
-          final rows = await _hrService.getAttendanceForDate(companyCode: _companyCode, date: _todayStr());
-          scope.check();
-          present = rows.where((a) => a.status == 'present' || a.status == 'late').length;
-          absent = rows.where((a) => a.status == 'absent').length;
-          late = rows.where((a) => a.lateMinutes > 0).length;
-          vacation = rows.where((a) => a.status == 'vacation').length;
-          attendanceLoaded = true;
-        } catch (e) {
-          scope.check();
-          debugPrint('Attendance statistics unavailable: $e');
-        }
-      }
-
-      // 3) الإحصائيات
-      scope.check();
-      if (!mounted || generation != _loadGeneration) return;
-
       setState(() {
-        _employeesLoaded = employeesLoaded;
-        _attendanceLoaded = attendanceLoaded;
-        _totalEmployees = employeeCount;
-        _presentToday = present;
-        _absentToday = absent;
-        _lateToday = late;
-        _vacationToday = vacation;
-
-        _isLoading = false;
+        _isLoading = true;
+        _employeesLoaded = false;
+        _attendanceLoaded = false;
       });
-    } catch (e) {
-      print("❌ خطأ في تحميل الإحصائيات: $e");
-      if (mounted && generation == _loadGeneration) setState(() => _isLoading = false);
-    }
-});
-}
 
+      try {
+        final scope = await ReadAuthorizationSnapshot.capture();
+        final prefs = await SharedPreferences.getInstance();
+        scope.check();
+        if (!mounted || generation != _loadGeneration) return;
+        _statsPreferences = prefs;
+        _companyCode = prefs.getString('company_code') ?? '';
+        _statsScope = _currentStatsScope;
+        if (_companyCode.isEmpty) {
+          setState(() => _isLoading = false);
+          return;
+        }
+
+        var employeeCount = 0;
+        var employeesLoaded = false;
+        var attendanceLoaded = false;
+        if (readEmployees) {
+          try {
+            final employees = await _employeeService.getEmployeesList(
+                companyCode: _companyCode, throwOnError: true);
+            scope.check();
+            employeeCount = employees.length;
+            employeesLoaded = true;
+          } catch (e) {
+            scope.check();
+            debugPrint('Employee statistics unavailable: $e');
+          }
+        }
+        scope.check();
+        if (!mounted || generation != _loadGeneration) return;
+        var present = 0, absent = 0, late = 0, vacation = 0;
+        if (readAttendance) {
+          try {
+            final rows = await _hrService.getAttendanceForDate(
+                companyCode: _companyCode, date: _todayStr());
+            scope.check();
+            present = rows
+                .where((a) => a.status == 'present' || a.status == 'late')
+                .length;
+            absent = rows.where((a) => a.status == 'absent').length;
+            late = rows.where((a) => a.lateMinutes > 0).length;
+            vacation = rows.where((a) => a.status == 'vacation').length;
+            attendanceLoaded = true;
+          } catch (e) {
+            scope.check();
+            debugPrint('Attendance statistics unavailable: $e');
+          }
+        }
+
+        // 3) الإحصائيات
+        scope.check();
+        if (!mounted || generation != _loadGeneration) return;
+
+        setState(() {
+          _employeesLoaded = employeesLoaded;
+          _attendanceLoaded = attendanceLoaded;
+          _totalEmployees = employeeCount;
+          _presentToday = present;
+          _absentToday = absent;
+          _lateToday = late;
+          _vacationToday = vacation;
+
+          _isLoading = false;
+        });
+      } catch (e) {
+        print("❌ خطأ في تحميل الإحصائيات: $e");
+        if (mounted && generation == _loadGeneration)
+          setState(() => _isLoading = false);
+      }
+    });
+  }
 
   // ============================================================
   // Helper — تاريخ اليوم
   // ============================================================
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   String _todayStr() => HRConstants.dateToStr(DateTime.now());
-
 
   // ============================================================
   // BUILD
   // ============================================================
 
-    @override
+  // يبني واجهة العنصر ويعيد شجرة العناصر
+  @override
   Widget build(BuildContext context) {
     // ⭐ فحص صلاحية فتح HR Dashboard
     if (!_sameOwner || !PermissionsService().canShowHR) {
@@ -298,7 +325,8 @@ return CachePartitions.run(() async {
                   child: Column(
                     children: [
                       if (_mayReadEmployees || _mayReadAttendance) ...[
-                        _buildStatsCard(), const SizedBox(height: 20),
+                        _buildStatsCard(),
+                        const SizedBox(height: 20),
                       ],
                       _buildMenuCards(),
                     ],
@@ -309,11 +337,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // بطاقة الإحصائيات
   // ============================================================
 
+  // يبني بطاقة الإحصائيات
   Widget _buildStatsCard() {
     return GlassCard(
       child: Column(
@@ -342,36 +370,41 @@ return CachePartitions.run(() async {
             spacing: 10,
             runSpacing: 10,
             children: [
-              if (_mayReadEmployees) _buildStatCard(
-                'إجمالي الموظفين',
-                _employeesLoaded ? '$_totalEmployees' : 'غير متاح',
-                Icons.people_rounded,
-                AppTheme.infoSoftFor(context),
-              ),
-              if (_mayReadAttendance) _buildStatCard(
-                'حاضر',
-                _attendanceLoaded ? '$_presentToday' : 'غير متاح',
-                Icons.check_circle_rounded,
-                AppTheme.successFor(context),
-              ),
-              if (_mayReadAttendance) _buildStatCard(
-                'غائب',
-                _attendanceLoaded ? '$_absentToday' : 'غير متاح',
-                Icons.cancel_rounded,
-                AppTheme.dangerFor(context),
-              ),
-              if (_mayReadAttendance) _buildStatCard(
-                'متأخر',
-                _attendanceLoaded ? '$_lateToday' : 'غير متاح',
-                Icons.timer_rounded,
-                AppTheme.warningOrangeSoftFor(context),
-              ),
-              if (_mayReadAttendance) _buildStatCard(
-                'إجازة',
-                _attendanceLoaded ? '$_vacationToday' : 'غير متاح',
-                Icons.beach_access_rounded,
-                AppTheme.extraTealFor(context),
-              ),
+              if (_mayReadEmployees)
+                _buildStatCard(
+                  'إجمالي الموظفين',
+                  _employeesLoaded ? '$_totalEmployees' : 'غير متاح',
+                  Icons.people_rounded,
+                  AppTheme.infoSoftFor(context),
+                ),
+              if (_mayReadAttendance)
+                _buildStatCard(
+                  'حاضر',
+                  _attendanceLoaded ? '$_presentToday' : 'غير متاح',
+                  Icons.check_circle_rounded,
+                  AppTheme.successFor(context),
+                ),
+              if (_mayReadAttendance)
+                _buildStatCard(
+                  'غائب',
+                  _attendanceLoaded ? '$_absentToday' : 'غير متاح',
+                  Icons.cancel_rounded,
+                  AppTheme.dangerFor(context),
+                ),
+              if (_mayReadAttendance)
+                _buildStatCard(
+                  'متأخر',
+                  _attendanceLoaded ? '$_lateToday' : 'غير متاح',
+                  Icons.timer_rounded,
+                  AppTheme.warningOrangeSoftFor(context),
+                ),
+              if (_mayReadAttendance)
+                _buildStatCard(
+                  'إجازة',
+                  _attendanceLoaded ? '$_vacationToday' : 'غير متاح',
+                  Icons.beach_access_rounded,
+                  AppTheme.extraTealFor(context),
+                ),
             ],
           ),
         ],
@@ -379,11 +412,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // بطاقة إحصائية صغيرة
   // ============================================================
 
+  // يبني بطاقة إحصائية واحدة
   Widget _buildStatCard(
     String label,
     String value,
@@ -429,12 +462,12 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // بطاقات التنقل (3 أقسام)
   // ============================================================
 
-     Widget _buildMenuCards() {
+  // يبني بطاقات القوائم حسب الصلاحيات
+  Widget _buildMenuCards() {
     final ps = PermissionsService();
     final cards = <Widget>[];
 
@@ -447,7 +480,8 @@ return CachePartitions.run(() async {
     // ─────────────────────────────────────────
     // 1) بطاقة الموظفين
     // ─────────────────────────────────────────
-    if (ps.pageVisible('إدارة الموظفين', fallback: (ps.canViewEmployees || ps.canViewOwnHRData))) {
+    if (ps.pageVisible('إدارة الموظفين',
+        fallback: (ps.canViewEmployees || ps.canViewOwnHRData))) {
       addCard(
         _buildMenuCard(
           title: ps.canViewEmployees ? 'إدارة الموظفين' : 'ملفي الشخصي',
@@ -456,7 +490,9 @@ return CachePartitions.run(() async {
               : 'عرض بياناتي الشخصية',
           icon: Icons.badge_rounded,
           color: AppTheme.infoFor(context),
-          onTap: () => _openPage((ps.canViewEmployees || ps.canViewOwnHRData) ? const EmployeesListPage() : const VisibilityPageShell(title: 'إدارة الموظفين')),
+          onTap: () => _openPage((ps.canViewEmployees || ps.canViewOwnHRData)
+              ? const EmployeesListPage()
+              : const VisibilityPageShell(title: 'إدارة الموظفين')),
         ),
       );
     }
@@ -464,14 +500,17 @@ return CachePartitions.run(() async {
     // ─────────────────────────────────────────
     // 2) بطاقة الحضور
     // ─────────────────────────────────────────
-    if (ps.pageVisible('الحضور والانصراف', fallback: (ps.canOpenAttendancePage))) {
+    if (ps.pageVisible('الحضور والانصراف',
+        fallback: (ps.canOpenAttendancePage))) {
       addCard(
         _buildMenuCard(
           title: 'الحضور والانصراف',
           subtitle: 'تسجيل حضور الموظفين اليومي',
           icon: Icons.fingerprint_rounded,
           color: AppTheme.successFor(context),
-          onTap: () => _openPage((ps.canOpenAttendancePage) ? const AttendancePage() : const VisibilityPageShell(title: 'الحضور والانصراف')),
+          onTap: () => _openPage((ps.canOpenAttendancePage)
+              ? const AttendancePage()
+              : const VisibilityPageShell(title: 'الحضور والانصراف')),
         ),
       );
     }
@@ -479,14 +518,17 @@ return CachePartitions.run(() async {
     // ─────────────────────────────────────────
     // 3) بطاقة الإجازات
     // ─────────────────────────────────────────
-    if (ps.pageVisible('الإجازات والإعدادات', fallback: (ps.canOpenVacationsPage))) {
+    if (ps.pageVisible('الإجازات والإعدادات',
+        fallback: (ps.canOpenVacationsPage))) {
       addCard(
         _buildMenuCard(
           title: 'الإجازات والإعدادات',
           subtitle: 'إجازات + سلف + مواعيد + خصومات تأخير',
           icon: Icons.beach_access_rounded,
           color: AppTheme.extraTealFor(context),
-          onTap: () => _openPage((ps.canOpenVacationsPage) ? const VacationsPage() : const VisibilityPageShell(title: 'الإجازات والإعدادات')),
+          onTap: () => _openPage((ps.canOpenVacationsPage)
+              ? const VacationsPage()
+              : const VisibilityPageShell(title: 'الإجازات والإعدادات')),
         ),
       );
     }
@@ -494,14 +536,17 @@ return CachePartitions.run(() async {
     // ─────────────────────────────────────────
     // 4) بطاقة التقارير
     // ─────────────────────────────────────────
-    if (ps.pageVisible('تقرير الراتب الشهري', fallback: (ps.canOpenReportPage))) {
+    if (ps.pageVisible('تقرير الراتب الشهري',
+        fallback: (ps.canOpenReportPage))) {
       addCard(
         _buildMenuCard(
           title: 'تقرير الراتب الشهري',
           subtitle: 'حساب الراتب + PDF',
           icon: Icons.receipt_long_rounded,
           color: AppTheme.extraPurpleFor(context),
-          onTap: () => _openPage((ps.canOpenReportPage) ? const HRReportPage() : const VisibilityPageShell(title: 'تقرير الراتب الشهري')),
+          onTap: () => _openPage((ps.canOpenReportPage)
+              ? const HRReportPage()
+              : const VisibilityPageShell(title: 'تقرير الراتب الشهري')),
         ),
       );
     }
@@ -509,14 +554,17 @@ return CachePartitions.run(() async {
     // ─────────────────────────────────────────
     // 5) بطاقة إجمالي الرواتب ⭐ جديد
     // ─────────────────────────────────────────
-    if (ps.pageVisible('إجمالي الرواتب', fallback: (ps.canViewBranchSalaryReport))) {
+    if (ps.pageVisible('إجمالي الرواتب',
+        fallback: (ps.canViewBranchSalaryReport))) {
       addCard(
         _buildMenuCard(
           title: 'إجمالي الرواتب',
           subtitle: 'تقرير مجمع لكل فرع / الشركة',
           icon: Icons.summarize_rounded,
           color: AppTheme.extraBlueGreyFor(context),
-          onTap: () => _openPage((ps.canViewBranchSalaryReport) ? const BranchSalariesPage() : const VisibilityPageShell(title: 'إجمالي الرواتب')),
+          onTap: () => _openPage((ps.canViewBranchSalaryReport)
+              ? const BranchSalariesPage()
+              : const VisibilityPageShell(title: 'إجمالي الرواتب')),
         ),
       );
     }
@@ -553,11 +601,11 @@ return CachePartitions.run(() async {
     return Column(children: cards);
   }
 
-
   // ============================================================
   // بطاقة تنقل واحدة
   // ============================================================
 
+  // يبني بطاقة قائمة واحدة
   Widget _buildMenuCard({
     required String title,
     required String subtitle,
@@ -624,25 +672,26 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // فتح صفحة + تحديث الإحصائيات بعد الرجوع
   // ============================================================
 
+  // يفتح صفحة ويعيد تحميل الإحصائيات عند العودة
   Future<void> _openPage(Widget page) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => page),
+      );
 
-    await Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => page),
-    );
+      // لما يرجع من الصفحة → نعيد تحميل الإحصائيات
+      // (عشان لو المستخدم سجل حضور/غاب، الأرقام تتحدث)
+      _loadStats();
+    });
+  }
 
-    // لما يرجع من الصفحة → نعيد تحميل الإحصائيات
-    // (عشان لو المستخدم سجل حضور/غاب، الأرقام تتحدث)
-    _loadStats();
-});
-}
-    // ⭐ شاشة "لا صلاحية"
+  // ⭐ شاشة "لا صلاحية"
+  // يبني شاشة تعذّر الوصول لعدم توفر الصلاحية
   Widget _buildNoPermissionScreen() {
     return Scaffold(
       extendBodyBehindAppBar: true,

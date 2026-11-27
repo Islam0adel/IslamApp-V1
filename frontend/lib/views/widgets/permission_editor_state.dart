@@ -1,7 +1,9 @@
+// frontend/lib/views/widgets/permission_editor_state.dart
 import 'package:flutter/material.dart';
 import 'glass_card.dart';
 import '../../core/theme.dart';
 
+// ويدجت حالة محرر الصلاحيات
 class PermissionEditorStatus extends StatelessWidget {
   const PermissionEditorStatus(
       {super.key,
@@ -12,6 +14,8 @@ class PermissionEditorStatus extends StatelessWidget {
   final bool loading, saving;
   final String? error;
   final VoidCallback? onReload;
+
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) => Container(
       margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
@@ -48,6 +52,7 @@ class PermissionEditorStatus extends StatelessWidget {
       ]));
 }
 
+// ويدجت شاشة بدء محرر الصلاحيات
 class PermissionEditorStartup extends StatelessWidget {
   const PermissionEditorStartup(
       {super.key,
@@ -61,6 +66,8 @@ class PermissionEditorStartup extends StatelessWidget {
   final List<String> allowed;
   final bool enabled;
   final ValueChanged<String> onChanged;
+
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     final selected = value == 'all' ? '' : value;

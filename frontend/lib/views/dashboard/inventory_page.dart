@@ -1,5 +1,5 @@
+// frontend/lib/views/dashboard/inventory_page.dart
 import '../../services/cache_partitions.dart';
-// lib/views/dashboard/inventory_page.dart
 
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -16,6 +16,7 @@ import '../../views/widgets/glass_card.dart';
 import '../../services/permissions_service.dart';
 import 'inventory_history_page.dart';
 
+// صفحة إدخال الجرد
 class InventoryPage extends StatefulWidget {
   final String companyCode;
   final String? selectedBranchCode;
@@ -30,10 +31,12 @@ class InventoryPage extends StatefulWidget {
     this.editItem,
   });
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<InventoryPage> createState() => _InventoryPageState();
 }
 
+// حالة الويدجت InventoryPage: تدير بيانات الشاشة وتفاعلاتها
 class _InventoryPageState extends State<InventoryPage> {
   final InventoryService _inventoryService = InventoryService();
   final CodingService _codingService = CodingService();
@@ -63,6 +66,7 @@ class _InventoryPageState extends State<InventoryPage> {
     'retailPrice',
   ];
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
@@ -73,6 +77,7 @@ class _InventoryPageState extends State<InventoryPage> {
   // تنسيق الأرقام - أرقام إنجليزية + الاحتفاظ بالكسور
   // ============================================================
 
+  // ينسّق الرقم للعرض
   String _formatNumber(double value) {
     if (value == 0) return '0';
     if (value % 1 == 0) return value.toStringAsFixed(0);
@@ -82,6 +87,7 @@ class _InventoryPageState extends State<InventoryPage> {
         .replaceFirst(RegExp(r'\.$'), '');
   }
 
+  // ينسّق الرقم بخانتين عشريتين
   String _formatDecimal(double value) {
     return value.toStringAsFixed(2);
   }
@@ -90,6 +96,7 @@ class _InventoryPageState extends State<InventoryPage> {
   // اسم الفرع
   // ============================================================
 
+  // يعيد اسم الفرع من الكود
   String _getBranchName(String? code) {
     if (code == null ||
         code.isEmpty ||
@@ -122,120 +129,119 @@ class _InventoryPageState extends State<InventoryPage> {
   // تحميل القوائم
   // ============================================================
 
+  // يحمّل خيارات القوائم المنسدلة
   Future<void> _loadDropdowns() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (!mounted) return;
 
-    if (!mounted) return;
+      setState(() => _isLoading = true);
 
-    setState(() => _isLoading = true);
+      try {
+        final prefs = await SharedPreferences.getInstance();
 
-    try {
-      final prefs = await SharedPreferences.getInstance();
+        _selectedBranchCode = widget.selectedBranchCode ??
+            prefs.getString('selected_branch_code') ??
+            'all';
 
-      _selectedBranchCode =
-          widget.selectedBranchCode ??
-          prefs.getString('selected_branch_code') ??
-          'all';
+        final box = CachePartitions.box('coding_box');
 
-      final box = CachePartitions.box('coding_box');
+        final rawStores = box.get(
+              '${widget.companyCode}_stores',
+              defaultValue: [],
+            ) as List? ??
+            [];
 
-      final rawStores = box.get(
-            '${widget.companyCode}_stores',
-            defaultValue: [],
-          ) as List? ??
-          [];
+        _stores = rawStores
+            .whereType<Map>()
+            .where((e) {
+              final assigned = e['branch_code']?.toString() ?? '';
+              return assigned.isEmpty ||
+                  _selectedBranchCode == null ||
+                  _selectedBranchCode == 'all' ||
+                  assigned == _selectedBranchCode;
+            })
+            .map(
+              (e) => {
+                'code': e['code']?.toString() ?? '',
+                'name': e['name']?.toString() ?? '',
+              },
+            )
+            .where(
+              (e) => e['code']!.isNotEmpty && e['name']!.isNotEmpty,
+            )
+            .toList();
+        // ✅ تحميل الأصناف للاقتراحات
+        await _loadItemsLookup();
+        if (widget.editItem != null) {
+          _loadEditData();
+        } else {
+          if (_stores.isNotEmpty && _selectedStoreCode == null) {
+            _selectedStoreCode = _stores.first['code'];
+          }
 
-      _stores = rawStores
-          .whereType<Map>()
-          .where((e) {
-            final assigned = e['branch_code']?.toString() ?? '';
-            return assigned.isEmpty || _selectedBranchCode == null ||
-                _selectedBranchCode == 'all' || assigned == _selectedBranchCode;
-          })
-          .map(
-            (e) => {
-              'code': e['code']?.toString() ?? '',
-              'name': e['name']?.toString() ?? '',
-            },
-          )
-          .where(
-            (e) =>
-                e['code']!.isNotEmpty &&
-                e['name']!.isNotEmpty,
-          )
-          .toList();
-      // ✅ تحميل الأصناف للاقتراحات
-      await _loadItemsLookup();
-      if (widget.editItem != null) {
-        _loadEditData();
-      } else {
-        if (_stores.isNotEmpty &&
-            _selectedStoreCode == null) {
-          _selectedStoreCode = _stores.first['code'];
+          await _loadLastSerial();
+          _addEmptyRow();
         }
-
-        await _loadLastSerial();
-        _addEmptyRow();
+      } catch (e) {
+        debugPrint('❌ خطأ في تحميل القوائم: $e');
+      } finally {
+        if (mounted) {
+          setState(() => _isLoading = false);
+        }
       }
-    } catch (e) {
-      debugPrint('❌ خطأ في تحميل القوائم: $e');
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
-});
-}
+    });
+  }
 
   // ============================================================
 // تحميل قائمة الأصناف للاقتراحات (من التكويد)
 // ============================================================
-Future<void> _loadItemsLookup() async {
-return CachePartitions.run(() async {
+// يحمّل قائمة الأصناف للبحث
+  Future<void> _loadItemsLookup() async {
+    return CachePartitions.run(() async {
+      try {
+        final box = CachePartitions.box('coding_box');
+        final raw = box.get(
+          '${widget.companyCode}_items',
+          defaultValue: [],
+        );
 
-  try {
-    final box = CachePartitions.box('coding_box');
-    final raw = box.get(
-      '${widget.companyCode}_items',
-      defaultValue: [],
-    );
+        final List<Map<String, String>> list = [];
 
-    final List<Map<String, String>> list = [];
+        if (raw is List) {
+          for (final e in raw) {
+            if (e is! Map) continue;
+            final code = e['code']?.toString() ?? '';
+            final name = e['name']?.toString() ?? '';
+            if (code.isEmpty || name.isEmpty) continue;
 
-    if (raw is List) {
-      for (final e in raw) {
-        if (e is! Map) continue;
-        final code = e['code']?.toString() ?? '';
-        final name = e['name']?.toString() ?? '';
-        if (code.isEmpty || name.isEmpty) continue;
+            list.add({
+              'code': code,
+              'name': name,
+              'wholesale_price':
+                  (e['wholesale_price'] ?? e['wholesalePrice'] ?? '0')
+                      .toString(),
+              'selling_price':
+                  (e['selling_price'] ?? e['sellingPrice'] ?? '0').toString(),
+            });
+          }
+        }
 
-        list.add({
-          'code': code,
-          'name': name,
-          'wholesale_price':
-              (e['wholesale_price'] ?? e['wholesalePrice'] ?? '0').toString(),
-          'selling_price':
-              (e['selling_price'] ?? e['sellingPrice'] ?? '0').toString(),
-        });
+        if (mounted) {
+          setState(() {
+            _itemsLookup = list;
+          });
+        }
+      } catch (e) {
+        debugPrint('❌ خطأ في تحميل الأصناف للاقتراحات: $e');
       }
-    }
-
-    if (mounted) {
-      setState(() {
-        _itemsLookup = list;
-      });
-    }
-  } catch (e) {
-    debugPrint('❌ خطأ في تحميل الأصناف للاقتراحات: $e');
+    });
   }
-
-});
-}
 
   // ============================================================
   // تحميل التعديل
   // ============================================================
 
+  // يحمّل بيانات الجرد للتعديل
   void _loadEditData() {
     final model = widget.editItem!;
 
@@ -276,6 +282,7 @@ return CachePartitions.run(() async {
   // Controllers + Focus
   // ============================================================
 
+  // يعيد بناء المتحكمات والتركيز
   void _rebuildControllersAndFocus() {
     for (final row in _controllers) {
       for (final controller in row) {
@@ -334,66 +341,64 @@ return CachePartitions.run(() async {
   // السيريال
   // ============================================================
 
+  // يحمّل آخر رقم تسلسلي
   Future<void> _loadLastSerial() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      try {
+        final box = CachePartitions.box('inventory_box');
+        final branchCode = _selectedBranchCode ?? 'all';
 
-    try {
-      final box = CachePartitions.box('inventory_box');
-      final branchCode = _selectedBranchCode ?? 'all';
+        int maxSerial = 0;
 
-      int maxSerial = 0;
+        for (final key in box.keys) {
+          final raw = box.get(key);
 
-      for (final key in box.keys) {
-        final raw = box.get(key);
+          if (raw is! List) continue;
 
-        if (raw is! List) continue;
+          for (final item in raw) {
+            if (item is! Map) continue;
 
-        for (final item in raw) {
-          if (item is! Map) continue;
+            if (item['is_deleted'] == true) continue;
 
-          if (item['is_deleted'] == true) continue;
+            if (item['company_code']?.toString() != widget.companyCode) {
+              continue;
+            }
 
-          if (item['company_code']?.toString() !=
-              widget.companyCode) {
-            continue;
-          }
+            if (item['branch_code']?.toString() != branchCode) {
+              continue;
+            }
 
-          if (item['branch_code']?.toString() !=
-              branchCode) {
-            continue;
-          }
+            final serial = int.tryParse(
+                  item['serial']?.toString() ?? '0',
+                ) ??
+                0;
 
-          final serial =
-              int.tryParse(
-                    item['serial']?.toString() ?? '0',
-                  ) ??
-                  0;
-
-          if (serial > maxSerial) {
-            maxSerial = serial;
+            if (serial > maxSerial) {
+              maxSerial = serial;
+            }
           }
         }
-      }
 
-      if (!mounted) return;
+        if (!mounted) return;
 
-      setState(() {
-        _currentSerial = maxSerial + 1;
-      });
-    } catch (e) {
-      if (mounted) {
         setState(() {
-          _currentSerial = 1;
+          _currentSerial = maxSerial + 1;
         });
+      } catch (e) {
+        if (mounted) {
+          setState(() {
+            _currentSerial = 1;
+          });
+        }
       }
-    }
-});
-}
+    });
+  }
 
   // ============================================================
   // إضافة صف
   // ============================================================
 
+  // يضيف صفًا فارغًا
   void _addEmptyRow() {
     if (_items.isNotEmpty) {
       final last = _items.last;
@@ -439,6 +444,7 @@ return CachePartitions.run(() async {
   // حذف صف
   // ============================================================
 
+  // يحذف صفًا
   void _removeRow(int index) {
     if (_items.length <= 1) return;
 
@@ -463,20 +469,17 @@ return CachePartitions.run(() async {
   // تغيير الحقول
   // ============================================================
 
+  // يعالج تغيّر قيمة حقل
   void _onFieldChanged(
     int rowIndex,
     int fieldIndex,
   ) {
-    if (rowIndex >= _items.length ||
-        rowIndex >= _controllers.length) {
+    if (rowIndex >= _items.length || rowIndex >= _controllers.length) {
       return;
     }
 
     final item = _items[rowIndex];
-    final value =
-        _controllers[rowIndex][fieldIndex]
-            .text
-            .trim();
+    final value = _controllers[rowIndex][fieldIndex].text.trim();
 
     switch (_fieldOrder[fieldIndex]) {
       case 'code':
@@ -494,18 +497,15 @@ return CachePartitions.run(() async {
         break;
 
       case 'quantity':
-        item.quantity =
-            double.tryParse(value) ?? 0.0;
+        item.quantity = double.tryParse(value) ?? 0.0;
         break;
 
       case 'wholesalePrice':
-        item.wholesalePrice =
-            double.tryParse(value) ?? 0.0;
+        item.wholesalePrice = double.tryParse(value) ?? 0.0;
         break;
 
       case 'retailPrice':
-        item.retailPrice =
-            double.tryParse(value) ?? 0.0;
+        item.retailPrice = double.tryParse(value) ?? 0.0;
         break;
     }
 
@@ -520,181 +520,153 @@ return CachePartitions.run(() async {
   // حساب القيمة
   // ============================================================
 
+  // يعيد حساب الصنف
   void _recalcItem(int index) {
-    if (index < 0 ||
-        index >= _items.length) {
+    if (index < 0 || index >= _items.length) {
       return;
     }
 
     final item = _items[index];
 
-    item.wholesaleValue =
-        item.wholesalePrice *
-        item.quantity;
+    item.wholesaleValue = item.wholesalePrice * item.quantity;
 
-    item.retailValue =
-        item.retailPrice *
-        item.quantity;
+    item.retailValue = item.retailPrice * item.quantity;
   }
 
   // ============================================================
   // التعبئة التلقائية
   // ============================================================
 
+  // يملأ بيانات الصنف تلقائيًا
   Future<void> _autoFillItem(int index) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (index >= _items.length) return;
 
-    if (index >= _items.length) return;
+      final code = _items[index].code.trim();
 
-    final code =
-        _items[index].code.trim();
+      if (code.isEmpty) return;
 
-    if (code.isEmpty) return;
+      final box = CachePartitions.box('coding_box');
 
-    final box = CachePartitions.box('coding_box');
-
-    final raw = box.get(
-      '${widget.companyCode}_items',
-      defaultValue: [],
-    );
-
-    if (raw is List) {
-      for (final rawItem in raw) {
-        if (rawItem is! Map) continue;
-
-        if (rawItem['code']?.toString() != code) {
-          continue;
-        }
-
-        final name =
-            rawItem['name']?.toString() ?? '';
-
-        final wholesale =
-            double.tryParse(
-                  rawItem['wholesale_price']
-                          ?.toString() ??
-                      '0',
-                ) ??
-                0.0;
-
-        final retail =
-            double.tryParse(
-                  rawItem['selling_price']
-                          ?.toString() ??
-                      '0',
-                ) ??
-                0.0;
-
-        if (!mounted ||
-            index >= _items.length) {
-          return;
-        }
-
-        setState(() {
-          _items[index].name = name;
-          _items[index].wholesalePrice =
-              wholesale;
-          _items[index].retailPrice =
-              retail;
-
-          _recalcItem(index);
-
-          _controllers[index][1].text =
-              name;
-          _controllers[index][3].text =
-              wholesale.toString();
-          _controllers[index][4].text =
-              retail.toString();
-        });
-
-        return;
-      }
-    }
-
-    try {
-      final list =
-          await _codingService.getCodingList(
-        companyCode:
-            widget.companyCode,
-        category:
-            'items',
+      final raw = box.get(
+        '${widget.companyCode}_items',
+        defaultValue: [],
       );
 
-      for (final item in list) {
-        if (item.code != code) continue;
+      if (raw is List) {
+        for (final rawItem in raw) {
+          if (rawItem is! Map) continue;
 
-        if (!mounted ||
-            index >= _items.length) {
+          if (rawItem['code']?.toString() != code) {
+            continue;
+          }
+
+          final name = rawItem['name']?.toString() ?? '';
+
+          final wholesale = double.tryParse(
+                rawItem['wholesale_price']?.toString() ?? '0',
+              ) ??
+              0.0;
+
+          final retail = double.tryParse(
+                rawItem['selling_price']?.toString() ?? '0',
+              ) ??
+              0.0;
+
+          if (!mounted || index >= _items.length) {
+            return;
+          }
+
+          setState(() {
+            _items[index].name = name;
+            _items[index].wholesalePrice = wholesale;
+            _items[index].retailPrice = retail;
+
+            _recalcItem(index);
+
+            _controllers[index][1].text = name;
+            _controllers[index][3].text = wholesale.toString();
+            _controllers[index][4].text = retail.toString();
+          });
+
           return;
         }
-
-        setState(() {
-          _items[index].name =
-              item.name;
-
-          _items[index].wholesalePrice =
-              item.wholesalePrice;
-
-          _items[index].retailPrice =
-              item.sellingPrice;
-
-          _recalcItem(index);
-
-          _controllers[index][1].text =
-              item.name;
-
-          _controllers[index][3].text =
-              item.wholesalePrice.toString();
-
-          _controllers[index][4].text =
-              item.sellingPrice.toString();
-        });
-
-        return;
       }
-    } catch (e) {
-      debugPrint(
-        '❌ خطأ في جلب الصنف: $e',
-      );
-    }
-});
-}
+
+      try {
+        final list = await _codingService.getCodingList(
+          companyCode: widget.companyCode,
+          category: 'items',
+        );
+
+        for (final item in list) {
+          if (item.code != code) continue;
+
+          if (!mounted || index >= _items.length) {
+            return;
+          }
+
+          setState(() {
+            _items[index].name = item.name;
+
+            _items[index].wholesalePrice = item.wholesalePrice;
+
+            _items[index].retailPrice = item.sellingPrice;
+
+            _recalcItem(index);
+
+            _controllers[index][1].text = item.name;
+
+            _controllers[index][3].text = item.wholesalePrice.toString();
+
+            _controllers[index][4].text = item.sellingPrice.toString();
+          });
+
+          return;
+        }
+      } catch (e) {
+        debugPrint(
+          '❌ خطأ في جلب الصنف: $e',
+        );
+      }
+    });
+  }
 
 // ============================================================
 // تعبئة الصف عند اختيار صنف من القائمة المنسدلة
 // ============================================================
-void _fillRowFromSelectedItem(
-  int rowIndex,
-  Map<String, String> item,
-) {
-  if (rowIndex >= _items.length) return;
+// يملأ الصف من الصنف المحدد
+  void _fillRowFromSelectedItem(
+    int rowIndex,
+    Map<String, String> item,
+  ) {
+    if (rowIndex >= _items.length) return;
 
-  final code = item['code'] ?? '';
-  final name = item['name'] ?? '';
-  final wholesale =
-      double.tryParse(item['wholesale_price'] ?? '0') ?? 0.0;
-  final retail =
-      double.tryParse(item['selling_price'] ?? '0') ?? 0.0;
+    final code = item['code'] ?? '';
+    final name = item['name'] ?? '';
+    final wholesale = double.tryParse(item['wholesale_price'] ?? '0') ?? 0.0;
+    final retail = double.tryParse(item['selling_price'] ?? '0') ?? 0.0;
 
-  setState(() {
-    _items[rowIndex].code = code;
-    _items[rowIndex].name = name;
-    _items[rowIndex].wholesalePrice = wholesale;
-    _items[rowIndex].retailPrice = retail;
+    setState(() {
+      _items[rowIndex].code = code;
+      _items[rowIndex].name = name;
+      _items[rowIndex].wholesalePrice = wholesale;
+      _items[rowIndex].retailPrice = retail;
 
-    _controllers[rowIndex][0].text = code;
-    _controllers[rowIndex][1].text = name;
-    _controllers[rowIndex][3].text = wholesale.toString();
-    _controllers[rowIndex][4].text = retail.toString();
+      _controllers[rowIndex][0].text = code;
+      _controllers[rowIndex][1].text = name;
+      _controllers[rowIndex][3].text = wholesale.toString();
+      _controllers[rowIndex][4].text = retail.toString();
 
-    _recalcItem(rowIndex);
-  });
-}
+      _recalcItem(rowIndex);
+    });
+  }
 
   // ============================================================
   // Enter
   // ============================================================
 
+  // يعالج إدخال الحقل
   void _onFieldSubmitted(
     int rowIndex,
     int fieldIndex,
@@ -704,40 +676,29 @@ void _fillRowFromSelectedItem(
       fieldIndex,
     );
 
-    final next =
-        fieldIndex + 1;
+    final next = fieldIndex + 1;
 
     if (next < _fieldOrder.length) {
-      _focusNodes[rowIndex][next]
-          .requestFocus();
+      _focusNodes[rowIndex][next].requestFocus();
       return;
     }
 
     _addEmptyRow();
 
-    WidgetsBinding.instance
-        .addPostFrameCallback((_) {
-      if (!mounted ||
-          rowIndex + 1 >=
-              _focusNodes.length) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || rowIndex + 1 >= _focusNodes.length) {
         return;
       }
 
-      _focusNodes[rowIndex + 1][0]
-          .requestFocus();
+      _focusNodes[rowIndex + 1][0].requestFocus();
 
-      if (_scrollController
-          .hasClients) {
+      if (_scrollController.hasClients) {
         _scrollController.animateTo(
-          _scrollController
-              .position
-              .maxScrollExtent,
-          duration:
-              const Duration(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(
             milliseconds: 300,
           ),
-          curve:
-              Curves.easeOut,
+          curve: Curves.easeOut,
         );
       }
     });
@@ -747,227 +708,193 @@ void _fillRowFromSelectedItem(
   // الإجماليات
   // ============================================================
 
-  double get totalWholesale =>
-      _items.fold<double>(
+  // يحسب إجمالي الجملة
+  double get totalWholesale => _items.fold<double>(
         0.0,
-        (sum, item) =>
-            sum + item.wholesaleValue,
+        (sum, item) => sum + item.wholesaleValue,
       );
 
-  double get totalRetail =>
-      _items.fold<double>(
+  // يحسب إجمالي القطاعي
+  double get totalRetail => _items.fold<double>(
         0.0,
-        (sum, item) =>
-            sum + item.retailValue,
+        (sum, item) => sum + item.retailValue,
       );
 
-  double get totalQuantity =>
-      _items.fold<double>(
+  // يحسب إجمالي الكمية
+  double get totalQuantity => _items.fold<double>(
         0.0,
-        (sum, item) =>
-            sum + item.quantity,
+        (sum, item) => sum + item.quantity,
       );
 
   // ============================================================
   // حفظ
   // ============================================================
 
+  // يحفظ الجرد
   Future<void> _saveInventory() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      final isEdit = widget.editItem != null;
 
-    final isEdit =
-        widget.editItem != null;
+      final allowed = isEdit
+          ? PermissionsService().canEditInventory
+          : PermissionsService().canAddInventory;
 
-    final allowed = isEdit
-        ? PermissionsService()
-            .canEditInventory
-        : PermissionsService()
-            .canAddInventory;
-
-    if (!allowed) {
-      _showSnackBar(
-        isEdit
-            ? 'ليس لديك صلاحية تعديل الجرد'
-            : 'ليس لديك صلاحية إضافة الجرد',
-        AppTheme.warningOrangeFor(context),
-      );
-      return;
-    }
-
-    for (int i = 0;
-        i < _items.length;
-        i++) {
-      for (int j = 0;
-          j < _fieldOrder.length;
-          j++) {
-        _onFieldChanged(
-          i,
-          j,
-        );
-      }
-    }
-
-    final validItems =
-        _items.where(
-      (item) =>
-          item.code.trim().isNotEmpty &&
-          item.quantity > 0,
-    ).toList();
-
-    if (validItems.isEmpty) {
-      _showSnackBar(
-        'أضف صنفاً واحداً على الأقل',
-        AppTheme.warningOrangeFor(context),
-      );
-      return;
-    }
-
-    if (_selectedBranchCode == null ||
-        _selectedBranchCode!.isEmpty ||
-        _selectedBranchCode == 'all') {
-      _showSnackBar(
-        'يجب تحديد الفرع',
-        AppTheme.warningOrangeFor(context),
-      );
-      return;
-    }
-
-    if (_selectedStoreCode == null ||
-        _selectedStoreCode!.isEmpty) {
-      _showSnackBar(
-        'اختر المخزن',
-        AppTheme.warningOrangeFor(context),
-      );
-      return;
-    }
-
-    setState(() {
-      _isSaving = true;
-    });
-
-    try {
-      for (final item in validItems) {
-        item.wholesaleValue =
-            item.wholesalePrice *
-            item.quantity;
-
-        item.retailValue =
-            item.retailPrice *
-            item.quantity;
-      }
-
-      final model =
-          InventoryModel(
-        companyCode:
-            widget.companyCode,
-        branchCode:
-            _selectedBranchCode!,
-        storeCode:
-            _selectedStoreCode!,
-        date:
-            _selectedDate,
-        inventoryType:
-            _inventoryType,
-        items:
-            validItems,
-        totalWholesale:
-            totalWholesale,
-        totalRetail:
-            totalRetail,
-        serial:
-            widget.editItem?.serial ??
-                _currentSerial,
-        docId:
-            widget.editItem?.docId,
-      );
-
-      final result =
-          await _inventoryService
-              .saveInventory(
-        model,
-      );
-
-      if (result['success'] == true) {
+      if (!allowed) {
         _showSnackBar(
           isEdit
-              ? 'تم تحديث الجرد بنجاح'
-              : 'تم حفظ الجرد بنجاح',
-          AppTheme.successStrongFor(context),
+              ? 'ليس لديك صلاحية تعديل الجرد'
+              : 'ليس لديك صلاحية إضافة الجرد',
+          AppTheme.warningOrangeFor(context),
+        );
+        return;
+      }
+
+      for (int i = 0; i < _items.length; i++) {
+        for (int j = 0; j < _fieldOrder.length; j++) {
+          _onFieldChanged(
+            i,
+            j,
+          );
+        }
+      }
+
+      final validItems = _items
+          .where(
+            (item) => item.code.trim().isNotEmpty && item.quantity > 0,
+          )
+          .toList();
+
+      if (validItems.isEmpty) {
+        _showSnackBar(
+          'أضف صنفاً واحداً على الأقل',
+          AppTheme.warningOrangeFor(context),
+        );
+        return;
+      }
+
+      if (_selectedBranchCode == null ||
+          _selectedBranchCode!.isEmpty ||
+          _selectedBranchCode == 'all') {
+        _showSnackBar(
+          'يجب تحديد الفرع',
+          AppTheme.warningOrangeFor(context),
+        );
+        return;
+      }
+
+      if (_selectedStoreCode == null || _selectedStoreCode!.isEmpty) {
+        _showSnackBar(
+          'اختر المخزن',
+          AppTheme.warningOrangeFor(context),
+        );
+        return;
+      }
+
+      setState(() {
+        _isSaving = true;
+      });
+
+      try {
+        for (final item in validItems) {
+          item.wholesaleValue = item.wholesalePrice * item.quantity;
+
+          item.retailValue = item.retailPrice * item.quantity;
+        }
+
+        final model = InventoryModel(
+          companyCode: widget.companyCode,
+          branchCode: _selectedBranchCode!,
+          storeCode: _selectedStoreCode!,
+          date: _selectedDate,
+          inventoryType: _inventoryType,
+          items: validItems,
+          totalWholesale: totalWholesale,
+          totalRetail: totalRetail,
+          serial: widget.editItem?.serial ?? _currentSerial,
+          docId: widget.editItem?.docId,
         );
 
-        if (isEdit) {
-          if (mounted) {
-            Navigator.pop(
-              context,
-              true,
-            );
+        final result = await _inventoryService.saveInventory(
+          model,
+        );
+
+        if (result['success'] == true) {
+          _showSnackBar(
+            isEdit ? 'تم تحديث الجرد بنجاح' : 'تم حفظ الجرد بنجاح',
+            AppTheme.successStrongFor(context),
+          );
+
+          if (isEdit) {
+            if (mounted) {
+              Navigator.pop(
+                context,
+                true,
+              );
+            }
+            return;
           }
-          return;
-        }
 
-        for (final row in _controllers) {
-          for (final c in row) {
-            c.dispose();
+          for (final row in _controllers) {
+            for (final c in row) {
+              c.dispose();
+            }
           }
-        }
 
-        for (final row in _focusNodes) {
-          for (final f in row) {
-            f.dispose();
+          for (final row in _focusNodes) {
+            for (final f in row) {
+              f.dispose();
+            }
           }
+
+          _controllers.clear();
+          _focusNodes.clear();
+          _items.clear();
+
+          _addEmptyRow();
+
+          await _loadLastSerial();
+        } else {
+          _showSnackBar(
+            'فشل الحفظ: '
+            '${result['error'] ?? 'خطأ غير معروف'}',
+            AppTheme.dangerStrongFor(context),
+          );
         }
-
-        _controllers.clear();
-        _focusNodes.clear();
-        _items.clear();
-
-        _addEmptyRow();
-
-        await _loadLastSerial();
-      } else {
+      } catch (e) {
         _showSnackBar(
-          'فشل الحفظ: '
-          '${result['error'] ?? 'خطأ غير معروف'}',
+          'خطأ: $e',
           AppTheme.dangerStrongFor(context),
         );
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isSaving = false;
+          });
+        }
       }
-    } catch (e) {
-      _showSnackBar(
-        'خطأ: $e',
-        AppTheme.dangerStrongFor(context),
-      );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isSaving = false;
-        });
-      }
-    }
-});
-}
+    });
+  }
 
   // ============================================================
   // قراءة الأرقام من Excel
   // ============================================================
 
+  // يحوّل خلية Excel إلى رقم
   double _parseExcelNumber(
     dynamic cell,
   ) {
-    if (cell == null ||
-        cell.value == null) {
+    if (cell == null || cell.value == null) {
       return 0.0;
     }
 
-    final value =
-        cell.value;
+    final value = cell.value;
 
     if (value is num) {
       return value.toDouble();
     }
 
     if (value is String) {
-      final text =
-          value.trim();
+      final text = value.trim();
 
       if (text.isEmpty) {
         return 0.0;
@@ -983,8 +910,7 @@ return CachePartitions.run(() async {
         }
       }
 
-      final cleaned =
-          text.replaceAll(
+      final cleaned = text.replaceAll(
         RegExp(r'[^0-9.\-]'),
         '',
       );
@@ -1005,35 +931,30 @@ return CachePartitions.run(() async {
   // تقييم التعبيرات
   // ============================================================
 
+  // يقيّم تعبيرًا حسابيًا
   double _evaluateExpression(
     String expr,
   ) {
-    expr =
-        expr.replaceAll(' ', '');
+    expr = expr.replaceAll(' ', '');
 
     while (expr.contains('(')) {
-      final start =
-          expr.lastIndexOf('(');
+      final start = expr.lastIndexOf('(');
 
-      final end =
-          expr.indexOf(
+      final end = expr.indexOf(
         ')',
         start,
       );
 
       if (end == -1) break;
 
-      final sub =
-          expr.substring(
+      final sub = expr.substring(
         start + 1,
         end,
       );
 
-      final value =
-          _evaluateSimple(sub);
+      final value = _evaluateSimple(sub);
 
-      expr =
-          expr.substring(
+      expr = expr.substring(
             0,
             start,
           ) +
@@ -1046,6 +967,7 @@ return CachePartitions.run(() async {
     return _evaluateSimple(expr);
   }
 
+  // يقيّم عمليات الجمع والطرح
   double _evaluateSimple(
     String expr,
   ) {
@@ -1053,15 +975,10 @@ return CachePartitions.run(() async {
 
     String current = '';
 
-    for (int i = 0;
-        i < expr.length;
-        i++) {
-      final char =
-          expr[i];
+    for (int i = 0; i < expr.length; i++) {
+      final char = expr[i];
 
-      if ((char == '+' ||
-              char == '-') &&
-          i > 0) {
+      if ((char == '+' || char == '-') && i > 0) {
         terms.add(current);
         current = char;
       } else {
@@ -1076,27 +993,23 @@ return CachePartitions.run(() async {
     return terms.fold<double>(
       0.0,
       (sum, term) {
-        if (term.startsWith('+') ||
-            term.startsWith('-')) {
-          final value =
-              _evaluateProduct(
+        if (term.startsWith('+') || term.startsWith('-')) {
+          final value = _evaluateProduct(
             term.substring(1),
           );
 
-          return sum +
-              (term[0] == '+'
-                  ? value
-                  : -value);
+          return sum + (term[0] == '+' ? value : -value);
         }
 
         return sum +
             _evaluateProduct(
-          term,
-        );
+              term,
+            );
       },
     );
   }
 
+  // يقيّم عمليات الضرب والقسمة
   double _evaluateProduct(
     String expr,
   ) {
@@ -1104,14 +1017,10 @@ return CachePartitions.run(() async {
 
     String current = '';
 
-    for (int i = 0;
-        i < expr.length;
-        i++) {
-      final char =
-          expr[i];
+    for (int i = 0; i < expr.length; i++) {
+      final char = expr[i];
 
-      if (char == '*' ||
-          char == '/') {
+      if (char == '*' || char == '/') {
         factors.add(current);
         factors.add(char);
         current = '';
@@ -1128,35 +1037,27 @@ return CachePartitions.run(() async {
       return 0.0;
     }
 
-    double result =
-        double.tryParse(
-              factors[0],
-            ) ??
-            0.0;
+    double result = double.tryParse(
+          factors[0],
+        ) ??
+        0.0;
 
-    for (int i = 1;
-        i < factors.length;
-        i += 2) {
+    for (int i = 1; i < factors.length; i += 2) {
       if (i + 1 >= factors.length) {
         break;
       }
 
-      final op =
-          factors[i];
+      final op = factors[i];
 
-      final next =
-          double.tryParse(
-                factors[i + 1],
-              ) ??
-              0.0;
+      final next = double.tryParse(
+            factors[i + 1],
+          ) ??
+          0.0;
 
       if (op == '*') {
         result *= next;
       } else if (op == '/') {
-        result =
-            next == 0
-                ? 0.0
-                : result / next;
+        result = next == 0 ? 0.0 : result / next;
       }
     }
 
@@ -1167,364 +1068,283 @@ return CachePartitions.run(() async {
   // استيراد Excel
   // ============================================================
 
+  // يستورد الأصناف من ملف Excel
   Future<void> _importFromExcel() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (!PermissionsService().canImportInventory) {
+        _showSnackBar(
+          'ليس لديك صلاحية للاستيراد',
+          AppTheme.warningOrangeFor(context),
+        );
+        return;
+      }
 
-    if (!PermissionsService()
-        .canImportInventory) {
-      _showSnackBar(
-        'ليس لديك صلاحية للاستيراد',
-        AppTheme.warningOrangeFor(context),
-      );
-      return;
-    }
-
-    final proceed =
-        await showDialog<bool>(
-      context:
-          context,
-      builder:
-          (ctx) =>
-              AlertDialog(
-        backgroundColor:
-            AppTheme.dialogBackground(context),
-        title:
-            Text(
-          'تأكيد الاستيراد',
-          style:
-              TextStyle(
-            color:
-                AppTheme.textMainFor(context),
-            fontFamily:
-                'Cairo',
-          ),
-        ),
-        content:
-            Text(
-          'تأكد من احتواء ملف Excel على الأعمدة التالية بأي ترتيب:\n\n'
-          '• الكود\n'
-          '• الصنف\n'
-          '• الكمية\n'
-          '• سعر الجملة\n'
-          '• سعر البيع\n\n'
-          'يسمح بالكسور مثل 11.33.',
-          style:
-              TextStyle(
-            color:
-                AppTheme.textSoftFor(context),
-            fontFamily:
-                'Cairo',
-          ),
-          textAlign:
-              TextAlign.right,
-        ),
-        actions: [
-          TextButton(
-            onPressed:
-                () =>
-                    Navigator.pop(
-              ctx,
-              false,
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppTheme.dialogBackground(context),
+          title: Text(
+            'تأكيد الاستيراد',
+            style: TextStyle(
+              color: AppTheme.textMainFor(context),
+              fontFamily: 'Cairo',
             ),
-            child:
-                Text(
-              'إلغاء',
-              style:
-                  TextStyle(
-                color:
-                    AppTheme.dangerFor(context),
+          ),
+          content: Text(
+            'تأكد من احتواء ملف Excel على الأعمدة التالية بأي ترتيب:\n\n'
+            '• الكود\n'
+            '• الصنف\n'
+            '• الكمية\n'
+            '• سعر الجملة\n'
+            '• سعر البيع\n\n'
+            'يسمح بالكسور مثل 11.33.',
+            style: TextStyle(
+              color: AppTheme.textSoftFor(context),
+              fontFamily: 'Cairo',
+            ),
+            textAlign: TextAlign.right,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(
+                ctx,
+                false,
+              ),
+              child: Text(
+                'إلغاء',
+                style: TextStyle(
+                  color: AppTheme.dangerFor(context),
+                ),
               ),
             ),
-          ),
-          ElevatedButton(
-            onPressed:
-                () =>
-                    Navigator.pop(
-              ctx,
-              true,
+            ElevatedButton(
+              onPressed: () => Navigator.pop(
+                ctx,
+                true,
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.successFor(context),
+                foregroundColor: AppTheme.onAccentFor(context),
+              ),
+              child: const Text(
+                'موافق',
+              ),
             ),
-            style:
-                ElevatedButton.styleFrom(
-              backgroundColor:
-                  AppTheme.successFor(context),
-              foregroundColor:
-                  AppTheme.onAccentFor(context),
-            ),
-            child:
-                const Text(
-              'موافق',
-            ),
-          ),
-        ],
-      ),
-    );
-
-    if (proceed != true) {
-      return;
-    }
-
-    final result =
-        await FilePicker.platform.pickFiles(
-      type:
-          FileType.custom,
-      allowedExtensions:
-          ['xlsx'],
-      withData:
-          true,
-    );
-
-    if (result == null) {
-      return;
-    }
-
-    setState(() {
-      _isLoading = true;
-    });
-
-    try {
-      var bytes =
-          result.files.single.bytes;
-
-      if (bytes == null &&
-          result.files.single.path !=
-              null) {
-        bytes =
-            await File(
-          result.files.single.path!,
-        ).readAsBytes();
-      }
-
-      if (bytes == null) {
-        throw 'تعذر قراءة الملف';
-      }
-
-      final excel =
-          excel_lib.Excel.decodeBytes(
-        bytes,
+          ],
+        ),
       );
 
-      for (final table
-          in excel.tables.keys) {
-        final rows =
-            excel.tables[table]!.rows;
+      if (proceed != true) {
+        return;
+      }
 
-        if (rows.isEmpty) {
-          continue;
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['xlsx'],
+        withData: true,
+      );
+
+      if (result == null) {
+        return;
+      }
+
+      setState(() {
+        _isLoading = true;
+      });
+
+      try {
+        var bytes = result.files.single.bytes;
+
+        if (bytes == null && result.files.single.path != null) {
+          bytes = await File(
+            result.files.single.path!,
+          ).readAsBytes();
         }
 
-        int codeIdx = -1;
-        int nameIdx = -1;
-        int qtyIdx = -1;
-        int wholesaleIdx = -1;
-        int retailIdx = -1;
-
-        final header =
-            rows[0];
-
-        for (int col = 0;
-            col < header.length;
-            col++) {
-          final value =
-              header[col]
-                      ?.value
-                      ?.toString()
-                      .trim() ??
-                  '';
-
-          if (value == 'الكود') {
-            codeIdx = col;
-          } else if (value == 'الصنف') {
-            nameIdx = col;
-          } else if (value == 'الكمية') {
-            qtyIdx = col;
-          } else if (value == 'سعر الجملة') {
-            wholesaleIdx = col;
-          } else if (value == 'سعر البيع') {
-            retailIdx = col;
-          }
+        if (bytes == null) {
+          throw 'تعذر قراءة الملف';
         }
 
-        if (codeIdx == -1 ||
-            nameIdx == -1 ||
-            qtyIdx == -1 ||
-            wholesaleIdx == -1 ||
-            retailIdx == -1) {
-          throw 'الملف لا يحتوي على الأعمدة المطلوبة';
-        }
+        final excel = excel_lib.Excel.decodeBytes(
+          bytes,
+        );
 
-        final newItems =
-            <InventoryItem>[];
+        for (final table in excel.tables.keys) {
+          final rows = excel.tables[table]!.rows;
 
-        for (int i = 1;
-            i < rows.length;
-            i++) {
-          final row =
-              rows[i];
-
-          if (codeIdx >= row.length ||
-              row[codeIdx] == null ||
-              row[codeIdx]!.value ==
-                  null) {
+          if (rows.isEmpty) {
             continue;
           }
 
-          final code =
-              row[codeIdx]!
-                  .value
-                  .toString()
-                  .trim();
+          int codeIdx = -1;
+          int nameIdx = -1;
+          int qtyIdx = -1;
+          int wholesaleIdx = -1;
+          int retailIdx = -1;
 
-          if (code.isEmpty) {
-            continue;
+          final header = rows[0];
+
+          for (int col = 0; col < header.length; col++) {
+            final value = header[col]?.value?.toString().trim() ?? '';
+
+            if (value == 'الكود') {
+              codeIdx = col;
+            } else if (value == 'الصنف') {
+              nameIdx = col;
+            } else if (value == 'الكمية') {
+              qtyIdx = col;
+            } else if (value == 'سعر الجملة') {
+              wholesaleIdx = col;
+            } else if (value == 'سعر البيع') {
+              retailIdx = col;
+            }
           }
 
-          final name =
-              nameIdx < row.length &&
-                      row[nameIdx] !=
-                          null &&
-                      row[nameIdx]!.value !=
-                          null
-                  ? row[nameIdx]!
-                      .value
-                      .toString()
-                      .trim()
-                  : '';
-
-          final qty =
-              qtyIdx < row.length
-                  ? _parseExcelNumber(
-                      row[qtyIdx],
-                    )
-                  : 0.0;
-
-          final wholesale =
-              wholesaleIdx < row.length
-                  ? _parseExcelNumber(
-                      row[wholesaleIdx],
-                    )
-                  : 0.0;
-
-          final retail =
-              retailIdx < row.length
-                  ? _parseExcelNumber(
-                      row[retailIdx],
-                    )
-                  : 0.0;
-
-          if (qty <= 0) {
-            continue;
+          if (codeIdx == -1 ||
+              nameIdx == -1 ||
+              qtyIdx == -1 ||
+              wholesaleIdx == -1 ||
+              retailIdx == -1) {
+            throw 'الملف لا يحتوي على الأعمدة المطلوبة';
           }
 
-          newItems.add(
-            InventoryItem(
-              code:
-                  code,
-              name:
-                  name,
-              quantity:
-                  qty,
-              wholesalePrice:
-                  wholesale,
-              retailPrice:
-                  retail,
-            ),
-          );
-        }
+          final newItems = <InventoryItem>[];
 
-        if (newItems.isNotEmpty) {
-          setState(() {
-            if (_items.isNotEmpty &&
-                _items.last.code.isEmpty) {
-              _items.removeLast();
+          for (int i = 1; i < rows.length; i++) {
+            final row = rows[i];
+
+            if (codeIdx >= row.length ||
+                row[codeIdx] == null ||
+                row[codeIdx]!.value == null) {
+              continue;
             }
 
-            _items.addAll(
-              newItems,
-            );
+            final code = row[codeIdx]!.value.toString().trim();
 
-            _items.add(
+            if (code.isEmpty) {
+              continue;
+            }
+
+            final name = nameIdx < row.length &&
+                    row[nameIdx] != null &&
+                    row[nameIdx]!.value != null
+                ? row[nameIdx]!.value.toString().trim()
+                : '';
+
+            final qty = qtyIdx < row.length
+                ? _parseExcelNumber(
+                    row[qtyIdx],
+                  )
+                : 0.0;
+
+            final wholesale = wholesaleIdx < row.length
+                ? _parseExcelNumber(
+                    row[wholesaleIdx],
+                  )
+                : 0.0;
+
+            final retail = retailIdx < row.length
+                ? _parseExcelNumber(
+                    row[retailIdx],
+                  )
+                : 0.0;
+
+            if (qty <= 0) {
+              continue;
+            }
+
+            newItems.add(
               InventoryItem(
-                code: '',
-                name: '',
-                quantity: 0,
-                wholesalePrice: 0,
-                retailPrice: 0,
+                code: code,
+                name: name,
+                quantity: qty,
+                wholesalePrice: wholesale,
+                retailPrice: retail,
               ),
             );
+          }
 
-            _rebuildControllersAndFocus();
-          });
+          if (newItems.isNotEmpty) {
+            setState(() {
+              if (_items.isNotEmpty && _items.last.code.isEmpty) {
+                _items.removeLast();
+              }
 
-          _showSnackBar(
-            'تم استيراد ${newItems.length} صنفاً',
-            AppTheme.successStrongFor(context),
-          );
-        } else {
-          _showSnackBar(
-            'لم يتم استيراد أي بيانات صالحة',
-            AppTheme.warningOrangeFor(context),
-          );
+              _items.addAll(
+                newItems,
+              );
+
+              _items.add(
+                InventoryItem(
+                  code: '',
+                  name: '',
+                  quantity: 0,
+                  wholesalePrice: 0,
+                  retailPrice: 0,
+                ),
+              );
+
+              _rebuildControllersAndFocus();
+            });
+
+            _showSnackBar(
+              'تم استيراد ${newItems.length} صنفاً',
+              AppTheme.successStrongFor(context),
+            );
+          } else {
+            _showSnackBar(
+              'لم يتم استيراد أي بيانات صالحة',
+              AppTheme.warningOrangeFor(context),
+            );
+          }
+
+          break;
         }
-
-        break;
+      } catch (e) {
+        _showSnackBar(
+          'فشل الاستيراد: $e',
+          AppTheme.dangerStrongFor(context),
+        );
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
       }
-    } catch (e) {
-      _showSnackBar(
-        'فشل الاستيراد: $e',
-        AppTheme.dangerStrongFor(context),
-      );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    }
-});
-}
+    });
+  }
 
   // ============================================================
   // Build
   // ============================================================
 
+  // يبني واجهة الصفحة
   @override
   Widget build(
     BuildContext context,
   ) {
-    if (!PermissionsService()
-        .canShowInventory) {
+    if (!PermissionsService().canShowInventory) {
       return Scaffold(
-        appBar:
-            AppBar(
-          title:
-              Text(
+        appBar: AppBar(
+          title: Text(
             'الجرد',
-            style:
-                TextStyle(
-              color:
-                  AppTheme.textMainFor(context),
-              fontFamily:
-                  'Cairo',
+            style: TextStyle(
+              color: AppTheme.textMainFor(context),
+              fontFamily: 'Cairo',
             ),
           ),
-          backgroundColor:
-              AppTheme.appBarBg,
+          backgroundColor: AppTheme.appBarBg,
         ),
-        body:
-            Container(
-          decoration:
-              BoxDecoration(gradient: LinearGradient(colors: AppTheme.pageGradient(context))),
-          child:
-              Center(
-            child:
-                Text(
+        body: Container(
+          decoration: BoxDecoration(
+              gradient: LinearGradient(colors: AppTheme.pageGradient(context))),
+          child: Center(
+            child: Text(
               'ليس لديك صلاحية لعرض الجرد',
-              style:
-                  TextStyle(
-                color:
-                    AppTheme.textSoftFor(context),
-                fontFamily:
-                    'Cairo',
+              style: TextStyle(
+                color: AppTheme.textSoftFor(context),
+                fontFamily: 'Cairo',
               ),
             ),
           ),
@@ -1533,264 +1353,180 @@ return CachePartitions.run(() async {
     }
 
     return PopScope(
-      canPop:
-          false,
-      onPopInvoked:
-          (didPop) {
-        if (!didPop &&
-            mounted) {
+      canPop: false,
+      onPopInvoked: (didPop) {
+        if (!didPop && mounted) {
           Navigator.pop(
             context,
           );
         }
       },
-      child:
-          Scaffold(
-        extendBodyBehindAppBar:
-            true,
-        appBar:
-            AppBar(
-          title:
-              Column(
-            mainAxisSize:
-                MainAxisSize.min,
+      child: Scaffold(
+        extendBodyBehindAppBar: true,
+        appBar: AppBar(
+          title: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                widget.editItem != null
-                    ? 'تعديل جرد'
-                    : 'جرد المخزون',
-                style:
-                    TextStyle(
-                  fontFamily:
-                      'Cairo',
-                  color:
-                      AppTheme.textMainFor(context),
-                  fontSize:
-                      16,
+                widget.editItem != null ? 'تعديل جرد' : 'جرد المخزون',
+                style: TextStyle(
+                  fontFamily: 'Cairo',
+                  color: AppTheme.textMainFor(context),
+                  fontSize: 16,
                 ),
               ),
-              if (_currentSerial !=
-                  null)
+              if (_currentSerial != null)
                 Text(
                   'إذن رقم: $_currentSerial',
-                  style:
-                      TextStyle(
-                    fontFamily:
-                        'Cairo',
-                    fontSize:
-                        14,
-                    color:
-                        AppTheme.accentFor(context),
-                    fontWeight:
-                        FontWeight.bold,
+                  style: TextStyle(
+                    fontFamily: 'Cairo',
+                    fontSize: 14,
+                    color: AppTheme.accentFor(context),
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
               Text(
                 'الفرع: ${widget.branchName ?? _getBranchName(_selectedBranchCode)}',
-                style:
-                    TextStyle(
-                  fontFamily:
-                      'Cairo',
-                  fontSize:
-                      11,
-                  color:
-                      AppTheme.textSoftFor(context),
+                style: TextStyle(
+                  fontFamily: 'Cairo',
+                  fontSize: 11,
+                  color: AppTheme.textSoftFor(context),
                 ),
               ),
             ],
           ),
-          backgroundColor:
-              AppTheme.appBarBg,
-          elevation:
-              0,
-          centerTitle:
-              true,
-          toolbarHeight:
-              75,
+          backgroundColor: AppTheme.appBarBg,
+          elevation: 0,
+          centerTitle: true,
+          toolbarHeight: 75,
           actions: [
-            if (PermissionsService()
-                .canViewInventory)
+            if (PermissionsService().canViewInventory)
               IconButton(
-                icon:
-                    Icon(
+                icon: Icon(
                   Icons.history,
-                  color:
-                      AppTheme.accentFor(context),
+                  color: AppTheme.accentFor(context),
                 ),
-                onPressed:
-                    () =>
-                        Navigator.push(
+                onPressed: () => Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder:
-                        (_) =>
-                            InventoryHistoryPage(
-                      companyCode:
-                          widget.companyCode,
-                      selectedBranchCode:
-                          _selectedBranchCode,
-                      branchName:
-                          widget.branchName,
+                    builder: (_) => InventoryHistoryPage(
+                      companyCode: widget.companyCode,
+                      selectedBranchCode: _selectedBranchCode,
+                      branchName: widget.branchName,
                     ),
                   ),
                 ).then(
-                  (_) =>
-                      _loadLastSerial(),
+                  (_) => _loadLastSerial(),
                 ),
               ),
-            if (PermissionsService()
-                .canImportInventory)
+            if (PermissionsService().canImportInventory)
               IconButton(
-                icon:
-                    Icon(
+                icon: Icon(
                   Icons.upload_file,
-                  color:
-                      AppTheme.successFor(context),
+                  color: AppTheme.successFor(context),
                 ),
-                onPressed:
-                    _importFromExcel,
+                onPressed: _importFromExcel,
               ),
           ],
         ),
-        body:
-            Container(
-          width:
-              double.infinity,
-          height:
-              double.infinity,
-          decoration:
-              BoxDecoration(gradient: LinearGradient(colors: AppTheme.pageGradient(context))),
-          child:
-              SafeArea(
-            child:
-                (_isLoading ||
-                        _isSaving)
-                    ? Center(
-                        child:
-                            CircularProgressIndicator(
-                          color:
-                              AppTheme.textMainFor(context),
-                        ),
-                      )
-                    : Center(
-                        child:
-                            Container(
-                          constraints:
-                              BoxConstraints(
-                            maxWidth:
-                                MediaQuery.of(
-                                          context,
-                                        ).size.width >
-                                    600
-                                    ? 1200
-                                    : double.infinity,
-                          ),
-                          child:
-                              Column(
-                            children: [
-                              Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(
-                                  horizontal:
-                                      12,
-                                  vertical:
-                                      4,
+        body: Container(
+          width: double.infinity,
+          height: double.infinity,
+          decoration: BoxDecoration(
+              gradient: LinearGradient(colors: AppTheme.pageGradient(context))),
+          child: SafeArea(
+            child: (_isLoading || _isSaving)
+                ? Center(
+                    child: CircularProgressIndicator(
+                      color: AppTheme.textMainFor(context),
+                    ),
+                  )
+                : Center(
+                    child: Container(
+                      constraints: BoxConstraints(
+                        maxWidth: MediaQuery.of(
+                                  context,
+                                ).size.width >
+                                600
+                            ? 1200
+                            : double.infinity,
+                      ),
+                      child: Column(
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 4,
+                            ),
+                            child: GlassCard(
+                              child: Padding(
+                                padding: const EdgeInsets.all(
+                                  4,
                                 ),
-                                child:
-                                    GlassCard(
-                                  child:
-                                      Padding(
-                                    padding:
-                                        const EdgeInsets.all(
-                                      4,
-                                    ),
-                                    child:
-                                        Row(
-                                      children: [
-                                        Expanded(
-                                          flex:
-                                              2,
-                                          child:
-                                              _buildSmallDateField(),
-                                        ),
-                                        const SizedBox(
-                                          width:
-                                              4,
-                                        ),
-                                        Expanded(
-                                          flex:
-                                              2,
-                                          child:
-                                              _buildSmallDropdown(
-                                            'المخزن',
-                                            _selectedStoreCode,
-                                            _stores,
-                                            (v) =>
-                                                setState(
-                                              () =>
-                                                  _selectedStoreCode =
-                                                      v,
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(
-                                          width:
-                                              4,
-                                        ),
-                                        Expanded(
-                                          flex:
-                                              1,
-                                          child:
-                                              _buildSmallTypeSelector(),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              Expanded(
-                                child:
-                                    Padding(
-                                  padding:
-                                      const EdgeInsets.symmetric(
-                                    horizontal:
-                                        8,
-                                  ),
-                                  child:
-                                      _buildItemsList(),
-                                ),
-                              ),
-                              Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(
-                                  horizontal:
-                                      8,
-                                  vertical:
-                                      6,
-                                ),
-                                child:
-                                    Row(
+                                child: Row(
                                   children: [
                                     Expanded(
-                                      child:
-                                          _buildSmallTotals(),
+                                      flex: 2,
+                                      child: _buildSmallDateField(),
                                     ),
                                     const SizedBox(
-                                      width:
-                                          8,
+                                      width: 4,
                                     ),
-                                    _buildSmallSaveButton(),
+                                    Expanded(
+                                      flex: 2,
+                                      child: _buildSmallDropdown(
+                                        'المخزن',
+                                        _selectedStoreCode,
+                                        _stores,
+                                        (v) => setState(
+                                          () => _selectedStoreCode = v,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(
+                                      width: 4,
+                                    ),
+                                    Expanded(
+                                      flex: 1,
+                                      child: _buildSmallTypeSelector(),
+                                    ),
                                   ],
                                 ),
                               ),
-                              const SizedBox(
-                                height:
-                                    4,
-                              ),
-                            ],
+                            ),
                           ),
-                        ),
+                          Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                              ),
+                              child: _buildItemsList(),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 6,
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: _buildSmallTotals(),
+                                ),
+                                const SizedBox(
+                                  width: 8,
+                                ),
+                                _buildSmallSaveButton(),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(
+                            height: 4,
+                          ),
+                        ],
                       ),
+                    ),
+                  ),
           ),
         ),
       ),
@@ -1801,86 +1537,60 @@ return CachePartitions.run(() async {
   // التاريخ
   // ============================================================
 
-  Widget _buildSmallDateField() =>
-      GestureDetector(
+  // يبني حقل التاريخ الصغير
+  Widget _buildSmallDateField() => GestureDetector(
         onTap: () async {
-return CachePartitions.run(() async {
+          return CachePartitions.run(() async {
+            final picked = await showDatePicker(
+              context: context,
+              initialDate: DateTime.parse(
+                _selectedDate,
+              ),
+              firstDate: DateTime(2020),
+              lastDate: DateTime(2101),
+            );
 
-          final picked =
-              await showDatePicker(
-            context:
-                context,
-            initialDate:
-                DateTime.parse(
-              _selectedDate,
-            ),
-            firstDate:
-                DateTime(2020),
-            lastDate:
-                DateTime(2101),
-          );
-
-          if (picked != null &&
-              mounted) {
-            setState(() {
-              _selectedDate =
-                  DateFormat(
-                'yyyy-MM-dd',
-              ).format(
-                picked,
-              );
-            });
-          }
-
-});
-},
-        child:
-            Container(
-          padding:
-              const EdgeInsets.symmetric(
-            horizontal:
-                6,
-            vertical:
-                4,
+            if (picked != null && mounted) {
+              setState(() {
+                _selectedDate = DateFormat(
+                  'yyyy-MM-dd',
+                ).format(
+                  picked,
+                );
+              });
+            }
+          });
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: 6,
+            vertical: 4,
           ),
-          decoration:
-              BoxDecoration(
-            color:
-                GlassStyle.fill05For(context),
-            borderRadius:
-                BorderRadius.circular(
+          decoration: BoxDecoration(
+            color: GlassStyle.fill05For(context),
+            borderRadius: BorderRadius.circular(
               6,
             ),
-            border:
-                Border.all(
-              color:
-                  GlassStyle.line24For(context),
+            border: Border.all(
+              color: GlassStyle.line24For(context),
             ),
           ),
-          child:
-              Row(
-            mainAxisSize:
-                MainAxisSize.min,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
                 Icons.calendar_today,
-                color:
-                    AppTheme.warningFor(context),
-                size:
-                    14,
+                color: AppTheme.warningFor(context),
+                size: 14,
               ),
               const SizedBox(
-                width:
-                    4,
+                width: 4,
               ),
               Text(
                 _selectedDate,
-                style:
-                    TextStyle(
-                  color:
-                      AppTheme.textMainFor(context),
-                  fontSize:
-                      12,
+                style: TextStyle(
+                  color: AppTheme.textMainFor(context),
+                  fontSize: 12,
                 ),
               ),
             ],
@@ -1892,6 +1602,7 @@ return CachePartitions.run(() async {
   // Dropdown
   // ============================================================
 
+  // يبني قائمة منسدلة صغيرة
   Widget _buildSmallDropdown(
     String label,
     String? value,
@@ -1899,185 +1610,123 @@ return CachePartitions.run(() async {
     Function(String?) onChanged,
   ) =>
       DropdownButtonFormField<String?>(
-        initialValue:
-            value,
-        dropdownColor:
-            AppTheme.dropdownBackground(context),
-        style:
-            TextStyle(
-          color:
-              AppTheme.textMainFor(context),
-          fontSize:
-              12,
+        initialValue: value,
+        dropdownColor: AppTheme.dropdownBackground(context),
+        style: TextStyle(
+          color: AppTheme.textMainFor(context),
+          fontSize: 12,
         ),
-        isExpanded:
-            true,
-        decoration:
-            InputDecoration(
-          labelText:
-              label,
-          labelStyle:
-              TextStyle(
-            color:
-                AppTheme.textSoftFor(context),
-            fontSize:
-                10,
+        isExpanded: true,
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: TextStyle(
+            color: AppTheme.textSoftFor(context),
+            fontSize: 10,
           ),
-          contentPadding:
-              const EdgeInsets.symmetric(
-            horizontal:
-                6,
-            vertical:
-                4,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 6,
+            vertical: 4,
           ),
-          border:
-              OutlineInputBorder(
-            borderRadius:
-                BorderRadius.circular(
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(
               6,
             ),
-            borderSide:
-                BorderSide(
-              color:
-                  GlassStyle.line24For(context),
+            borderSide: BorderSide(
+              color: GlassStyle.line24For(context),
             ),
           ),
-          enabledBorder:
-              OutlineInputBorder(
-            borderRadius:
-                BorderRadius.circular(
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(
               6,
             ),
-            borderSide:
-                BorderSide(
-              color:
-                  GlassStyle.line24For(context),
+            borderSide: BorderSide(
+              color: GlassStyle.line24For(context),
             ),
           ),
-          isDense:
-              true,
+          isDense: true,
         ),
-        items:
-            items.map(
-          (item) =>
-              DropdownMenuItem<String?>(
-            value:
-                item['code'],
-            child:
-                Text(
-              item['name'] ?? '',
-              style:
-                  TextStyle(
-                fontSize:
-                    12,
+        items: items
+            .map(
+              (item) => DropdownMenuItem<String?>(
+                value: item['code'],
+                child: Text(
+                  item['name'] ?? '',
+                  style: TextStyle(
+                    fontSize: 12,
+                  ),
+                ),
               ),
-            ),
-          ),
-        ).toList(),
-        onChanged:
-            onChanged,
+            )
+            .toList(),
+        onChanged: onChanged,
       );
 
   // ============================================================
   // النوع
   // ============================================================
 
-  Widget _buildSmallTypeSelector() =>
-      DropdownButtonFormField<String>(
-        initialValue:
-            _inventoryType,
-        dropdownColor:
-            AppTheme.dropdownBackground(context),
-        style:
-            TextStyle(
-          color:
-              AppTheme.textMainFor(context),
-          fontSize:
-              12,
+  // يبني منتقي النوع الصغير
+  Widget _buildSmallTypeSelector() => DropdownButtonFormField<String>(
+        initialValue: _inventoryType,
+        dropdownColor: AppTheme.dropdownBackground(context),
+        style: TextStyle(
+          color: AppTheme.textMainFor(context),
+          fontSize: 12,
         ),
-        isExpanded:
-            true,
-        decoration:
-            InputDecoration(
-          labelText:
-              'النوع',
-          labelStyle:
-              TextStyle(
-            color:
-                AppTheme.textSoftFor(context),
-            fontSize:
-                10,
+        isExpanded: true,
+        decoration: InputDecoration(
+          labelText: 'النوع',
+          labelStyle: TextStyle(
+            color: AppTheme.textSoftFor(context),
+            fontSize: 10,
           ),
-          contentPadding:
-              const EdgeInsets.symmetric(
-            horizontal:
-                6,
-            vertical:
-                4,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 6,
+            vertical: 4,
           ),
-          border:
-              OutlineInputBorder(
-            borderRadius:
-                BorderRadius.circular(
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(
               6,
             ),
-            borderSide:
-                BorderSide(
-              color:
-                  GlassStyle.line24For(context),
+            borderSide: BorderSide(
+              color: GlassStyle.line24For(context),
             ),
           ),
-          enabledBorder:
-              OutlineInputBorder(
-            borderRadius:
-                BorderRadius.circular(
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(
               6,
             ),
-            borderSide:
-                BorderSide(
-              color:
-                  GlassStyle.line24For(context),
+            borderSide: BorderSide(
+              color: GlassStyle.line24For(context),
             ),
           ),
-          isDense:
-              true,
+          isDense: true,
         ),
-        items:
-            const [
+        items: const [
           DropdownMenuItem(
-            value:
-                'general',
-            child:
-                Text(
+            value: 'general',
+            child: Text(
               'جرد عام',
-              style:
-                  TextStyle(
-                fontSize:
-                    12,
+              style: TextStyle(
+                fontSize: 12,
               ),
             ),
           ),
           DropdownMenuItem(
-            value:
-                'specific',
-            child:
-                Text(
+            value: 'specific',
+            child: Text(
               'جرد محدد',
-              style:
-                  TextStyle(
-                fontSize:
-                    12,
+              style: TextStyle(
+                fontSize: 12,
               ),
             ),
           ),
         ],
-        onChanged:
-            (value) {
+        onChanged: (value) {
           if (value == null) return;
 
           setState(() {
-            _inventoryType =
-                value;
+            _inventoryType = value;
           });
         },
       );
@@ -2086,11 +1735,10 @@ return CachePartitions.run(() async {
   // الإجماليات
   // ============================================================
 
+  // يبني الإجماليات الصغيرة
   Widget _buildSmallTotals() {
-    final valid =
-        _items.any(
-      (item) =>
-          item.code.isNotEmpty,
+    final valid = _items.any(
+      (item) => item.code.isNotEmpty,
     );
 
     if (!valid) {
@@ -2098,61 +1746,42 @@ return CachePartitions.run(() async {
     }
 
     return Container(
-      padding:
-          const EdgeInsets.symmetric(
-        horizontal:
-            10,
-        vertical:
-            4,
+      padding: const EdgeInsets.symmetric(
+        horizontal: 10,
+        vertical: 4,
       ),
-      decoration:
-          BoxDecoration(
-        color:
-            GlassStyle.fill05For(context),
-        borderRadius:
-            BorderRadius.circular(
+      decoration: BoxDecoration(
+        color: GlassStyle.fill05For(context),
+        borderRadius: BorderRadius.circular(
           6,
         ),
-        border:
-            Border.all(
-          color:
-              GlassStyle.line24For(context),
+        border: Border.all(
+          color: GlassStyle.line24For(context),
         ),
       ),
-      child:
-          Row(
-        mainAxisAlignment:
-            MainAxisAlignment
-                .spaceAround,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
           Row(
             children: [
               Text(
                 'الكمية:',
-                style:
-                    TextStyle(
-                  color:
-                      AppTheme.textSoftFor(context),
-                  fontSize:
-                      12,
+                style: TextStyle(
+                  color: AppTheme.textSoftFor(context),
+                  fontSize: 12,
                 ),
               ),
               const SizedBox(
-                width:
-                    4,
+                width: 4,
               ),
               Text(
                 _formatNumber(
                   totalQuantity,
                 ),
-                style:
-                    TextStyle(
-                  color:
-                      AppTheme.accentFor(context),
-                  fontSize:
-                      13,
-                  fontWeight:
-                      FontWeight.bold,
+                style: TextStyle(
+                  color: AppTheme.accentFor(context),
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
             ],
@@ -2161,30 +1790,22 @@ return CachePartitions.run(() async {
             children: [
               Text(
                 'الجملة:',
-                style:
-                    TextStyle(
-                  color:
-                      AppTheme.textSoftFor(context),
-                  fontSize:
-                      12,
+                style: TextStyle(
+                  color: AppTheme.textSoftFor(context),
+                  fontSize: 12,
                 ),
               ),
               const SizedBox(
-                width:
-                    4,
+                width: 4,
               ),
               Text(
                 _formatDecimal(
                   totalWholesale,
                 ),
-                style:
-                    TextStyle(
-                  color:
-                      AppTheme.successFor(context),
-                  fontSize:
-                      13,
-                  fontWeight:
-                      FontWeight.bold,
+                style: TextStyle(
+                  color: AppTheme.successFor(context),
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
             ],
@@ -2193,30 +1814,22 @@ return CachePartitions.run(() async {
             children: [
               Text(
                 'البيع:',
-                style:
-                    TextStyle(
-                  color:
-                      AppTheme.textSoftFor(context),
-                  fontSize:
-                      12,
+                style: TextStyle(
+                  color: AppTheme.textSoftFor(context),
+                  fontSize: 12,
                 ),
               ),
               const SizedBox(
-                width:
-                    4,
+                width: 4,
               ),
               Text(
                 _formatDecimal(
                   totalRetail,
                 ),
-                style:
-                    TextStyle(
-                  color:
-                      AppTheme.warningFor(context),
-                  fontSize:
-                      13,
-                  fontWeight:
-                      FontWeight.bold,
+                style: TextStyle(
+                  color: AppTheme.warningFor(context),
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
             ],
@@ -2230,66 +1843,45 @@ return CachePartitions.run(() async {
   // زر الحفظ
   // ============================================================
 
+  // يبني زر الحفظ الصغير
   Widget _buildSmallSaveButton() {
-    final isEdit =
-        widget.editItem != null;
+    final isEdit = widget.editItem != null;
 
     final canSave = isEdit
-        ? PermissionsService()
-            .canEditInventory
-        : PermissionsService()
-            .canAddInventory;
+        ? PermissionsService().canEditInventory
+        : PermissionsService().canAddInventory;
 
-    final valid =
-        _items.any(
-      (item) =>
-          item.code.isNotEmpty &&
-          item.quantity > 0,
+    final valid = _items.any(
+      (item) => item.code.isNotEmpty && item.quantity > 0,
     );
 
     return ElevatedButton(
-      onPressed:
-          canSave && valid
-              ? _saveInventory
-              : null,
-      style:
-          ElevatedButton.styleFrom(
-        backgroundColor:
-            canSave && valid
-                ? AppTheme.successFor(context)
-                : AppTheme.neutralFor(context),
-        foregroundColor:
-            AppTheme.onAccentFor(context),
-        padding:
-            const EdgeInsets.symmetric(
-          horizontal:
-              14,
-          vertical:
-              6,
+      onPressed: canSave && valid ? _saveInventory : null,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: canSave && valid
+            ? AppTheme.successFor(context)
+            : AppTheme.neutralFor(context),
+        foregroundColor: AppTheme.onAccentFor(context),
+        padding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 6,
         ),
-        shape:
-            RoundedRectangleBorder(
-          borderRadius:
-              BorderRadius.circular(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(
             6,
           ),
         ),
       ),
-      child:
-          Text(
+      child: Text(
         _isSaving
             ? '...'
             : isEdit
                 ? 'تحديث'
                 : 'حفظ',
-        style:
-            TextStyle(
-          fontSize:
-              14,
-          fontWeight:
-              FontWeight.bold,
-          fontFamily:
-              'Cairo',
+        style: TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.bold,
+          fontFamily: 'Cairo',
         ),
       ),
     );
@@ -2299,437 +1891,390 @@ return CachePartitions.run(() async {
   // قائمة الأصناف
   // ============================================================
 
+  // يبني قائمة الأصناف
   Widget _buildItemsList() {
-  final hasValid = _items.any((item) => item.code.isNotEmpty);
-  final isMobile = MediaQuery.of(context).size.width < 600;
+    final hasValid = _items.any((item) => item.code.isNotEmpty);
+    final isMobile = MediaQuery.of(context).size.width < 600;
 
-  return GlassCard(
-    child: isMobile
-        ? _buildMobileTable()
-        : Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
-                decoration: BoxDecoration(
-                  color: GlassStyle.fill10For(context),
-                  borderRadius: BorderRadius.circular(6),
+    return GlassCard(
+      child: isMobile
+          ? _buildMobileTable()
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+                  decoration: BoxDecoration(
+                    color: GlassStyle.fill10For(context),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: _buildDesktopHeaders(),
                 ),
-                child: _buildDesktopHeaders(),
-              ),
-              const SizedBox(height: 4),
-              Expanded(
-                child: _buildDesktopItemsList(),
-              ),
-              if (hasValid)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: InkWell(
-                    onTap: _addEmptyRow,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      decoration: BoxDecoration(
-                        border: Border.all(color: GlassStyle.line24For(context)),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Center(
-                        child: Text(
-                          '+ إضافة صنف جديد',
-                          style: TextStyle(
-                            color: AppTheme.accentFor(context),
-                            fontFamily: 'Cairo',
-                            fontSize: 13,
+                const SizedBox(height: 4),
+                Expanded(
+                  child: _buildDesktopItemsList(),
+                ),
+                if (hasValid)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: InkWell(
+                      onTap: _addEmptyRow,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        decoration: BoxDecoration(
+                          border:
+                              Border.all(color: GlassStyle.line24For(context)),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Center(
+                          child: Text(
+                            '+ إضافة صنف جديد',
+                            style: TextStyle(
+                              color: AppTheme.accentFor(context),
+                              fontFamily: 'Cairo',
+                              fontSize: 13,
+                            ),
                           ),
                         ),
                       ),
                     ),
                   ),
-                ),
-            ],
-          ),
-  );
-}
+              ],
+            ),
+    );
+  }
 
   // ============================================================
   // جدول الموبايل
   // ============================================================
 
+  // يبني جدول الهاتف
   Widget _buildMobileTable() {
-  // حساب عرض الأعمدة الثابتة
-  const double colWidth = 80.0;
-  const double nameColWidth = 120.0;
-  const double actionWidth = 40.0; // مساحة زر الحذف
-  const double spacing = 4.0;
-  const double padding = 16.0; // padding جانبي
+    // حساب عرض الأعمدة الثابتة
+    const double colWidth = 80.0;
+    const double nameColWidth = 120.0;
+    const double actionWidth = 40.0; // مساحة زر الحذف
+    const double spacing = 4.0;
+    const double padding = 16.0; // padding جانبي
 
-  // عدد الأعمدة: الكود، الصنف، الكمية، سعر الجملة، قيمة الجملة، سعر البيع، قيمة البيع
-  // 7 أعمدة + زر الحذف
-  final double totalWidth = colWidth * 6 + nameColWidth + actionWidth + (7 * spacing) + padding;
+    // عدد الأعمدة: الكود، الصنف، الكمية، سعر الجملة، قيمة الجملة، سعر البيع، قيمة البيع
+    // 7 أعمدة + زر الحذف
+    final double totalWidth =
+        colWidth * 6 + nameColWidth + actionWidth + (7 * spacing) + padding;
 
-  // بناء المحتوى الأفقي
-  Widget horizontalContent = SizedBox(
-    width: totalWidth,
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Header
-        Container(
-          padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
-          decoration: BoxDecoration(
-            color: GlassStyle.fill10For(context),
-            borderRadius: BorderRadius.circular(6),
+    // بناء المحتوى الأفقي
+    Widget horizontalContent = SizedBox(
+      width: totalWidth,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+            decoration: BoxDecoration(
+              color: GlassStyle.fill10For(context),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: _buildMobileHeaders(),
           ),
-          child: _buildMobileHeaders(),
-        ),
-        const SizedBox(height: 4),
-        // Rows
-        ...List.generate(
-          _items.length,
-          (rowIndex) {
-            final item = _items[rowIndex];
-            final isLast = rowIndex == _items.length - 1;
-            if (item.code.isEmpty && !isLast) {
-              return const SizedBox.shrink();
-            }
-            return Container(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              decoration: BoxDecoration(
-                border: Border(
-                  bottom: BorderSide(
-                    color: GlassStyle.line05For(context),
-                    width: 0.5,
-                  ),
-                ),
-              ),
-              child: _buildMobileRow(rowIndex),
-            );
-          },
-        ),
-        // Add button
-        if (_items.any((item) => item.code.isNotEmpty))
-          Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: InkWell(
-              onTap: _addEmptyRow,
-              child: Container(
+          const SizedBox(height: 4),
+          // Rows
+          ...List.generate(
+            _items.length,
+            (rowIndex) {
+              final item = _items[rowIndex];
+              final isLast = rowIndex == _items.length - 1;
+              if (item.code.isEmpty && !isLast) {
+                return const SizedBox.shrink();
+              }
+              return Container(
                 padding: const EdgeInsets.symmetric(vertical: 4),
                 decoration: BoxDecoration(
-                  border: Border.all(color: GlassStyle.line24For(context)),
-                  borderRadius: BorderRadius.circular(6),
+                  border: Border(
+                    bottom: BorderSide(
+                      color: GlassStyle.line05For(context),
+                      width: 0.5,
+                    ),
+                  ),
                 ),
-                child: Center(
-                  child: Text(
-                    '+ إضافة صنف جديد',
-                    style: TextStyle(
-                      color: AppTheme.accentFor(context),
-                      fontFamily: 'Cairo',
-                      fontSize: 13,
+                child: _buildMobileRow(rowIndex),
+              );
+            },
+          ),
+          // Add button
+          if (_items.any((item) => item.code.isNotEmpty))
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: InkWell(
+                onTap: _addEmptyRow,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: GlassStyle.line24For(context)),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Center(
+                    child: Text(
+                      '+ إضافة صنف جديد',
+                      style: TextStyle(
+                        color: AppTheme.accentFor(context),
+                        fontFamily: 'Cairo',
+                        fontSize: 13,
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
-          ),
-      ],
-    ),
-  );
+        ],
+      ),
+    );
 
-  // لف المحتوى الأفقي في SingleChildScrollView عمودي
-  return SingleChildScrollView(
-    physics: const AlwaysScrollableScrollPhysics(),
-    child: SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
+    // لف المحتوى الأفقي في SingleChildScrollView عمودي
+    return SingleChildScrollView(
       physics: const AlwaysScrollableScrollPhysics(),
-      child: horizontalContent,
-    ),
-  );
-}
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: horizontalContent,
+      ),
+    );
+  }
 
   // ============================================================
   // Headers
   // ============================================================
 
+  // يبني رؤوس أعمدة الهاتف
   Widget _buildMobileHeaders() {
-  const double colWidth = 80.0;
-  const double nameColWidth = 120.0;
+    const double colWidth = 80.0;
+    const double nameColWidth = 120.0;
 
-  return Row(
-    mainAxisSize: MainAxisSize.max,
-    children: [
-      _headerCell('الكود', colWidth, AppTheme.accentAltFor(context)),
-      const SizedBox(width: 4),
-      _headerCell('الصنف', nameColWidth, AppTheme.accentAltFor(context)),
-      const SizedBox(width: 4),
-      _headerCell('الكمية', colWidth, AppTheme.accentAltFor(context)),
-      const SizedBox(width: 4),
-      _headerCell('سعر الجملة', colWidth, AppTheme.accentAltFor(context)),
-      const SizedBox(width: 4),
-      _headerCell('قيمة الجملة', colWidth, AppTheme.successFor(context)),
-      const SizedBox(width: 4),
-      _headerCell('سعر البيع', colWidth, AppTheme.accentAltFor(context)),
-      const SizedBox(width: 4),
-      _headerCell('قيمة البيع', colWidth, AppTheme.warningFor(context)),
-      const SizedBox(width: 4),
-      const SizedBox(width: 40), // مساحة زر الحذف
-    ],
-  );
-}
+    return Row(
+      mainAxisSize: MainAxisSize.max,
+      children: [
+        _headerCell('الكود', colWidth, AppTheme.accentAltFor(context)),
+        const SizedBox(width: 4),
+        _headerCell('الصنف', nameColWidth, AppTheme.accentAltFor(context)),
+        const SizedBox(width: 4),
+        _headerCell('الكمية', colWidth, AppTheme.accentAltFor(context)),
+        const SizedBox(width: 4),
+        _headerCell('سعر الجملة', colWidth, AppTheme.accentAltFor(context)),
+        const SizedBox(width: 4),
+        _headerCell('قيمة الجملة', colWidth, AppTheme.successFor(context)),
+        const SizedBox(width: 4),
+        _headerCell('سعر البيع', colWidth, AppTheme.accentAltFor(context)),
+        const SizedBox(width: 4),
+        _headerCell('قيمة البيع', colWidth, AppTheme.warningFor(context)),
+        const SizedBox(width: 4),
+        const SizedBox(width: 40), // مساحة زر الحذف
+      ],
+    );
+  }
 
+  // يبني خلية رأس
   Widget _headerCell(String text, double width, Color color) {
-  return SizedBox(
-    width: width,
-    child: Text(
-      text,
-      textAlign: TextAlign.center,
-      style: TextStyle(
-        color: color,
-        fontWeight: FontWeight.bold,
-        fontSize: 11,
-        fontFamily: 'Cairo',
+    return SizedBox(
+      width: width,
+      child: Text(
+        text,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: color,
+          fontWeight: FontWeight.bold,
+          fontSize: 11,
+          fontFamily: 'Cairo',
+        ),
       ),
-    ),
-  );
-}
+    );
+  }
 
   // ============================================================
   // صف الموبايل
   // ============================================================
 
+  // يبني صف الهاتف
   Widget _buildMobileRow(int rowIndex) {
-  const double colWidth = 80.0;
-  const double nameColWidth = 120.0;
-  final item = _items[rowIndex];
+    const double colWidth = 80.0;
+    const double nameColWidth = 120.0;
+    final item = _items[rowIndex];
 
-  return Row(
-    mainAxisSize: MainAxisSize.max,
-    children: [
-      SizedBox(
-        width: colWidth,
-        child: _buildItemField(rowIndex, 0),
-      ),
-      const SizedBox(width: 4),
-      SizedBox(
-        width: nameColWidth,
-        child: _buildItemField(rowIndex, 1),
-      ),
-      const SizedBox(width: 4),
-      SizedBox(
-        width: colWidth,
-        child: _buildItemField(rowIndex, 2),
-      ),
-      const SizedBox(width: 4),
-      SizedBox(
-        width: colWidth,
-        child: _buildItemField(rowIndex, 3),
-      ),
-      const SizedBox(width: 4),
-      _valueCell(item.wholesaleValue, colWidth, AppTheme.successFor(context)),
-      const SizedBox(width: 4),
-      SizedBox(
-        width: colWidth,
-        child: _buildItemField(rowIndex, 4),
-      ),
-      const SizedBox(width: 4),
-      _valueCell(item.retailValue, colWidth, AppTheme.warningFor(context)),
-      const SizedBox(width: 4),
-      SizedBox(
-        width: 40,
-        child: IconButton(
-          icon: Icon(Icons.delete, color: AppTheme.dangerStrongFor(context), size: 20),
-          onPressed: () => _removeRow(rowIndex),
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(),
+    return Row(
+      mainAxisSize: MainAxisSize.max,
+      children: [
+        SizedBox(
+          width: colWidth,
+          child: _buildItemField(rowIndex, 0),
         ),
-      ),
-    ],
-  );
-}
+        const SizedBox(width: 4),
+        SizedBox(
+          width: nameColWidth,
+          child: _buildItemField(rowIndex, 1),
+        ),
+        const SizedBox(width: 4),
+        SizedBox(
+          width: colWidth,
+          child: _buildItemField(rowIndex, 2),
+        ),
+        const SizedBox(width: 4),
+        SizedBox(
+          width: colWidth,
+          child: _buildItemField(rowIndex, 3),
+        ),
+        const SizedBox(width: 4),
+        _valueCell(item.wholesaleValue, colWidth, AppTheme.successFor(context)),
+        const SizedBox(width: 4),
+        SizedBox(
+          width: colWidth,
+          child: _buildItemField(rowIndex, 4),
+        ),
+        const SizedBox(width: 4),
+        _valueCell(item.retailValue, colWidth, AppTheme.warningFor(context)),
+        const SizedBox(width: 4),
+        SizedBox(
+          width: 40,
+          child: IconButton(
+            icon: Icon(Icons.delete,
+                color: AppTheme.dangerStrongFor(context), size: 20),
+            onPressed: () => _removeRow(rowIndex),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+          ),
+        ),
+      ],
+    );
+  }
 
   // ============================================================
   // خلية القيمة
   // ============================================================
 
+  // يبني خلية قيمة
   Widget _valueCell(double value, double width, Color color) {
-  return SizedBox(
-    width: width,
-    child: Container(
-      margin: const EdgeInsets.symmetric(horizontal: 2),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
-      ),
-      alignment: Alignment.center,
-      child: Text(
-        _formatDecimal(value),
-        style: TextStyle(
-          color: color,
-          fontSize: 13,
-          fontWeight: FontWeight.bold,
+    return SizedBox(
+      width: width,
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 2),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: color.withValues(alpha: 0.3)),
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          _formatDecimal(value),
+          style: TextStyle(
+            color: color,
+            fontSize: 13,
+            fontWeight: FontWeight.bold,
+          ),
         ),
       ),
-    ),
-  );
-}
+    );
+  }
 
   // ============================================================
   // Headers Desktop
   // ============================================================
 
-  Widget _buildDesktopHeaders() =>
-      Row(
+  // يبني رؤوس أعمدة سطح المكتب
+  Widget _buildDesktopHeaders() => Row(
         children: [
           Expanded(
-            flex:
-                1,
-            child:
-                Text(
+            flex: 1,
+            child: Text(
               'الكود',
-              textAlign:
-                  TextAlign.center,
-              style:
-                  TextStyle(
-                color:
-                    AppTheme.accentAltFor(context),
-                fontWeight:
-                    FontWeight.bold,
-                fontSize:
-                    11,
-                fontFamily:
-                    'Cairo',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: AppTheme.accentAltFor(context),
+                fontWeight: FontWeight.bold,
+                fontSize: 11,
+                fontFamily: 'Cairo',
               ),
             ),
           ),
           Expanded(
-            flex:
-                2,
-            child:
-                Text(
+            flex: 2,
+            child: Text(
               'الصنف',
-              textAlign:
-                  TextAlign.center,
-              style:
-                  TextStyle(
-                color:
-                    AppTheme.accentAltFor(context),
-                fontWeight:
-                    FontWeight.bold,
-                fontSize:
-                    11,
-                fontFamily:
-                    'Cairo',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: AppTheme.accentAltFor(context),
+                fontWeight: FontWeight.bold,
+                fontSize: 11,
+                fontFamily: 'Cairo',
               ),
             ),
           ),
           Expanded(
-            flex:
-                1,
-            child:
-                Text(
+            flex: 1,
+            child: Text(
               'الكمية',
-              textAlign:
-                  TextAlign.center,
-              style:
-                  TextStyle(
-                color:
-                    AppTheme.accentAltFor(context),
-                fontWeight:
-                    FontWeight.bold,
-                fontSize:
-                    11,
-                fontFamily:
-                    'Cairo',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: AppTheme.accentAltFor(context),
+                fontWeight: FontWeight.bold,
+                fontSize: 11,
+                fontFamily: 'Cairo',
               ),
             ),
           ),
           Expanded(
-            flex:
-                1,
-            child:
-                Text(
+            flex: 1,
+            child: Text(
               'سعر الجملة',
-              textAlign:
-                  TextAlign.center,
-              style:
-                  TextStyle(
-                color:
-                    AppTheme.accentAltFor(context),
-                fontWeight:
-                    FontWeight.bold,
-                fontSize:
-                    11,
-                fontFamily:
-                    'Cairo',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: AppTheme.accentAltFor(context),
+                fontWeight: FontWeight.bold,
+                fontSize: 11,
+                fontFamily: 'Cairo',
               ),
             ),
           ),
           Expanded(
-            flex:
-                1,
-            child:
-                Text(
+            flex: 1,
+            child: Text(
               'قيمة الجملة',
-              textAlign:
-                  TextAlign.center,
-              style:
-                  TextStyle(
-                color:
-                    AppTheme.successFor(context),
-                fontWeight:
-                    FontWeight.bold,
-                fontSize:
-                    11,
-                fontFamily:
-                    'Cairo',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: AppTheme.successFor(context),
+                fontWeight: FontWeight.bold,
+                fontSize: 11,
+                fontFamily: 'Cairo',
               ),
             ),
           ),
           Expanded(
-            flex:
-                1,
-            child:
-                Text(
+            flex: 1,
+            child: Text(
               'سعر البيع',
-              textAlign:
-                  TextAlign.center,
-              style:
-                  TextStyle(
-                color:
-                    AppTheme.accentAltFor(context),
-                fontWeight:
-                    FontWeight.bold,
-                fontSize:
-                    11,
-                fontFamily:
-                    'Cairo',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: AppTheme.accentAltFor(context),
+                fontWeight: FontWeight.bold,
+                fontSize: 11,
+                fontFamily: 'Cairo',
               ),
             ),
           ),
           Expanded(
-            flex:
-                1,
-            child:
-                Text(
+            flex: 1,
+            child: Text(
               'قيمة البيع',
-              textAlign:
-                  TextAlign.center,
-              style:
-                  TextStyle(
-                color:
-                    AppTheme.warningFor(context),
-                fontWeight:
-                    FontWeight.bold,
-                fontSize:
-                    11,
-                fontFamily:
-                    'Cairo',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: AppTheme.warningFor(context),
+                fontWeight: FontWeight.bold,
+                fontSize: 11,
+                fontFamily: 'Cairo',
               ),
             ),
           ),
           SizedBox(
-            width:
-                30,
+            width: 30,
           ),
         ],
       );
@@ -2738,138 +2283,98 @@ return CachePartitions.run(() async {
   // Desktop Items
   // ============================================================
 
-  Widget _buildDesktopItemsList() =>
-      ListView.builder(
-        controller:
-            _scrollController,
-        padding:
-            EdgeInsets.zero,
-        itemCount:
-            _items.length,
-        itemBuilder:
-            (ctx, rowIndex) {
-          final item =
-              _items[rowIndex];
+  // يبني قائمة أصناف سطح المكتب
+  Widget _buildDesktopItemsList() => ListView.builder(
+        controller: _scrollController,
+        padding: EdgeInsets.zero,
+        itemCount: _items.length,
+        itemBuilder: (ctx, rowIndex) {
+          final item = _items[rowIndex];
 
-          final isLast =
-              rowIndex ==
-                  _items.length -
-                      1;
+          final isLast = rowIndex == _items.length - 1;
 
-          if (item.code.isEmpty &&
-              !isLast) {
+          if (item.code.isEmpty && !isLast) {
             return const SizedBox.shrink();
           }
 
           return Container(
-            padding:
-                const EdgeInsets.symmetric(
-              vertical:
-                  4,
+            padding: const EdgeInsets.symmetric(
+              vertical: 4,
             ),
-            decoration:
-                BoxDecoration(
-              border:
-                  Border(
-                bottom:
-                    BorderSide(
-                  color:
-                      GlassStyle.line05For(context),
-                  width:
-                      0.5,
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(
+                  color: GlassStyle.line05For(context),
+                  width: 0.5,
                 ),
               ),
             ),
-            child:
-                Row(
+            child: Row(
               children: [
                 Expanded(
-                  flex:
-                      1,
-                  child:
-                      _buildItemField(
+                  flex: 1,
+                  child: _buildItemField(
                     rowIndex,
                     0,
                   ),
                 ),
                 Expanded(
-                  flex:
-                      2,
-                  child:
-                      _buildItemField(
+                  flex: 2,
+                  child: _buildItemField(
                     rowIndex,
                     1,
                   ),
                 ),
                 Expanded(
-                  flex:
-                      1,
-                  child:
-                      _buildItemField(
+                  flex: 1,
+                  child: _buildItemField(
                     rowIndex,
                     2,
                   ),
                 ),
                 Expanded(
-                  flex:
-                      1,
-                  child:
-                      _buildItemField(
+                  flex: 1,
+                  child: _buildItemField(
                     rowIndex,
                     3,
                   ),
                 ),
                 Expanded(
-                  flex:
-                      1,
-                  child:
-                      _valueCell(
+                  flex: 1,
+                  child: _valueCell(
                     item.wholesaleValue,
                     double.infinity,
                     AppTheme.successFor(context),
                   ),
                 ),
                 Expanded(
-                  flex:
-                      1,
-                  child:
-                      _buildItemField(
+                  flex: 1,
+                  child: _buildItemField(
                     rowIndex,
                     4,
                   ),
                 ),
                 Expanded(
-                  flex:
-                      1,
-                  child:
-                      _valueCell(
+                  flex: 1,
+                  child: _valueCell(
                     item.retailValue,
                     double.infinity,
                     AppTheme.warningFor(context),
                   ),
                 ),
                 SizedBox(
-                  width:
-                      30,
-                  child:
-                      IconButton(
-                    icon:
-                        Icon(
+                  width: 30,
+                  child: IconButton(
+                    icon: Icon(
                       Icons.delete,
-                      color:
-                          AppTheme.dangerStrongFor(context),
-                      size:
-                          18,
+                      color: AppTheme.dangerStrongFor(context),
+                      size: 18,
                     ),
-                    onPressed:
-                        () =>
-                            _removeRow(
+                    onPressed: () => _removeRow(
                       rowIndex,
                     ),
-                    padding:
-                        EdgeInsets.zero,
-                    constraints:
-                        const BoxConstraints(),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
                   ),
                 ),
               ],
@@ -2882,221 +2387,223 @@ return CachePartitions.run(() async {
   // الحقول
   // ============================================================
 
+  // يبني حقل صنف
   Widget _buildItemField(
-  int rowIndex,
-  int fieldIndex,
-) {
-  final field = _fieldOrder[fieldIndex];
+    int rowIndex,
+    int fieldIndex,
+  ) {
+    final field = _fieldOrder[fieldIndex];
 
-  // ✅ حقل "الصنف" فقط: نستخدم RawAutocomplete
-  if (field == 'name') {
-    return _buildNameFieldWithSuggestions(rowIndex, fieldIndex);
-  }
+    // ✅ حقل "الصنف" فقط: نستخدم RawAutocomplete
+    if (field == 'name') {
+      return _buildNameFieldWithSuggestions(rowIndex, fieldIndex);
+    }
 
-  final isNumber =
-      field == 'quantity' ||
-      field == 'wholesalePrice' ||
-      field == 'retailPrice';
+    final isNumber = field == 'quantity' ||
+        field == 'wholesalePrice' ||
+        field == 'retailPrice';
 
-  // سعر الجملة لا يظهر ولا يُدخَّل لمن لا يملك حق التكلفة:
-  // الخادم يحسبه من كتالوج التكويد
-  if (field == 'wholesalePrice' &&
-      !PermissionsService().canViewCostPrices) {
+    // سعر الجملة لا يظهر ولا يُدخَّل لمن لا يملك حق التكلفة:
+    // الخادم يحسبه من كتالوج التكويد
+    if (field == 'wholesalePrice' && !PermissionsService().canViewCostPrices) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 2),
+        child: Center(
+          child: Text(
+            '—',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: AppTheme.textSoftFor(context),
+              fontSize: 13,
+              fontFamily: 'Cairo',
+            ),
+          ),
+        ),
+      );
+    }
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 2),
-      child: Center(
-        child: Text(
-          '—',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: AppTheme.textSoftFor(context),
-            fontSize: 13,
-            fontFamily: 'Cairo',
+      child: TextFormField(
+        controller: _controllers[rowIndex][fieldIndex],
+        focusNode: _focusNodes[rowIndex][fieldIndex],
+        style: TextStyle(
+          color: AppTheme.textMainFor(context),
+          fontSize: 13,
+          fontFamily: 'Cairo',
+        ),
+        textAlign: TextAlign.center,
+        keyboardType: isNumber
+            ? const TextInputType.numberWithOptions(decimal: true)
+            : TextInputType.text,
+        textInputAction: fieldIndex == _fieldOrder.length - 1
+            ? TextInputAction.done
+            : TextInputAction.next,
+        onChanged: (_) => _onFieldChanged(rowIndex, fieldIndex),
+        onFieldSubmitted: (_) => _onFieldSubmitted(rowIndex, fieldIndex),
+        decoration: InputDecoration(
+          border: const OutlineInputBorder(),
+          enabledBorder: OutlineInputBorder(
+            borderSide: BorderSide(color: GlassStyle.line24For(context)),
           ),
+          focusedBorder: OutlineInputBorder(
+            borderSide: BorderSide(color: AppTheme.accentFor(context)),
+          ),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+          isDense: true,
+          fillColor: GlassStyle.fill03For(context),
+          filled: true,
         ),
       ),
     );
   }
 
-  return Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 2),
-    child: TextFormField(
-      controller: _controllers[rowIndex][fieldIndex],
-      focusNode: _focusNodes[rowIndex][fieldIndex],
-      style: TextStyle(
-        color: AppTheme.textMainFor(context),
-        fontSize: 13,
-        fontFamily: 'Cairo',
-      ),
-      textAlign: TextAlign.center,
-      keyboardType: isNumber
-          ? const TextInputType.numberWithOptions(decimal: true)
-          : TextInputType.text,
-      textInputAction: fieldIndex == _fieldOrder.length - 1
-          ? TextInputAction.done
-          : TextInputAction.next,
-      onChanged: (_) => _onFieldChanged(rowIndex, fieldIndex),
-      onFieldSubmitted: (_) => _onFieldSubmitted(rowIndex, fieldIndex),
-      decoration: InputDecoration(
-        border: const OutlineInputBorder(),
-        enabledBorder: OutlineInputBorder(
-          borderSide: BorderSide(color: GlassStyle.line24For(context)),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderSide: BorderSide(color: AppTheme.accentFor(context)),
-        ),
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-        isDense: true,
-        fillColor: GlassStyle.fill03For(context),
-        filled: true,
-      ),
-    ),
-  );
-}
-
 // ============================================================
 // حقل الصنف مع اقتراحات تلقائية
 // ============================================================
-Widget _buildNameFieldWithSuggestions(
-  int rowIndex,
-  int fieldIndex,
-) {
-  return Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 2),
-    child: RawAutocomplete<Map<String, String>>(
-      textEditingController: _controllers[rowIndex][fieldIndex],
-      focusNode: _focusNodes[rowIndex][fieldIndex],
-      displayStringForOption: (option) => option['name'] ?? '',
-      optionsBuilder: (TextEditingValue textValue) {
-        final query = textValue.text.trim();
-        if (query.isEmpty) {
-          return const Iterable<Map<String, String>>.empty();
-        }
-        // ✅ بحث لا يعتمد على حالة الأحرف، ويعرض كل الأصناف المطابقة
-        return _itemsLookup.where(
-          (item) => (item['name'] ?? '').contains(query),
-        );
-      },
-      onSelected: (option) {
-        _fillRowFromSelectedItem(rowIndex, option);
-      },
-      fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
-  return CompositedTransformTarget( // ✅ اربط الحقل بالرابط
-    link: _nameFieldLinks[rowIndex],
-    child: TextFormField(
-      controller: controller,
-      focusNode: focusNode,
-      style: TextStyle(
-        color: AppTheme.textMainFor(context),
-        fontSize: 13,
-        fontFamily: 'Cairo',
-      ),
-      textAlign: TextAlign.center,
-      keyboardType: TextInputType.text,
-      textInputAction: TextInputAction.next,
-      onChanged: (_) => _onFieldChanged(rowIndex, fieldIndex),
-      onFieldSubmitted: (_) {
-        _onFieldSubmitted(rowIndex, fieldIndex);
-      },
-      decoration: InputDecoration(
-        border: const OutlineInputBorder(),
-        enabledBorder: OutlineInputBorder(
-          borderSide: BorderSide(color: GlassStyle.line24For(context)),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderSide: BorderSide(color: AppTheme.accentFor(context)),
-        ),
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-        isDense: true,
-        fillColor: GlassStyle.fill03For(context),
-        filled: true,
-      ),
-    ),
-  );
-},
-    optionsViewBuilder: (context, onSelected, options) {
-  // ✅ رقم واحد فقط تتحكم به في العرض
-  const double boxWidth = 150.0;
+// يبني حقل الاسم مع الاقتراحات
+  Widget _buildNameFieldWithSuggestions(
+    int rowIndex,
+    int fieldIndex,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: RawAutocomplete<Map<String, String>>(
+        textEditingController: _controllers[rowIndex][fieldIndex],
+        focusNode: _focusNodes[rowIndex][fieldIndex],
+        displayStringForOption: (option) => option['name'] ?? '',
+        optionsBuilder: (TextEditingValue textValue) {
+          final query = textValue.text.trim();
+          if (query.isEmpty) {
+            return const Iterable<Map<String, String>>.empty();
+          }
+          // ✅ بحث لا يعتمد على حالة الأحرف، ويعرض كل الأصناف المطابقة
+          return _itemsLookup.where(
+            (item) => (item['name'] ?? '').contains(query),
+          );
+        },
+        onSelected: (option) {
+          _fillRowFromSelectedItem(rowIndex, option);
+        },
+        fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+          return CompositedTransformTarget(
+            // ✅ اربط الحقل بالرابط
+            link: _nameFieldLinks[rowIndex],
+            child: TextFormField(
+              controller: controller,
+              focusNode: focusNode,
+              style: TextStyle(
+                color: AppTheme.textMainFor(context),
+                fontSize: 13,
+                fontFamily: 'Cairo',
+              ),
+              textAlign: TextAlign.center,
+              keyboardType: TextInputType.text,
+              textInputAction: TextInputAction.next,
+              onChanged: (_) => _onFieldChanged(rowIndex, fieldIndex),
+              onFieldSubmitted: (_) {
+                _onFieldSubmitted(rowIndex, fieldIndex);
+              },
+              decoration: InputDecoration(
+                border: const OutlineInputBorder(),
+                enabledBorder: OutlineInputBorder(
+                  borderSide: BorderSide(color: GlassStyle.line24For(context)),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderSide: BorderSide(color: AppTheme.accentFor(context)),
+                ),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                isDense: true,
+                fillColor: GlassStyle.fill03For(context),
+                filled: true,
+              ),
+            ),
+          );
+        },
+        optionsViewBuilder: (context, onSelected, options) {
+          // ✅ رقم واحد فقط تتحكم به في العرض
+          const double boxWidth = 150.0;
 
-  return CompositedTransformFollower(
-    link: _nameFieldLinks[rowIndex],
-    showWhenUnlinked: false,
-    // ✅ في RTL نربط بالحافة اليمنى للحقل
-    targetAnchor: Alignment.bottomRight,
-    followerAnchor: Alignment.topRight,
-    offset: const Offset(0, 6),
-    child: Align(
-      alignment: Alignment.topRight,
-      // ✅ widthFactor: 1.0 يمنع Align من تمديد الأبناء
-      widthFactor: 1.0,
-      heightFactor: 1.0,
-      child: Material(
-        elevation: 8,
-        color: AppTheme.dropdownBackground(context),
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          // ✅ عرض ثابت صريح
-          width: boxWidth,
-          constraints: const BoxConstraints(maxHeight: 200),
-          child: ListView.builder(
-            padding: EdgeInsets.zero,
-            shrinkWrap: true,
-            itemCount: options.length,
-            itemBuilder: (context, index) {
-              final option = options.elementAt(index);
-              return InkWell(
-                onTap: () => onSelected(option),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 4,
-                    horizontal: 8,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        option['name'] ?? '',
-                        style: TextStyle(
-                          color: AppTheme.textMainFor(context),
-                          fontSize: 12,
-                          fontFamily: 'Cairo',
+          return CompositedTransformFollower(
+            link: _nameFieldLinks[rowIndex],
+            showWhenUnlinked: false,
+            // ✅ في RTL نربط بالحافة اليمنى للحقل
+            targetAnchor: Alignment.bottomRight,
+            followerAnchor: Alignment.topRight,
+            offset: const Offset(0, 6),
+            child: Align(
+              alignment: Alignment.topRight,
+              // ✅ widthFactor: 1.0 يمنع Align من تمديد الأبناء
+              widthFactor: 1.0,
+              heightFactor: 1.0,
+              child: Material(
+                elevation: 8,
+                color: AppTheme.dropdownBackground(context),
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  // ✅ عرض ثابت صريح
+                  width: boxWidth,
+                  constraints: const BoxConstraints(maxHeight: 200),
+                  child: ListView.builder(
+                    padding: EdgeInsets.zero,
+                    shrinkWrap: true,
+                    itemCount: options.length,
+                    itemBuilder: (context, index) {
+                      final option = options.elementAt(index);
+                      return InkWell(
+                        onTap: () => onSelected(option),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            vertical: 4,
+                            horizontal: 8,
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                option['name'] ?? '',
+                                style: TextStyle(
+                                  color: AppTheme.textMainFor(context),
+                                  fontSize: 12,
+                                  fontFamily: 'Cairo',
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 1),
+                              Text(
+                                'كود: ${option['code']}',
+                                style: TextStyle(
+                                  color: AppTheme.textMutedFor(context),
+                                  fontSize: 9,
+                                  fontFamily: 'Cairo',
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 1),
-                      Text(
-                        'كود: ${option['code']}',
-                        style: TextStyle(
-                          color: AppTheme.textMutedFor(context),
-                          fontSize: 9,
-                          fontFamily: 'Cairo',
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
+                      );
+                    },
                   ),
                 ),
-              );
-            },
-          ),
-        ),
+              ),
+            ),
+          );
+        },
       ),
-    ),
-  );
-},
-    ),
-  );
-}
+    );
+  }
 
   // ============================================================
   // SnackBar
   // ============================================================
 
+  // يعرض رسالة سريعة بالنص واللون المحددين
   void _showSnackBar(
     String msg,
     Color color,
@@ -3107,25 +2614,17 @@ Widget _buildNameFieldWithSuggestions(
       context,
     ).showSnackBar(
       SnackBar(
-        content:
-            Text(
+        content: Text(
           msg,
-          textAlign:
-              TextAlign.center,
-          style:
-              TextStyle(
-            fontFamily:
-                'Cairo',
-            fontSize:
-                14,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontFamily: 'Cairo',
+            fontSize: 14,
           ),
         ),
-        backgroundColor:
-            color,
-        duration:
-            const Duration(
-          seconds:
-              3,
+        backgroundColor: color,
+        duration: const Duration(
+          seconds: 3,
         ),
       ),
     );
@@ -3135,6 +2634,7 @@ Widget _buildNameFieldWithSuggestions(
   // Dispose
   // ============================================================
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     for (final row in _controllers) {

@@ -1,5 +1,5 @@
+// frontend/lib/views/dashboard/notification_settings_page.dart
 import '../../services/cache_partitions.dart';
-// lib/views/dashboard/notification_settings_page.dart
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -9,6 +9,7 @@ import '../../services/fcm_service.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../services/permissions_service.dart';
 
+// شرح إعدادات إشعارات النظام
 /// Explains how the browser permission, the mute switch and background
 /// updates relate. Kept separate so it can be tested on its own.
 class SystemPushExplanation extends StatelessWidget {
@@ -20,6 +21,7 @@ class SystemPushExplanation extends StatelessWidget {
       'تقدر تكتم الصوت والاهتزاز مع استمرار التحديثات. لو الإذن مقفول، '
       'البيانات بتتحدّث عند فتح البرنامج.';
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -46,15 +48,18 @@ class SystemPushExplanation extends StatelessWidget {
   }
 }
 
+// صفحة إعدادات الإشعارات
 class NotificationSettingsPage extends StatefulWidget {
   final String companyCode;
   const NotificationSettingsPage({super.key, required this.companyCode});
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<NotificationSettingsPage> createState() =>
       _NotificationSettingsPageState();
 }
 
+// حالة الويدجت NotificationSettingsPage: تدير بيانات الشاشة وتفاعلاتها
 class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
   final NotificationsService _service = NotificationsService.instance;
   final FcmService _fcm = FcmService.instance;
@@ -83,6 +88,7 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
   bool _systemPushEnabled = false;
   bool _systemPushBusy = false;
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
@@ -93,7 +99,12 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
     _loadSystemPushState();
   }
 
-  void _settingsChanged() { if (mounted) setState(() {}); }
+  // يستجيب لتغيّر الإعدادات
+  void _settingsChanged() {
+    if (mounted) setState(() {});
+  }
+
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     _service.settingsChanges.removeListener(_settingsChanged);
@@ -101,90 +112,91 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
     super.dispose();
   }
 
+  // يحمّل الإعدادات
   Future<void> _loadSettings() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      await _service.ensureSettings();
+      if (mounted) setState(() {});
+    });
+  }
 
-    await _service.ensureSettings();
-    if (mounted) setState(() {});
-});
-}
-
+  // يحمّل حالة إشعارات النظام
   Future<void> _loadSystemPushState() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      final enabled = await _fcm.isSystemNotificationsEnabled();
+      final muted = await _fcm.isAlertsMuted();
+      // The switch means "alerts with sound". Muted keeps the registration.
+      if (mounted) setState(() => _systemPushEnabled = enabled && !muted);
+    });
+  }
 
-    final enabled = await _fcm.isSystemNotificationsEnabled();
-    final muted = await _fcm.isAlertsMuted();
-    // The switch means "alerts with sound". Muted keeps the registration.
-    if (mounted) setState(() => _systemPushEnabled = enabled && !muted);
-});
-}
-
+  // يبدّل إشعارات النظام
   Future<void> _toggleSystemPush(bool value) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_systemPushBusy) return;
+      setState(() => _systemPushBusy = true);
 
-    if (_systemPushBusy) return;
-    setState(() => _systemPushBusy = true);
-
-    Map<String, dynamic> result;
-    try {
-      if (value) {
-        // Already registered and only muted: just unmute, keep the token.
-        result = await _fcm.isSystemNotificationsEnabled()
-            ? await _fcm.setAlertsMuted(false)
-            : await _fcm.enableSystemNotifications();
-      } else {
-        // Alerts off = mute (no sound/vibration). Background updates continue.
-        result = await _fcm.setAlertsMuted(true);
-        if (result['error'] == 'not_registered') {
-          result = {'success': true};
+      Map<String, dynamic> result;
+      try {
+        if (value) {
+          // Already registered and only muted: just unmute, keep the token.
+          result = await _fcm.isSystemNotificationsEnabled()
+              ? await _fcm.setAlertsMuted(false)
+              : await _fcm.enableSystemNotifications();
+        } else {
+          // Alerts off = mute (no sound/vibration). Background updates continue.
+          result = await _fcm.setAlertsMuted(true);
+          if (result['error'] == 'not_registered') {
+            result = {'success': true};
+          }
         }
+      } catch (e) {
+        result = {'success': false, 'error': e.toString()};
       }
-    } catch (e) {
-      result = {'success': false, 'error': e.toString()};
-    }
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    setState(() => _systemPushBusy = false);
+      setState(() => _systemPushBusy = false);
 
-    if (result['success'] == true) {
-      setState(() => _systemPushEnabled = value);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            value
-                ? 'تم تفعيل إشعارات النظام ✅'
-                : 'تم كتم الإشعارات (بدون صوت أو اهتزاز). التحديثات تستمر في الخلفية',
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontFamily: 'Cairo'),
+      if (result['success'] == true) {
+        setState(() => _systemPushEnabled = value);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              value
+                  ? 'تم تفعيل إشعارات النظام ✅'
+                  : 'تم كتم الإشعارات (بدون صوت أو اهتزاز). التحديثات تستمر في الخلفية',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontFamily: 'Cairo'),
+            ),
+            backgroundColor: value
+                ? AppTheme.successStrongFor(context)
+                : AppTheme.textMutedFor(context),
           ),
-          backgroundColor: value
-              ? AppTheme.successStrongFor(context)
-              : AppTheme.textMutedFor(context),
-        ),
-      );
-    } else {
-      final err = result['error']?.toString() ?? '';
-      final msg = err == 'permission_denied'
-          ? 'تم رفض الإذن. افتح إعدادات المتصفح للسماح بالإشعارات'
-          : err == 'no_token'
-              ? 'تعذر الحصول على FCM token. تحقق من VAPID Key.'
-              : 'تعذر تفعيل الإشعارات: $err';
+        );
+      } else {
+        final err = result['error']?.toString() ?? '';
+        final msg = err == 'permission_denied'
+            ? 'تم رفض الإذن. افتح إعدادات المتصفح للسماح بالإشعارات'
+            : err == 'no_token'
+                ? 'تعذر الحصول على FCM token. تحقق من VAPID Key.'
+                : 'تعذر تفعيل الإشعارات: $err';
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            msg,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontFamily: 'Cairo'),
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              msg,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontFamily: 'Cairo'),
+            ),
+            backgroundColor: AppTheme.dangerStrongFor(context),
           ),
-          backgroundColor: AppTheme.dangerStrongFor(context),
-        ),
-      );
-    }
-});
-}
+        );
+      }
+    });
+  }
 
+  // يبني عنوان قسم
   Widget _buildSectionTitle(String title) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
@@ -200,6 +212,7 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يبني صف مفتاح تبديل
   Widget _buildSwitchTile({
     required String title,
     String? subtitle,
@@ -211,8 +224,7 @@ return CachePartitions.run(() async {
       borderRadius: BorderRadius.circular(14),
       clipBehavior: Clip.antiAlias,
       child: SwitchListTile(
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
         title: Text(
           title,
           style: TextStyle(
@@ -242,6 +254,7 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يبني قسم مفاتيح التبديل
   Widget _buildSwitchSection({
     required Map<String, String> items,
     required bool Function(String) isEnabled,
@@ -254,13 +267,11 @@ return CachePartitions.run(() async {
             title: entry.value,
             value: isEnabled(entry.key),
             onChanged: (value) async {
-return CachePartitions.run(() async {
-
-              await update(entry.key, value);
-              if (mounted) setState(() {});
-
-});
-},
+              return CachePartitions.run(() async {
+                await update(entry.key, value);
+                if (mounted) setState(() {});
+              });
+            },
           );
         }).toList(),
       ),
@@ -270,6 +281,7 @@ return CachePartitions.run(() async {
   // ============================================================
   // ⭐ قسم إشعارات النظام (Web Push)
   // ============================================================
+  // يبني قسم إشعارات النظام
   Widget _buildSystemPushSection() {
     if (!kIsWeb) return const SizedBox.shrink();
 
@@ -282,8 +294,7 @@ return CachePartitions.run(() async {
             children: [
               _buildSwitchTile(
                 title: 'تفعيل إشعارات النظام',
-                subtitle:
-                    'استقبل إشعارات على مستوى النظام حتى لو التطبيق مغلق',
+                subtitle: 'استقبل إشعارات على مستوى النظام حتى لو التطبيق مغلق',
                 value: _systemPushEnabled,
                 onChanged: _systemPushBusy ? null : _toggleSystemPush,
               ),
@@ -332,6 +343,7 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     if (!PermissionsService().canShowNotifications) {
@@ -421,7 +433,7 @@ return CachePartitions.run(() async {
                 items: PermissionsService().isSuperAdmin
                     ? sections
                     : (Map<String, String>.from(sections)
-                        ..remove('registration_requests')),
+                      ..remove('registration_requests')),
                 isEnabled: _service.sectionEnabled,
                 update: _service.setSectionEnabled,
               ),
@@ -443,8 +455,7 @@ return CachePartitions.run(() async {
                   child: DropdownButtonFormField<int>(
                     initialValue: _service.retentionDays,
                     isExpanded: true,
-                    dropdownColor:
-                        AppTheme.dashGradientDeep(context).last,
+                    dropdownColor: AppTheme.dashGradientDeep(context).last,
                     style: TextStyle(
                       color: AppTheme.textMainFor(context),
                       fontFamily: 'Cairo',
@@ -502,14 +513,12 @@ return CachePartitions.run(() async {
                       ),
                     ],
                     onChanged: (value) async {
-return CachePartitions.run(() async {
-
-                      if (value == null) return;
-                      await _service.setRetentionDays(value);
-                      if (mounted) setState(() {});
-
-});
-},
+                      return CachePartitions.run(() async {
+                        if (value == null) return;
+                        await _service.setRetentionDays(value);
+                        if (mounted) setState(() {});
+                      });
+                    },
                   ),
                 ),
               ),

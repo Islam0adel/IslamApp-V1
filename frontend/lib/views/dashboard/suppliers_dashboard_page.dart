@@ -1,5 +1,5 @@
+// frontend/lib/views/dashboard/suppliers_dashboard_page.dart
 import '../widgets/visibility_page_shell.dart';
-// lib/views/dashboard/suppliers_dashboard_page.dart
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
 import '../../views/widgets/glass_card.dart';
@@ -10,6 +10,7 @@ import 'supplier_settlement_history_page.dart';
 import 'commercial_pages.dart';
 import '../../services/permissions_service.dart';
 
+// لوحة الموردين
 class SuppliersDashboardPage extends StatelessWidget {
   final String companyCode;
   final String? selectedBranchCode;
@@ -22,6 +23,7 @@ class SuppliersDashboardPage extends StatelessWidget {
     this.userName,
   });
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -57,107 +59,133 @@ class SuppliersDashboardPage extends StatelessWidget {
             padding: const EdgeInsets.all(16.0),
             child: ListView(
               children: [
-
                 // ✅ زر المشتريات (صفحة الموردين الحالية)
                 if (PermissionsService().pageVisible('المشتريات'))
-_buildDashboardCard(
-                  context,
-                  icon: Icons.local_shipping_rounded,
-                  title: 'المشتريات',
-                  subtitle: 'إضافة فواتير المشتريات من الموردين',
-                  color: AppTheme.infoSoftFor(context),
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (c) => !(PermissionsService().canAddSupplierTransaction) ? const VisibilityPageShell(title: 'المشتريات') : SupplierPage(
-                          companyCode: companyCode,
-                          selectedBranchCode: selectedBranchCode,
-                          userName: userName,
+                  _buildDashboardCard(
+                    context,
+                    icon: Icons.local_shipping_rounded,
+                    title: 'المشتريات',
+                    subtitle: 'إضافة فواتير المشتريات من الموردين',
+                    color: AppTheme.infoSoftFor(context),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (c) => !(PermissionsService()
+                                  .canAddSupplierTransaction)
+                              ? const VisibilityPageShell(title: 'المشتريات')
+                              : SupplierPage(
+                                  companyCode: companyCode,
+                                  selectedBranchCode: selectedBranchCode,
+                                  userName: userName,
+                                ),
                         ),
-                      ),
-                    );
-                  },
-                ),
+                      );
+                    },
+                  ),
                 const SizedBox(height: 16),
                 // ✅ زر معاينة المشتريات (صفحة الهيستوري)
                 if (PermissionsService().pageVisible('معاينة المشتريات'))
-_buildDashboardCard(
-                  context,
-                  icon: Icons.history_rounded,
-                  title: 'معاينة المشتريات',
-                  subtitle: 'عرض فواتير المشتريات السابقة',
-                  color: AppTheme.accentFor(context),
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (c) => !(PermissionsService().canViewSupplierHistory) ? const VisibilityPageShell(title: 'معاينة المشتريات') : SupplierHistoryPage(
-  companyCode: companyCode,
-  selectedBranchCode: selectedBranchCode,
-  userName: userName,
-),
-                      ),
-                    );
-                  },
-                ),
+                  _buildDashboardCard(
+                    context,
+                    icon: Icons.history_rounded,
+                    title: 'معاينة المشتريات',
+                    subtitle: 'عرض فواتير المشتريات السابقة',
+                    color: AppTheme.accentFor(context),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (c) =>
+                              !(PermissionsService().canViewSupplierHistory)
+                                  ? const VisibilityPageShell(
+                                      title: 'معاينة المشتريات')
+                                  : SupplierHistoryPage(
+                                      companyCode: companyCode,
+                                      selectedBranchCode: selectedBranchCode,
+                                      userName: userName,
+                                    ),
+                        ),
+                      );
+                    },
+                  ),
                 const SizedBox(height: 16),
                 // ✅ زر تسويات الموردين (قيد التطوير)
                 if (PermissionsService().pageVisible('تسويات الموردين'))
-_buildDashboardCard(
-                  context,
-                  icon: Icons.account_balance_rounded,
-                  title: 'تسويات الموردين',
-                  subtitle: 'تسوية حسابات الموردين والدفعات',
-                  color: AppTheme.warningFor(context),
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (c) => !(PermissionsService().canAddSupplierSettlement) ? const VisibilityPageShell(title: 'تسويات الموردين') : SupplierSettlementPage(
-                          companyCode: companyCode,
-                          selectedBranchCode: selectedBranchCode,
+                  _buildDashboardCard(
+                    context,
+                    icon: Icons.account_balance_rounded,
+                    title: 'تسويات الموردين',
+                    subtitle: 'تسوية حسابات الموردين والدفعات',
+                    color: AppTheme.warningFor(context),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (c) =>
+                              !(PermissionsService().canAddSupplierSettlement)
+                                  ? const VisibilityPageShell(
+                                      title: 'تسويات الموردين')
+                                  : SupplierSettlementPage(
+                                      companyCode: companyCode,
+                                      selectedBranchCode: selectedBranchCode,
+                                    ),
                         ),
-                      ),
-                    );
-                  },
-                ),
+                      );
+                    },
+                  ),
                 const SizedBox(height: 16),
 
-if (PermissionsService().pageVisible('معاينة التسويات'))
-_buildDashboardCard(
-  context,
-  icon: Icons.history_rounded,
-  title: 'معاينة التسويات',
-  subtitle: 'عرض دفعات وتسويات الموردين',
-  color: AppTheme.accentFor(context),
-  onTap: () {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (c) => !(PermissionsService().canViewSupplierSettlements) ? const VisibilityPageShell(title: 'معاينة التسويات') : SupplierSettlementHistoryPage(
-          companyCode: companyCode,
-          selectedBranchCode: selectedBranchCode,
-        ),
-      ),
-    );
-  },
-),
+                if (PermissionsService().pageVisible('معاينة التسويات'))
+                  _buildDashboardCard(
+                    context,
+                    icon: Icons.history_rounded,
+                    title: 'معاينة التسويات',
+                    subtitle: 'عرض دفعات وتسويات الموردين',
+                    color: AppTheme.accentFor(context),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (c) =>
+                              !(PermissionsService().canViewSupplierSettlements)
+                                  ? const VisibilityPageShell(
+                                      title: 'معاينة التسويات')
+                                  : SupplierSettlementHistoryPage(
+                                      companyCode: companyCode,
+                                      selectedBranchCode: selectedBranchCode,
+                                    ),
+                        ),
+                      );
+                    },
+                  ),
                 const SizedBox(height: 20),
-                                const SizedBox(height: 16),
+                const SizedBox(height: 16),
 
-                if (PermissionsService().pageVisible('التحويلات المخزنية', fallback: PermissionsService().canAddStockTransfer))
+                if (PermissionsService().pageVisible('التحويلات المخزنية',
+                    fallback: PermissionsService().canAddStockTransfer))
                   _buildDashboardCard(
                     context,
                     icon: Icons.swap_horiz_rounded,
                     title: 'التحويلات المخزنية',
                     subtitle: 'نقل أصناف بين فروع ومخازن الشركة',
                     color: AppTheme.extraTealFor(context),
-                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => !(PermissionsService().canAddStockTransfer) ? const VisibilityPageShell(title: 'التحويلات المخزنية') : StockTransfersPage(
-                      companyCode: companyCode, branchCode: selectedBranchCode, userName: userName,
-                    ))),
+                    onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) =>
+                                !(PermissionsService().canAddStockTransfer)
+                                    ? const VisibilityPageShell(
+                                        title: 'التحويلات المخزنية')
+                                    : StockTransfersPage(
+                                        companyCode: companyCode,
+                                        branchCode: selectedBranchCode,
+                                        userName: userName,
+                                      ))),
                   ),
-                if (PermissionsService().pageVisible('معاينة التحويلات المخزنية', fallback: PermissionsService().canViewStockTransfers)) ...[
+                if (PermissionsService().pageVisible(
+                    'معاينة التحويلات المخزنية',
+                    fallback: PermissionsService().canViewStockTransfers)) ...[
                   const SizedBox(height: 16),
                   _buildDashboardCard(
                     context,
@@ -165,9 +193,18 @@ _buildDashboardCard(
                     title: 'معاينة التحويلات المخزنية',
                     subtitle: 'عرض حركات النقل بين الفروع والمخازن',
                     color: AppTheme.accentFor(context),
-                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => !(PermissionsService().canViewStockTransfers) ? const VisibilityPageShell(title: 'معاينة التحويلات المخزنية') : TransfersHistoryPage(
-                      companyCode: companyCode, branchCode: selectedBranchCode, userName: userName,
-                    ))),
+                    onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) =>
+                                !(PermissionsService().canViewStockTransfers)
+                                    ? const VisibilityPageShell(
+                                        title: 'معاينة التحويلات المخزنية')
+                                    : TransfersHistoryPage(
+                                        companyCode: companyCode,
+                                        branchCode: selectedBranchCode,
+                                        userName: userName,
+                                      ))),
                   ),
                   const SizedBox(height: 16),
                 ],
@@ -179,6 +216,7 @@ _buildDashboardCard(
     );
   }
 
+  // يبني بطاقة لوحة
   Widget _buildDashboardCard(
     BuildContext context, {
     required IconData icon,
@@ -197,7 +235,10 @@ _buildDashboardCard(
             children: [
               Container(
                 padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(color: color.withValues(alpha: 0.15),borderRadius: BorderRadius.circular(12),),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(12),
+                ),
                 child: Icon(
                   icon,
                   color: color,

@@ -1,4 +1,4 @@
-// lib/services/export_service.dart
+// frontend/lib/services/export_service.dart
 
 import 'dart:io';
 
@@ -12,6 +12,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:universal_html/html.dart' as html;
 
+// خدمة التصدير إلى Excel وPDF
 class ExportService {
   static pw.Font? _arabicFont;
 
@@ -19,6 +20,7 @@ class ExportService {
   // تحميل الخط العربي
   // ============================================================
 
+  // يحمّل الخط العربي المستخدم في ملفات PDF
   static Future<pw.Font> _loadArabicFont() async {
     if (_arabicFont != null) {
       return _arabicFont!;
@@ -47,6 +49,7 @@ class ExportService {
   // تصدير Excel
   // ============================================================
 
+  // يصدّر البيانات إلى ملف Excel
   static Future<void> exportToExcel(
     List<Map<String, dynamic>> data,
     String title,
@@ -224,8 +227,7 @@ class ExportService {
         throw Exception('فشل إنشاء ملف Excel');
       }
 
-      final fileName =
-          '${_safeFileName(title)}_'
+      final fileName = '${_safeFileName(title)}_'
           '${DateTime.now().millisecondsSinceEpoch}.xlsx';
 
       // ========================================================
@@ -238,8 +240,7 @@ class ExportService {
           'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         );
 
-        final url =
-            html.Url.createObjectUrlFromBlob(blob);
+        final url = html.Url.createObjectUrlFromBlob(blob);
 
         final anchor = html.AnchorElement(
           href: url,
@@ -264,16 +265,11 @@ class ExportService {
       // Mobile / Desktop
       // ========================================================
 
-      String? selectedPath =
-          await FilePicker.platform.saveFile(
-        dialogTitle:
-            'اختر مكان حفظ ملف Excel',
-        fileName:
-            fileName,
-        type:
-            FileType.custom,
-        allowedExtensions:
-            ['xlsx'],
+      String? selectedPath = await FilePicker.platform.saveFile(
+        dialogTitle: 'اختر مكان حفظ ملف Excel',
+        fileName: fileName,
+        type: FileType.custom,
+        allowedExtensions: ['xlsx'],
       );
 
       if (selectedPath == null) {
@@ -302,12 +298,12 @@ class ExportService {
   // تصدير PDF
   // ============================================================
 
+  // يصدّر البيانات إلى ملف PDF
   static Future<void> exportToPDF({
     required List<Map<String, dynamic>> data,
     required String title,
     required List<String> headers,
     required List<String> keys,
-
     String? companyName,
     String? branchName,
     String? storeName,
@@ -316,7 +312,6 @@ class ExportService {
     String? period,
     String? supplierName,
     String? employee,
-
     Map<String, dynamic>? summary,
     double? totalAmount,
   }) async {
@@ -329,7 +324,6 @@ class ExportService {
         pw.MultiPage(
           pageFormat: PdfPageFormat.a4,
           margin: const pw.EdgeInsets.all(28),
-
           build: (pw.Context context) {
             final List<pw.Widget> widgets = [];
 
@@ -341,11 +335,9 @@ class ExportService {
               pw.Directionality(
                 textDirection: pw.TextDirection.rtl,
                 child: pw.Column(
-                  crossAxisAlignment:
-                      pw.CrossAxisAlignment.end,
+                  crossAxisAlignment: pw.CrossAxisAlignment.end,
                   children: [
-                    if (companyName != null &&
-                        companyName.isNotEmpty)
+                    if (companyName != null && companyName.isNotEmpty)
                       pw.Text(
                         companyName,
                         style: pw.TextStyle(
@@ -354,12 +346,9 @@ class ExportService {
                           fontWeight: pw.FontWeight.bold,
                           color: PdfColors.blue900,
                         ),
-                        textDirection:
-                            pw.TextDirection.rtl,
+                        textDirection: pw.TextDirection.rtl,
                       ),
-
                     pw.SizedBox(height: 4),
-
                     pw.Text(
                       title,
                       style: pw.TextStyle(
@@ -368,75 +357,56 @@ class ExportService {
                         fontWeight: pw.FontWeight.bold,
                         color: PdfColors.blue900,
                       ),
-                      textDirection:
-                          pw.TextDirection.rtl,
+                      textDirection: pw.TextDirection.rtl,
                     ),
-
                     pw.SizedBox(height: 8),
-
-                    if (serial != null &&
-                        serial.isNotEmpty)
+                    if (serial != null && serial.isNotEmpty)
                       _metaText(
                         font,
                         'رقم الإذن',
                         serial,
                       ),
-
-                    if (date != null &&
-                        date.isNotEmpty)
+                    if (date != null && date.isNotEmpty)
                       _metaText(
                         font,
                         'التاريخ',
                         date,
                       ),
-
-                    if (period != null &&
-                        period.isNotEmpty)
+                    if (period != null && period.isNotEmpty)
                       _metaText(
                         font,
                         'الفترة',
                         period,
                       ),
-
-                    if (branchName != null &&
-                        branchName.isNotEmpty)
+                    if (branchName != null && branchName.isNotEmpty)
                       _metaText(
                         font,
                         'الفرع',
                         branchName,
                       ),
-
-                    if (storeName != null &&
-                        storeName.isNotEmpty)
+                    if (storeName != null && storeName.isNotEmpty)
                       _metaText(
                         font,
                         'المخزن',
                         storeName,
                       ),
-
-                    if (supplierName != null &&
-                        supplierName.isNotEmpty)
+                    if (supplierName != null && supplierName.isNotEmpty)
                       _metaText(
                         font,
                         'المورد',
                         supplierName,
                       ),
-
-                    if (employee != null &&
-                        employee.isNotEmpty)
+                    if (employee != null && employee.isNotEmpty)
                       _metaText(
                         font,
                         'الموظف',
                         employee,
                       ),
-
                     pw.SizedBox(height: 6),
-
                     pw.Divider(
                       thickness: 1,
                       color: PdfColors.blue200,
                     ),
-
                     pw.SizedBox(height: 10),
                   ],
                 ),
@@ -449,23 +419,14 @@ class ExportService {
 
             widgets.add(
               pw.Directionality(
-                textDirection:
-                    pw.TextDirection.rtl,
+                textDirection: pw.TextDirection.rtl,
                 child: pw.Table(
-                  border:
-                      pw.TableBorder.all(
-                    color:
-                        PdfColors.grey400,
-                    width:
-                        0.5,
+                  border: pw.TableBorder.all(
+                    color: PdfColors.grey400,
+                    width: 0.5,
                   ),
-                  columnWidths:
-                      <int, pw.TableColumnWidth>{
-                    for (
-                      int i = 0;
-                      i < headers.length;
-                      i++
-                    )
+                  columnWidths: <int, pw.TableColumnWidth>{
+                    for (int i = 0; i < headers.length; i++)
                       i: const pw.FlexColumnWidth(1),
                   },
                   children: [
@@ -474,35 +435,23 @@ class ExportService {
                     // ==========================================
 
                     pw.TableRow(
-                      decoration:
-                          const pw.BoxDecoration(
-                        color:
-                            PdfColors.blue100,
+                      decoration: const pw.BoxDecoration(
+                        color: PdfColors.blue100,
                       ),
-                      children:
-                          headers.map(
+                      children: headers.map(
                         (header) {
                           return pw.Padding(
-                            padding:
-                                const pw.EdgeInsets.all(7),
-                            child:
-                                pw.Text(
+                            padding: const pw.EdgeInsets.all(7),
+                            child: pw.Text(
                               header,
-                              style:
-                                  pw.TextStyle(
-                                font:
-                                    font,
-                                fontWeight:
-                                    pw.FontWeight.bold,
-                                fontSize:
-                                    11,
-                                color:
-                                    PdfColors.blue800,
+                              style: pw.TextStyle(
+                                font: font,
+                                fontWeight: pw.FontWeight.bold,
+                                fontSize: 11,
+                                color: PdfColors.blue800,
                               ),
-                              textAlign:
-                                  pw.TextAlign.center,
-                              textDirection:
-                                  pw.TextDirection.rtl,
+                              textAlign: pw.TextAlign.center,
+                              textDirection: pw.TextDirection.rtl,
                             ),
                           );
                         },
@@ -516,32 +465,23 @@ class ExportService {
                     ...data.map(
                       (row) {
                         return pw.TableRow(
-                          children:
-                              keys.map(
+                          children: keys.map(
                             (key) {
-                              final value =
-                                  _formatPdfValue(
+                              final value = _formatPdfValue(
                                 key,
                                 row[key],
                               );
 
                               return pw.Padding(
-                                padding:
-                                    const pw.EdgeInsets.all(6),
-                                child:
-                                    pw.Text(
+                                padding: const pw.EdgeInsets.all(6),
+                                child: pw.Text(
                                   value,
-                                  style:
-                                      pw.TextStyle(
-                                    font:
-                                        font,
-                                    fontSize:
-                                        9,
+                                  style: pw.TextStyle(
+                                    font: font,
+                                    fontSize: 9,
                                   ),
-                                  textAlign:
-                                      pw.TextAlign.center,
-                                  textDirection:
-                                      pw.TextDirection.rtl,
+                                  textAlign: pw.TextAlign.center,
+                                  textDirection: pw.TextDirection.rtl,
                                 ),
                               );
                             },
@@ -558,105 +498,72 @@ class ExportService {
             // قسم الإجماليات
             // ==================================================
 
-            if (summary != null &&
-                summary.isNotEmpty) {
+            if (summary != null && summary.isNotEmpty) {
               widgets.add(
                 pw.SizedBox(height: 15),
               );
 
               widgets.add(
                 pw.Directionality(
-                  textDirection:
-                      pw.TextDirection.rtl,
+                  textDirection: pw.TextDirection.rtl,
                   child: pw.Container(
-                    padding:
-                        const pw.EdgeInsets.all(10),
-                    decoration:
-                        pw.BoxDecoration(
-                      color:
-                          PdfColors.green50,
-                      border:
-                          pw.Border.all(
-                        color:
-                            PdfColors.green200,
-                        width:
-                            0.7,
+                    padding: const pw.EdgeInsets.all(10),
+                    decoration: pw.BoxDecoration(
+                      color: PdfColors.green50,
+                      border: pw.Border.all(
+                        color: PdfColors.green200,
+                        width: 0.7,
                       ),
                     ),
                     child: pw.Column(
-                      crossAxisAlignment:
-                          pw.CrossAxisAlignment.stretch,
+                      crossAxisAlignment: pw.CrossAxisAlignment.stretch,
                       children: [
                         pw.Text(
                           'الإجماليات',
-                          style:
-                              pw.TextStyle(
-                            font:
-                                font,
-                            fontSize:
-                                14,
-                            fontWeight:
-                                pw.FontWeight.bold,
-                            color:
-                                PdfColors.green800,
+                          style: pw.TextStyle(
+                            font: font,
+                            fontSize: 14,
+                            fontWeight: pw.FontWeight.bold,
+                            color: PdfColors.green800,
                           ),
-                          textDirection:
-                              pw.TextDirection.rtl,
+                          textDirection: pw.TextDirection.rtl,
                         ),
-
                         pw.SizedBox(
                           height: 8,
                         ),
-
                         ...summary.entries.map(
                           (entry) {
-                            final value =
-                                _formatSummaryValue(
+                            final value = _formatSummaryValue(
                               entry.value,
                             );
 
                             return pw.Padding(
-                              padding:
-                                  const pw.EdgeInsets.symmetric(
-                                vertical:
-                                    3,
+                              padding: const pw.EdgeInsets.symmetric(
+                                vertical: 3,
                               ),
-                              child:
-                                  pw.Row(
+                              child: pw.Row(
                                 mainAxisAlignment:
                                     pw.MainAxisAlignment.spaceBetween,
                                 children: [
                                   pw.Text(
                                     entry.key,
-                                    style:
-                                        pw.TextStyle(
-                                      font:
-                                          font,
-                                      fontSize:
-                                          11,
-                                      fontWeight:
-                                          pw.FontWeight.bold,
-                                      color:
-                                          PdfColors.grey800,
+                                    style: pw.TextStyle(
+                                      font: font,
+                                      fontSize: 11,
+                                      fontWeight: pw.FontWeight.bold,
+                                      color: PdfColors.grey800,
                                     ),
-                                    textDirection:
-                                        pw.TextDirection.rtl,
+                                    textDirection: pw.TextDirection.rtl,
                                   ),
                                   pw.Text(
                                     value,
-                                    style:
-                                        pw.TextStyle(
-                                      font:
-                                          font,
-                                      fontSize:
-                                          11,
-                                      fontWeight:
-                                          pw.FontWeight.bold,
-                                      color:
-                                          PdfColors.green800,
+                                    style: pw.TextStyle(
+                                      font: font,
+                                      fontSize: 11,
+                                      fontWeight: pw.FontWeight.bold,
+                                      color: PdfColors.green800,
                                     ),
-                                    textDirection:
-                                        pw.TextDirection.rtl,
+                                    textDirection: pw.TextDirection.rtl,
                                   ),
                                 ],
                               ),
@@ -681,28 +588,19 @@ class ExportService {
 
               widgets.add(
                 pw.Directionality(
-                  textDirection:
-                      pw.TextDirection.rtl,
+                  textDirection: pw.TextDirection.rtl,
                   child: pw.Align(
-                    alignment:
-                        pw.Alignment.centerRight,
-                    child:
-                        pw.Text(
+                    alignment: pw.Alignment.centerRight,
+                    child: pw.Text(
                       'إجمالي المبلغ: '
                       '${totalAmount.toStringAsFixed(2)}',
-                      style:
-                          pw.TextStyle(
-                        font:
-                            font,
-                        fontSize:
-                            14,
-                        fontWeight:
-                            pw.FontWeight.bold,
-                        color:
-                            PdfColors.green700,
+                      style: pw.TextStyle(
+                        font: font,
+                        fontSize: 14,
+                        fontWeight: pw.FontWeight.bold,
+                        color: PdfColors.green700,
                       ),
-                      textDirection:
-                          pw.TextDirection.rtl,
+                      textDirection: pw.TextDirection.rtl,
                     ),
                   ),
                 ),
@@ -719,38 +617,28 @@ class ExportService {
 
             widgets.add(
               pw.Directionality(
-                textDirection:
-                    pw.TextDirection.rtl,
+                textDirection: pw.TextDirection.rtl,
                 child: pw.Row(
-                  mainAxisAlignment:
-                      pw.MainAxisAlignment.spaceBetween,
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                   children: [
                     pw.Text(
                       'تم التصدير بواسطة IslamApp V1.0',
                       style: pw.TextStyle(
-                        font:
-                            font,
-                        fontSize:
-                            9,
-                        color:
-                            PdfColors.grey600,
+                        font: font,
+                        fontSize: 9,
+                        color: PdfColors.grey600,
                       ),
-                      textDirection:
-                          pw.TextDirection.rtl,
+                      textDirection: pw.TextDirection.rtl,
                     ),
                     pw.Text(
                       'تاريخ التصدير: '
                       '${DateFormat('yyyy-MM-dd').format(DateTime.now())}',
                       style: pw.TextStyle(
-                        font:
-                            font,
-                        fontSize:
-                            9,
-                        color:
-                            PdfColors.grey600,
+                        font: font,
+                        fontSize: 9,
+                        color: PdfColors.grey600,
                       ),
-                      textDirection:
-                          pw.TextDirection.rtl,
+                      textDirection: pw.TextDirection.rtl,
                     ),
                   ],
                 ),
@@ -768,8 +656,7 @@ class ExportService {
 
       final bytes = await pdf.save();
 
-      final fileName =
-          '${_safeFileName(title)}_'
+      final fileName = '${_safeFileName(title)}_'
           '${DateTime.now().millisecondsSinceEpoch}.pdf';
 
       // ========================================================
@@ -782,20 +669,18 @@ class ExportService {
           'application/pdf',
         );
 
-        final url =
-            html.Url.createObjectUrlFromBlob(
+        final url = html.Url.createObjectUrlFromBlob(
           blob,
         );
 
-        final anchor =
-            html.AnchorElement(
+        final anchor = html.AnchorElement(
           href: url,
         )
-              ..setAttribute(
-                'download',
-                fileName,
-              )
-              ..style.display = 'none';
+          ..setAttribute(
+            'download',
+            fileName,
+          )
+          ..style.display = 'none';
 
         html.document.body?.append(anchor);
 
@@ -811,16 +696,11 @@ class ExportService {
       // Mobile / Desktop
       // ========================================================
 
-      String? selectedPath =
-          await FilePicker.platform.saveFile(
-        dialogTitle:
-            'اختر مكان حفظ ملف PDF',
-        fileName:
-            fileName,
-        type:
-            FileType.custom,
-        allowedExtensions:
-            ['pdf'],
+      String? selectedPath = await FilePicker.platform.saveFile(
+        dialogTitle: 'اختر مكان حفظ ملف PDF',
+        fileName: fileName,
+        type: FileType.custom,
+        allowedExtensions: ['pdf'],
       );
 
       if (selectedPath == null) {
@@ -849,29 +729,24 @@ class ExportService {
   // PDF Metadata
   // ============================================================
 
+  // ينشئ سطر بيانات وصفية في PDF
   static pw.Widget _metaText(
     pw.Font font,
     String label,
     String value,
   ) {
     return pw.Padding(
-      padding:
-          const pw.EdgeInsets.only(
+      padding: const pw.EdgeInsets.only(
         bottom: 2,
       ),
       child: pw.Text(
         '$label: $value',
-        style:
-            pw.TextStyle(
-          font:
-              font,
-          fontSize:
-              11,
-          color:
-              PdfColors.grey700,
+        style: pw.TextStyle(
+          font: font,
+          fontSize: 11,
+          color: PdfColors.grey700,
         ),
-        textDirection:
-            pw.TextDirection.rtl,
+        textDirection: pw.TextDirection.rtl,
       ),
     );
   }
@@ -880,6 +755,7 @@ class ExportService {
   // Excel Cell
   // ============================================================
 
+  // يحوّل القيمة إلى خلية Excel مناسبة
   static excel_lib.CellValue _excelCellValue(
     dynamic value,
   ) {
@@ -898,6 +774,7 @@ class ExportService {
   // PDF Value
   // ============================================================
 
+  // ينسّق قيمة لعرضها في PDF
   static String _formatPdfValue(
     String key,
     dynamic value,
@@ -917,8 +794,7 @@ class ExportService {
     final text = value.toString();
 
     if (_isDecimalField(key)) {
-      final parsed =
-          double.tryParse(text);
+      final parsed = double.tryParse(text);
 
       if (parsed != null) {
         return parsed.toStringAsFixed(2);
@@ -932,6 +808,7 @@ class ExportService {
   // Summary Value
   // ============================================================
 
+  // ينسّق قيمة ملخص لعرضها
   static String _formatSummaryValue(
     dynamic value,
   ) {
@@ -955,6 +832,7 @@ class ExportService {
   // هل الحقل رقم عشري؟
   // ============================================================
 
+  // يحدد هل الحقل عشري
   static bool _isDecimalField(String key) {
     final lower = key.toLowerCase();
 
@@ -997,11 +875,11 @@ class ExportService {
   // اسم الملف
   // ============================================================
 
+  // ينظّف اسم الملف من الرموز غير الصالحة
   static String _safeFileName(
     String value,
   ) {
-    String result =
-        value.trim();
+    String result = value.trim();
 
     if (result.isEmpty) {
       result = 'report';
@@ -1019,11 +897,11 @@ class ExportService {
   // اسم Sheet
   // ============================================================
 
+  // ينظّف اسم الورقة من الرموز غير الصالحة
   static String _safeSheetName(
     String value,
   ) {
-    String result =
-        value.trim();
+    String result = value.trim();
 
     if (result.isEmpty) {
       result = 'Report';
@@ -1035,8 +913,7 @@ class ExportService {
     );
 
     if (result.length > 31) {
-      result =
-          result.substring(0, 31);
+      result = result.substring(0, 31);
     }
 
     return result;

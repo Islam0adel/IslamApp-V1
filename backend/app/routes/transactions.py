@@ -18,9 +18,11 @@ import hashlib
 import json
 import logging
 
+# ضبط تسجيل الأحداث (log) للملف
 log = logging.getLogger(__name__)
 
 
+# يبث الرسالة لمتصلي الشركة من غير ما يوقّع الحفظ لو فشل البث
 async def _safe_broadcast(company, message):
     try:
         await manager.broadcast(company, message)
@@ -28,18 +30,21 @@ async def _safe_broadcast(company, message):
         log.exception("Journal notification failed after commit")
 
 
+# راوتر معاملات اليومية
 router = APIRouter()
 
 
 _CATEGORY = "حركة الخزينة"
 
 
+# يتأكد إن المستخدم عنده أي صلاحية من المفاتيح المطلوبة
 def _require_any(request: Request, keys):
     return require_any_section_permission(
         request, [(_CATEGORY, key) for key in keys]
     )
 
 
+# يتحقق إن الفرع مسموح للمستخدم
 def _check_branch(profile: dict, branch_code) -> None:
     allowed = allowed_branches_for_profile(profile)
     if allowed and branch_code and str(branch_code) not in allowed:
@@ -53,6 +58,8 @@ def _check_branch(profile: dict, branch_code) -> None:
 # Helper
 # ============================================================
 
+
+# يحوّل المعاملة إلى JSON مع إخفاء ما ملوش حق عليه
 def serialize_transaction(
     tx: Transaction,
     action: str | None = None,
@@ -89,6 +96,8 @@ def serialize_transaction(
 # 1. حفظ أو تحديث إذن
 # ==========================================================
 
+
+# يتحقق من نسخة التعديل لمنع الكتابة فوق تعديل أحدث
 def _check_edit_version(data, tx):
     # Old non-intent clients retain their existing missing-version contract.
     # New intent-based edits must name the exact displayed server version.
@@ -96,6 +105,8 @@ def _check_edit_version(data, tx):
         if data.operation_id:
             raise HTTPException(409, "أعد تحميل الإذن قبل التعديل لتأكيد نسخته الحالية")
         return
+
+    # يحوّل قيمة الوقت إلى طابع زمني موحّد
     def stamp(value):
         parsed = value if isinstance(value, datetime.datetime) else datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
         return parsed.replace(tzinfo=datetime.timezone.utc) if parsed.tzinfo is None else parsed.astimezone(datetime.timezone.utc)
@@ -107,9 +118,11 @@ def _check_edit_version(data, tx):
         raise HTTPException(409, "تم تعديل هذا الإذن من مستخدم آخر. أعد تحميله وراجع التعديل")
 
 
+# يحسب بصمة طلب الحفظ لكشف التكرار
 def _request_fingerprint(data):
     values = data.model_dump(mode="json", exclude={"operation_id"})
-    if values.get("base_updated_at") is None:values.pop("base_updated_at", None)
+    if values.get("base_updated_at") is None:
+        values.pop("base_updated_at", None)
     try:
         return hashlib.sha256(json.dumps(values, sort_keys=True, ensure_ascii=False,
                                          separators=(",", ":"), allow_nan=False).encode()).hexdigest()
@@ -117,6 +130,7 @@ def _request_fingerprint(data):
         raise HTTPException(400, "بيانات الحفظ غير صالحة")
 
 
+# يبني لقطة نتيجة العملية من الإيصال المحفوظ
 async def _receipt_snapshot(db, receipt, profile):
     result = {"status": "success", "committed": True, "available": False,
               "serial": receipt.original_serial, "action": "unchanged",
@@ -146,6 +160,7 @@ async def _receipt_snapshot(db, receipt, profile):
     return result
 
 
+# يعيد نفس نتيجة العملية لو الطلب مكرر
 async def _replay_receipt(db, receipt, data, profile, fingerprint):
     if (receipt.owner_uid != str(profile.get("uid") or "")
             or receipt.company_code != data.company_code
@@ -159,6 +174,7 @@ async def _replay_receipt(db, receipt, data, profile, fingerprint):
     return result
 
 
+# مسار حالة حفظ عملية معينة (للتأكد من وصولها بعد انقطاع)
 @router.get("/save-status/{company_code}/{operation_id}")
 async def journal_save_status(request: Request, company_code: str, operation_id: str,
                               branch_code: str = Query(...), db: AsyncSession = Depends(get_db)):
@@ -178,6 +194,7 @@ async def journal_save_status(request: Request, company_code: str, operation_id:
     return await _receipt_snapshot(db, receipt, profile)
 
 
+# مسار حفظ معاملة يومية (إضافة أو تعديل)
 @router.post("/save")
 async def save_transaction(
     request: Request,
@@ -268,7 +285,8 @@ async def save_transaction(
         if linked_transaction is not None:
             _require_any(request, ["التعديل"])
             tx = linked_transaction
-            if tx.is_deleted:raise HTTPException(404, "Transaction has been deleted")
+            if tx.is_deleted:
+                raise HTTPException(404, "Transaction has been deleted")
             # الفرع المخزَّن أيضاً: منع تعديل/نقل إذن فرع غير مسموح
             _check_branch(_profile, tx.branch_code)
             _check_edit_version(data, tx)
@@ -500,6 +518,8 @@ async def save_transaction(
 # المحذوف لا يظهر هنا
 # ==========================================================
 
+
+# مسار قائمة المعاملات
 @router.get("/list/{company_code}")
 async def get_transactions(
     request: Request,
@@ -585,6 +605,8 @@ async def get_transactions(
 # وبكده الجهاز Offline لما يرجع يعرف إن السجل اتحذف.
 # ==========================================================
 
+
+# مسار فيد v2 لتغييرات اليومية (تجريبي)
 @router.get("/changes-v2/{company_code}")
 async def get_transactions_changes_v2(
     request: Request,
@@ -612,9 +634,12 @@ async def get_transactions_changes_v2(
     except Exception:
         raise HTTPException(status_code=400, detail="bad cursor")
     allowed = allowed_branches_for_profile(request.state.auth_user)
+
+    # يحوّل صف الفيد للشكل المرسل
     def ser(r):
         j = dict(r["row_json"])
-        j.pop("touched", None); j.pop("tx", None)
+        j.pop("touched", None)
+        j.pop("tx", None)
         j["action"] = "delete" if j.get("is_deleted") else "update"
         return j
     out = await changes_v2.fetch(db, company_code, allowed, cursor, limit, ser)
@@ -622,6 +647,7 @@ async def get_transactions_changes_v2(
     return out
 
 
+# مسار التغييرات منذ آخر مزامنة لليومية
 @router.get("/changes/{company_code}")
 async def get_transactions_changes(
     request: Request,
@@ -743,6 +769,8 @@ async def get_transactions_changes(
 # المحذوف لا يظهر.
 # ==========================================================
 
+
+# مسار المعاملات من رقم تسلسلي معين
 @router.get("/updates/{company_code}/{from_serial}")
 async def get_transactions_from_serial(
     request: Request,
@@ -803,6 +831,8 @@ async def get_transactions_from_serial(
 # عشان الأجهزة Offline تعرف بالحذف.
 # ==========================================================
 
+
+# مسار حذف معاملة
 @router.delete(
     "/delete/{company_code}/{branch_code}/{serial}"
 )
@@ -950,6 +980,8 @@ async def delete_transaction(
 # استخدام رقم Serial قديم.
 # ==========================================================
 
+
+# مسار آخر رقم تسلسلي للفرع
 @router.get("/last_serial/{company_code}")
 async def get_last_serial(
     request: Request,
@@ -1016,6 +1048,8 @@ async def get_last_serial(
 # للتوافق مع الكود القديم.
 # ==========================================================
 
+
+# مسار ملخص الأرصدة والإجماليات
 @router.get("/summary/{company_code}")
 async def get_summary(
     request: Request,

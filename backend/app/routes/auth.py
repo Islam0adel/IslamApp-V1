@@ -39,6 +39,7 @@ from app.core.company_policy_store import (
 )
 
 
+# يبعت تنبيه لحظي بتغيّر قائمة مستخدمين الشركة
 async def _notify_user_directory_changed(company_code: str) -> None:
     try:
         await sync_manager.notify_user_directory_changed(str(company_code))
@@ -46,6 +47,7 @@ async def _notify_user_directory_changed(company_code: str) -> None:
         print(f'User-directory refresh hint unavailable: {exc}')
 
 
+# يجمّد اتصالات الشركة فورًا بعد أي تعديل عليها
 async def _notify_company_changed(company_code: str) -> None:
     """Hold local sockets immediately after a company mutation commits.
 
@@ -73,6 +75,7 @@ async def _notify_company_changed(company_code: str) -> None:
                 print(f'Company control delivery failed: {exc}')
 
 
+# يبعت إشعار فوري لجهاز صاحب الحساب إن صلاحياته أو حالته اتغيرت
 async def _notify_permissions_changed(company_code: str, email: str) -> None:
     """إشعار فوري للجهاز صاحب الحساب بأن صلاحياته/حالته تغيرت.
 
@@ -113,6 +116,8 @@ async def _notify_permissions_changed(company_code: str, email: str) -> None:
         print(f"⚠️ permissions_changed notify failed: {e}")
     await _notify_user_directory_changed(company_code)
 
+
+# راوتر المصادقة وإدارة الحسابات والشركات
 router = APIRouter()
 
 
@@ -158,11 +163,13 @@ JOB_CODE_TO_ROLE = {
 }
 
 
+# يحوّل كود الوظيفة القديم لدور جديد
 def _default_role_for_job_code(job_code: str) -> str:
     """يحول job_code القديم لـ role جديد."""
     return JOB_CODE_TO_ROLE.get(str(job_code or "1"), "employee")
 
 
+# يحدد الدور الفعلي للمستخدم من بروفايله
 def _effective_role(profile: dict) -> str:
     """
     يحسب الدور الفعلي:
@@ -179,6 +186,7 @@ def _effective_role(profile: dict) -> str:
     return _default_role_for_job_code(str(profile.get("job_code", "1")))
 
 
+# يتأكد إن المستخدم أدمن البرنامج وإلا يرفض
 def _require_program_admin(request: Request):
     """للـ endpoints القديمة — يفضل يعمل بـ job_code، لكن يقبل role كمان."""
     actor = getattr(request.state, "auth_user", {})
@@ -187,6 +195,7 @@ def _require_program_admin(request: Request):
         raise HTTPException(status_code=403, detail="هذه الصلاحية خاصة بصاحب البرنامج فقط")
 
 
+# يرجّع الصلاحيات الافتراضية للموظف الجديد
 def _default_employee_permissions() -> dict:
     """
     ⭐ الصلاحيات الافتراضية للموظف الجديد.
@@ -268,6 +277,8 @@ def _default_employee_permissions() -> dict:
 # ⭐ Helper: إنشاء موظف تلقائياً عند التسجيل
 # ============================================================
 
+
+# يجيب كود الموظف التالي للشركة (1، 2، 3...)
 async def _get_next_employee_code(
     db: AsyncSession,
     company_code: str,
@@ -287,6 +298,7 @@ async def _get_next_employee_code(
         return "1"
 
 
+# ينشئ سجل موظف تلقائيًا للحساب الجديد لو لزم
 async def _auto_create_employee_if_needed(
     db: AsyncSession,
     user_email: str,
@@ -354,7 +366,7 @@ async def _auto_create_employee_if_needed(
             if not existing_branch:
                 # جرب CodingRecord (احتياطي — بعض الأنظمة تخزن الفروع هناك)
                 try:
-                    
+
                     coding_branch_stmt = select(CodingRecord).where(
                         CodingRecord.company_code == company_clean,
                         CodingRecord.category == "branches",
@@ -488,6 +500,8 @@ async def _auto_create_employee_if_needed(
 # ⭐ Helper: البحث عن مستخدم بالموبايل (في Firestore)
 # ============================================================
 
+
+# يدوّر على مستخدم برقم الموبايل
 def find_user_by_phone(phone_number: str):
     """
     يبحث في users collection عن مستخدم عنده phone_number.
@@ -505,11 +519,14 @@ def find_user_by_phone(phone_number: str):
         print(f"⚠️ find_user_by_phone error: {e}")
     return None
 
+
+# يبني معرّف مستند مؤقت من الإيميل للمستخدمين قبل إكمال التسجيل
 def _email_doc_id(email: str) -> str:
     """doc id مؤقت للـ email-only users (قبل إكمال التسجيل)"""
     return f"email_{email.replace('@', '_at_').replace('/', '_')}"
 
 
+# يدوّر على مستخدم معلّق بالموبايل أو الإيميل
 def find_pending_user(phone: str = "", email: str = ""):
     """
     يبحث عن المستخدم المؤقت (pending) بـ:
@@ -544,11 +561,15 @@ def find_pending_user(phone: str = "", email: str = ""):
             pass
 
     if email:
-        matches=list(db.collection('users').where('invitation_email','==',email).limit(2).stream())
-        if len(matches)==1:return matches[0]
-        if len(matches)>1:raise HTTPException(status_code=409,detail='يوجد تعارض في بريد الدعوة. راجع الإدارة')
+        matches = list(db.collection('users').where('invitation_email', '==', email).limit(2).stream())
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches)>1:
+            raise HTTPException(status_code=409, detail='يوجد تعارض في بريد الدعوة. راجع الإدارة')
     return None
 
+
+# يدوّر على مستخدم بالإيميل أو الموبايل أو اسم المستخدم
 def find_user_by_identifier(identifier: str):
     """
     يبحث بـ (إيميل / موبايل / يوزرنيم).
@@ -592,6 +613,7 @@ def find_user_by_identifier(identifier: str):
 # ⭐ الأدوار المسموح للأدمن بإضافتها (بدون 99 و 201)
 # ============================================================
 
+# الأدوار اللي الأدمن يقدر يضيفها
 ADMIN_ADDABLE_ROLES = {
     "1": "موظف عادي",
     "200": "مشرف",
@@ -602,16 +624,20 @@ ADMIN_ADDABLE_ROLES = {
 # ⭐ resolve-identifier — الدخول بـ (إيميل / موبايل / يوزرنيم)
 # ============================================================
 
+
+# نموذج طلب تحديد هوية (إيميل أو موبايل أو يوزرنيم)
 class IdentifierResolveModel(BaseModel):
     identifier: str  # إيميل أو موبايل أو يوزرنيم
 
 
 # Rate limiting بسيط (in-memory, كافي لـ 1 process)
+# حد محاولات تحديد الهوية في الذاكرة لمنع التخمين
 _IDENTIFIER_ATTEMPTS: Dict[str, list] = {}
 _MAX_IDENTIFIER_ATTEMPTS = 10  # 10 محاولات
 _IDENTIFIER_WINDOW_SECONDS = 60  # في الدقيقة
 
 
+# يفحص هل العميل تجاوز حد محاولات تحديد الهوية
 def _check_identifier_rate_limit(client_key: str) -> bool:
     """يرجع True لو مسموح، False لو تجاوز الحد."""
     now = time.time()
@@ -627,9 +653,11 @@ def _check_identifier_rate_limit(client_key: str) -> bool:
 
 
 # Username validation
+# نمط التحقق من اسم المستخدم
 _USERNAME_REGEX = re.compile(r"^[a-zA-Z0-9_]{3,30}$")
 
 
+# يتحقق من صيغة اسم المستخدم ويرجّعه بحروف صغيرة
 def _validate_username(username: str) -> str:
     """يتحقق من صيغة الـ username ويرجعه lowercase."""
     if not username:
@@ -643,6 +671,7 @@ def _validate_username(username: str) -> str:
     return u
 
 
+# يتحقق إن اسم المستخدم مش مستخدم عند حساب تاني
 def _is_username_taken(username: str, exclude_doc_id: str = "") -> bool:
     """يتحقق إن الـ username مش مستخدم في حساب تاني."""
     if not username:
@@ -661,6 +690,8 @@ def _is_username_taken(username: str, exclude_doc_id: str = "") -> bool:
         print(f"⚠️ _is_username_taken error: {e}")
     return False
 
+
+# الأدوار المتاحة في النظام
 USER_ROLES = {
     "1": "موظف",
     "200": "مشرف",
@@ -668,6 +699,8 @@ USER_ROLES = {
     "99": "صاحب البرنامج"
 }
 
+
+# نموذج تسجيل مستخدم
 class UserRegister(BaseModel):
     name: str
     email: EmailStr
@@ -676,6 +709,8 @@ class UserRegister(BaseModel):
     # ⚠️ job_code: تم حذفه — الباك بيحدده من .env أو يعطيه "1" افتراضي
     employee_code: Optional[str] = None
 
+
+# نموذج تحديث صلاحيات مستخدم
 class PermissionsUpdateModel(BaseModel):
     email: str
     permissions: dict
@@ -691,6 +726,8 @@ class PermissionsUpdateModel(BaseModel):
 # ⭐ Models جديدة — Admin Add User / Phone Check / Complete Reg
 # ============================================================
 
+
+# نموذج إضافة مستخدم بواسطة الأدمن
 class AdminAddUserModel(BaseModel):
     """الأدمن يضيف مستخدم جديد — الاسم اختياري، رقم/إيميل واحد على الأقل"""
     name: Optional[str] = None
@@ -702,11 +739,13 @@ class AdminAddUserModel(BaseModel):
     username: Optional[str] = None
 
 
+# نموذج فحص الموبايل أو الإيميل
 class PhoneCheckModel(BaseModel):
     # ⭐ الاسم قديم لكن المحتوى: identifier (إيميل/موبايل)
     phone_number: str
 
 
+# نموذج إكمال التسجيل
 class CompleteRegistrationModel(BaseModel):
     # ⭐ phone_number اختياري (للسوبر أدمن)
     phone_number: Optional[str] = None
@@ -716,6 +755,8 @@ class CompleteRegistrationModel(BaseModel):
     name: Optional[str] = None
     employee_code: Optional[str] = None  # ⭐ اختياري — لربط HR
 
+
+# نموذج طلب انضمام لشركة بدون دعوة
 class RegistrationRequestModel(BaseModel):
     """طلب انضمام لشركة (بدون دعوة)"""
     name: str
@@ -726,15 +767,18 @@ class RegistrationRequestModel(BaseModel):
     note: Optional[str] = None
 
 
+# نموذج الموافقة على طلب انضمام بتحديد الدور والفرع والشركة
 class ApproveRequestModel(BaseModel):
     """الموافقة على طلب — تحدد الدور والفرع والشركة (لو مش محددة)"""
     role: str = "employee"
     branch_code: Optional[str] = ""
     company_code: Optional[str] = None  # ⭐ مطلوب لو الطلب مش محدد شركة
 
+
 # ============================================================
 # ⭐ إشعار السوبر أدمن بطلب انضمام جديد
 # ============================================================
+# يبعت إشعار للسوبر أدمن بوجود طلب انضمام جديد
 async def notify_super_admins_of_registration_request(
     request_doc_id: str,
     request_data: dict,
@@ -843,10 +887,10 @@ async def notify_super_admins_of_registration_request(
             print(f"⚠️ push schedule failed: {e}")
 
 
-
 # ==========================================
 # ⭐ 2.11. طلب انضمام (Self-Registration Request)
 # ==========================================
+# مسار تقديم طلب انضمام لشركة
 @router.post("/request-registration")
 async def request_registration(data: RegistrationRequestModel):
     """
@@ -948,25 +992,31 @@ async def request_registration(data: RegistrationRequestModel):
 # ==========================================
 # ⭐ 2.12. قائمة طلبات الانضمام (للأدمن)
 # ==========================================
+# مسار قائمة طلبات الانضمام للأدمن
 @router.get('/admin/registration-requests')
-async def list_registration_requests(request: Request,status: str=Query('pending'),session: AsyncSession=Depends(get_db)):
+async def list_registration_requests(request: Request, status: str=Query('pending'), session: AsyncSession=Depends(get_db)):
     try:
-        return await read_requests(session,db,getattr(request.state,'auth_user',{}),status,_effective_role)
-    except HTTPException:raise
-    except Exception:raise HTTPException(status_code=503,detail='تعذر تحميل طلبات الانضمام الحالية')
+        return await read_requests(session, db, getattr(request.state, 'auth_user', {}), status, _effective_role)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=503, detail='تعذر تحميل طلبات الانضمام الحالية')
 
 
 # ==========================================
 # ⭐ 2.13. الموافقة على طلب انضمام
 # ==========================================
+# مسار الموافقة على طلب انضمام
 @router.post("/admin/registration-requests/{request_id}/approve")
 async def approve_registration_request(request_id: str, data: ApproveRequestModel, request: Request,
     session: AsyncSession = Depends(get_db)):
     return await _create_invitation_action(data, request, session, request_id)
 
+
 # ==========================================
 # ⭐ 2.14. رفض طلب انضمام
 # ==========================================
+# مسار رفض طلب انضمام
 @router.post("/admin/registration-requests/{request_id}/reject")
 async def reject_registration_request(
     request_id: str,
@@ -976,6 +1026,8 @@ async def reject_registration_request(
     try:
         if not isinstance(session, AsyncSession):
             raise HTTPException(status_code=503, detail='تعذر التحقق من سياسة الشركة')
+
+        # ينفّذ الرفض في معاملة ويحفظه
         async def commit():
             result = await reject_request(session, db, getattr(request.state, 'auth_user', {}), request_id, _effective_role)
             await session.rollback()
@@ -989,9 +1041,11 @@ async def reject_registration_request(
     except Exception:
         raise HTTPException(status_code=503, detail='تعذر تأكيد رفض الطلب. أعد تحميل القائمة للتحقق قبل المحاولة مجدداً')
 
+
 # ==========================================
 # 1. تسجيل مستخدم جديد
 # ==========================================
+# مسار التسجيل المباشر القديم (متوقف)
 @router.post("/register")
 async def register(
     user: UserRegister,
@@ -1126,6 +1180,7 @@ async def register(
 # ==========================================
 # 2. التحقق من المستخدم (تسجيل الدخول)
 # ==========================================
+# مسار التحقق من المستخدم بعد تسجيل الدخول
 @router.post("/verify-user")
 async def verify_user(
     authorization: str = Header(None),
@@ -1153,12 +1208,14 @@ async def verify_user(
         if data.get('requires_email_verification') is True and decoded_token.get('email_verified') is not True:
             raise HTTPException(status_code=403, detail='يجب التحقق من بريد الدعوة أولاً')
         if data.get('requires_email_verification') is True:
+            # يؤكد حساب المدعو ويحفظ
             async def confirm():
                 value = await verify_invited_account(session, db, str(email).strip().lower(), str(decoded_token['uid']))
                 await session.rollback()
                 return value
             data, interrupted = await finish_mutation(confirm())
-            if interrupted: raise asyncio.CancelledError()
+            if interrupted:
+                raise asyncio.CancelledError()
         elif str(data.get('status', 'active')).lower() == 'pending':
             raise HTTPException(status_code=403, detail='الحساب معلق')
         comp_code = data.get("company_code")
@@ -1201,9 +1258,11 @@ async def verify_user(
         print(f"⚠️ خطأ في التحقق من التوكن: {e}")
         raise HTTPException(status_code=401, detail="انتهت صلاحية الجلسة، سجل دخولك مرة أخرى")
 
+
 # ==========================================
 # ⭐ 2.4. حل الـ identifier (إيميل / موبايل / يوزرنيم)
 # ==========================================
+# مسار تحويل المعرّف (إيميل أو موبايل أو يوزرنيم) لإيميل الدخول
 @router.post("/resolve-identifier")
 async def resolve_identifier(
     data: IdentifierResolveModel,
@@ -1271,10 +1330,10 @@ async def resolve_identifier(
         return {"found": False, "email": None}
 
 
-
 # ==========================================
 # ⭐ 2.5. التحقق من رقم الموبايل (قبل التسجيل)
 # ==========================================
+# مسار فحص هل رقم الموبايل مسجّل
 @router.post("/check-phone")
 async def check_phone(data: PhoneCheckModel):
     """
@@ -1342,6 +1401,8 @@ async def check_phone(data: PhoneCheckModel):
         print(f"⚠️ check_phone error: {e}")
         raise HTTPException(status_code=500, detail="تعذر التحقق")
 
+
+# ينشئ حساب السوبر أدمن (مرة واحدة)
 async def _setup_super_admin(
     data: CompleteRegistrationModel,
     uid: str,
@@ -1393,10 +1454,13 @@ async def _setup_super_admin(
         "email": email_clean,
     }
 
+
+# نموذج فحص الإيميل
 class CheckEmailModel(BaseModel):
     email: str
 
 
+# مسار فحص هل الإيميل مسجّل
 @router.post("/check-email")
 async def check_email(data: CheckEmailModel):
     """
@@ -1411,26 +1475,29 @@ async def check_email(data: CheckEmailModel):
     email = (data.email or "").strip().lower()
     if not email:
         return {"exists": False, "needs_completion": False}
-    
+
     # 1) ابحث في users/{email}
     doc = db.collection("users").document(email).get()
-    
+
     # 2) لو مش موجود، ابحث في users/email_XXX
     if not doc.exists:
         doc = db.collection("users").document(_email_doc_id(email)).get()
-    
+
     if not doc.exists:
         return {"exists": False, "needs_completion": False}
-    
+
     user_data = doc.to_dict() or {}
     uid = (user_data.get("uid") or "").strip()
     return {
         "exists": True,
         "needs_completion": uid == "",
     }
+
+
 # ==========================================
 # ⭐ 2.6. إكمال التسجيل (بعد التحقق من الرقم)
 # ==========================================
+# مسار إكمال التسجيل وربطه بالدعوة
 @router.post("/complete-registration")
 async def complete_registration(
     data: CompleteRegistrationModel,
@@ -1502,12 +1569,15 @@ async def complete_registration(
 
         if not isinstance(session, AsyncSession):
             raise HTTPException(status_code=503, detail='تعذر التحقق من سياسة الشركة')
+
+        # يربط الدعوة بالحساب ويحفظ
         async def commit_binding():
             bound = await bind_invitation(session, db, doc.id, email_clean, uid, username_final, _effective_role)
             await session.rollback()
             return bound
         _, interrupted = await finish_mutation(commit_binding())
-        if interrupted: raise asyncio.CancelledError()
+        if interrupted:
+            raise asyncio.CancelledError()
         # ============================================================
         # ⭐ ربط / إنشاء الموظف تلقائياً
         # ============================================================
@@ -1561,9 +1631,11 @@ async def complete_registration(
         print(f"⚠️ complete_registration error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 # ==========================================
 # ⭐ 2.6.5. جلب مستخدمي الشركة
 # ==========================================
+# مسار بروفايل الجلسة الحالي (صلاحيات ونطاق)
 @router.get("/session-profile")
 async def current_session_profile(request: Request, db: AsyncSession = Depends(get_db)):
     """Authenticated own effective scope, never another admin's policy map."""
@@ -1590,33 +1662,41 @@ async def current_session_profile(request: Request, db: AsyncSession = Depends(g
     return out
 
 
+# مسار دليل إدارة المستخدمين
 @router.get('/user-management-directory')
-async def user_management_directory(request: Request,company_code: Optional[str]=Query(None),session: AsyncSession=Depends(get_db)):
+async def user_management_directory(request: Request, company_code: Optional[str]=Query(None), session: AsyncSession=Depends(get_db)):
     try:
-        return await read_management_directory(session,db,getattr(request.state,'auth_user',{}),company_code,_effective_role)
-    except HTTPException:raise
-    except Exception:raise HTTPException(status_code=503,detail='تعذر تحميل قائمة المستخدمين الحالية')
+        return await read_management_directory(session, db, getattr(request.state, 'auth_user', {}), company_code, _effective_role)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=503, detail='تعذر تحميل قائمة المستخدمين الحالية')
 
 
+# مسار قائمة مستخدمي الشركة
 @router.get('/company-users')
-async def list_company_users(request: Request,company_code: Optional[str]=Query(None),session: AsyncSession=Depends(get_db)):
+async def list_company_users(request: Request, company_code: Optional[str]=Query(None), session: AsyncSession=Depends(get_db)):
     # Preserve the list-shaped API used by existing clients, with the same
     # current-source authorization and privacy boundary as the richer directory.
-    return (await user_management_directory(request,company_code,session))['users']
+    return (await user_management_directory(request, company_code, session))['users']
 
 
 # ==========================================
 # ⭐ 2.7. الأدمن يضيف موظف جديد (Invitation Model)
 # ==========================================
+# مسار إضافة مستخدم بواسطة الأدمن (دعوة)
 @router.post("/admin/add-user")
 async def admin_add_user(data: AdminAddUserModel, request: Request, session: AsyncSession = Depends(get_db)):
     return await _create_invitation_action(data, request, session)
 
 
+# ينشئ الدعوة ويبعتها
 async def _create_invitation_action(data, request, session, request_id=None):
     try:
         if not isinstance(session, AsyncSession):
             raise HTTPException(status_code=503, detail='تعذر التحقق من سياسة الشركة')
+
+        # ينفّذ إنشاء الدعوة ويحفظ ويحدّث
         async def commit_and_refresh():
             result = await create_invitation(session, db, getattr(request.state, 'auth_user', {}), data,
                 _effective_role, ROLE_TO_JOB_CODE, ROLE_TITLES, _default_employee_permissions,
@@ -1625,15 +1705,19 @@ async def _create_invitation_action(data, request, session, request_id=None):
             await _notify_user_directory_changed(result['company_code'])
             return result
         result, interrupted = await finish_mutation(commit_and_refresh())
-        if interrupted: raise asyncio.CancelledError()
+        if interrupted:
+            raise asyncio.CancelledError()
         return {'status': 'success', 'message': 'تم إعداد الدعوة. يجب التسجيل بنفس البريد والتحقق منه', **result}
-    except HTTPException: raise
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(status_code=503, detail='تعذر تأكيد حفظ الدعوة. أعد تحميل القائمة للتحقق قبل المحاولة مجدداً')
+
 
 # ==========================================
 # ⭐ 2.8. تعديل مستخدم (Admin)
 # ==========================================
+# نموذج تعديل مستخدم بواسطة الأدمن
 class AdminEditUserModel(BaseModel):
     email: str
     invitation_email: Optional[str] = None
@@ -1649,48 +1733,64 @@ class AdminEditUserModel(BaseModel):
     expected_policy_revision: Optional[StrictInt] = None
 
 
+# مسار قراءة بيانات تعديل مستخدم
 @router.get('/user-editor/{document_id}')
-async def get_user_editor(document_id: str,request: Request,session: AsyncSession=Depends(get_db)):
+async def get_user_editor(document_id: str, request: Request, session: AsyncSession=Depends(get_db)):
     try:
-        return await read_account_editor(session,db,getattr(request.state,'auth_user',{}),document_id.strip().lower(),_effective_role)
-    except HTTPException:raise
-    except Exception:raise HTTPException(status_code=503,detail='تعذر تحميل بيانات الحساب الحالية')
+        return await read_account_editor(session, db, getattr(request.state, 'auth_user', {}), document_id.strip().lower(), _effective_role)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=503, detail='تعذر تحميل بيانات الحساب الحالية')
 
 
+# مسار تعديل مستخدم بواسطة الأدمن
 @router.put('/admin/edit-user')
-async def admin_edit_user(data: AdminEditUserModel,request: Request,session: AsyncSession=Depends(get_db)):
+async def admin_edit_user(data: AdminEditUserModel, request: Request, session: AsyncSession=Depends(get_db)):
     try:
-        if not isinstance(session,AsyncSession):raise HTTPException(status_code=503,detail='تعذر التحقق من سياسة الشركة')
+        if not isinstance(session, AsyncSession):
+            raise HTTPException(status_code=503, detail='تعذر التحقق من سياسة الشركة')
+
+        # ينفّذ التعديل ويحفظ ويحدّث
         async def commit_and_refresh():
-            result=await write_account_editor(session,db,getattr(request.state,'auth_user',{}),data.email.strip().lower(),
-                data,_effective_role,ROLE_TO_JOB_CODE,ROLE_TITLES,_validate_username)
+            result = await write_account_editor(session, db, getattr(request.state, 'auth_user', {}), data.email.strip().lower(),
+                data, _effective_role, ROLE_TO_JOB_CODE, ROLE_TITLES, _validate_username)
             await session.rollback()
-            if result['updates']:await _notify_permissions_changed(result['company_code'],data.email.strip().lower())
+            if result['updates']:
+                await _notify_permissions_changed(result['company_code'], data.email.strip().lower())
             return result
-        result,interrupted=await finish_mutation(commit_and_refresh())
-        if interrupted:raise asyncio.CancelledError()
-        return {'status':'success','message':'تم التحديث بنجاح' if result['updates'] else 'لا توجد تغييرات','updates':result['updates']}
-    except HTTPException:raise
-    except Exception:raise HTTPException(status_code=503,detail='تعذر تأكيد تعديل الحساب. أعد تحميل بياناته للتحقق قبل المحاولة مجدداً')
+        result, interrupted = await finish_mutation(commit_and_refresh())
+        if interrupted:
+            raise asyncio.CancelledError()
+        return {'status':'success', 'message':'تم التحديث بنجاح' if result['updates'] else 'لا توجد تغييرات', 'updates':result['updates']}
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=503, detail='تعذر تأكيد تعديل الحساب. أعد تحميل بياناته للتحقق قبل المحاولة مجدداً')
 
 
 # ==========================================
 # ⭐ 2.9. حذف مستخدم (Admin)
 # ==========================================
+# مسار حذف مستخدم
 @router.delete("/admin/delete-user")
 async def admin_delete_user(request: Request, email: str = Query(..., min_length=1), session: AsyncSession = Depends(get_db)):
     return await _destructive_user_action(request, email, session, 'delete')
 
 
+# مسار إعادة ضبط مستخدم معلّق
 @router.post('/admin/reset-pending-user')
 async def admin_reset_pending_user(request: Request, email: str = Query(..., min_length=1), session: AsyncSession = Depends(get_db)):
     return await _destructive_user_action(request, email, session, 'reset')
 
 
+# ينفّذ حذف أو إعادة ضبط الحساب
 async def _destructive_user_action(request, email, session, action):
     try:
         if not isinstance(session, AsyncSession):
             raise HTTPException(status_code=503, detail='تعذر التحقق من سياسة الشركة')
+
+        # ينفّذ العملية ويحفظ ويحدّث
         async def commit_and_refresh():
             try:
                 result = await destructive_account(session, db, getattr(request.state, 'auth_user', {}),
@@ -1714,94 +1814,112 @@ async def _destructive_user_action(request, email, session, action):
 # ==========================================
 # ⭐ 2.15. إلغاء التسجيل (من شاشة تحقق الإيميل)
 # ==========================================
+# مسار إلغاء المستخدم تسجيله بنفسه
 @router.post("/cancel-registration")
 async def cancel_registration(authorization: Optional[str] = Header(None), session: AsyncSession = Depends(get_db)):
     if not authorization or not authorization.startswith('Bearer '):
-        raise HTTPException(status_code=401,detail='التوثيق مطلوب')
+        raise HTTPException(status_code=401, detail='التوثيق مطلوب')
     try:
-        decoded=admin_auth.verify_id_token(authorization.split(' ',1)[1].strip(),clock_skew_seconds=60)
+        decoded = admin_auth.verify_id_token(authorization.split(' ', 1)[1].strip(), clock_skew_seconds=60)
     except Exception:
-        raise HTTPException(status_code=401,detail='توكن غير صالح')
-    uid=str(decoded.get('uid') or '')
-    email=str(decoded.get('email') or '').strip().lower()
+        raise HTTPException(status_code=401, detail='توكن غير صالح')
+    uid = str(decoded.get('uid') or '')
+    email = str(decoded.get('email') or '').strip().lower()
     if not uid or not email or decoded.get('email_verified') is True:
-        raise HTTPException(status_code=403,detail='هذا المسار لإلغاء التسجيل غير المكتمل فقط')
+        raise HTTPException(status_code=403, detail='هذا المسار لإلغاء التسجيل غير المكتمل فقط')
     try:
+        # ينفّذ الإلغاء ويحفظ
         async def commit():
-            code=await cancel_invited_account(session,db,email,uid,admin_auth,_notify_permissions_changed)
+            code = await cancel_invited_account(session, db, email, uid, admin_auth, _notify_permissions_changed)
             await session.rollback()
-            await _notify_permissions_changed(code,email)
-        _,interrupted=await finish_mutation(commit())
-        if interrupted:raise asyncio.CancelledError()
-        return {'status':'success','message':'تم إلغاء التسجيل. بريد الدعوة محفوظ لإعادة المحاولة'}
-    except HTTPException:raise
+            await _notify_permissions_changed(code, email)
+        _, interrupted = await finish_mutation(commit())
+        if interrupted:
+            raise asyncio.CancelledError()
+        return {'status':'success', 'message':'تم إلغاء التسجيل. بريد الدعوة محفوظ لإعادة المحاولة'}
+    except HTTPException:
+        raise
     except Exception:
-        raise HTTPException(status_code=503,detail='تعذر تأكيد الإلغاء. أعد نفس الإجراء للتحقق والإكمال')
+        raise HTTPException(status_code=503, detail='تعذر تأكيد الإلغاء. أعد نفس الإجراء للتحقق والإكمال')
 
 
 # ==========================================
 # 4. إدارة الشركات (جميعها في Neon)
 # ==========================================
 
+
+# نموذج مسوّدة سياسة الشركة
 class CompanyPolicyDraftModel(BaseModel):
     reconciled_active_revision: Optional[StrictInt] = None
     expected_revision: StrictInt
     configuration: dict
 
 
+# نموذج تفعيل سياسة الشركة بعد المراجعة
 class CompanyPolicyActivationModel(BaseModel):
     expected_revision: StrictInt
     source_review_token: StrictStr
     confirmed_review: StrictBool
 
 
+# مسار مراجعة سياسة الشركة قبل التفعيل
 @router.get('/companies/{company_code}/permission-policy/review')
 async def get_company_policy_review(company_code: str, request: Request, session: AsyncSession=Depends(get_db)):
     try:
-        return await review_context(session,db,getattr(request.state,'auth_user',{}),company_code,_effective_role)
-    except HTTPException:raise
-    except Exception:raise HTTPException(status_code=503,detail='تعذر تحميل مراجعة الصلاحيات الحالية')
+        return await review_context(session, db, getattr(request.state, 'auth_user', {}), company_code, _effective_role)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=503, detail='تعذر تحميل مراجعة الصلاحيات الحالية')
 
 
+# مسار تفعيل سياسة الشركة
 @router.post('/companies/{company_code}/permission-policy/activate')
 async def activate_company_policy(company_code: str, data: CompanyPolicyActivationModel, request: Request, session: AsyncSession=Depends(get_db)):
-    if data.confirmed_review is not True:raise HTTPException(status_code=400,detail='راجع الصلاحيات وأكد التفعيل صراحة')
+    if data.confirmed_review is not True:
+        raise HTTPException(status_code=400, detail='راجع الصلاحيات وأكد التفعيل صراحة')
     try:
+        # ينفّذ التفعيل ويحفظ
         async def commit():
-            result=await activate_review(session,db,getattr(request.state,'auth_user',{}),company_code,_effective_role,
-                data.expected_revision,data.source_review_token)
+            result = await activate_review(session, db, getattr(request.state, 'auth_user', {}), company_code, _effective_role,
+                data.expected_revision, data.source_review_token)
             invalidate_company_recipients(company_code)
             await sync_manager.notify_company_directory_changed()
-            for target in result.pop('refresh_accounts',[]):
-                await _notify_permissions_changed(company_code,target)
+            for target in result.pop('refresh_accounts', []):
+                await _notify_permissions_changed(company_code, target)
             await _notify_user_directory_changed(company_code)
             return result
-        result,interrupted=await finish_mutation(commit())
-        if interrupted:raise asyncio.CancelledError()
-        return {'status':'success',**result}
-    except HTTPException:raise
-    except Exception:raise HTTPException(status_code=503,detail='تعذر تأكيد تفعيل السياسة. أعد تحميل المراجعة قبل المحاولة مجدداً')
+        result, interrupted = await finish_mutation(commit())
+        if interrupted:
+            raise asyncio.CancelledError()
+        return {'status':'success', **result}
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=503, detail='تعذر تأكيد تفعيل السياسة. أعد تحميل المراجعة قبل المحاولة مجدداً')
 
 
+# مسار قراءة سياسة صلاحيات الشركة
 @router.get("/companies/{company_code}/permission-policy")
 async def get_company_permission_policy(
     company_code: str, request: Request, session: AsyncSession = Depends(get_db)
 ):
     _require_program_admin(request)
-    await asyncio.to_thread(require_root,db,getattr(request.state,'auth_user',{}),_effective_role)
+    await asyncio.to_thread(require_root, db, getattr(request.state, 'auth_user', {}), _effective_role)
     try:
         return await read_policy(session, company_code)
     except UnknownPolicyCompany:
         raise HTTPException(status_code=404, detail="الشركة غير موجودة")
 
 
+# مسار حفظ مسوّدة سياسة صلاحيات الشركة
 @router.put("/companies/{company_code}/permission-policy/draft")
 async def put_company_permission_policy_draft(
     company_code: str, data: CompanyPolicyDraftModel, request: Request,
     session: AsyncSession = Depends(get_db)
 ):
     _require_program_admin(request)
-    await review_context(session,db,getattr(request.state,'auth_user',{}),company_code,_effective_role)
+    await review_context(session, db, getattr(request.state, 'auth_user', {}), company_code, _effective_role)
     try:
         result = await save_policy_draft(
             session, company_code, data.configuration,
@@ -1817,6 +1935,7 @@ async def put_company_permission_policy_draft(
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+# مسار إضافة شركة جديدة
 @router.post("/companies/add")
 async def add_new_company(
     company: CompanyModel,
@@ -1851,6 +1970,7 @@ async def add_new_company(
             "requires_permission_review": True}
 
 
+# مسار قائمة كل الشركات
 @router.get("/companies/all")
 async def get_all_companies(
     request: Request,
@@ -1878,6 +1998,7 @@ async def get_all_companies(
     return companies_list
 
 
+# مسار تفعيل أو إيقاف شركة
 @router.post("/companies/toggle")
 async def toggle_company_status(
     request: Request,
@@ -1896,6 +2017,7 @@ async def toggle_company_status(
     if not company:
         raise HTTPException(status_code=404, detail="الشركة غير موجودة")
 
+    # ينفّذ تغيير الحالة ويحفظ
     async def commit():
         company.is_active = is_active
         await session.commit()
@@ -1908,6 +2030,7 @@ async def toggle_company_status(
     return {"status": "success", "message": f"تم تحديث حالة الشركة بنجاح و{status_txt}"}
 
 
+# مسار تعديل بيانات شركة (وكودها)
 @router.put("/companies/update")
 async def update_company(
     request: Request,
@@ -1985,6 +2108,7 @@ async def update_company(
         raise HTTPException(status_code=500, detail=f"خطأ داخلي: {str(e)}")
 
 
+# مسار حذف شركة
 @router.delete("/companies/delete/{code}")
 async def delete_company(
     code: str,
@@ -2007,9 +2131,10 @@ async def delete_company(
         if not company:
             raise HTTPException(status_code=404, detail="الشركة غير موجودة")
 
-        policy=await session.scalar(select(CompanyPermissionPolicy).where(
-            CompanyPermissionPolicy.company_code==code).with_for_update())
-        if policy is not None:await session.delete(policy)
+        policy = await session.scalar(select(CompanyPermissionPolicy).where(
+            CompanyPermissionPolicy.company_code == code).with_for_update())
+        if policy is not None:
+            await session.delete(policy)
         await session.delete(company)
         await session.commit()
         await _notify_company_changed(code)
@@ -2031,6 +2156,7 @@ async def delete_company(
 # ==========================================
 # 5. تحديث الصلاحيات (يبقى في Firestore)
 # ==========================================
+# مسار المستخدمين المتاحين لتعديل صلاحياتهم
 @router.get('/permission-editor-targets')
 async def get_permission_targets(request: Request, company_code: str = Query(''),
                                  session: AsyncSession = Depends(get_db)):
@@ -2043,6 +2169,7 @@ async def get_permission_targets(request: Request, company_code: str = Query('')
         raise HTTPException(status_code=503, detail='تعذر تحميل قائمة المستخدمين الحالية')
 
 
+# مسار قراءة صلاحيات مستخدم في المحرر
 @router.get('/permission-editor/{email}')
 async def get_permission_editor(email: str, request: Request, session: AsyncSession = Depends(get_db)):
     actor = getattr(request.state, 'auth_user', {})
@@ -2054,6 +2181,7 @@ async def get_permission_editor(email: str, request: Request, session: AsyncSess
         raise HTTPException(status_code=503, detail='تعذر التحقق من نطاق الصلاحيات مؤقتاً')
 
 
+# نموذج تغيير حالة الحساب من المحرر القديم
 class LegacyEditorStatusModel(BaseModel):
     email: StrictStr
     is_active: StrictBool
@@ -2061,12 +2189,15 @@ class LegacyEditorStatusModel(BaseModel):
     expected_profile_version: StrictStr
 
 
+# مسار تغيير حالة الحساب من المحرر القديم
 @router.post('/permission-editor-status')
 async def legacy_editor_status(data: LegacyEditorStatusModel, request: Request,
                                session: AsyncSession = Depends(get_db)):
     try:
         if not isinstance(session, AsyncSession):
             raise HTTPException(status_code=503, detail='تعذر التحقق من سياسة الشركة')
+
+        # ينفّذ تغيير الحالة ويحفظ ويحدّث
         async def commit_and_refresh():
             result = await write_legacy_editor_status(session, db, getattr(request.state, 'auth_user', {}),
                 data.email.strip().lower(), data, _effective_role)
@@ -2075,13 +2206,16 @@ async def legacy_editor_status(data: LegacyEditorStatusModel, request: Request,
                 await _notify_permissions_changed(result['company_code'], data.email.strip().lower())
             return result
         result, interrupted = await finish_mutation(commit_and_refresh())
-        if interrupted: raise asyncio.CancelledError()
+        if interrupted:
+            raise asyncio.CancelledError()
         return {'status': 'success', 'changed': result['changed']}
-    except HTTPException: raise
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(status_code=503, detail='تعذر تأكيد تغيير الحالة. أعد تحميل الحساب للتحقق')
 
 
+# مسار حفظ صلاحيات مستخدم
 @router.post("/update-permissions")
 async def update_user_permissions(data: PermissionsUpdateModel, request: Request,
                                   session: AsyncSession = Depends(get_db)):
@@ -2093,6 +2227,8 @@ async def update_user_permissions(data: PermissionsUpdateModel, request: Request
         if not isinstance(session, AsyncSession):
             raise HTTPException(status_code=503, detail='تعذر التحقق من سياسة الشركة')
         actor = getattr(request.state, "auth_user", {})
+
+        # ينفّذ الحفظ ويحدّث
         async def commit_and_refresh():
             result = await write_permission_editor(session, db, actor,
                 data.email.strip().lower(), data, _effective_role)
@@ -2111,6 +2247,7 @@ async def update_user_permissions(data: PermissionsUpdateModel, request: Request
         raise HTTPException(status_code=503, detail='تعذر إتمام تحديث الصلاحيات. أعد تحميل بيانات المستخدم للتحقق قبل المحاولة مجدداً')
 
 
+# مسار حذف سجل تواجد (presence) لمستخدم
 @router.delete("/admin/presence/{email}")
 async def delete_presence_record(email: str, request: Request):
     actor = getattr(request.state, "auth_user", {})
@@ -2144,4 +2281,3 @@ async def delete_presence_record(email: str, request: Request):
         print(f"⚠️ delete_presence_record({target_email}): {exc}")
         raise HTTPException(status_code=502, detail="تعذر حذف سجل الحضور") from exc
     return {"status": "success", "message": "تم حذف سجل الحضور"}
-

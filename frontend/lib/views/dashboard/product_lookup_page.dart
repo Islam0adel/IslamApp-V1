@@ -1,3 +1,4 @@
+// frontend/lib/views/dashboard/product_lookup_page.dart
 import '../../services/cache_partitions.dart';
 
 import 'package:flutter/material.dart';
@@ -7,13 +8,16 @@ import '../../services/product_lookup_service.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../services/permissions_service.dart';
 
+// صفحة البحث عن الأصناف
 class ProductLookupPage extends StatefulWidget {
   const ProductLookupPage({super.key});
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<ProductLookupPage> createState() => _ProductLookupPageState();
 }
 
+// حالة الويدجت ProductLookupPage: تدير بيانات الشاشة وتفاعلاتها
 class _ProductLookupPageState extends State<ProductLookupPage> {
   final _controller = TextEditingController();
   final _service = ProductLookupService();
@@ -22,61 +26,65 @@ class _ProductLookupPageState extends State<ProductLookupPage> {
   String? _error;
   bool _nameSearch = false;
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     _controller.dispose();
     super.dispose();
   }
 
+  // يبحث عن الصنف
   Future<void> _search({bool refresh = false}) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      FocusScope.of(context).unfocus();
+      final input = _controller.text.trim();
 
-    FocusScope.of(context).unfocus();
-    final input = _controller.text.trim();
-
-    if (input.isEmpty) {
-      setState(() {
-        _error = 'اكتب باركود المنتج أو اسمه أولًا';
-        _result = null;
-      });
-      return;
-    }
-
-    final isBarcode = RegExp(r'^\d{8,14}$').hasMatch(input);
-
-    setState(() {
-      _loading = true;
-      _error = null;
-      _result = null;
-      _nameSearch = !isBarcode;
-    });
-
-    try {
-      final result = isBarcode
-          ? await _service.lookup(input, forceRefresh: refresh)
-          : await _service.searchByName(input, forceRefresh: refresh);
-
-      if (mounted) setState(() => _result = result);
-    } catch (e) {
-      if (mounted) {
-        setState(() => _error = e.toString().replaceFirst('Exception: ', ''));
+      if (input.isEmpty) {
+        setState(() {
+          _error = 'اكتب باركود المنتج أو اسمه أولًا';
+          _result = null;
+        });
+        return;
       }
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-});
-}
 
+      final isBarcode = RegExp(r'^\d{8,14}$').hasMatch(input);
+
+      setState(() {
+        _loading = true;
+        _error = null;
+        _result = null;
+        _nameSearch = !isBarcode;
+      });
+
+      try {
+        final result = isBarcode
+            ? await _service.lookup(input, forceRefresh: refresh)
+            : await _service.searchByName(input, forceRefresh: refresh);
+
+        if (mounted) setState(() => _result = result);
+      } catch (e) {
+        if (mounted) {
+          setState(() => _error = e.toString().replaceFirst('Exception: ', ''));
+        }
+      } finally {
+        if (mounted) setState(() => _loading = false);
+      }
+    });
+  }
+
+  // يعيد النص أو قيمة بديلة
   String _text(dynamic value, [String fallback = 'غير متاح']) {
     final text = value?.toString().trim() ?? '';
     return text.isEmpty || text == 'null' ? fallback : text;
   }
 
+  // ينسّق السعر
   String _money(dynamic value) {
     if (value is! num || value <= 0) return 'السعر غير متاح';
     return '${value.toStringAsFixed(value % 1 == 0 ? 0 : 2)} جنيه';
   }
 
+  // يبني نص وصف السعر
   String _priceLabel(Map<String, dynamic>? price) {
     if (price == null) return 'لم نعثر على سعر موثوق لهذا الباركود';
 
@@ -100,6 +108,7 @@ return CachePartitions.run(() async {
     return '${format(amount)} جنيه ${type == 'unconfirmed' ? '(سعر منشور غير مؤكد)' : ''}';
   }
 
+  // ينسّق التاريخ
   String _date(dynamic value) {
     final parsed = DateTime.tryParse(value?.toString() ?? '');
     if (parsed == null) return 'غير متاح';
@@ -109,6 +118,7 @@ return CachePartitions.run(() async {
         '${parsed.day.toString().padLeft(2, '0')}';
   }
 
+  // يبني سطر تفصيل
   Widget _detail(String label, String value) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: Row(
@@ -131,20 +141,21 @@ return CachePartitions.run(() async {
         ),
       );
 
+  // ينسخ رابط الصنف
   Future<void> _copyProductUrl(String url) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (url.isEmpty || url == 'غير متاح') return;
 
-    if (url.isEmpty || url == 'غير متاح') return;
+      await Clipboard.setData(ClipboardData(text: url));
+      if (!mounted) return;
 
-    await Clipboard.setData(ClipboardData(text: url));
-    if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم نسخ رابط المنتج')),
+      );
+    });
+  }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('تم نسخ رابط المنتج')),
-    );
-});
-}
-
+  // يبني نتائج البحث بالاسم
   Widget _nameResults() {
     final results = _result?['results'];
     final items = results is List
@@ -274,224 +285,223 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
-Widget build(BuildContext context) {
-  // ============================================================
-  // حماية بالصلاحية الجديدة
-  // ============================================================
-  if (!PermissionsService().canShowProductLookup) {
+  Widget build(BuildContext context) {
+    // ============================================================
+    // حماية بالصلاحية الجديدة
+    // ============================================================
+    if (!PermissionsService().canShowProductLookup) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('البحث عن المنتجات')),
+        body: SafeArea(
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.lock_outline_rounded,
+                  size: 54,
+                  color: AppTheme.textMutedFor(context),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'غير مصرح بالوصول لهذه الصفحة',
+                  style: TextStyle(
+                    color: AppTheme.textMutedFor(context),
+                    fontFamily: 'Cairo',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    // ============================================================
+    // المحتوى الطبيعي
+    // ============================================================
+    final product = _result?['product'] is Map
+        ? Map<String, dynamic>.from(_result!['product'])
+        : null;
+    final price = _result?['price'] is Map
+        ? Map<String, dynamic>.from(_result!['price'])
+        : null;
+    final found = _result?['found'] == true;
+    final valid = _result?['barcode_format_valid'] == true;
+
     return Scaffold(
       appBar: AppBar(title: const Text('البحث عن المنتجات')),
       body: SafeArea(
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.lock_outline_rounded,
-                size: 54,
-                color: AppTheme.textMutedFor(context),
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            GlassCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text(
+                    'ابحث بالباركود أو اسم المنتج',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _controller,
+                    keyboardType: TextInputType.text,
+                    textDirection: TextDirection.rtl,
+                    decoration: const InputDecoration(
+                      hintText: 'باركود أو مثال: زيت عباد الشمس 1.5 لتر',
+                      prefixIcon: Icon(Icons.search),
+                      border: OutlineInputBorder(),
+                    ),
+                    onSubmitted: (_) => _search(),
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton.icon(
+                    onPressed: _loading ? null : () => _search(),
+                    icon: const Icon(Icons.search),
+                    label: const Text('بحث'),
+                  ),
+                  if (_loading) ...[
+                    const SizedBox(height: 14),
+                    const LinearProgressIndicator(),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'جارٍ البحث في مصادر المنتجات...',
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                  if (_error != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: Text(
+                        _error!,
+                        style: TextStyle(color: AppTheme.dangerFor(context)),
+                      ),
+                    ),
+                ],
               ),
-              const SizedBox(height: 12),
-              Text(
-                'غير مصرح بالوصول لهذه الصفحة',
-                style: TextStyle(
-                  color: AppTheme.textMutedFor(context),
-                  fontFamily: 'Cairo',
+            ),
+            if (_result != null && _nameSearch) ...[
+              const SizedBox(height: 14),
+              _nameResults(),
+            ],
+            if (_result != null && !_nameSearch) ...[
+              const SizedBox(height: 14),
+              GlassCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          found
+                              ? Icons.inventory_2_outlined
+                              : Icons.search_off_rounded,
+                          color: found
+                              ? AppTheme.successFor(context)
+                              : AppTheme.warningFor(context),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            found
+                                ? _text(
+                                    product?['name'],
+                                    'اسم المنتج غير متاح',
+                                  )
+                                : 'لم يتم العثور على سجل لهذا الباركود',
+                            style: const TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    _detail('الباركود', _text(_result!['barcode'])),
+                    _detail(
+                      'فحص الصيغة',
+                      valid
+                          ? 'اجتاز فحص رقم التحقق الحسابي'
+                          : 'لم يجتز فحص رقم التحقق أو نوع الكود غير مدعوم',
+                    ),
+                    if (found) ...[
+                      _detail('الماركة', _text(product?['brand'])),
+                      _detail('الوزن / الحجم', _text(product?['quantity'])),
+                      _detail('التصنيف', _text(product?['category'])),
+                      _detail(
+                        'الشركة المصنعة',
+                        _text(product?['manufacturer']),
+                      ),
+                      _detail(
+                        'بلد المنشأ',
+                        _text(product?['origin_country']),
+                      ),
+                      _detail(
+                        'مصدر بيانات المنتج',
+                        _text(product?['source']),
+                      ),
+                      _detail(
+                        'آخر تحديث للبيانات',
+                        _date(product?['updated_at']),
+                      ),
+                    ],
+                    const Divider(height: 26),
+                    const Text(
+                      'السعر في مصر',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _priceLabel(price),
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    if (price != null) ...[
+                      _detail('وحدة السعر', _text(price['unit'], 'القطعة')),
+                      _detail('مصدر السعر', _text(price['source'])),
+                      _detail(
+                        'تاريخ رصد السعر',
+                        _date(price['observed_at']),
+                      ),
+                      _detail(
+                        'آخر تحديث فعلي للسعر',
+                        _date(price['updated_at']),
+                      ),
+                      _detail(
+                        'آخر محاولة فحص للسعر',
+                        _date(price['checked_at']),
+                      ),
+                    ],
+                    const SizedBox(height: 8),
+                    Text(
+                      'صحة صيغة الباركود لا تثبت وحدها تسجيله رسميًا أو صحة بيانات المنتج. السعر غير المتاح لا يتم تخمينه دون مصدر مناسب.',
+                      style: TextStyle(
+                        color: AppTheme.textSoftFor(context),
+                        fontSize: 12,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: _loading ? null : () => _search(refresh: true),
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('تحديث البيانات والسعر'),
+                    ),
+                  ],
                 ),
               ),
             ],
-          ),
+          ],
         ),
       ),
     );
   }
-
-  // ============================================================
-  // المحتوى الطبيعي
-  // ============================================================
-  final product = _result?['product'] is Map
-      ? Map<String, dynamic>.from(_result!['product'])
-      : null;
-  final price = _result?['price'] is Map
-      ? Map<String, dynamic>.from(_result!['price'])
-      : null;
-  final found = _result?['found'] == true;
-  final valid = _result?['barcode_format_valid'] == true;
-
-  return Scaffold(
-    appBar: AppBar(title: const Text('البحث عن المنتجات')),
-    body: SafeArea(
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          GlassCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Text(
-                  'ابحث بالباركود أو اسم المنتج',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _controller,
-                  keyboardType: TextInputType.text,
-                  textDirection: TextDirection.rtl,
-                  decoration: const InputDecoration(
-                    hintText: 'باركود أو مثال: زيت عباد الشمس 1.5 لتر',
-                    prefixIcon: Icon(Icons.search),
-                    border: OutlineInputBorder(),
-                  ),
-                  onSubmitted: (_) => _search(),
-                ),
-                const SizedBox(height: 12),
-                FilledButton.icon(
-                  onPressed: _loading ? null : () => _search(),
-                  icon: const Icon(Icons.search),
-                  label: const Text('بحث'),
-                ),
-                if (_loading) ...[
-                  const SizedBox(height: 14),
-                  const LinearProgressIndicator(),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'جارٍ البحث في مصادر المنتجات...',
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-                if (_error != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 12),
-                    child: Text(
-                      _error!,
-                      style: TextStyle(color: AppTheme.dangerFor(context)),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          if (_result != null && _nameSearch) ...[
-            const SizedBox(height: 14),
-            _nameResults(),
-          ],
-          if (_result != null && !_nameSearch) ...[
-            const SizedBox(height: 14),
-            GlassCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        found
-                            ? Icons.inventory_2_outlined
-                            : Icons.search_off_rounded,
-                        color: found
-                            ? AppTheme.successFor(context)
-                            : AppTheme.warningFor(context),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          found
-                              ? _text(
-                                  product?['name'],
-                                  'اسم المنتج غير متاح',
-                                )
-                              : 'لم يتم العثور على سجل لهذا الباركود',
-                          style: const TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  _detail('الباركود', _text(_result!['barcode'])),
-                  _detail(
-                    'فحص الصيغة',
-                    valid
-                        ? 'اجتاز فحص رقم التحقق الحسابي'
-                        : 'لم يجتز فحص رقم التحقق أو نوع الكود غير مدعوم',
-                  ),
-                  if (found) ...[
-                    _detail('الماركة', _text(product?['brand'])),
-                    _detail('الوزن / الحجم', _text(product?['quantity'])),
-                    _detail('التصنيف', _text(product?['category'])),
-                    _detail(
-                      'الشركة المصنعة',
-                      _text(product?['manufacturer']),
-                    ),
-                    _detail(
-                      'بلد المنشأ',
-                      _text(product?['origin_country']),
-                    ),
-                    _detail(
-                      'مصدر بيانات المنتج',
-                      _text(product?['source']),
-                    ),
-                    _detail(
-                      'آخر تحديث للبيانات',
-                      _date(product?['updated_at']),
-                    ),
-                  ],
-                  const Divider(height: 26),
-                  const Text(
-                    'السعر في مصر',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    _priceLabel(price),
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  if (price != null) ...[
-                    _detail('وحدة السعر', _text(price['unit'], 'القطعة')),
-                    _detail('مصدر السعر', _text(price['source'])),
-                    _detail(
-                      'تاريخ رصد السعر',
-                      _date(price['observed_at']),
-                    ),
-                    _detail(
-                      'آخر تحديث فعلي للسعر',
-                      _date(price['updated_at']),
-                    ),
-                    _detail(
-                      'آخر محاولة فحص للسعر',
-                      _date(price['checked_at']),
-                    ),
-                  ],
-                  const SizedBox(height: 8),
-                  Text(
-                    'صحة صيغة الباركود لا تثبت وحدها تسجيله رسميًا أو صحة بيانات المنتج. السعر غير المتاح لا يتم تخمينه دون مصدر مناسب.',
-                    style: TextStyle(
-                      color: AppTheme.textSoftFor(context),
-                      fontSize: 12,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    onPressed: _loading
-                        ? null
-                        : () => _search(refresh: true),
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('تحديث البيانات والسعر'),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ],
-      ),
-    ),
-  );
-}
 }

@@ -1,3 +1,4 @@
+# backend/app/routes/settings.py
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -10,6 +11,7 @@ from app.core.permissions import (
 )
 
 # قراءة التكويد من الإعدادات: نفس مستهلكي الكتالوج في coding.py
+# صلاحيات قراءة الأكواد من الإعدادات
 _GET_CODES_VIEW_CHECKS = [
     ("التكويد", "معاينة"),
     ("حركة الخزينة", "المعاينة"), ("حركة الخزينة", "ادخال اذون"),
@@ -29,6 +31,7 @@ _GET_CODES_VIEW_CHECKS = [
 ]
 from app.core.sync import manager
 
+# اسم تصنيف صلاحيات التكويد
 _CATEGORY = "التكويد"
 
 # نفس خريطة coding.py: القسم → مفتاح صلاحية الإضافة
@@ -52,7 +55,7 @@ from pydantic import BaseModel
 
 import datetime
 
-
+# راوتر الإعدادات
 router = APIRouter()
 
 
@@ -60,6 +63,8 @@ router = APIRouter()
 # Model
 # ============================================================
 
+
+# نموذج بيانات إضافة كود جديد
 class CodingItem(BaseModel):
     category: str
     code: str
@@ -72,6 +77,8 @@ class CodingItem(BaseModel):
 #    مستخدم في الإعدادات
 # ============================================================
 
+
+# مسار إضافة كود جديد للإعدادات
 @router.post("/add-code")
 async def add_coding_item(
     item: CodingItem,
@@ -303,6 +310,8 @@ async def add_coding_item(
 # المحذوف لا يظهر
 # ============================================================
 
+
+# مسار قراءة أكواد تصنيف معين
 @router.get("/get-codes/{company_code}/{category}")
 async def get_coding_items(
     company_code: str,

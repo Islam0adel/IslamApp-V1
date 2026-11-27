@@ -1,3 +1,4 @@
+# backend/app/core/notification_events.py
 from app.core.auth_middleware import can_bypass_permissions
 # backend/app/core/notification_events.py
 
@@ -18,10 +19,10 @@ from app.core.fcm_service import send_push_to_user_bg
 from app.core.branch_scope import active_operating_branches, InvalidOperatingBranchScope
 from app.core.company_policy_store import active_policy_configuration, effective_policy_profile
 
-
 # ============================================================
 # ⭐ SUPER_ADMIN_EMAILS (من .env)
 # ============================================================
+# قائمة إيميلات السوبر أدمن من متغيرات البيئة
 SUPER_ADMIN_EMAILS = {
     e.strip().lower()
     for e in os.getenv("SUPER_ADMIN_EMAILS", "").split(",")
@@ -36,6 +37,7 @@ _JOB_CODE_TO_ROLE = {
 }
 
 
+# يحدد الدور الفعلي للمستخدم (نفس منطق auth_middleware)
 def _effective_role(profile: Dict[str, Any]) -> str:
     """نفس المنطق في auth_middleware."""
     email = str(profile.get("email", "")).strip().lower()
@@ -52,6 +54,7 @@ def _effective_role(profile: Dict[str, Any]) -> str:
 # Section Map
 # ============================================================
 
+# خريطة ربط أنواع الأحداث بأقسام الإشعارات
 _SECTION_MAP = {
     "transaction": ("daily", "اليوميات"),
     "supplier": ("purchases", "المشتريات والموردين"),
@@ -74,16 +77,19 @@ _SECTION_MAP = {
 
 from app.core.hr_audience import HR_EVENTS, HRTarget, message_target, target_allowed, targets_for_codes, own_access
 
+# أسماء الإجراءات بالعربي (إضافة/تعديل/حذف)
 _ACTION_NAMES = {"add": "إضافة", "edit": "تعديل", "delete": "حذف"}
 _RECIPIENT_CACHE: Dict[str, tuple[float, list[dict]]] = {}
 _RECIPIENT_CACHE_SECONDS = 20
 _RECIPIENT_EPOCH: Dict[str, int] = {}
 
 
+# يرجّع رقم نسخة مستلمي الشركة للكشف عن تغيّر الحسابات
 def company_recipient_epoch(company_code: str) -> int:
     return _RECIPIENT_EPOCH.get(str(company_code), 0)
 
 
+# يبطل كاش مستلمي إشعارات الشركة بعد تعديل أي حساب
 def invalidate_company_recipients(company_code: str) -> None:
     """Invalidate this process's recipient snapshot after an account mutation."""
     company = str(company_code)
@@ -91,6 +97,7 @@ def invalidate_company_recipients(company_code: str) -> None:
     _RECIPIENT_EPOCH[company] = _RECIPIENT_EPOCH.get(company, 0) + 1
 
 
+# يحوّل نوع الإجراء إلى اسمه العربي للعرض في الإشعار
 def _action_name(action: str, data: Dict[str, Any]) -> str:
     action = (action or "update").lower()
     if data.get("is_deleted") is True or action in {"delete", "remove"}:
@@ -100,6 +107,7 @@ def _action_name(action: str, data: Dict[str, Any]) -> str:
     return "edit"
 
 
+# يجيب مستلمي إشعارات الشركة من الكاش أو القاعدة
 def _company_recipients(company_code: str, *, force_refresh: bool = False) -> list[dict]:
     now = time.monotonic()
     cached = _RECIPIENT_CACHE.get(company_code)
@@ -122,6 +130,7 @@ def _company_recipients(company_code: str, *, force_refresh: bool = False) -> li
     return users
 
 
+# يجيب المستلمين الفعليين للشركة بعد تطبيق سياسة الصلاحيات
 async def _effective_company_recipients(session, company_code: str) -> list[dict]:
     # Reading recipient scope must not flush a caller's queued audit rows.
     with session.no_autoflush:
@@ -146,11 +155,13 @@ async def _effective_company_recipients(session, company_code: str) -> list[dict
     return result
 
 
+# يحدد هل الإشعار الصامت لتحديث البيانات مسموح للمستلم (مفعّل للجميع)
 def _quiet_push_allowed_for(recipient_email: str) -> bool:
     """Quiet data-update pushes are on for everyone (decided by the owner, no env var needed)."""
     return True
 
 
+# فحص وقت الإرسال: هل المستلم ما زال مسموحًا له يستلم الإشعار
 async def current_push_allowed(tokens: list[str], *, user_uid: str, company_code: str, recipient_email: str,
         section: str, action: str, branch_code: str = '', hr_target=None, require_active_policy: bool = False,
         quiet: bool = False) -> bool:
@@ -214,6 +225,7 @@ async def current_push_allowed(tokens: list[str], *, user_uid: str, company_code
         return False
 
 
+# يفحص هل الفرع مسموح للمستخدم حسب دوره
 def _branch_allowed(profile: Dict[str, Any], branch_code: str) -> bool:
     """⭐ يستخدم role بدل job_code."""
     role = _effective_role(profile)
@@ -236,6 +248,7 @@ def _branch_allowed(profile: Dict[str, Any], branch_code: str) -> bool:
     )
 
 
+# مفاتيح أقسام الموارد البشرية وربطها بصلاحياتها
 _HR_SECTION_KEYS = {
     "hr_attendance": ("canOpenAttendancePage",),
     "hr_vacations": ("canOpenVacationsPage",),
@@ -244,6 +257,7 @@ _HR_SECTION_KEYS = {
 }
 
 
+# يفحص هل المستخدم يقدر يشوف القسم (أو بياناته فقط) حسب صلاحياته
 def _can_view_section(profile: Dict[str, Any], section: str, *, data_only: bool = False) -> bool:
     """
     ⭐ يستخدم role بدل job_code.
@@ -337,6 +351,7 @@ def _can_view_section(profile: Dict[str, Any], section: str, *, data_only: bool 
     return any(explicit) if explicit else False
 
 
+# يحدد هل المستخدم مفعّل إشعارات القسم والإجراء (الأقسام التجارية مقفولة افتراضيًا)
 def _preference_enabled(
     pref: Optional[NotificationPreference], section: str, action: str
 ) -> bool:
@@ -356,6 +371,8 @@ def _preference_enabled(
 # إثراء HR payload باسم الموظف
 # ============================================================
 
+
+# يضيف بيانات الموظف المستهدف لحمولة حدث الموارد البشرية
 async def _enrich_hr_payload(
     company_code: str,
     data: Dict[str, Any],
@@ -383,6 +400,7 @@ async def _enrich_hr_payload(
     return data
 
 
+# يبني ملخص نصي قصير للحدث للعرض في الإشعار
 def _summary(data: Dict[str, Any]) -> str:
     parts = []
     for key, label in (
@@ -405,19 +423,21 @@ def _summary(data: Dict[str, Any]) -> str:
     return " • ".join(parts)
 
 
+# يفحص هل المستلم مسموح له يستقبل الحدث (قسم وفرع وموظف)
 def recipient_allowed(profile, section, branch_code, target=None):
-    if own_access(profile,target):
+    if own_access(profile, target):
         if can_bypass_permissions(profile):
             return True
-        general=(profile.get('permissions') or {}).get('صلاحيات عامة',{})
+        general = (profile.get('permissions') or {}).get('صلاحيات عامة', {})
         if profile.get('company_policy_active') is True:
             return isinstance(general, dict) and general.get('إظهار الإشعارات') is True and general.get('إظهار الموارد البشرية') is True
-        return not isinstance(general,dict) or (general.get('إظهار الإشعارات') is not False and
+        return not isinstance(general, dict) or (general.get('إظهار الإشعارات') is not False and
             general.get('إظهار الموارد البشرية') is not False)
-    return (_branch_allowed(profile,branch_code) and _can_view_section(profile,section) and
-        (target is None or target_allowed(profile,target)))
+    return (_branch_allowed(profile, branch_code) and _can_view_section(profile, section) and
+        (target is None or target_allowed(profile, target)))
 
 
+# يجهّز الحدث ويحفظه ويبعت الإشعارات للمستلمين المسموحين
 async def prepare_and_persist_event(
     company_code: str, message: dict, *, hr_target: HRTarget | None = None,
 ) -> dict:
@@ -514,7 +534,7 @@ async def prepare_and_persist_event(
                     recipient_email = str(profile.get("email", "")).strip().lower()
                     if not recipient_uid:
                         continue
-                    if not recipient_allowed(profile,section,branch_code,hr_target):
+                    if not recipient_allowed(profile, section, branch_code, hr_target):
                         continue
                     pref = preferences.get(recipient_uid)
                     if not _preference_enabled(pref, section, action):
@@ -604,7 +624,7 @@ async def prepare_and_persist_event(
             push_targets = [
                 target for target in push_targets
                 if (profile := current_recipients.get(target["user_uid"]))
-                and recipient_allowed(profile,section,branch_code,hr_target)
+                and recipient_allowed(profile, section, branch_code, hr_target)
             ]
         except Exception as exc:
             print(f"⚠️ Push recipient recheck failed | company={company_code} | error={exc}")

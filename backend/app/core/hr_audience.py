@@ -1,3 +1,4 @@
+# backend/app/core/hr_audience.py
 """Employee-target checks shared by HR reads and notification delivery.
 
 Explicit own-HR access survives broader branch/list exclusions for the linked
@@ -10,6 +11,7 @@ from sqlalchemy import select
 from app.core.models import Employee
 from app.core.permissions import has_section_permission
 
+# أنواع أحداث الموارد البشرية المعروفة
 HR_EVENTS = frozenset({'employee', 'hr_employee_settings', 'hr_attendance', 'hr_vacation', 'hr_adjustment'})
 HR_SECTIONS = frozenset({'hr_employees', 'hr_attendance', 'hr_vacations', 'hr_adjustments'})
 HR_VIEW_KEYS = (
@@ -18,6 +20,7 @@ HR_VIEW_KEYS = (
 )
 
 
+# هل المستخدم مسموح له يشوف بياناته الشخصية فقط
 def own_only(profile: dict) -> bool:
     return (
         has_section_permission(profile, 'الموارد البشرية', 'canViewOwnHRData')
@@ -25,17 +28,20 @@ def own_only(profile: dict) -> bool:
     )
 
 
+# هل المستخدم يملك الوصول لبيانات الموظف المستهدف (هو نفسه)
 def own_access(profile: dict, target: HRTarget | None) -> bool:
     return bool(target is not None and target.code and target.is_self(profile) and
         has_section_permission(profile, 'الموارد البشرية', 'canViewOwnHRData'))
 
 
+# هل مسموح يشوف المبالغ والمرتبات للموظف المستهدف
 def amounts_allowed(profile: dict, target: HRTarget | None) -> bool:
-    return own_access(profile,target) or has_section_permission(profile,'الموارد البشرية','canViewSalaryAmounts')
+    return own_access(profile, target) or has_section_permission(profile, 'الموارد البشرية', 'canViewSalaryAmounts')
 
 
+# هل مسموح يستقبل حدث متعلق بالموظف المستهدف
 def target_allowed(profile: dict, target: HRTarget) -> bool:
-    if own_access(profile,target):
+    if own_access(profile, target):
         return True
     if own_only(profile):
         return False
@@ -45,10 +51,12 @@ def target_allowed(profile: dict, target: HRTarget) -> bool:
     return True
 
 
+# يبني هدف الموارد البشرية من صف موظف
 def _from_employee(row) -> HRTarget:
     return HRTarget.from_employee(row)
 
 
+# يجيب أهداف الموظفين من أكوادهم
 async def targets_for_codes(db, company: str, codes) -> dict[str, HRTarget]:
     wanted = {str(code) for code in codes if str(code)}
     if not wanted:
@@ -60,6 +68,7 @@ async def targets_for_codes(db, company: str, codes) -> dict[str, HRTarget]:
     return {code: found.get(code, HRTarget(code=code)) for code in wanted}
 
 
+# يحدد الموظف المستهدف من رسالة حدث للموارد البشرية
 async def message_target(db, company: str, event_type: str, payload: dict) -> HRTarget | None:
     if event_type not in HR_EVENTS:
         return None
@@ -78,6 +87,7 @@ async def message_target(db, company: str, event_type: str, payload: dict) -> HR
     return targets.get(code, HRTarget())
 
 
+# يستخرج كود الموظف المخزّن في تفاصيل الحدث
 def stored_target_code(details: dict) -> str:
     if not isinstance(details, dict):
         return ''

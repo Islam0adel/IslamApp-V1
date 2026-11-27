@@ -1,15 +1,17 @@
-// web/staged-sync-sw.js
+// frontend/web/staged-sync-sw.js
 // Downloads the daily-journal changes when a push arrives and keeps them in a
 // separate IndexedDB store. It never touches Hive. The app merges them at open.
 // Pilot scope: daily journal (/transactions/changes). Failure always means
 // "stage nothing", and the normal incremental sync at open covers it.
 
+// ثوابت مزامنة التغييرات المؤقتة: اسم القاعدة ومدة التداخل والمهلة وأقصى عدد دفعات
 const SS_DB = "islam_staged_sync";
 const SS_OVERLAP_MS = 60 * 1000;      // same 1 minute overlap the app uses
 const SS_TIMEOUT_MS = 8000;
 const SS_MAX_BATCHES = 50;            // bound the store; page drops on a hole
 const SS_MODULES = new Set(["daily", "journal", ""]); // push `section` values that mean "daily changed"
 
+// يفتح قاعدة IndexedDB الخاصة بالمزامنة المؤقتة
 function ssOpen() {
   return new Promise((res, rej) => {
     const r = indexedDB.open(SS_DB, 1);
@@ -21,7 +23,9 @@ function ssOpen() {
     r.onerror = () => rej(r.error);
   });
 }
+
 // Scope check and batch write in ONE transaction, so a clear/scope change cannot slip in between them.
+// يحفظ دفعة في القاعدة بشرط بقاء نطاق المستخدم كما هو
 function ssPutIfScope(db, scopeKey, key, value) {
   return new Promise((res, rej) => {
     const t = db.transaction(["meta", "batches"], "readwrite");
@@ -36,6 +40,8 @@ function ssPutIfScope(db, scopeKey, key, value) {
     t.onabort = () => rej(t.error);
   });
 }
+
+// يشغّل طلب IndexedDB على مخزن معين ويعيد نتيجته
 function ssReq(db, store, mode, fn) {
   return new Promise((res, rej) => {
     const t = db.transaction(store, mode);
@@ -47,14 +53,17 @@ function ssReq(db, store, mode, fn) {
 
 // The backend sends updated_at as UTC without a zone suffix. Date.parse would
 // read that as local time, so a missing zone means UTC here.
+// يحلّل قيمة JSON ويعيد null إذا كانت فاسدة
 function ssParse(v) {
   if (typeof v !== "string") return NaN;
   return Date.parse(/(Z|[+-]\d\d:?\d\d)$/.test(v) ? v : v + "Z");
 }
 
+// حالة تشغيل مزامنة اليومية (تشغيلة واحدة وتشغيلة تانية لاحقة إذا ورد إشعار أثناءها)
 let ssRunning = null, ssAgain = false;
 
 // Bursts share one run plus at most one trailing run.
+// نقطة دخول الإشعار: تحدد القسم وتشغّل المزامنة المناسبة له
 function stagedSyncOnMessage(data) {
   if (data && data.section === "treasury_transfers") return stagedSyncTreasury();
   if (data && data.section === "coding") return stagedSyncCoding();
@@ -82,7 +91,10 @@ function stagedSyncOnMessage(data) {
 // (https://firebase.google.com/docs/auth/web/service-worker-sessions). The SDK restores the
 // signed-in user from the same IndexedDB the page uses and refreshes the token itself, so we
 // never read Firebase's internal storage format. Only for the uid the app published.
+// توكن المصادقة الحالي للمزامنة
 let ssAuth = null;
+
+// يجلب بيانات المصادقة اللازمة للمزامنة
 function ssGetAuth(meta) {
   if (ssAuth) return ssAuth;
   if (typeof firebase === "undefined" || !firebase.auth) return null;
@@ -93,6 +105,7 @@ function ssGetAuth(meta) {
   return ssAuth;
 }
 
+// يجدد توكن المصادقة إذا قارب على الانتهاء
 async function ssRefreshToken(db, meta) {
   if (!meta.uid) return "token-expired";
   const auth = ssGetAuth(meta);
@@ -113,6 +126,7 @@ async function ssRefreshToken(db, meta) {
   } catch (e) { return "refresh-failed:" + String((e && (e.code || e.message)) || e).slice(0, 40); }
 }
 
+// تشغيلة مزامنة اليومية: تجلب التغييرات الجديدة وتخزّنها دون المساس بقاعدة Hive
 async function ssOnce() {
   let db;
   try { db = await ssOpen(); } catch (_) { return "no-db"; }
@@ -158,11 +172,13 @@ async function ssOnce() {
 }
 
 // ---- commit-safe feed (/transactions/changes-v2), cursor "tx:id" ----
+// يقارن مؤشرين نصيين (tx:id) ويعيد -1 أو 0 أو 1
 function ssCmp(a, b) {
   const [a1, a2] = String(a).split(":").map(BigInt), [b1, b2] = String(b).split(":").map(BigInt);
   return a1 !== b1 ? (a1 < b1 ? -1 : 1) : (a2 === b2 ? 0 : (a2 < b2 ? -1 : 1));
 }
 
+// تشغيلة مزامنة اليومية على فيد v2 بالمؤشر
 async function ssOnceV2(db, meta, mine) {
   let cur = meta.appCursorV2;
   if (mine.length) {
@@ -202,7 +218,10 @@ async function ssOnceV2(db, meta, mine) {
 // The raw response is stored per cursor step. The page applies it through the same validation code
 // as its live refresh, against the permission it has at open time. Batch keys start with "tt:" so
 // the daily reader (prefix scopeKey + "|") never sees them.
+// حالة تشغيل مزامنة الخزائن
 let ssTtRunning = null, ssTtAgain = false;
+
+// يشغّل مزامنة تحويلات الخزائن (تشغيلة واحدة + لاحقة)
 function stagedSyncTreasury() {
   if (ssTtRunning) { ssTtAgain = true; return ssTtRunning; }
   ssTtRunning = (async () => {
@@ -216,7 +235,10 @@ function stagedSyncTreasury() {
   return ssTtRunning;
 }
 
+// عدّاد تشغيلات مزامنة الخزائن
 let ssTtSeq = 0;
+
+// تشغيلة مزامنة تحويلات الخزائن
 async function ssOnceTreasury() {
   let db;
   try { db = await ssOpen(); } catch (_) { return "no-db"; }
@@ -274,7 +296,10 @@ async function ssOnceTreasury() {
 // ---- coding catalog (/coding/changes-v2), cursor "tx:id" + scope fingerprint ----
 // One stored batch per fetched page, chained by cursor continuity (fromCursor/fromScope -> response
 // next_cursor/scope). Keys start with "cd:" so the daily and treasury readers never see them.
+// حالة تشغيل مزامنة الكودنج
 let ssCdRunning = null, ssCdAgain = false;
+
+// يشغّل مزامنة الكودنج (تشغيلة واحدة + لاحقة)
 function stagedSyncCoding() {
   if (ssCdRunning) { ssCdAgain = true; return ssCdRunning; }
   ssCdRunning = (async () => {
@@ -288,7 +313,10 @@ function stagedSyncCoding() {
   return ssCdRunning;
 }
 
+// عدّاد تشغيلات مزامنة الكودنج
 let ssCdSeq = 0;
+
+// تشغيلة مزامنة الكودنج
 async function ssOnceCoding() {
   let db;
   try { db = await ssOpen(); } catch (_) { return "no-db"; }
@@ -353,7 +381,10 @@ async function ssOnceCoding() {
 // ---- employees (/employees/changes-v2), cursor "tx:id" + scope fingerprint ----
 // One stored batch per fetched page, chained by cursor continuity (fromCursor/fromScope -> response
 // next_cursor/scope). Keys start with "em:" so the other readers never see them.
+// حالة تشغيل مزامنة الموظفين
 let ssEmRunning = null, ssEmAgain = false;
+
+// يشغّل مزامنة الموظفين (تشغيلة واحدة + لاحقة)
 function stagedSyncEmployees() {
   if (ssEmRunning) { ssEmAgain = true; return ssEmRunning; }
   ssEmRunning = (async () => {
@@ -367,7 +398,10 @@ function stagedSyncEmployees() {
   return ssEmRunning;
 }
 
+// عدّاد تشغيلات مزامنة الموظفين
 let ssEmSeq = 0;
+
+// تشغيلة مزامنة الموظفين
 async function ssOnceEmployees() {
   let db;
   try { db = await ssOpen(); } catch (_) { return "no-db"; }
@@ -432,7 +466,10 @@ async function ssOnceEmployees() {
 // ---- supplier (/supplier/changes-v2), cursor "tx:id" + scope fingerprint ----
 // One stored batch per fetched page, chained by cursor continuity (fromCursor/fromScope -> response
 // next_cursor/scope). Keys start with "sp:" so the other readers never see them.
+// حالة تشغيل مزامنة الموردين
 let ssSpRunning = null, ssSpAgain = false;
+
+// يشغّل مزامنة الموردين (تشغيلة واحدة + لاحقة)
 function stagedSyncSupplier() {
   if (ssSpRunning) { ssSpAgain = true; return ssSpRunning; }
   ssSpRunning = (async () => {
@@ -446,7 +483,10 @@ function stagedSyncSupplier() {
   return ssSpRunning;
 }
 
+// عدّاد تشغيلات مزامنة الموردين
 let ssSpSeq = 0;
+
+// تشغيلة مزامنة الموردين
 async function ssOnceSupplier() {
   let db;
   try { db = await ssOpen(); } catch (_) { return "no-db"; }
@@ -511,7 +551,10 @@ async function ssOnceSupplier() {
 // ---- inventory (/inventory/changes-v2), cursor "tx:id" + scope fingerprint ----
 // One stored batch per fetched page, chained by cursor continuity (fromCursor/fromScope -> response
 // next_cursor/scope). Keys start with "iv:" so the other readers never see them.
+// حالة تشغيل مزامنة المخزون
 let ssIvRunning = null, ssIvAgain = false;
+
+// يشغّل مزامنة المخزون (تشغيلة واحدة + لاحقة)
 function stagedSyncInventory() {
   if (ssIvRunning) { ssIvAgain = true; return ssIvRunning; }
   ssIvRunning = (async () => {
@@ -525,7 +568,10 @@ function stagedSyncInventory() {
   return ssIvRunning;
 }
 
+// عدّاد تشغيلات مزامنة المخزون
 let ssIvSeq = 0;
+
+// تشغيلة مزامنة المخزون
 async function ssOnceInventory() {
   let db;
   try { db = await ssOpen(); } catch (_) { return "no-db"; }
@@ -590,10 +636,13 @@ async function ssOnceInventory() {
 // ---- commercial feeds (/commercial/{kind}/changes-v2): sales, returns, customer payments, transfers ----
 // Same chaining as inventory. The cursor is opaque ("tx:" or "tx:i<id>"). Keys: c1: sales, c2: returns,
 // c3: customer payments, c4: transfers.
+// خرائط الأقسام التجارية والموارد البشرية ومساراتها ومفاتيح تخزينها
 const SS_CM_SECTIONS = { sales: "sales", sales_returns: "returns", customer_payments: "customer-payments", stock_transfers: "transfers", hr_attendance: "hr-attendance", hr_vacations: "hr-vacations", hr_adjustments: "hr-adjustments" };
 const SS_CM = { "sales": "c1", "returns": "c2", "customer-payments": "c3", "transfers": "c4", "hr-attendance": "c5", "hr-vacations": "c6", "hr-adjustments": "c7", "hr-settings": "c8" };
 const SS_HR_ROUTES = { "hr-attendance": "/hr/attendance", "hr-vacations": "/hr/vacations", "hr-adjustments": "/hr/adjustments", "hr-settings": "/hr/employee-settings" };
 const ssCmState = {};
+
+// يشغّل مزامنة قسم تجاري أو موارد بشرية حسب النوع
 function stagedSyncCommercial(kind) {
   const st = ssCmState[kind] || (ssCmState[kind] = { running: null, again: false, seq: 0 });
   if (st.running) { st.again = true; return st.running; }
@@ -608,6 +657,7 @@ function stagedSyncCommercial(kind) {
   return st.running;
 }
 
+// تشغيلة مزامنة قسم تجاري أو موارد بشرية واحدة
 async function ssOnceCommercial(kind, st) {
   const pf = SS_CM[kind];
   let db;
@@ -674,7 +724,10 @@ async function ssOnceCommercial(kind, st) {
 // ---- settlement (/supplier-settlement/changes-v2), cursor "tx:id" + scope fingerprint ----
 // One stored batch per fetched page, chained by cursor continuity (fromCursor/fromScope -> response
 // next_cursor/scope). Keys start with "sl:" so the other readers never see them.
+// حالة تشغيل مزامنة التسويات
 let ssSlRunning = null, ssSlAgain = false;
+
+// يشغّل مزامنة تسويات الموردين (تشغيلة واحدة + لاحقة)
 function stagedSyncSettlement() {
   if (ssSlRunning) { ssSlAgain = true; return ssSlRunning; }
   ssSlRunning = (async () => {
@@ -688,7 +741,10 @@ function stagedSyncSettlement() {
   return ssSlRunning;
 }
 
+// عدّاد تشغيلات مزامنة التسويات
 let ssSlSeq = 0;
+
+// تشغيلة مزامنة تسويات الموردين
 async function ssOnceSettlement() {
   let db;
   try { db = await ssOpen(); } catch (_) { return "no-db"; }

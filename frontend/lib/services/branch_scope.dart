@@ -1,13 +1,19 @@
+// frontend/lib/services/branch_scope.dart
+// نتيجة فحص تعيين الفروع (الفروع خارج الشركة أو التفويض)
 /// Explicit scopes for reviewed company policies. No role or operating scope
 /// supplies a missing branch-delegation grant.
 class BranchAssignmentCheck {
   const BranchAssignmentCheck(this.outsideCompany, this.outsideDelegation);
   final Set<String> outsideCompany;
   final Set<String> outsideDelegation;
+
+  // يحدد هل التعيين مسموح
   bool get allowed => outsideCompany.isEmpty && outsideDelegation.isEmpty;
 }
 
+// فئة التحقق من نطاق الفروع
 class BranchScope {
+  // يتحقق من صحة قائمة الفروع
   static void validate(dynamic value, {bool allowEmpty = true}) {
     if (value is! List || (!allowEmpty && value.isEmpty)) {
       throw const FormatException('Branch scope must be an explicit list');
@@ -26,6 +32,7 @@ class BranchScope {
     }
   }
 
+  // يفحص تعيين الفروع الجديد مقابل السابق
   static BranchAssignmentCheck checkAssignment({
     required List<String> previousBranches,
     required List<String> proposedBranches,

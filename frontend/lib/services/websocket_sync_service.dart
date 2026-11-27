@@ -1,9 +1,9 @@
+// frontend/lib/services/websocket_sync_service.dart
 import 'cache_partitions.dart';
 import 'journal_cache.dart';
 import 'admin_cache_events.dart';
 import 'permissions_service.dart';
 import 'treasury_transfer_service.dart';
-// lib/services/websocket_sync_service.dart
 
 import 'dart:async';
 import 'dart:convert';
@@ -17,8 +17,11 @@ import 'daily_service.dart';
 import '../core/constants.dart';
 import 'notifications_service.dart';
 
+// خدمة مزامنة WebSocket: تستقبل الأحداث وتحدّث الذاكرة المحلية
 class WebSocketSyncService {
   static final userDirectoryChanges = AdminCacheEvents.users;
+
+  // يستجيب لتغيّر دليل المستخدمين
   void _directoryChanged() {
     final company = _companyCode;
     if (company == null || company.isEmpty) return;
@@ -35,7 +38,11 @@ class WebSocketSyncService {
   Timer? _authTimeout;
   Future<void> _permissionRefresh = Future<void>.value();
   bool _authorizationReady = false;
+
+  // يحدد هل التفويض جاهز
   bool get authorizationReady => isConnected && _authorizationReady;
+
+  // يعيد عملية تحديث الصلاحيات للاختبار
   @visibleForTesting
   Future<void> get debugAuthorizationRefresh => _permissionRefresh;
   // ============================================================
@@ -81,6 +88,7 @@ class WebSocketSyncService {
   // ⭐ يمنع إطلاق onConnectionFailed أكتر من مرة لنفس محاولة الاتصال
   bool _connectionFailedNotified = false;
 
+  // يبلّغ بفشل الاتصال مرة واحدة
   void _notifyConnectionFailed() {
     if (_connectionFailedNotified) return;
     _connectionFailedNotified = true;
@@ -93,20 +101,26 @@ class WebSocketSyncService {
   // Hive Boxes
   // ============================================================
 
+  // يعيد صندوق اليومية المحلي
   Box get _dailyBox => CachePartitions.box('daily_transactions_box');
 
+  // يعيد صندوق الترميز المحلي
   Box get _codingBox => CachePartitions.box('coding_box');
 
+  // يعيد صندوق المخزون المحلي
   Box get _inventoryBox => CachePartitions.box('inventory_box');
 
+  // يعيد صندوق الموردين المحلي
   Box get _supplierBox => CachePartitions.box('supplier_box');
 
+  // يعيد صندوق التسويات المحلي
   Box get _settlementBox => CachePartitions.box('supplier_settlement_box');
 
   // ============================================================
   // 1. الاتصال
   // ============================================================
 
+  // يتصل بالخادم للشركة
   Future<void> connect(String companyCode) async {
     return CachePartitions.run(() async {
       final ownerUid = FirebaseAuth.instance.currentUser?.uid ?? '';
@@ -249,6 +263,7 @@ class WebSocketSyncService {
   // 2. إعادة الاتصال
   // ============================================================
 
+  // يجدول إعادة الاتصال
   void _scheduleReconnect() {
     // ----------------------------------------------------------
     // لا توجد شركة
@@ -320,6 +335,7 @@ class WebSocketSyncService {
   // 3. قطع الاتصال
   // ============================================================
 
+  // يقطع الاتصال
   void disconnect() {
     _connectGeneration++;
     _connectionUid = null;
@@ -374,6 +390,7 @@ class WebSocketSyncService {
   // 4. حالة الاتصال
   // ============================================================
 
+  // يحدد هل الاتصال قائم
   bool get isConnected =>
       _isConnected && _connectionUid == FirebaseAuth.instance.currentUser?.uid;
 
@@ -381,6 +398,7 @@ class WebSocketSyncService {
   // 5. معالجة الرسائل
   // ============================================================
 
+  // يعالج الرسالة الواردة
   void _handleMessage(dynamic message) {
     if (CachePartitions.enabled &&
         (_cacheGeneration != CachePartitions.generation ||
@@ -650,6 +668,7 @@ class WebSocketSyncService {
     }
   }
 
+  // يعالج تغيّر الصلاحيات ويعيد المزامنة عند الحاجة
   Future<void> _handlePermissionsChanged(bool resync) {
     final company = _companyCode;
     final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
@@ -688,6 +707,7 @@ class WebSocketSyncService {
     return work;
   }
 
+  // يعالج حدث إشعار وارد
   Future<void> _processNotificationEvent(Map<String, dynamic> event) async {
     return CachePartitions.run(() async {
       if (event['suppress_notification'] == true) return;
@@ -696,6 +716,7 @@ class WebSocketSyncService {
     });
   }
 
+  // يحدّث صندوق العمليات التجارية
   Future<void> _updateCommercialBox(
       String name, Map<String, dynamic> payload, bool isDelete) async {
     return CachePartitions.run(() async {
@@ -754,6 +775,7 @@ class WebSocketSyncService {
   // 6. تحديث اليومية
   // ============================================================
 
+  // يحدّث صندوق اليومية
   Future<void> _updateTransactionBox(
     Map<String, dynamic> payload,
     String action,
@@ -779,8 +801,10 @@ class WebSocketSyncService {
           if (stamp != null && stamp.isNotEmpty) {
             final prefs = await CachePartitions.preferences();
             final lk = JournalCache.ledgerKey(_companyCode!);
-            await prefs.setString(lk,
-                JournalCache.writeLedger(JournalCache.readLedger(prefs.getString(lk)), id, stamp));
+            await prefs.setString(
+                lk,
+                JournalCache.writeLedger(
+                    JournalCache.readLedger(prefs.getString(lk)), id, stamp));
           }
 
           print(
@@ -815,6 +839,7 @@ class WebSocketSyncService {
   // حماية من عدم وجود companyCode
   // ============================================================
 
+  // يجدول تحديث ملخص اليومية
   void _scheduleDailySummaryRefresh({
     String? branchCode,
   }) {
@@ -853,6 +878,7 @@ class WebSocketSyncService {
   // 7. تحديث التكويد
   // ============================================================
 
+  // يحدّث صندوق الترميز
   void _updateCodingBox(
     Map<String, dynamic> payload,
     String action,
@@ -972,6 +998,7 @@ class WebSocketSyncService {
   // من جميع المفاتيح (حتى لو تغير التاريخ/الفرع/المخزن)
   // ============================================================
 
+  // يحدّث صندوق المخزون
   Future<void> _updateInventoryBox(
     Map<String, dynamic> payload,
     String action,
@@ -1108,6 +1135,7 @@ class WebSocketSyncService {
   // 9. تحديث الموردين
   // ============================================================
 
+  // يحدّث صندوق الموردين
   Future<void> _updateSupplierBox(
     Map<String, dynamic> payload,
     String action,
@@ -1273,6 +1301,7 @@ class WebSocketSyncService {
   // من جميع المفاتيح (حتى لو تغير التاريخ/الفرع)
   // ============================================================
 
+  // يحدّث صندوق التسويات
   Future<void> _updateSettlementBox(
     Map<String, dynamic> payload,
     String action,
@@ -1408,6 +1437,7 @@ class WebSocketSyncService {
   // "${companyCode}_employees"
   // ============================================================
 
+  // يحدّث صندوق الموظفين
   void _updateEmployeeBox(
     Map<String, dynamic> payload,
     String action,
@@ -1471,6 +1501,7 @@ class WebSocketSyncService {
   // 11. تحديث حضور HR
   // ============================================================
 
+  // يحدّث صندوق حضور الموارد البشرية
   void _updateHRAttendanceBox(
     Map<String, dynamic> payload,
     String action,
@@ -1524,6 +1555,7 @@ class WebSocketSyncService {
   // 12. تحديث إجازات HR
   // ============================================================
 
+  // يحدّث صندوق إجازات الموارد البشرية
   void _updateHRVacationBox(
     Map<String, dynamic> payload,
     String action,
@@ -1574,6 +1606,7 @@ class WebSocketSyncService {
   // 13. تحديث تسويات HR
   // ============================================================
 
+  // يحدّث صندوق تسويات الموارد البشرية
   void _updateHRAdjustmentBox(
     Map<String, dynamic> payload,
     String action,
@@ -1627,6 +1660,7 @@ class WebSocketSyncService {
   // (الإعدادات بتتعدل، مش بتتحذف)
   // ============================================================
 
+  // يحدّث صندوق إعدادات الموارد البشرية
   void _updateHREmployeeSettingsBox(
     Map<String, dynamic> payload,
     String action,

@@ -16,19 +16,21 @@ from typing import Optional
 import datetime
 import logging
 
-
+# راوتر المخزون
 router = APIRouter()
 
 
 _CATEGORY = "حركة الجرد"
 
 
+# يتأكد إن المستخدم عنده أي صلاحية من المفاتيح المطلوبة
 def _require_any(request: Request, keys):
     return require_any_section_permission(
         request, [(_CATEGORY, key) for key in keys]
     )
 
 
+# يتحقق إن الفرع مسموح للمستخدم
 def _check_branch(profile: dict, branch_code) -> None:
     allowed = allowed_branches_for_profile(profile)
     if allowed and branch_code and str(branch_code) not in allowed:
@@ -37,6 +39,8 @@ def _check_branch(profile: dict, branch_code) -> None:
             detail="ليس لديك صلاحية على هذا الفرع",
         )
 
+
+# ضبط تسجيل الأحداث (logger) للملف
 logger = logging.getLogger(__name__)
 
 
@@ -44,6 +48,8 @@ logger = logging.getLogger(__name__)
 # Helper
 # ============================================================
 
+
+# يفحص هل المشاهد يقدر يشوف التكلفة (نفس حقوق الحفظ)
 def _viewer_may_costs(request) -> bool:
     """نفس حقوق التكلفة الثلاثة المستخدمة عند الحفظ."""
     from app.core.permissions import has_section_permission as _hsp
@@ -54,9 +60,11 @@ def _viewer_may_costs(request) -> bool:
     )
 
 
+# حقول التكلفة اللي بتتخفي عن اللي ملوش حق
 _COST_ITEM_FIELDS = ("wholesalePrice", "wholesaleValue")
 
 
+# يحوّل سجل المخزون إلى JSON مع إخفاء التكلفة لمن ملوش حق
 def serialize_inventory(
     doc: InventoryRecord,
     action: str | None = None,
@@ -106,6 +114,8 @@ def serialize_inventory(
 #    إضافة أو تحديث
 # ============================================================
 
+
+# مسار حفظ سجل مخزون (إضافة أو تعديل)
 @router.post("/save")
 async def save_inventory(
     request: Request,
@@ -439,6 +449,8 @@ async def save_inventory(
 # المحذوف لا يظهر
 # ============================================================
 
+
+# مسار قائمة المخزون
 @router.get("/list/{company_code}")
 async def list_inventory(
     request: Request,
@@ -521,6 +533,8 @@ async def list_inventory(
 # الجهاز Offline لازم يعرف أن السجل اتحذف.
 # ============================================================
 
+
+# مسار فيد v2 لتغييرات المخزون (تجريبي)
 @router.get("/changes-v2/{company_code}")
 async def get_inventory_changes_v2(
     request: Request,
@@ -563,6 +577,7 @@ async def get_inventory_changes_v2(
     return out
 
 
+# مسار التغييرات منذ آخر مزامنة للمخزون
 @router.get("/changes/{company_code}")
 async def get_inventory_changes(
     request: Request,
@@ -679,6 +694,8 @@ async def get_inventory_changes(
 # 4. حذف جرد - Soft Delete
 # ============================================================
 
+
+# مسار حذف سجل مخزون
 @router.delete(
     "/delete/{company_code}/{doc_id}"
 )

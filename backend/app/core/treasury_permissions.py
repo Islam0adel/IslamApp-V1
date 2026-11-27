@@ -1,6 +1,8 @@
+# backend/app/core/treasury_permissions.py
 """Permission-safe access to derived effects, not raw transfer details."""
 from app.core.permissions import has_section_permission
 
+# الحقوق اللي بتسمح بمشاهدة آثار الخزينة
 EFFECT_RIGHTS = (
     ("حركة الخزينة", "شاشات الارصدة"),
     ("حركة الخزينة", "المعاينة"),
@@ -12,6 +14,7 @@ EFFECT_RIGHTS = (
 )
 
 
+# يفحص هل المستخدم يقدر يشوف آثار حركات الخزينة
 def can_view_treasury_effects(profile):
     return any(has_section_permission(profile, category, key)
                for category, key in EFFECT_RIGHTS)

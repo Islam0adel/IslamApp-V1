@@ -1,9 +1,9 @@
+// frontend/lib/pages/hr/vacations_page.dart
 import '../../services/cache_partitions.dart';
-// lib/pages/hr/vacations_page.dart
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../../services/permissions_service.dart';  // ⭐ جديد
+import '../../services/permissions_service.dart'; // ⭐ جديد
 import '../../core/theme.dart';
 import '../../core/hr_constants.dart';
 import '../../views/widgets/glass_card.dart';
@@ -13,7 +13,7 @@ import '../../services/hr_report_service.dart';
 import '../../models/employee_model.dart';
 import '../../models/hr_models.dart';
 
-
+// صفحة إعدادات الموظف والإجازات والتسويات
 /// صفحة الإعدادات والإجازات
 ///
 /// 5 تبويبات:
@@ -30,11 +30,12 @@ import '../../models/hr_models.dart';
 class VacationsPage extends StatefulWidget {
   const VacationsPage({super.key});
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<VacationsPage> createState() => _VacationsPageState();
 }
 
-
+// حالة الويدجت VacationsPage: تدير بيانات الشاشة وتفاعلاتها
 class _VacationsPageState extends State<VacationsPage>
     with TickerProviderStateMixin {
   // ============================================================
@@ -44,7 +45,6 @@ class _VacationsPageState extends State<VacationsPage>
   final EmployeeService _employeeService = EmployeeService();
   final HRService _hrService = HRService();
   final HRReportService _reportService = HRReportService();
-
 
   // ============================================================
   // State
@@ -63,58 +63,62 @@ class _VacationsPageState extends State<VacationsPage>
 
   late TabController _tabController;
 
-
   // ============================================================
   // Lifecycle
   // ============================================================
 
-    @override
+  // يهيّئ حالة الشاشة عند إنشائها
+  @override
   void initState() {
     super.initState();
 
     // ⭐ عدد التبويبات ديناميكي حسب الصلاحيات
     final count = _visibleTabsCount();
     _tabController = TabController(
-      length: count > 0 ? count : 1,  // 1 على الأقل لتفادي crash
+      length: count > 0 ? count : 1, // 1 على الأقل لتفادي crash
       vsync: this,
     );
     _loadEmployees();
   }
 
-    // ⭐ عدد التبويبات المرئية حسب الصلاحيات
+  // ⭐ عدد التبويبات المرئية حسب الصلاحيات
+  // يحسب عدد التبويبات الظاهرة
   int _visibleTabsCount() {
     final ps = PermissionsService();
     int count = 0;
 
-    if (ps.canEditWeeklyDay) count++;                           // أسبوعية
-    if (ps.canAddVacation || ps.canDeleteVacation ||
-        ps.canEditVacation) count++;                            // استثنائية
-    if (ps.canEditWorkSchedule) count++;                        // مواعيد العمل
-    if (ps.canViewAdjustments) count++;                         // السلف والمكافآت
-    if (ps.canEditDelayRules) count++;                          // إعدادات التأخير
+    if (ps.canEditWeeklyDay) count++; // أسبوعية
+    if (ps.canAddVacation || ps.canDeleteVacation || ps.canEditVacation)
+      count++; // استثنائية
+    if (ps.canEditWorkSchedule) count++; // مواعيد العمل
+    if (ps.canViewAdjustments) count++; // السلف والمكافآت
+    if (ps.canEditDelayRules) count++; // إعدادات التأخير
 
     return count;
   }
 
   // ⭐ هل فيه أي صلاحية داخل الصفحة؟
+  // يحدد هل توجد تبويبات ظاهرة
   bool _hasAnyTab() => _visibleTabsCount() > 0;
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     _tabController.dispose();
     super.dispose();
   }
 
-
   // ============================================================
   // Helpers — أشهر
   // ============================================================
 
+  // يعيد الشهر الحالي بصيغة نصية
   String _currentMonth() {
     final now = DateTime.now();
     return HRConstants.monthToStr(now);
   }
 
+  // يضيف أشهرًا إلى شهر نصي
   String _addMonths(String month, int count) {
     final parts = month.split('-');
     final year = int.tryParse(parts[0]) ?? DateTime.now().year;
@@ -123,51 +127,49 @@ class _VacationsPageState extends State<VacationsPage>
     return HRConstants.monthToStr(dt);
   }
 
-
   // ============================================================
   // Load employees
   // ============================================================
 
+  // يحمّل قائمة الموظفين
   Future<void> _loadEmployees() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      setState(() => _isLoading = true);
 
-    setState(() => _isLoading = true);
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        _companyCode = prefs.getString('company_code') ?? '';
 
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      _companyCode = prefs.getString('company_code') ?? '';
+        if (_companyCode.isEmpty) {
+          setState(() => _isLoading = false);
+          return;
+        }
 
-      if (_companyCode.isEmpty) {
-        setState(() => _isLoading = false);
-        return;
+        final allEmployees = await _employeeService.getEmployeesList(
+          companyCode: _companyCode,
+        );
+
+        // ⭐ فلترة حسب الصلاحيات
+        _employees = allEmployees
+            .where((e) =>
+                PermissionsService().canViewEmployee(e.code, e.branchCode))
+            .toList();
+
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+            if (_employees.isNotEmpty && _selectedEmployee == null) {
+              _selectedEmployee = _employees.first;
+              _loadEmployeeData();
+            }
+          });
+        }
+      } catch (e) {
+        print("❌ خطأ في تحميل الموظفين: $e");
+        if (mounted) setState(() => _isLoading = false);
       }
-
-            final allEmployees = await _employeeService.getEmployeesList(
-        companyCode: _companyCode,
-      );
-
-      // ⭐ فلترة حسب الصلاحيات
-      _employees = allEmployees
-          .where((e) => PermissionsService()
-              .canViewEmployee(e.code, e.branchCode))
-          .toList();
-
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          if (_employees.isNotEmpty && _selectedEmployee == null) {
-            _selectedEmployee = _employees.first;
-            _loadEmployeeData();
-          }
-        });
-      }
-    } catch (e) {
-      print("❌ خطأ في تحميل الموظفين: $e");
-      if (mounted) setState(() => _isLoading = false);
-    }
-});
-}
-
+    });
+  }
 
   // ============================================================
   // Load employee data
@@ -178,271 +180,366 @@ return CachePartitions.run(() async {
   // - adjustments (فلترة على الشهر الحالي)
   // ============================================================
 
+  // يحمّل بيانات الموظف المحدد
   Future<void> _loadEmployeeData({bool showLoader = true}) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_selectedEmployee == null) return;
+      if (showLoader) setState(() => _isLoading = true);
 
-    if (_selectedEmployee == null) return;
-    if (showLoader) setState(() => _isLoading = true);
+      try {
+        // 1) إعدادات الموظف
+        final settings = await _hrService.getEmployeeSettings(
+          companyCode: _companyCode,
+          employeeCode: _selectedEmployee!.code,
+        );
 
-    try {
-      // 1) إعدادات الموظف
-      final settings = await _hrService.getEmployeeSettings(
-        companyCode: _companyCode,
-        employeeCode: _selectedEmployee!.code,
-      );
+        // 2) الإجازات (كل الإجازات المطبقة على الموظف)
+        final allVacations = await _hrService.getVacations(
+          companyCode: _companyCode,
+          branchCode: _selectedEmployee!.branchCode,
+          employeeCode: _selectedEmployee!.code,
+        );
 
-      // 2) الإجازات (كل الإجازات المطبقة على الموظف)
-      final allVacations = await _hrService.getVacations(
-        companyCode: _companyCode,
-        branchCode: _selectedEmployee!.branchCode,
-        employeeCode: _selectedEmployee!.code,
-      );
+        // نفلتر على الاستثنائية (اللي فيها employee_code محدد)
+        final exceptional = allVacations
+            .where((v) => v.employeeCode == _selectedEmployee!.code)
+            .toList();
 
-      // نفلتر على الاستثنائية (اللي فيها employee_code محدد)
-      final exceptional = allVacations
-          .where((v) => v.employeeCode == _selectedEmployee!.code)
-          .toList();
+        // ترتيب تنازلي بالتاريخ (الأحدث أولاً)
+        exceptional.sort((a, b) => b.date.compareTo(a.date));
 
-      // ترتيب تنازلي بالتاريخ (الأحدث أولاً)
-      exceptional.sort((a, b) => b.date.compareTo(a.date));
+        // 3) التسويات (خصم/مكافأة/سلف للشهر الحالي)
+        final currentMonth = _currentMonth();
+        final allAdjustments = await _hrService.getAdjustmentsForMonth(
+          companyCode: _companyCode,
+          month: currentMonth,
+          branchCode: _selectedEmployee!.branchCode,
+        );
 
-      // 3) التسويات (خصم/مكافأة/سلف للشهر الحالي)
-      final currentMonth = _currentMonth();
-      final allAdjustments = await _hrService.getAdjustmentsForMonth(
-        companyCode: _companyCode,
-        month: currentMonth,
-        branchCode: _selectedEmployee!.branchCode,
-      );
+        final empAdjustments = allAdjustments
+            .where(
+              (a) =>
+                  a.employeeCode == _selectedEmployee!.code &&
+                  (a.type == 'bonus' || a.type == 'loan'),
+            )
+            .toList();
 
-      final empAdjustments = allAdjustments
-          .where(
-            (a) =>
-                a.employeeCode == _selectedEmployee!.code &&
-                (a.type == 'bonus' || a.type == 'loan'),
-          )
-          .toList();
-
-      if (mounted) {
-        setState(() {
-          _settings = settings;
-          _exceptionalVacations = exceptional;
-          _adjustments = empAdjustments;
-          _isLoading = false;
-        });
+        if (mounted) {
+          setState(() {
+            _settings = settings;
+            _exceptionalVacations = exceptional;
+            _adjustments = empAdjustments;
+            _isLoading = false;
+          });
+        }
+      } catch (e) {
+        print("❌ خطأ في تحميل بيانات الموظف: $e");
+        if (mounted) setState(() => _isLoading = false);
       }
-    } catch (e) {
-      print("❌ خطأ في تحميل بيانات الموظف: $e");
-      if (mounted) setState(() => _isLoading = false);
-    }
-});
-}
-
+    });
+  }
 
   // ============================================================
   // إبطال كاش التقرير بعد أي حفظ
   // ============================================================
 
+  // يبطل ذاكرة الموظف المؤقتة
   Future<void> _invalidateCacheForEmployee() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_selectedEmployee == null) return;
+      await _reportService.invalidateCache(
+        companyCode: _companyCode,
+        employeeCode: _selectedEmployee!.code,
+      );
+    });
+  }
 
-    if (_selectedEmployee == null) return;
-    await _reportService.invalidateCache(
-      companyCode: _companyCode,
-      employeeCode: _selectedEmployee!.code,
-    );
-});
-}
-
+  // يبطل ذاكرة الشركة المؤقتة
   Future<void> _invalidateCacheForCompany() async {
-return CachePartitions.run(() async {
-
-    await _reportService.invalidateCache(companyCode: _companyCode);
-});
-}
-
+    return CachePartitions.run(() async {
+      await _reportService.invalidateCache(companyCode: _companyCode);
+    });
+  }
 
   // ============================================================
   // إضافة إجازة عامة (لكل الشركة)
   // ============================================================
 
-    Future<void> _addGeneralVacation() async {
-return CachePartitions.run(() async {
+  // يضيف إجازة عامة
+  Future<void> _addGeneralVacation() async {
+    return CachePartitions.run(() async {
+      // ⭐ فحص
+      if (!PermissionsService().canAddVacation) {
+        _showSnackBar(
+          "ليس لديك صلاحية إضافة إجازة",
+          AppTheme.dangerFor(context),
+        );
+        return;
+      }
 
-    // ⭐ فحص
-    if (!PermissionsService().canAddVacation) {
-      _showSnackBar(
-        "ليس لديك صلاحية إضافة إجازة",
-        AppTheme.dangerFor(context),
+      final result = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (ctx) => const _AddGeneralVacationDialog(),
       );
-      return;
-    }
 
-    final result = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (ctx) => const _AddGeneralVacationDialog(),
-    );
+      if (result == null) return;
 
-    if (result == null) return;
-
-    final model = HRVacationModel(
-      companyCode: _companyCode,
-      branchCode: null,
-      employeeCode: null,
-      date: result['date'],
-      name: result['name'],
-      type: 'official',
-    );
-
-    final saveResult = await _hrService.saveVacation(model: model);
-
-    if (!mounted) return;
-
-    if (saveResult['success'] == true) {
-      // ⭐ الإجازة العامة تؤثر على كل الموظفين → مسح كاش الشركة
-      await _invalidateCacheForCompany();
-
-      _showSnackBar(
-        "تم حفظ الإجازة العامة",
-        AppTheme.successStrongFor(context),
+      final model = HRVacationModel(
+        companyCode: _companyCode,
+        branchCode: null,
+        employeeCode: null,
+        date: result['date'],
+        name: result['name'],
+        type: 'official',
       );
-      _loadEmployeeData(showLoader: false);
-    } else {
-      _showSnackBar(
-        "فشل: ${saveResult['error']}",
-        AppTheme.dangerStrongFor(context),
-      );
-    }
-});
-}
 
+      final saveResult = await _hrService.saveVacation(model: model);
+
+      if (!mounted) return;
+
+      if (saveResult['success'] == true) {
+        // ⭐ الإجازة العامة تؤثر على كل الموظفين → مسح كاش الشركة
+        await _invalidateCacheForCompany();
+
+        _showSnackBar(
+          "تم حفظ الإجازة العامة",
+          AppTheme.successStrongFor(context),
+        );
+        _loadEmployeeData(showLoader: false);
+      } else {
+        _showSnackBar(
+          "فشل: ${saveResult['error']}",
+          AppTheme.dangerStrongFor(context),
+        );
+      }
+    });
+  }
 
   // ============================================================
   // حفظ يوم الراحة الأسبوعي
   // ============================================================
 
-    Future<void> _saveWeeklyDay(int? day) async {
-return CachePartitions.run(() async {
+  // يحفظ يوم الإجازة الأسبوعية
+  Future<void> _saveWeeklyDay(int? day) async {
+    return CachePartitions.run(() async {
+      if (_settings == null || _selectedEmployee == null) return;
 
-    if (_settings == null || _selectedEmployee == null) return;
-
-    // ⭐ فحص
-    if (!PermissionsService().canEditWeeklyDay) {
-      _showSnackBar(
-        "ليس لديك صلاحية تعديل يوم الإجازة",
-        AppTheme.dangerFor(context),
-      );
-      return;
-    }
-
-    setState(() => _isSaving = true);
-
-    try {
-      final updated = day == null
-          ? _settings!.copyWith(clearWeekly: true)
-          : _settings!.copyWith(weeklyVacationDay: day);
-
-      final result = await _hrService.saveEmployeeSettings(model: updated);
-
-      if (!mounted) return;
-
-      if (result['success'] == true) {
-        setState(() => _settings = updated);
-
-        // ⭐ تغيير يوم الراحة → يؤثر على كل الشهور
-        await _invalidateCacheForEmployee();
-
+      // ⭐ فحص
+      if (!PermissionsService().canEditWeeklyDay) {
         _showSnackBar(
-          day == null ? "تم إلغاء الإجازة الأسبوعية" : "تم الحفظ",
-          AppTheme.successStrongFor(context),
+          "ليس لديك صلاحية تعديل يوم الإجازة",
+          AppTheme.dangerFor(context),
         );
-      } else {
-        _showSnackBar(
-          "فشل: ${result['error']}",
-          AppTheme.dangerStrongFor(context),
-        );
+        return;
       }
-    } catch (e) {
-      if (mounted) {
-        _showSnackBar(
-          "خطأ: $e",
-          AppTheme.dangerStrongFor(context),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isSaving = false);
-    }
-});
-}
 
+      setState(() => _isSaving = true);
+
+      try {
+        final updated = day == null
+            ? _settings!.copyWith(clearWeekly: true)
+            : _settings!.copyWith(weeklyVacationDay: day);
+
+        final result = await _hrService.saveEmployeeSettings(model: updated);
+
+        if (!mounted) return;
+
+        if (result['success'] == true) {
+          setState(() => _settings = updated);
+
+          // ⭐ تغيير يوم الراحة → يؤثر على كل الشهور
+          await _invalidateCacheForEmployee();
+
+          _showSnackBar(
+            day == null ? "تم إلغاء الإجازة الأسبوعية" : "تم الحفظ",
+            AppTheme.successStrongFor(context),
+          );
+        } else {
+          _showSnackBar(
+            "فشل: ${result['error']}",
+            AppTheme.dangerStrongFor(context),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          _showSnackBar(
+            "خطأ: $e",
+            AppTheme.dangerStrongFor(context),
+          );
+        }
+      } finally {
+        if (mounted) setState(() => _isSaving = false);
+      }
+    });
+  }
 
   // ============================================================
   // إضافة إجازة استثنائية
   // ============================================================
 
-    Future<void> _addExceptionalVacation() async {
-return CachePartitions.run(() async {
+  // يضيف إجازة استثنائية
+  Future<void> _addExceptionalVacation() async {
+    return CachePartitions.run(() async {
+      if (_selectedEmployee == null) return;
 
-    if (_selectedEmployee == null) return;
+      // ⭐ فحص
+      if (!PermissionsService().canAddVacation) {
+        _showSnackBar(
+          "ليس لديك صلاحية إضافة إجازة",
+          AppTheme.dangerFor(context),
+        );
+        return;
+      }
 
-    // ⭐ فحص
-    if (!PermissionsService().canAddVacation) {
-      _showSnackBar(
-        "ليس لديك صلاحية إضافة إجازة",
-        AppTheme.dangerFor(context),
+      // 1) اختيار التاريخ
+      final picked = await showDatePicker(
+        context: context,
+        initialDate: DateTime.now(),
+        firstDate: DateTime(2020),
+        lastDate: DateTime(2030),
+        helpText: 'اختر تاريخ الإجازة',
       );
-      return;
-    }
 
-    // 1) اختيار التاريخ
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: DateTime.now(),
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2030),
-      helpText: 'اختر تاريخ الإجازة',
-    );
+      if (picked == null) return;
 
-    if (picked == null) return;
+      final dateStr = HRConstants.dateToStr(picked);
 
-    final dateStr = HRConstants.dateToStr(picked);
+      // 2) اسم الإجازة
+      final name = await showDialog<String>(
+        context: context,
+        builder: (ctx) {
+          final ctrl = TextEditingController(text: 'إجازة استثنائية');
+          return AlertDialog(
+            backgroundColor: AppTheme.dialogBackground(context),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(15),
+            ),
+            title: Text(
+              'اسم الإجازة',
+              style: TextStyle(
+                color: AppTheme.textMainFor(context),
+                fontFamily: 'Cairo',
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            content: TextField(
+              controller: ctrl,
+              autofocus: true,
+              decoration: InputDecoration(
+                filled: true,
+                fillColor: GlassStyle.fill05For(context),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+              style: TextStyle(
+                fontFamily: 'Cairo',
+                color: AppTheme.textMainFor(context),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(
+                  'إلغاء',
+                  style: TextStyle(
+                    color: AppTheme.textMutedFor(context),
+                    fontFamily: 'Cairo',
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+                child: Text(
+                  'حفظ',
+                  style: TextStyle(
+                    color: AppTheme.accentFor(context),
+                    fontFamily: 'Cairo',
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      );
 
-    // 2) اسم الإجازة
-    final name = await showDialog<String>(
-      context: context,
-      builder: (ctx) {
-        final ctrl = TextEditingController(text: 'إجازة استثنائية');
-        return AlertDialog(
+      if (name == null || name.isEmpty) return;
+
+      // 3) حفظ
+      final model = HRVacationModel(
+        companyCode: _companyCode,
+        branchCode: _selectedEmployee!.branchCode,
+        employeeCode: _selectedEmployee!.code,
+        date: dateStr,
+        name: name,
+        type: 'official',
+      );
+
+      final saveResult = await _hrService.saveVacation(model: model);
+
+      if (!mounted) return;
+
+      if (saveResult['success'] == true) {
+        await _invalidateCacheForEmployee();
+        _showSnackBar(
+          "تم الحفظ",
+          AppTheme.successStrongFor(context),
+        );
+        _loadEmployeeData(showLoader: false);
+      } else {
+        _showSnackBar(
+          "فشل: ${saveResult['error']}",
+          AppTheme.dangerStrongFor(context),
+        );
+      }
+    });
+  }
+
+  // ============================================================
+  // حذف إجازة استثنائية
+  // ============================================================
+
+  // يحذف إجازة استثنائية
+  Future<void> _deleteExceptionalVacation(HRVacationModel v) async {
+    return CachePartitions.run(() async {
+      if (v.id == null) return;
+
+      // ⭐ فحص
+      if (!PermissionsService().canDeleteVacation) {
+        _showSnackBar(
+          "ليس لديك صلاحية حذف الإجازة",
+          AppTheme.dangerFor(context),
+        );
+        return;
+      }
+
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
           backgroundColor: AppTheme.dialogBackground(context),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(15),
           ),
           title: Text(
-            'اسم الإجازة',
+            'حذف الإجازة',
             style: TextStyle(
               color: AppTheme.textMainFor(context),
               fontFamily: 'Cairo',
               fontWeight: FontWeight.bold,
             ),
           ),
-          content: TextField(
-            controller: ctrl,
-            autofocus: true,
-            decoration: InputDecoration(
-              filled: true,
-              fillColor: GlassStyle.fill05For(context),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: BorderSide.none,
-              ),
-            ),
+          content: Text(
+            'سيتم حذف "${v.name}" بتاريخ ${v.date}.',
             style: TextStyle(
+              color: AppTheme.textMutedFor(context),
               fontFamily: 'Cairo',
-              color: AppTheme.textMainFor(context),
             ),
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(ctx),
+              onPressed: () => Navigator.pop(ctx, false),
               child: Text(
                 'إلغاء',
                 style: TextStyle(
@@ -452,268 +549,165 @@ return CachePartitions.run(() async {
               ),
             ),
             TextButton(
-              onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+              onPressed: () => Navigator.pop(ctx, true),
               child: Text(
-                'حفظ',
+                'حذف',
                 style: TextStyle(
-                  color: AppTheme.accentFor(context),
+                  color: AppTheme.dangerFor(context),
                   fontFamily: 'Cairo',
                   fontWeight: FontWeight.bold,
                 ),
               ),
             ),
           ],
+        ),
+      );
+
+      if (confirmed != true) return;
+
+      final ok = await _hrService.deleteVacation(
+        companyCode: _companyCode,
+        vacationId: v.id!,
+      );
+
+      if (!mounted) return;
+
+      if (ok) {
+        await _invalidateCacheForEmployee();
+        _showSnackBar(
+          "تم الحذف",
+          AppTheme.successStrongFor(context),
         );
-      },
-    );
-
-    if (name == null || name.isEmpty) return;
-
-    // 3) حفظ
-    final model = HRVacationModel(
-      companyCode: _companyCode,
-      branchCode: _selectedEmployee!.branchCode,
-      employeeCode: _selectedEmployee!.code,
-      date: dateStr,
-      name: name,
-      type: 'official',
-    );
-
-    final saveResult = await _hrService.saveVacation(model: model);
-
-    if (!mounted) return;
-
-    if (saveResult['success'] == true) {
-      await _invalidateCacheForEmployee();
-      _showSnackBar(
-        "تم الحفظ",
-        AppTheme.successStrongFor(context),
-      );
-      _loadEmployeeData(showLoader: false);
-    } else {
-      _showSnackBar(
-        "فشل: ${saveResult['error']}",
-        AppTheme.dangerStrongFor(context),
-      );
-    }
-});
-}
-
-
-  // ============================================================
-  // حذف إجازة استثنائية
-  // ============================================================
-
-    Future<void> _deleteExceptionalVacation(HRVacationModel v) async {
-return CachePartitions.run(() async {
-
-    if (v.id == null) return;
-
-    // ⭐ فحص
-    if (!PermissionsService().canDeleteVacation) {
-      _showSnackBar(
-        "ليس لديك صلاحية حذف الإجازة",
-        AppTheme.dangerFor(context),
-      );
-      return;
-    }
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.dialogBackground(context),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(15),
-        ),
-        title: Text(
-          'حذف الإجازة',
-          style: TextStyle(
-            color: AppTheme.textMainFor(context),
-            fontFamily: 'Cairo',
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        content: Text(
-          'سيتم حذف "${v.name}" بتاريخ ${v.date}.',
-          style: TextStyle(
-            color: AppTheme.textMutedFor(context),
-            fontFamily: 'Cairo',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(
-              'إلغاء',
-              style: TextStyle(
-                color: AppTheme.textMutedFor(context),
-                fontFamily: 'Cairo',
-              ),
-            ),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(
-              'حذف',
-              style: TextStyle(
-                color: AppTheme.dangerFor(context),
-                fontFamily: 'Cairo',
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true) return;
-
-    final ok = await _hrService.deleteVacation(
-      companyCode: _companyCode,
-      vacationId: v.id!,
-    );
-
-    if (!mounted) return;
-
-    if (ok) {
-      await _invalidateCacheForEmployee();
-      _showSnackBar(
-        "تم الحذف",
-        AppTheme.successStrongFor(context),
-      );
-      _loadEmployeeData(showLoader: false);
-    } else {
-      _showSnackBar(
-        "فشل الحذف",
-        AppTheme.dangerStrongFor(context),
-      );
-    }
-});
-}
-
+        _loadEmployeeData(showLoader: false);
+      } else {
+        _showSnackBar(
+          "فشل الحذف",
+          AppTheme.dangerStrongFor(context),
+        );
+      }
+    });
+  }
 
   // ============================================================
   // حفظ مواعيد العمل
   // ============================================================
 
-    Future<void> _saveWorkSchedule({
+  // يحفظ جدول العمل
+  Future<void> _saveWorkSchedule({
     required String checkIn,
     required String checkOut,
     required bool flexible,
     required bool useFixedMonthDays,
   }) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_settings == null || _selectedEmployee == null) return;
 
-    if (_settings == null || _selectedEmployee == null) return;
-
-    // ⭐ فحص
-    if (!PermissionsService().canEditWorkSchedule) {
-      _showSnackBar(
-        "ليس لديك صلاحية تعديل مواعيد العمل",
-        AppTheme.dangerFor(context),
-      );
-      return;
-    }
-
-    setState(() => _isSaving = true);
-
-    try {
-      final updated = _settings!.copyWith(
-        defaultCheckIn: checkIn,
-        defaultCheckOut: checkOut,
-        flexibleHours: flexible,
-        useFixedMonthDays: useFixedMonthDays,
-      );
-
-      final result = await _hrService.saveEmployeeSettings(model: updated);
-
-      if (!mounted) return;
-
-      if (result['success'] == true) {
-        setState(() => _settings = updated);
-
-        // ⭐ تغيير مواعيد العمل → يؤثر على حسابات كل الشهور
-        await _invalidateCacheForEmployee();
-
+      // ⭐ فحص
+      if (!PermissionsService().canEditWorkSchedule) {
         _showSnackBar(
-          "تم حفظ مواعيد العمل",
-          AppTheme.successStrongFor(context),
+          "ليس لديك صلاحية تعديل مواعيد العمل",
+          AppTheme.dangerFor(context),
         );
-      } else {
-        _showSnackBar(
-          "فشل: ${result['error']}",
-          AppTheme.dangerStrongFor(context),
-        );
+        return;
       }
-    } catch (e) {
-      if (mounted) {
-        _showSnackBar(
-          "خطأ: $e",
-          AppTheme.dangerStrongFor(context),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isSaving = false);
-    }
-});
-}
 
+      setState(() => _isSaving = true);
+
+      try {
+        final updated = _settings!.copyWith(
+          defaultCheckIn: checkIn,
+          defaultCheckOut: checkOut,
+          flexibleHours: flexible,
+          useFixedMonthDays: useFixedMonthDays,
+        );
+
+        final result = await _hrService.saveEmployeeSettings(model: updated);
+
+        if (!mounted) return;
+
+        if (result['success'] == true) {
+          setState(() => _settings = updated);
+
+          // ⭐ تغيير مواعيد العمل → يؤثر على حسابات كل الشهور
+          await _invalidateCacheForEmployee();
+
+          _showSnackBar(
+            "تم حفظ مواعيد العمل",
+            AppTheme.successStrongFor(context),
+          );
+        } else {
+          _showSnackBar(
+            "فشل: ${result['error']}",
+            AppTheme.dangerStrongFor(context),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          _showSnackBar(
+            "خطأ: $e",
+            AppTheme.dangerStrongFor(context),
+          );
+        }
+      } finally {
+        if (mounted) setState(() => _isSaving = false);
+      }
+    });
+  }
 
   // ============================================================
   // حفظ إعدادات التأخير
   // ============================================================
 
-    Future<void> _saveDelayRules(Map<String, double> rules) async {
-return CachePartitions.run(() async {
+  // يحفظ قواعد التأخير
+  Future<void> _saveDelayRules(Map<String, double> rules) async {
+    return CachePartitions.run(() async {
+      if (_settings == null || _selectedEmployee == null) return;
 
-    if (_settings == null || _selectedEmployee == null) return;
-
-    // ⭐ فحص
-    if (!PermissionsService().canEditDelayRules) {
-      _showSnackBar(
-        "ليس لديك صلاحية تعديل إعدادات التأخير",
-        AppTheme.dangerFor(context),
-      );
-      return;
-    }
-
-    setState(() => _isSaving = true);
-
-    try {
-      final updated = _settings!.copyWith(delayRules: rules);
-      final result = await _hrService.saveEmployeeSettings(model: updated);
-
-      if (!mounted) return;
-
-      if (result['success'] == true) {
-        setState(() => _settings = updated);
-
-        // ⭐ تغيير قواعد التأخير → يؤثر على حسابات كل الشهور
-        await _invalidateCacheForEmployee();
-
+      // ⭐ فحص
+      if (!PermissionsService().canEditDelayRules) {
         _showSnackBar(
-          "تم حفظ إعدادات التأخير",
-          AppTheme.successStrongFor(context),
+          "ليس لديك صلاحية تعديل إعدادات التأخير",
+          AppTheme.dangerFor(context),
         );
-      } else {
-        _showSnackBar(
-          "فشل: ${result['error']}",
-          AppTheme.dangerStrongFor(context),
-        );
+        return;
       }
-    } catch (e) {
-      if (mounted) {
-        _showSnackBar(
-          "خطأ: $e",
-          AppTheme.dangerStrongFor(context),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isSaving = false);
-    }
-});
-}
 
+      setState(() => _isSaving = true);
+
+      try {
+        final updated = _settings!.copyWith(delayRules: rules);
+        final result = await _hrService.saveEmployeeSettings(model: updated);
+
+        if (!mounted) return;
+
+        if (result['success'] == true) {
+          setState(() => _settings = updated);
+
+          // ⭐ تغيير قواعد التأخير → يؤثر على حسابات كل الشهور
+          await _invalidateCacheForEmployee();
+
+          _showSnackBar(
+            "تم حفظ إعدادات التأخير",
+            AppTheme.successStrongFor(context),
+          );
+        } else {
+          _showSnackBar(
+            "فشل: ${result['error']}",
+            AppTheme.dangerStrongFor(context),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          _showSnackBar(
+            "خطأ: $e",
+            AppTheme.dangerStrongFor(context),
+          );
+        }
+      } finally {
+        if (mounted) setState(() => _isSaving = false);
+      }
+    });
+  }
 
   // ============================================================
   // إضافة مكافأة أو سلفة
@@ -724,234 +718,233 @@ return CachePartitions.run(() async {
   // - بعد ما كلهم يخلصوا → invalidate cache مرة واحدة
   // ============================================================
 
-    Future<void> _addAdjustment() async {
-return CachePartitions.run(() async {
+  // يضيف تسوية
+  Future<void> _addAdjustment() async {
+    return CachePartitions.run(() async {
+      if (_selectedEmployee == null) return;
 
-    if (_selectedEmployee == null) return;
+      // ⭐ فحص: لازم يكون عنده صلاحية إضافة مكافأة أو سلفة
+      final ps = PermissionsService();
+      if (!ps.canAddBonus && !ps.canAddLoan) {
+        _showSnackBar(
+          "ليس لديك صلاحية إضافة مكافأة أو سلفة",
+          AppTheme.dangerFor(context),
+        );
+        return;
+      }
 
-    // ⭐ فحص: لازم يكون عنده صلاحية إضافة مكافأة أو سلفة
-    final ps = PermissionsService();
-    if (!ps.canAddBonus && !ps.canAddLoan) {
-      _showSnackBar(
-        "ليس لديك صلاحية إضافة مكافأة أو سلفة",
-        AppTheme.dangerFor(context),
+      final result = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (ctx) => _AddAdjustmentDialog(
+          employeeName: _selectedEmployee!.name,
+          month: _currentMonth(),
+        ),
       );
-      return;
-    }
 
-    final result = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (ctx) => _AddAdjustmentDialog(
-        employeeName: _selectedEmployee!.name,
-        month: _currentMonth(),
-      ),
-    );
+      if (result == null) return;
 
-    if (result == null) return;
+      // ⭐ فحص إضافي: نوع العملية لازم يكون مسموح
+      final resultType = result['type'] as String;
+      if (resultType == 'bonus' && !ps.canAddBonus) {
+        _showSnackBar(
+          "ليس لديك صلاحية إضافة مكافأة",
+          AppTheme.dangerFor(context),
+        );
+        return;
+      }
+      if (resultType == 'loan' && !ps.canAddLoan) {
+        _showSnackBar(
+          "ليس لديك صلاحية إضافة سلفة",
+          AppTheme.dangerFor(context),
+        );
+        return;
+      }
 
-    // ⭐ فحص إضافي: نوع العملية لازم يكون مسموح
-    final resultType = result['type'] as String;
-    if (resultType == 'bonus' && !ps.canAddBonus) {
-      _showSnackBar(
-        "ليس لديك صلاحية إضافة مكافأة",
-        AppTheme.dangerFor(context),
-      );
-      return;
-    }
-    if (resultType == 'loan' && !ps.canAddLoan) {
-      _showSnackBar(
-        "ليس لديك صلاحية إضافة سلفة",
-        AppTheme.dangerFor(context),
-      );
-      return;
-    }
+      setState(() => _isSaving = true);
 
-    setState(() => _isSaving = true);
+      try {
+        final type = result['type'] as String;
+        final amount = result['amount'] as double;
+        final reason = result['reason'] as String? ?? '';
+        final installments = result['installments'] as int? ?? 1;
 
-    try {
-      final type = result['type'] as String;
-      final amount = result['amount'] as double;
-      final reason = result['reason'] as String? ?? '';
-      final installments = result['installments'] as int? ?? 1;
+        if (type == 'loan' && installments > 1) {
+          // سلفة بأقساط → صف لكل شهر
+          final amountPerMonth = amount / installments;
 
-      if (type == 'loan' && installments > 1) {
-        // سلفة بأقساط → صف لكل شهر
-        final amountPerMonth = amount / installments;
+          for (int i = 1; i <= installments; i++) {
+            final targetMonth = _addMonths(_currentMonth(), i - 1);
 
-        for (int i = 1; i <= installments; i++) {
-          final targetMonth = _addMonths(_currentMonth(), i - 1);
+            final adj = HRAdjustmentModel(
+              companyCode: _companyCode,
+              branchCode: _selectedEmployee!.branchCode,
+              employeeCode: _selectedEmployee!.code,
+              month: targetMonth,
+              type: 'loan',
+              amount: amountPerMonth,
+              reason: reason,
+              installmentRef: '$i/$installments',
+            );
 
+            final saveResult = await _hrService.saveAdjustment(model: adj);
+
+            if (saveResult['success'] != true) {
+              _showSnackBar(
+                "فشل القسط $i: ${saveResult['error']}",
+                AppTheme.dangerStrongFor(context),
+              );
+              return; // نوقف باقي الأقساط
+            }
+          }
+
+          await _invalidateCacheForEmployee();
+
+          _showSnackBar(
+            "تم إنشاء سلفة على $installments قسط",
+            AppTheme.successStrongFor(context),
+          );
+        } else {
+          // مكافأة/خصم/سلفة بدون أقساط
           final adj = HRAdjustmentModel(
             companyCode: _companyCode,
             branchCode: _selectedEmployee!.branchCode,
             employeeCode: _selectedEmployee!.code,
-            month: targetMonth,
-            type: 'loan',
-            amount: amountPerMonth,
+            month: _currentMonth(),
+            type: type,
+            amount: amount,
             reason: reason,
-            installmentRef: '$i/$installments',
           );
 
           final saveResult = await _hrService.saveAdjustment(model: adj);
 
           if (saveResult['success'] != true) {
             _showSnackBar(
-              "فشل القسط $i: ${saveResult['error']}",
+              "فشل: ${saveResult['error']}",
               AppTheme.dangerStrongFor(context),
             );
-            return; // نوقف باقي الأقساط
+            return;
           }
+
+          await _invalidateCacheForEmployee();
+
+          _showSnackBar(
+            "تم الحفظ",
+            AppTheme.successStrongFor(context),
+          );
         }
 
-        await _invalidateCacheForEmployee();
-
-        _showSnackBar(
-          "تم إنشاء سلفة على $installments قسط",
-          AppTheme.successStrongFor(context),
-        );
-      } else {
-        // مكافأة/خصم/سلفة بدون أقساط
-        final adj = HRAdjustmentModel(
-          companyCode: _companyCode,
-          branchCode: _selectedEmployee!.branchCode,
-          employeeCode: _selectedEmployee!.code,
-          month: _currentMonth(),
-          type: type,
-          amount: amount,
-          reason: reason,
-        );
-
-        final saveResult = await _hrService.saveAdjustment(model: adj);
-
-        if (saveResult['success'] != true) {
+        _loadEmployeeData(showLoader: false);
+      } catch (e) {
+        if (mounted) {
           _showSnackBar(
-            "فشل: ${saveResult['error']}",
+            "خطأ: $e",
             AppTheme.dangerStrongFor(context),
           );
-          return;
         }
-
-        await _invalidateCacheForEmployee();
-
-        _showSnackBar(
-          "تم الحفظ",
-          AppTheme.successStrongFor(context),
-        );
+      } finally {
+        if (mounted) setState(() => _isSaving = false);
       }
-
-      _loadEmployeeData(showLoader: false);
-    } catch (e) {
-      if (mounted) {
-        _showSnackBar(
-          "خطأ: $e",
-          AppTheme.dangerStrongFor(context),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isSaving = false);
-    }
-});
-}
-
+    });
+  }
 
   // ============================================================
   // حذف تسوية
   // ============================================================
 
-    Future<void> _deleteAdjustment(HRAdjustmentModel adj) async {
-return CachePartitions.run(() async {
+  // يحذف تسوية
+  Future<void> _deleteAdjustment(HRAdjustmentModel adj) async {
+    return CachePartitions.run(() async {
+      if (adj.id == null) return;
 
-    if (adj.id == null) return;
+      // ⭐ فحص
+      if (!PermissionsService().canDeleteAdjustment) {
+        _showSnackBar(
+          "ليس لديك صلاحية حذف التسوية",
+          AppTheme.dangerFor(context),
+        );
+        return;
+      }
 
-    // ⭐ فحص
-    if (!PermissionsService().canDeleteAdjustment) {
-      _showSnackBar(
-        "ليس لديك صلاحية حذف التسوية",
-        AppTheme.dangerFor(context),
-      );
-      return;
-    }
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.dialogBackground(context),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(15),
-        ),
-        title: Text(
-          'حذف التسوية',
-          style: TextStyle(
-            color: AppTheme.textMainFor(context),
-            fontFamily: 'Cairo',
-            fontWeight: FontWeight.bold,
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppTheme.dialogBackground(context),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(15),
           ),
-        ),
-        content: Text(
-          PermissionsService().canViewSalaryAmounts
-              ? 'سيتم حذف "${adj.typeLabel}" بقيمة ${adj.amount.toStringAsFixed(2)} ج.م.'
-              : 'سيتم حذف "${adj.typeLabel}".',
-          style: TextStyle(
-            color: AppTheme.textMutedFor(context),
-            fontFamily: 'Cairo',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(
-              'إلغاء',
-              style: TextStyle(
-                color: AppTheme.textMutedFor(context),
-                fontFamily: 'Cairo',
-              ),
+          title: Text(
+            'حذف التسوية',
+            style: TextStyle(
+              color: AppTheme.textMainFor(context),
+              fontFamily: 'Cairo',
+              fontWeight: FontWeight.bold,
             ),
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(
-              'حذف',
-              style: TextStyle(
-                color: AppTheme.dangerFor(context),
-                fontFamily: 'Cairo',
-                fontWeight: FontWeight.bold,
-              ),
+          content: Text(
+            PermissionsService().canViewSalaryAmounts
+                ? 'سيتم حذف "${adj.typeLabel}" بقيمة ${adj.amount.toStringAsFixed(2)} ج.م.'
+                : 'سيتم حذف "${adj.typeLabel}".',
+            style: TextStyle(
+              color: AppTheme.textMutedFor(context),
+              fontFamily: 'Cairo',
             ),
           ),
-        ],
-      ),
-    );
-
-    if (confirmed != true) return;
-
-    final ok = await _hrService.deleteAdjustment(
-      companyCode: _companyCode,
-      adjustmentId: adj.id!,
-    );
-
-    if (!mounted) return;
-
-    if (ok) {
-      await _invalidateCacheForEmployee();
-      _showSnackBar(
-        "تم الحذف",
-        AppTheme.successStrongFor(context),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(
+                'إلغاء',
+                style: TextStyle(
+                  color: AppTheme.textMutedFor(context),
+                  fontFamily: 'Cairo',
+                ),
+              ),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(
+                'حذف',
+                style: TextStyle(
+                  color: AppTheme.dangerFor(context),
+                  fontFamily: 'Cairo',
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
       );
-      _loadEmployeeData(showLoader: false);
-    } else {
-      _showSnackBar(
-        "فشل الحذف",
-        AppTheme.dangerStrongFor(context),
-      );
-    }
-});
-}
 
+      if (confirmed != true) return;
+
+      final ok = await _hrService.deleteAdjustment(
+        companyCode: _companyCode,
+        adjustmentId: adj.id!,
+      );
+
+      if (!mounted) return;
+
+      if (ok) {
+        await _invalidateCacheForEmployee();
+        _showSnackBar(
+          "تم الحذف",
+          AppTheme.successStrongFor(context),
+        );
+        _loadEmployeeData(showLoader: false);
+      } else {
+        _showSnackBar(
+          "فشل الحذف",
+          AppTheme.dangerStrongFor(context),
+        );
+      }
+    });
+  }
 
   // ============================================================
   // SnackBar
   // ============================================================
 
+  // يعرض رسالة سريعة بالنص واللون المحددين
   void _showSnackBar(String message, Color color) {
     if (!mounted) return;
 
@@ -967,12 +960,12 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // BUILD
   // ============================================================
 
-    @override
+  // يبني واجهة العنصر ويعيد شجرة العناصر
+  @override
   Widget build(BuildContext context) {
     // ⭐ فحص صلاحية فتح الصفحة
     if (!PermissionsService().canOpenVacationsPage) {
@@ -1029,11 +1022,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Empty state
   // ============================================================
 
+  // يبني حالة العرض الفارغة
   Widget _buildEmptyState() {
     return Center(
       child: Column(
@@ -1067,11 +1060,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // المحتوى الرئيسي (Dropdown + Tabs)
   // ============================================================
 
+  // يبني محتوى الشاشة الرئيسي
   Widget _buildContent() {
     return Column(
       children: [
@@ -1135,7 +1128,7 @@ return CachePartitions.run(() async {
           ),
         ),
 
-                // ⭐ لو مفيش أي صلاحية داخل الصفحة → رسالة
+        // ⭐ لو مفيش أي صلاحية داخل الصفحة → رسالة
         if (!_hasAnyTab())
           const Expanded(
             child: Center(
@@ -1191,8 +1184,6 @@ return CachePartitions.run(() async {
     );
   }
 
-
-
   // ============================================================
   // Tab 1: الإجازة الأسبوعية
   //
@@ -1200,6 +1191,7 @@ return CachePartitions.run(() async {
   // الـ `HRConstants.weekdayNamesAr` هي مصدر الأسماء
   // ============================================================
 
+  // يبني تبويب الإجازة الأسبوعية
   Widget _buildWeeklyTab() {
     if (_settings == null) {
       return const Center(child: CircularProgressIndicator());
@@ -1287,9 +1279,8 @@ return CachePartitions.run(() async {
                               : AppTheme.textMainFor(context),
                           fontFamily: 'Cairo',
                           fontSize: 13,
-                          fontWeight: isSelected
-                              ? FontWeight.bold
-                              : FontWeight.normal,
+                          fontWeight:
+                              isSelected ? FontWeight.bold : FontWeight.normal,
                         ),
                       ),
                     ),
@@ -1307,12 +1298,11 @@ return CachePartitions.run(() async {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: AppTheme.extraTealFor(context)
-                      .withValues(alpha: 0.1),
+                  color: AppTheme.extraTealFor(context).withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(
-                    color: AppTheme.extraTealFor(context)
-                        .withValues(alpha: 0.3),
+                    color:
+                        AppTheme.extraTealFor(context).withValues(alpha: 0.3),
                   ),
                 ),
                 child: Row(
@@ -1340,8 +1330,7 @@ return CachePartitions.run(() async {
                         color: AppTheme.dangerFor(context),
                         size: 18,
                       ),
-                      onPressed:
-                          _isSaving ? null : () => _saveWeeklyDay(null),
+                      onPressed: _isSaving ? null : () => _saveWeeklyDay(null),
                       tooltip: 'إلغاء',
                     ),
                   ],
@@ -1368,13 +1357,13 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Tab 2: الإجازات الاستثنائية
   //
   // قائمة الإجازات (الموظف ده بس) + زر إضافة
   // ============================================================
 
+  // يبني تبويب الإجازات الاستثنائية
   Widget _buildExceptionalTab() {
     return Column(
       children: [
@@ -1456,11 +1445,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // بطاقة إجازة استثنائية (سطر واحد)
   // ============================================================
 
+  // يبني بطاقة إجازة استثنائية
   Widget _buildExceptionalCard(HRVacationModel v) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -1517,9 +1506,7 @@ return CachePartitions.run(() async {
                 color: AppTheme.dangerFor(context),
                 size: 18,
               ),
-              onPressed: _isSaving
-                  ? null
-                  : () => _deleteExceptionalVacation(v),
+              onPressed: _isSaving ? null : () => _deleteExceptionalVacation(v),
             ),
           ],
         ),
@@ -1527,14 +1514,13 @@ return CachePartitions.run(() async {
     );
   }
 
-
-
   // ============================================================
   // Tab 3: مواعيد العمل
   //
   // يستخدم _WorkScheduleEditor (widget منفصل في الجزء 4)
   // ============================================================
 
+  // يبني تبويب جدول العمل
   Widget _buildWorkScheduleTab() {
     if (_settings == null) {
       return const Center(child: CircularProgressIndicator());
@@ -1547,7 +1533,6 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Tab 4: السلف والمكافآت
   //
@@ -1556,15 +1541,14 @@ return CachePartitions.run(() async {
   // - قائمة التسويات
   // ============================================================
 
+  // يبني تبويب السلف والمكافآت
   Widget _buildLoansBonusesTab() {
     // فلترة المكافآت والسلف
     final bonuses = _adjustments.where((a) => a.type == 'bonus').toList();
     final loans = _adjustments.where((a) => a.type == 'loan').toList();
 
-    final totalBonuses =
-        bonuses.fold<double>(0.0, (sum, a) => sum + a.amount);
-    final totalLoans =
-        loans.fold<double>(0.0, (sum, a) => sum + a.amount);
+    final totalBonuses = bonuses.fold<double>(0.0, (sum, a) => sum + a.amount);
+    final totalLoans = loans.fold<double>(0.0, (sum, a) => sum + a.amount);
 
     return Column(
       children: [
@@ -1575,7 +1559,7 @@ return CachePartitions.run(() async {
           padding: const EdgeInsets.all(15),
           child: Row(
             children: [
-                            Expanded(
+              Expanded(
                 child: _buildMiniStat(
                   'المكافآت',
                   PermissionsService().canViewSalaryAmounts
@@ -1600,11 +1584,10 @@ return CachePartitions.run(() async {
           ),
         ),
 
-                // ============================================
+        // ============================================
         // زر الإضافة (لو عنده صلاحية)
         // ============================================
-        if (PermissionsService().canAddBonus ||
-            PermissionsService().canAddLoan)
+        if (PermissionsService().canAddBonus || PermissionsService().canAddLoan)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 15),
             child: SizedBox(
@@ -1667,11 +1650,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // بطاقة إحصائية صغيرة (مكافآت / سلف)
   // ============================================================
 
+  // يبني مربع إحصائية صغير
   Widget _buildMiniStat(
     String label,
     String value,
@@ -1718,20 +1701,19 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // بطاقة تسوية واحدة (مكافأة أو قسط سلفة)
   // ============================================================
 
+  // يبني بطاقة تسوية
   Widget _buildAdjustmentCard(HRAdjustmentModel adj) {
     // استخدام getters من الـ Model (isBonus)
     final isBonus = adj.isBonus;
     final color = isBonus
         ? AppTheme.successFor(context)
         : AppTheme.warningOrangeSoftFor(context);
-    final icon = isBonus
-        ? Icons.add_circle_rounded
-        : Icons.request_quote_rounded;
+    final icon =
+        isBonus ? Icons.add_circle_rounded : Icons.request_quote_rounded;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -1788,7 +1770,7 @@ return CachePartitions.run(() async {
               ),
             ),
 
-                        // المبلغ (يظهر فقط لو عنده صلاحية)
+            // المبلغ (يظهر فقط لو عنده صلاحية)
             if (PermissionsService().canViewSalaryAmounts)
               Text(
                 '${adj.amount.toStringAsFixed(2)} ج.م',
@@ -1807,8 +1789,7 @@ return CachePartitions.run(() async {
                 color: AppTheme.dangerFor(context),
                 size: 18,
               ),
-              onPressed:
-                  _isSaving ? null : () => _deleteAdjustment(adj),
+              onPressed: _isSaving ? null : () => _deleteAdjustment(adj),
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(),
             ),
@@ -1818,13 +1799,13 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Tab 5: إعدادات التأخير
   //
   // يستخدم _DelayRulesEditor (widget منفصل في الجزء 5)
   // ============================================================
 
+  // يبني تبويب قواعد التأخير
   Widget _buildDelayRulesTab() {
     if (_settings == null) {
       return const Center(child: CircularProgressIndicator());
@@ -1836,7 +1817,9 @@ return CachePartitions.run(() async {
       isSaving: _isSaving,
     );
   }
+
   // ⭐ TabBar children ديناميكي
+  // يبني عناوين التبويبات
   List<Widget> _buildTabBarChildren() {
     final ps = PermissionsService();
     final tabs = <Widget>[];
@@ -1861,6 +1844,7 @@ return CachePartitions.run(() async {
   }
 
   // ⭐ TabBarView children ديناميكي
+  // يبني محتوى التبويبات
   List<Widget> _buildTabBarViewChildren() {
     final ps = PermissionsService();
     final views = <Widget>[];
@@ -1885,6 +1869,7 @@ return CachePartitions.run(() async {
   }
 
   // ⭐ شاشة "لا صلاحية"
+  // يبني شاشة تعذّر الوصول لعدم توفر الصلاحية
   Widget _buildNoPermissionScreen(String permission) {
     return Scaffold(
       extendBodyBehindAppBar: true,
@@ -1939,48 +1924,51 @@ return CachePartitions.run(() async {
   }
 }
 
-
 // ============================================================
 // Dialog 1: إضافة إجازة عامة
 //
 // إجازة لكل الشركة (كل الفروع + كل الموظفين)
 // ============================================================
 
+// نافذة إضافة إجازة عامة
 class _AddGeneralVacationDialog extends StatefulWidget {
   const _AddGeneralVacationDialog();
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<_AddGeneralVacationDialog> createState() =>
       _AddGeneralVacationDialogState();
 }
 
-
+// حالة الويدجت _AddGeneralVacationDialog: تدير بيانات الشاشة وتفاعلاتها
 class _AddGeneralVacationDialogState extends State<_AddGeneralVacationDialog> {
   final _nameCtrl = TextEditingController(text: 'عيد');
   DateTime _date = DateTime.now();
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     _nameCtrl.dispose();
     super.dispose();
   }
 
+  // يفتح نافذة اختيار التاريخ
   Future<void> _pickDate() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      final picked = await showDatePicker(
+        context: context,
+        initialDate: _date,
+        firstDate: DateTime(2020),
+        lastDate: DateTime(2030),
+        helpText: 'اختر التاريخ',
+      );
+      if (picked != null) {
+        setState(() => _date = picked);
+      }
+    });
+  }
 
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _date,
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2030),
-      helpText: 'اختر التاريخ',
-    );
-    if (picked != null) {
-      setState(() => _date = picked);
-    }
-});
-}
-
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
@@ -2159,7 +2147,6 @@ return CachePartitions.run(() async {
   }
 }
 
-
 // ============================================================
 // Widget 2: محرر مواعيد العمل
 //
@@ -2171,6 +2158,7 @@ return CachePartitions.run(() async {
 // الـ Page بتوفر: settings + onSave callback + isSaving
 // ============================================================
 
+// محرر جدول العمل
 class _WorkScheduleEditor extends StatefulWidget {
   final HREmployeeSettingsModel settings;
   final Future<void> Function({
@@ -2187,17 +2175,19 @@ class _WorkScheduleEditor extends StatefulWidget {
     required this.isSaving,
   });
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<_WorkScheduleEditor> createState() => _WorkScheduleEditorState();
 }
 
-
+// حالة الويدجت _WorkScheduleEditor: تدير بيانات الشاشة وتفاعلاتها
 class _WorkScheduleEditorState extends State<_WorkScheduleEditor> {
   late String _checkIn;
   late String _checkOut;
   late bool _flexible;
-  late bool _useFixedMonthDays;   // ⭐ جديد
+  late bool _useFixedMonthDays; // ⭐ جديد
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
@@ -2206,7 +2196,9 @@ class _WorkScheduleEditorState extends State<_WorkScheduleEditor> {
     _flexible = widget.settings.flexibleHours;
     _useFixedMonthDays = widget.settings.useFixedMonthDays;
   }
-    @override
+
+  // يستجيب لتحديث إعدادات العنصر
+  @override
   void didUpdateWidget(_WorkScheduleEditor oldWidget) {
     super.didUpdateWidget(oldWidget);
 
@@ -2220,35 +2212,35 @@ class _WorkScheduleEditorState extends State<_WorkScheduleEditor> {
     }
   }
 
+  // يفتح نافذة اختيار الوقت
   Future<void> _pickTime({required bool isCheckIn}) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      final current = isCheckIn ? _checkIn : _checkOut;
+      final parts = current.split(':');
+      final initH = int.tryParse(parts.isNotEmpty ? parts[0] : '9') ?? 9;
+      final initM = int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0;
 
-    final current = isCheckIn ? _checkIn : _checkOut;
-    final parts = current.split(':');
-    final initH = int.tryParse(parts.isNotEmpty ? parts[0] : '9') ?? 9;
-    final initM = int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0;
+      final picked = await showTimePicker(
+        context: context,
+        initialTime: TimeOfDay(hour: initH, minute: initM),
+        helpText: isCheckIn ? 'وقت الحضور' : 'وقت الانصراف',
+      );
 
-    final picked = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay(hour: initH, minute: initM),
-      helpText: isCheckIn ? 'وقت الحضور' : 'وقت الانصراف',
-    );
+      if (picked != null) {
+        final str = '${picked.hour.toString().padLeft(2, '0')}:'
+            '${picked.minute.toString().padLeft(2, '0')}';
+        setState(() {
+          if (isCheckIn) {
+            _checkIn = str;
+          } else {
+            _checkOut = str;
+          }
+        });
+      }
+    });
+  }
 
-    if (picked != null) {
-      final str =
-          '${picked.hour.toString().padLeft(2, '0')}:'
-          '${picked.minute.toString().padLeft(2, '0')}';
-      setState(() {
-        if (isCheckIn) {
-          _checkIn = str;
-        } else {
-          _checkOut = str;
-        }
-      });
-    }
-});
-}
-
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
@@ -2425,9 +2417,7 @@ return CachePartitions.run(() async {
               child: Row(
                 children: [
                   Icon(
-                    _flexible
-                        ? Icons.timer_rounded
-                        : Icons.timer_off_rounded,
+                    _flexible ? Icons.timer_rounded : Icons.timer_off_rounded,
                     color: _flexible
                         ? AppTheme.warningOrangeSoftFor(context)
                         : AppTheme.textMutedFor(context),
@@ -2465,11 +2455,10 @@ return CachePartitions.run(() async {
                     activeThumbColor: AppTheme.successFor(context),
                     onChanged: (v) => setState(() => _flexible = v),
                   ),
-
                 ],
               ),
             ),
-                        // ⭐ جديد: الشهر ثابت 30 يوم
+            // ⭐ جديد: الشهر ثابت 30 يوم
             const SizedBox(height: 10),
             Container(
               padding: const EdgeInsets.all(12),
@@ -2527,8 +2516,7 @@ return CachePartitions.run(() async {
                   Switch(
                     value: _useFixedMonthDays,
                     activeThumbColor: AppTheme.infoFor(context),
-                    onChanged: (v) =>
-                        setState(() => _useFixedMonthDays = v),
+                    onChanged: (v) => setState(() => _useFixedMonthDays = v),
                   ),
                 ],
               ),
@@ -2542,13 +2530,13 @@ return CachePartitions.run(() async {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                                onPressed: widget.isSaving
+                onPressed: widget.isSaving
                     ? null
                     : () => widget.onSave(
                           checkIn: _checkIn,
                           checkOut: _checkOut,
                           flexible: _flexible,
-                          useFixedMonthDays: _useFixedMonthDays,   // ⭐
+                          useFixedMonthDays: _useFixedMonthDays, // ⭐
                         ),
                 icon: widget.isSaving
                     ? const SizedBox(
@@ -2585,8 +2573,6 @@ return CachePartitions.run(() async {
   }
 }
 
-
-
 // ============================================================
 // Widget 3: محرر إعدادات التأخير
 //
@@ -2598,6 +2584,7 @@ return CachePartitions.run(() async {
 // ⚠️ التسميات بتجي من HRConstants.delayRuleLabels (مش من الـ Model)
 // ============================================================
 
+// محرر قواعد التأخير
 class _DelayRulesEditor extends StatefulWidget {
   final HREmployeeSettingsModel settings;
   final Future<void> Function(Map<String, double>) onSave;
@@ -2609,11 +2596,12 @@ class _DelayRulesEditor extends StatefulWidget {
     required this.isSaving,
   });
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<_DelayRulesEditor> createState() => _DelayRulesEditorState();
 }
 
-
+// حالة الويدجت _DelayRulesEditor: تدير بيانات الشاشة وتفاعلاتها
 class _DelayRulesEditorState extends State<_DelayRulesEditor> {
   late Map<String, double> _rules;
   late Map<String, TextEditingController> _controllers;
@@ -2629,6 +2617,7 @@ class _DelayRulesEditorState extends State<_DelayRulesEditor> {
     'absence_with_permission',
   ];
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
@@ -2640,7 +2629,9 @@ class _DelayRulesEditorState extends State<_DelayRulesEditor> {
         ),
     };
   }
-    @override
+
+  // يستجيب لتحديث إعدادات العنصر
+  @override
   void didUpdateWidget(_DelayRulesEditor oldWidget) {
     super.didUpdateWidget(oldWidget);
 
@@ -2662,6 +2653,7 @@ class _DelayRulesEditorState extends State<_DelayRulesEditor> {
     }
   }
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     for (final c in _controllers.values) {
@@ -2670,6 +2662,7 @@ class _DelayRulesEditorState extends State<_DelayRulesEditor> {
     super.dispose();
   }
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
@@ -2804,11 +2797,11 @@ class _DelayRulesEditorState extends State<_DelayRulesEditor> {
     );
   }
 
-
   // ============================================================
   // صف قاعدة واحدة (label + text field)
   // ============================================================
 
+  // يبني صف قاعدة تأخير
   Widget _buildRuleRow(String key) {
     // ⭐ التسميات من HRConstants (مش من الـ Model)
     final label = HRConstants.delayRuleLabels[key] ?? key;
@@ -2900,11 +2893,11 @@ class _DelayRulesEditorState extends State<_DelayRulesEditor> {
     );
   }
 
-
   // ============================================================
   // حفظ — بياخد القيم من الـ controllers
   // ============================================================
 
+  // يتحقق من البيانات ويحفظها
   void _save() {
     final newRules = <String, double>{};
 
@@ -2917,7 +2910,6 @@ class _DelayRulesEditorState extends State<_DelayRulesEditor> {
   }
 }
 
-
 // ============================================================
 // Dialog 4: إضافة مكافأة أو سلفة
 //
@@ -2927,6 +2919,7 @@ class _DelayRulesEditorState extends State<_DelayRulesEditor> {
 // الـ Page هي اللي بتقسم السلفة على شهور
 // ============================================================
 
+// نافذة إضافة تسوية
 class _AddAdjustmentDialog extends StatefulWidget {
   final String employeeName;
   final String month;
@@ -2936,18 +2929,20 @@ class _AddAdjustmentDialog extends StatefulWidget {
     required this.month,
   });
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<_AddAdjustmentDialog> createState() => _AddAdjustmentDialogState();
 }
 
-
+// حالة الويدجت _AddAdjustmentDialog: تدير بيانات الشاشة وتفاعلاتها
 class _AddAdjustmentDialogState extends State<_AddAdjustmentDialog> {
   final _amountCtrl = TextEditingController();
   final _reasonCtrl = TextEditingController();
   final _installmentsCtrl = TextEditingController(text: '1');
 
-    String _type = 'bonus';
+  String _type = 'bonus';
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
@@ -2962,6 +2957,7 @@ class _AddAdjustmentDialogState extends State<_AddAdjustmentDialog> {
     // لو عنده الاتنين → bonus (default)
   }
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     _amountCtrl.dispose();
@@ -2970,6 +2966,7 @@ class _AddAdjustmentDialogState extends State<_AddAdjustmentDialog> {
     super.dispose();
   }
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     final isLoan = _type == 'loan';
@@ -3085,7 +3082,7 @@ class _AddAdjustmentDialogState extends State<_AddAdjustmentDialog> {
                   borderSide: BorderSide.none,
                 ),
               ),
-                            items: [
+              items: [
                 if (PermissionsService().canAddBonus)
                   const DropdownMenuItem(
                     value: 'bonus',

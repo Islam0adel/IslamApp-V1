@@ -1,5 +1,8 @@
+// frontend/lib/services/permission_catalog.dart
 import 'page_visibility.dart';
+
 // Explicit action catalog, no default grants.
+// يعيد كتالوج صلاحيات فارغًا بكل الفئات والمفاتيح
 Map<String, Map<String, bool>> emptyPermissionCatalog() {
   return {
     'إدارة المستخدمين': {
@@ -173,6 +176,7 @@ Map<String, Map<String, bool>> emptyPermissionCatalog() {
   };
 }
 
+// يعيد الاسم المعروض للصلاحية حسب الفئة والمفتاح
 String permissionDisplayLabel(String category, String key) {
   if (category != 'الموارد البشرية') return key;
   const labels = {

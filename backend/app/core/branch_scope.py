@@ -1,7 +1,9 @@
+# backend/app/core/branch_scope.py
 """Explicit company-local branch scopes, without legacy wildcard defaults."""
 from dataclasses import dataclass
 
 
+# يتحقق من قيمة نطاق الفروع ويرجّعها منظّمة
 def validate_branch_scope(value, *, allow_empty=True):
     if not isinstance(value, list) or (not allow_empty and not value):
         raise ValueError('branch scope must be an explicit list')
@@ -13,10 +15,12 @@ def validate_branch_scope(value, *, allow_empty=True):
         raise ValueError('all-branch scope must use the exact all marker')
 
 
+# خطأ يُرفع لما نطاق الفروع غير صالح
 class InvalidOperatingBranchScope(ValueError):
     pass
 
 
+# يرجّع الفروع التشغيلية النشطة من القيمة المدخلة
 def active_operating_branches(value):
     # The historical explicit string marker remains compatible. Missing/empty
     # scope must never be converted into company-wide operating authority.
@@ -29,16 +33,19 @@ def active_operating_branches(value):
     return list(value)
 
 
+# نتيجة فحص تغيير فروع المستخدم (مسموح/مرفوض وسبب الرفض)
 @dataclass(frozen=True)
 class BranchAssignmentCheck:
     outside_company: frozenset[str]
     outside_delegation: frozenset[str]
 
+    # خاصية بترجّع هل تغيير الفروع مسموح
     @property
     def allowed(self):
         return not self.outside_company and not self.outside_delegation
 
 
+# يقارن الفروع السابقة بالمقترحة ويقرر هل التغيير مسموح للمنفذ
 def check_branch_assignment(*, previous_branches, proposed_branches,
                             delegable_branches, company_branches,
                             check_delegation=True):

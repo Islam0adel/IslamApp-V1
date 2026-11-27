@@ -1,5 +1,5 @@
+// frontend/lib/pages/hr/employees/employees_list_page.dart
 import '../../../services/cache_partitions.dart';
-// lib/pages/hr/employees/employees_list_page.dart
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -12,7 +12,7 @@ import '../../../models/employee_model.dart';
 import 'employee_form_page.dart';
 import 'employee_profile_page.dart';
 
-
+// صفحة قائمة الموظفين
 /// صفحة قائمة الموظفين
 ///
 /// الميزات:
@@ -24,18 +24,18 @@ import 'employee_profile_page.dart';
 class EmployeesListPage extends StatefulWidget {
   const EmployeesListPage({super.key});
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<EmployeesListPage> createState() => _EmployeesListPageState();
 }
 
-
+// حالة الويدجت EmployeesListPage: تدير بيانات الشاشة وتفاعلاتها
 class _EmployeesListPageState extends State<EmployeesListPage> {
   // ============================================================
   // Services
   // ============================================================
 
   final EmployeeService _employeeService = EmployeeService();
-
 
   // ============================================================
   // State
@@ -49,90 +49,90 @@ class _EmployeesListPageState extends State<EmployeesListPage> {
 
   // Filters
   String _searchQuery = '';
-  String? _selectedBranch;  // null = all
-  String? _selectedStatus;  // null = all
+  String? _selectedBranch; // null = all
+  String? _selectedStatus; // null = all
   String _sortBy = 'code';
 
   List<Map<String, String>> _branches = [];
 
   final TextEditingController _searchController = TextEditingController();
 
-
   // ============================================================
   // Lifecycle
   // ============================================================
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
     _loadData();
   }
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
   }
 
-
   // ============================================================
   // Load data
   // ============================================================
 
+  // يحمّل بيانات الشاشة
   Future<void> _loadData({bool forceRefresh = false}) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      setState(() => _isLoading = true);
 
-    setState(() => _isLoading = true);
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        _companyCode = prefs.getString('company_code') ?? '';
 
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      _companyCode = prefs.getString('company_code') ?? '';
-
-      if (_companyCode.isEmpty) {
-        if (mounted) setState(() => _isLoading = false);
-        return;
-      }
-
-      // تحميل الفروع (للفلترة)
-      _loadBranches();
-
-      // تحميل الموظفين
-      final all = await _employeeService.getEmployeesList(
-        companyCode: _companyCode,
-        forceRefresh: forceRefresh,
-      );
-
-      // فلترة حسب الصلاحيات
-      _allEmployees = all
-          .where((e) =>
-              PermissionsService().canViewEmployee(e.code, e.branchCode))
-          .toList();
-
-      _applyFilters();
-
-      if (mounted) {
-        setState(() => _isLoading = false);
-        if (forceRefresh) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text(
-                'تم التحديث من السيرفر ✅',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontFamily: 'Cairo'),
-              ),
-              backgroundColor: AppTheme.successStrongFor(context),
-            ),
-          );
+        if (_companyCode.isEmpty) {
+          if (mounted) setState(() => _isLoading = false);
+          return;
         }
+
+        // تحميل الفروع (للفلترة)
+        _loadBranches();
+
+        // تحميل الموظفين
+        final all = await _employeeService.getEmployeesList(
+          companyCode: _companyCode,
+          forceRefresh: forceRefresh,
+        );
+
+        // فلترة حسب الصلاحيات
+        _allEmployees = all
+            .where((e) =>
+                PermissionsService().canViewEmployee(e.code, e.branchCode))
+            .toList();
+
+        _applyFilters();
+
+        if (mounted) {
+          setState(() => _isLoading = false);
+          if (forceRefresh) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: const Text(
+                  'تم التحديث من السيرفر ✅',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontFamily: 'Cairo'),
+                ),
+                backgroundColor: AppTheme.successStrongFor(context),
+              ),
+            );
+          }
+        }
+      } catch (e) {
+        print("❌ خطأ في تحميل الموظفين: $e");
+        if (mounted) setState(() => _isLoading = false);
       }
-    } catch (e) {
-      print("❌ خطأ في تحميل الموظفين: $e");
-      if (mounted) setState(() => _isLoading = false);
-    }
-});
-}
+    });
+  }
 
-
+  // يحمّل قائمة الفروع من التخزين المحلي
   void _loadBranches() {
     final box = CachePartitions.box('coding_box');
     final key = '${_companyCode}_branches';
@@ -150,11 +150,11 @@ return CachePartitions.run(() async {
     }
   }
 
-
   // ============================================================
   // Filters
   // ============================================================
 
+  // يطبق البحث والمرشحات على القائمة
   void _applyFilters() {
     var filtered = List<EmployeeModel>.from(_allEmployees);
 
@@ -178,8 +178,7 @@ return CachePartitions.run(() async {
 
     // Status filter
     if (_selectedStatus != null) {
-      filtered =
-          filtered.where((e) => e.status == _selectedStatus).toList();
+      filtered = filtered.where((e) => e.status == _selectedStatus).toList();
     }
 
     // Sort
@@ -205,13 +204,13 @@ return CachePartitions.run(() async {
     setState(() => _filteredEmployees = filtered);
   }
 
-
+  // يستجيب لتغيّر نص البحث
   void _onSearchChanged(String value) {
     _searchQuery = value;
     _applyFilters();
   }
 
-
+  // يمسح كل المرشحات
   void _clearFilters() {
     setState(() {
       _searchController.clear();
@@ -223,155 +222,152 @@ return CachePartitions.run(() async {
     _applyFilters();
   }
 
-
   // ============================================================
   // Actions
   // ============================================================
 
+  // يفتح نموذج إضافة أو تعديل موظف
   Future<void> _openForm({EmployeeModel? employee}) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (!PermissionsService().canManageEmployees) {
+        _showSnackBar(
+          "ليس لديك صلاحية إدارة الموظفين",
+          AppTheme.dangerFor(context),
+        );
+        return;
+      }
 
-    if (!PermissionsService().canManageEmployees) {
-      _showSnackBar(
-        "ليس لديك صلاحية إدارة الموظفين",
-        AppTheme.dangerFor(context),
-      );
-      return;
-    }
-
-    final result = await Navigator.push<bool>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => EmployeeFormPage(
-          companyCode: _companyCode,
-          employee: employee,
+      final result = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => EmployeeFormPage(
+            companyCode: _companyCode,
+            employee: employee,
+          ),
         ),
-      ),
-    );
+      );
 
-    if (result == true) {
-      _loadData();
-    }
-});
-}
+      if (result == true) {
+        _loadData();
+      }
+    });
+  }
 
-
+  // يفتح الملف الشخصي للموظف
   Future<void> _openProfile(EmployeeModel employee) async {
-return CachePartitions.run(() async {
-
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => EmployeeProfilePage(
-          companyCode: _companyCode,
-          employeeCode: employee.code,
+    return CachePartitions.run(() async {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => EmployeeProfilePage(
+            companyCode: _companyCode,
+            employeeCode: employee.code,
+          ),
         ),
-      ),
-    );
-
-    // reload بعد الرجوع (ممكن يكون فيه تعديلات)
-    _loadData();
-});
-}
-
-
-  Future<void> _confirmDelete(EmployeeModel employee) async {
-return CachePartitions.run(() async {
-
-    if (!PermissionsService().canManageEmployees) {
-      _showSnackBar(
-        "ليس لديك صلاحية حذف الموظفين",
-        AppTheme.dangerFor(context),
       );
-      return;
-    }
 
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.dialogBackground(context),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(15),
-        ),
-        title: Row(
-          children: [
-            Icon(
-              Icons.warning_amber_rounded,
-              color: AppTheme.dangerFor(context),
-              size: 24,
+      // reload بعد الرجوع (ممكن يكون فيه تعديلات)
+      _loadData();
+    });
+  }
+
+  // يطلب تأكيد حذف الموظف ويحذفه
+  Future<void> _confirmDelete(EmployeeModel employee) async {
+    return CachePartitions.run(() async {
+      if (!PermissionsService().canManageEmployees) {
+        _showSnackBar(
+          "ليس لديك صلاحية حذف الموظفين",
+          AppTheme.dangerFor(context),
+        );
+        return;
+      }
+
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppTheme.dialogBackground(context),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(15),
+          ),
+          title: Row(
+            children: [
+              Icon(
+                Icons.warning_amber_rounded,
+                color: AppTheme.dangerFor(context),
+                size: 24,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'حذف الموظف',
+                style: TextStyle(
+                  color: AppTheme.textMainFor(context),
+                  fontFamily: 'Cairo',
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          content: Text(
+            'سيتم حذف "${employee.name}" (${employee.code}).\n\n'
+            'ملاحظة: السجل يبقى محفوظ في قاعدة البيانات (soft delete) '
+            'لكن لن يظهر في القوائم.',
+            style: TextStyle(
+              color: AppTheme.textMutedFor(context),
+              fontFamily: 'Cairo',
+              height: 1.5,
             ),
-            const SizedBox(width: 8),
-            Text(
-              'حذف الموظف',
-              style: TextStyle(
-                color: AppTheme.textMainFor(context),
-                fontFamily: 'Cairo',
-                fontWeight: FontWeight.bold,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(
+                'إلغاء',
+                style: TextStyle(
+                  color: AppTheme.textMutedFor(context),
+                  fontFamily: 'Cairo',
+                ),
+              ),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(
+                'حذف',
+                style: TextStyle(
+                  color: AppTheme.dangerFor(context),
+                  fontFamily: 'Cairo',
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
           ],
         ),
-        content: Text(
-          'سيتم حذف "${employee.name}" (${employee.code}).\n\n'
-          'ملاحظة: السجل يبقى محفوظ في قاعدة البيانات (soft delete) '
-          'لكن لن يظهر في القوائم.',
-          style: TextStyle(
-            color: AppTheme.textMutedFor(context),
-            fontFamily: 'Cairo',
-            height: 1.5,
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(
-              'إلغاء',
-              style: TextStyle(
-                color: AppTheme.textMutedFor(context),
-                fontFamily: 'Cairo',
-              ),
-            ),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(
-              'حذف',
-              style: TextStyle(
-                color: AppTheme.dangerFor(context),
-                fontFamily: 'Cairo',
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true) return;
-
-    final ok = await _employeeService.deleteEmployee(
-      companyCode: _companyCode,
-      code: employee.code,
-    );
-
-    if (!mounted) return;
-
-    if (ok) {
-      _showSnackBar(
-        "تم حذف ${employee.name}",
-        AppTheme.successStrongFor(context),
       );
-      _loadData();
-    } else {
-      _showSnackBar(
-        "فشل الحذف، تحقق من الاتصال",
-        AppTheme.dangerStrongFor(context),
+
+      if (confirmed != true) return;
+
+      final ok = await _employeeService.deleteEmployee(
+        companyCode: _companyCode,
+        code: employee.code,
       );
-    }
-});
-}
 
+      if (!mounted) return;
 
+      if (ok) {
+        _showSnackBar(
+          "تم حذف ${employee.name}",
+          AppTheme.successStrongFor(context),
+        );
+        _loadData();
+      } else {
+        _showSnackBar(
+          "فشل الحذف، تحقق من الاتصال",
+          AppTheme.dangerStrongFor(context),
+        );
+      }
+    });
+  }
+
+  // يعرض رسالة سريعة بالنص واللون المحددين
   void _showSnackBar(String message, Color color) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -386,12 +382,12 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Build
   // ============================================================
 
-     @override
+  // يبني واجهة العنصر ويعيد شجرة العناصر
+  @override
   Widget build(BuildContext context) {
     // ⭐ فحص الصلاحية (canViewEmployees أو canViewOwnHRData)
     final ps = PermissionsService();
@@ -458,7 +454,7 @@ return CachePartitions.run(() async {
     );
   }
 
-
+  // يبني محتوى الشاشة الرئيسي
   Widget _buildContent() {
     return Column(
       children: [
@@ -499,11 +495,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Search bar
   // ============================================================
 
+  // يبني شريط البحث
   Widget _buildSearchBar() {
     return GlassCard(
       padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -546,11 +542,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Filters row
   // ============================================================
 
+  // يبني صف المرشحات
   Widget _buildFiltersRow() {
     return Wrap(
       spacing: 8,
@@ -565,8 +561,7 @@ return CachePartitions.run(() async {
           items: [
             const DropdownMenuItem<String?>(
               value: null,
-              child: Text('كل الفروع',
-                  style: TextStyle(fontFamily: 'Cairo')),
+              child: Text('كل الفروع', style: TextStyle(fontFamily: 'Cairo')),
             ),
             ..._branches.map((b) => DropdownMenuItem<String?>(
                   value: b['code'],
@@ -590,8 +585,7 @@ return CachePartitions.run(() async {
           items: const [
             DropdownMenuItem<String?>(
               value: null,
-              child: Text('كل الحالات',
-                  style: TextStyle(fontFamily: 'Cairo')),
+              child: Text('كل الحالات', style: TextStyle(fontFamily: 'Cairo')),
             ),
             DropdownMenuItem<String?>(
               value: 'active',
@@ -635,8 +629,8 @@ return CachePartitions.run(() async {
             ),
             DropdownMenuItem<String>(
               value: 'hire_date',
-              child: Text('تاريخ التعيين',
-                  style: TextStyle(fontFamily: 'Cairo')),
+              child:
+                  Text('تاريخ التعيين', style: TextStyle(fontFamily: 'Cairo')),
             ),
           ],
           onChanged: (v) {
@@ -652,8 +646,7 @@ return CachePartitions.run(() async {
             onTap: _clearFilters,
             borderRadius: BorderRadius.circular(20),
             child: Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
                 color: AppTheme.dangerFor(context).withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(20),
@@ -687,7 +680,7 @@ return CachePartitions.run(() async {
     );
   }
 
-
+  // يبني شريحة قائمة منسدلة للتصفية
   Widget _buildDropdownChip<T>({
     required IconData icon,
     required String label,
@@ -723,8 +716,7 @@ return CachePartitions.run(() async {
               .map((_) => Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(icon,
-                          size: 14, color: AppTheme.accentFor(context)),
+                      Icon(icon, size: 14, color: AppTheme.accentFor(context)),
                       const SizedBox(width: 4),
                       Text(
                         label,
@@ -742,16 +734,15 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Stats bar
   // ============================================================
 
+  // يبني شريط الإحصائيات
   Widget _buildStatsBar() {
     final total = _allEmployees.length;
     final showing = _filteredEmployees.length;
-    final active =
-        _filteredEmployees.where((e) => e.status == 'active').length;
+    final active = _filteredEmployees.where((e) => e.status == 'active').length;
 
     return Row(
       children: [
@@ -762,9 +753,7 @@ return CachePartitions.run(() async {
         ),
         const SizedBox(width: 6),
         Text(
-          showing == total
-              ? 'إجمالي: $total موظف'
-              : 'عرض $showing من $total',
+          showing == total ? 'إجمالي: $total موظف' : 'عرض $showing من $total',
           style: TextStyle(
             color: AppTheme.textMutedFor(context),
             fontFamily: 'Cairo',
@@ -793,11 +782,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Employee card
   // ============================================================
 
+  // يبني بطاقة موظف
   Widget _buildEmployeeCard(EmployeeModel employee) {
     final canManage = PermissionsService().canManageEmployees;
 
@@ -954,7 +943,7 @@ return CachePartitions.run(() async {
     );
   }
 
-
+  // يبني شريحة معلومات بأيقونة ونص
   Widget _buildInfoChip(IconData icon, String text, Color color) {
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -973,7 +962,7 @@ return CachePartitions.run(() async {
     );
   }
 
-
+  // يبني شارة الحالة
   Widget _buildStatusBadge(String status) {
     final color = _statusColor(status);
     final label = _statusLabel(status);
@@ -997,7 +986,7 @@ return CachePartitions.run(() async {
     );
   }
 
-
+  // يبني زر إجراء بأيقونة
   Widget _buildActionButton({
     required IconData icon,
     required String label,
@@ -1034,12 +1023,12 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Empty state
   // ============================================================
 
-    Widget _buildEmptyState() {
+  // يبني حالة العرض الفارغة
+  Widget _buildEmptyState() {
     final hasFilter = _searchQuery.isNotEmpty ||
         _selectedBranch != null ||
         _selectedStatus != null;
@@ -1055,8 +1044,7 @@ return CachePartitions.run(() async {
       emptySubtitle = 'جرّب تعديل البحث أو مسح الفلاتر';
     } else if (onlySelfMode) {
       emptyTitle = 'لم يتم ربط حسابك بموظف';
-      emptySubtitle =
-          'اطلب من المسؤول ربط حسابك (user_email) بملفك الوظيفي';
+      emptySubtitle = 'اطلب من المسؤول ربط حسابك (user_email) بملفك الوظيفي';
     } else if (ps.canManageEmployees) {
       emptyTitle = 'لا يوجد موظفون مسجلون';
       emptySubtitle = 'اضغط زر الإضافة لبدء تسجيل موظفين';
@@ -1122,11 +1110,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // No permission screen
   // ============================================================
 
+  // يبني شاشة تعذّر الوصول لعدم توفر الصلاحية
   Widget _buildNoPermissionScreen() {
     return Scaffold(
       extendBodyBehindAppBar: true,
@@ -1180,11 +1168,11 @@ return CachePartitions.run(() async {
     );
   }
 
-
   // ============================================================
   // Helpers
   // ============================================================
 
+  // يعيد اسم الفرع من الكود
   String _branchName(String? code) {
     if (code == null || code.isEmpty) return 'بدون فرع';
     for (final b in _branches) {
@@ -1193,7 +1181,7 @@ return CachePartitions.run(() async {
     return code;
   }
 
-
+  // يعيد اسم الحالة بالعربية
   String _statusLabel(String status) {
     switch (status) {
       case 'active':
@@ -1209,7 +1197,7 @@ return CachePartitions.run(() async {
     }
   }
 
-
+  // يعيد لون الحالة
   Color _statusColor(String status) {
     switch (status) {
       case 'active':
@@ -1225,7 +1213,7 @@ return CachePartitions.run(() async {
     }
   }
 
-
+  // يعيد وصف طريقة الفرز
   String _sortLabel(String sort) {
     switch (sort) {
       case 'name':

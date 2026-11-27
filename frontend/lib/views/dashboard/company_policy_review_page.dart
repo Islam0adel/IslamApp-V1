@@ -1,3 +1,4 @@
+// frontend/lib/views/dashboard/company_policy_review_page.dart
 import '../../services/cache_partitions.dart';
 import '../../services/permission_bulk_edit.dart';
 import '../widgets/permission_bulk_actions.dart';
@@ -13,15 +14,19 @@ import '../../services/read_authorization_snapshot.dart';
 import '../widgets/permission_action_switch.dart';
 import 'company_users_page.dart';
 
+// صفحة مراجعة سياسة الشركة
 class CompanyPolicyReviewPage extends StatefulWidget {
   const CompanyPolicyReviewPage(
       {super.key, required this.companyCode, required this.companyName});
   final String companyCode, companyName;
+
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<CompanyPolicyReviewPage> createState() =>
       _CompanyPolicyReviewPageState();
 }
 
+// حالة الويدجت CompanyPolicyReviewPage: تدير بيانات الشاشة وتفاعلاتها
 class _CompanyPolicyReviewPageState extends State<CompanyPolicyReviewPage> {
   Map<String, dynamic>? _review;
   Map<String, dynamic> _configuration = {
@@ -31,13 +36,19 @@ class _CompanyPolicyReviewPageState extends State<CompanyPolicyReviewPage> {
   ReadAuthorizationSnapshot? _scope;
   bool _busy = false, _dirty = false;
   String? _error;
+
+  // يعيد عنوان واجهة السياسة
   String get _base =>
       '${ApiConstants.baseUrl}/auth/companies/${Uri.encodeComponent(widget.companyCode)}/permission-policy';
+
+  // يحدد هل الشاشة جاهزة للتعديل
   bool get _ready =>
       !_busy &&
       _review != null &&
       (_scope?.isCurrent ?? false) &&
       PermissionsService().isSuperAdmin;
+
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
@@ -46,6 +57,7 @@ class _CompanyPolicyReviewPageState extends State<CompanyPolicyReviewPage> {
     _load();
   }
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     ReadAuthorizationEpoch.changes.removeListener(_authorityChanged);
@@ -53,6 +65,7 @@ class _CompanyPolicyReviewPageState extends State<CompanyPolicyReviewPage> {
     super.dispose();
   }
 
+  // يستجيب لتغيّر الصلاحيات
   void _authorityChanged() {
     if (!mounted ||
         (_scope?.isCurrent == true && PermissionsService().isSuperAdmin))
@@ -67,83 +80,86 @@ class _CompanyPolicyReviewPageState extends State<CompanyPolicyReviewPage> {
     });
   }
 
+  // يحوّل القيمة إلى خريطة
   Map<String, dynamic> _object(dynamic value) =>
       Map<String, dynamic>.from(value as Map);
+
+  // يفك استجابة الخادم
   Future<Map<String, dynamic>> _decode(dynamic response) async {
-return CachePartitions.run(() async {
-
-    final value = jsonDecode(response.body);
-    if (response.statusCode != 200)
-      throw value is Map
-          ? value['detail'] ?? 'تعذر حفظ المراجعة'
-          : 'تعذر حفظ المراجعة';
-    if (value is! Map) throw const FormatException('Invalid review response');
-    return _object(value);
-});
-}
-
-  Future<bool> _discardChanges() async {
-return CachePartitions.run(() async {
-
-    if (!_dirty) return true;
-    final discard = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-                title: const Text('تعديلات غير محفوظة'),
-                content: const Text(
-                    'سيتم تجاهل تعديلات المسودة غير المحفوظة. هل تريد المتابعة؟'),
-                actions: [
-                  TextButton(
-                      onPressed: () => Navigator.pop(context, false),
-                      child: const Text('البقاء في المراجعة')),
-                  FilledButton(
-                      onPressed: () => Navigator.pop(context, true),
-                      child: const Text('تجاهل التعديلات'))
-                ]));
-    return discard == true && mounted;
-});
-}
-
-  Future<void> _load() async {
-return CachePartitions.run(() async {
-
-    if (_busy) return;
-    setState(() {
-      _busy = true;
-      _error = null;
+    return CachePartitions.run(() async {
+      final value = jsonDecode(response.body);
+      if (response.statusCode != 200)
+        throw value is Map
+            ? value['detail'] ?? 'تعذر حفظ المراجعة'
+            : 'تعذر حفظ المراجعة';
+      if (value is! Map) throw const FormatException('Invalid review response');
+      return _object(value);
     });
-    try {
-      if (!PermissionsService().isSuperAdmin)
-        throw StateError('هذه المراجعة خاصة بصاحب البرنامج');
-      final scope = await ReadAuthorizationSnapshot.capture();
-      final value =
-          await _decode(await AuthHttp.get(Uri.parse('$_base/review')));
-      scope.check();
-      if (!mounted) return;
-      final configuration = value['draft'] ??
-          value['active'] ??
-          {
-            'company_permissions': <String, dynamic>{},
-            'admin_profiles': <String, dynamic>{}
-          };
-      setState(() {
-        _scope = scope;
-        _review = value;
-        _configuration = _object(jsonDecode(jsonEncode(configuration)));
-        _dirty = false;
-      });
-    } catch (error) {
-      if (mounted)
-        setState(() {
-          _review = null;
-          _error = error.toString();
-        });
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-});
-}
+  }
 
+  // يسأل عن تجاهل التغييرات
+  Future<bool> _discardChanges() async {
+    return CachePartitions.run(() async {
+      if (!_dirty) return true;
+      final discard = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+                  title: const Text('تعديلات غير محفوظة'),
+                  content: const Text(
+                      'سيتم تجاهل تعديلات المسودة غير المحفوظة. هل تريد المتابعة؟'),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text('البقاء في المراجعة')),
+                    FilledButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        child: const Text('تجاهل التعديلات'))
+                  ]));
+      return discard == true && mounted;
+    });
+  }
+
+  // يحمّل بيانات الشاشة
+  Future<void> _load() async {
+    return CachePartitions.run(() async {
+      if (_busy) return;
+      setState(() {
+        _busy = true;
+        _error = null;
+      });
+      try {
+        if (!PermissionsService().isSuperAdmin)
+          throw StateError('هذه المراجعة خاصة بصاحب البرنامج');
+        final scope = await ReadAuthorizationSnapshot.capture();
+        final value =
+            await _decode(await AuthHttp.get(Uri.parse('$_base/review')));
+        scope.check();
+        if (!mounted) return;
+        final configuration = value['draft'] ??
+            value['active'] ??
+            {
+              'company_permissions': <String, dynamic>{},
+              'admin_profiles': <String, dynamic>{}
+            };
+        setState(() {
+          _scope = scope;
+          _review = value;
+          _configuration = _object(jsonDecode(jsonEncode(configuration)));
+          _dirty = false;
+        });
+      } catch (error) {
+        if (mounted)
+          setState(() {
+            _review = null;
+            _error = error.toString();
+          });
+      } finally {
+        if (mounted) setState(() => _busy = false);
+      }
+    });
+  }
+
+  // يبني مقارنة بين نسختي السياسة
   Widget _policyComparison(String title, dynamic value) {
     final map = _object(value);
     final admins = _object(map['admin_profiles']);
@@ -159,122 +175,128 @@ return CachePartitions.run(() async {
     ]);
   }
 
+  // يتحقق من البيانات ويحفظها
   Future<void> _save() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (!_ready) return;
+      int? reconciled;
+      if (_review!['draft_requires_reconciliation'] == true) {
+        final yes = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+                    title:
+                        const Text('راجع اختلاف المسودة عن الصلاحيات الحالية'),
+                    content: SingleChildScrollView(
+                        child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                          const Text(
+                              'تغيرت صلاحيات استخدام مدير بعد حفظ هذه المسودة. حفظها ثم تفعيلها قد يستبدل التغييرات الحالية. قارن القيم وعدل المسودة عند الحاجة. لم نغير اختياراتك تلقائياً.'),
+                          _policyComparison('استخدام المديرين المفعل حالياً',
+                              _review!['active']),
+                          const Divider(),
+                          _policyComparison(
+                              'استخدام المديرين في المسودة المراد حفظها',
+                              _configuration),
+                        ])),
+                    actions: [
+                      TextButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          child: const Text('رجوع لتعديل المسودة')),
+                      FilledButton(
+                          onPressed: () => Navigator.pop(context, true),
+                          child: const Text(
+                              'راجعت الاختلافات وأوافق على حفظ اختيارات المسودة'))
+                    ]));
+        if (yes != true || !mounted || !_ready) return;
+        reconciled = _review!['active_revision'];
+      }
+      final scope = _scope!;
+      setState(() {
+        _busy = true;
+        _error = null;
+      });
+      try {
+        scope.check();
+        await _decode(await AuthHttp.put(Uri.parse('$_base/draft'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'expected_revision': _review!['revision'],
+              if (reconciled != null) 'reconciled_active_revision': reconciled,
+              'configuration': _configuration
+            })));
+        scope.check();
+        if (!mounted) return;
+        setState(() {
+          _busy = false;
+        });
+        await _load();
+      } catch (error) {
+        if (mounted)
+          setState(() => _error =
+              'لم يتأكد حفظ المسودة. أعد تحميل المراجعة قبل إعادة الحفظ: $error');
+      } finally {
+        if (mounted) setState(() => _busy = false);
+      }
+    });
+  }
 
-    if (!_ready) return;
-    int? reconciled;
-    if (_review!['draft_requires_reconciliation'] == true) {
+  // يفعّل السياسة
+  Future<void> _activate() async {
+    return CachePartitions.run(() async {
+      if (!_ready || _dirty || _review!['draft'] == null) return;
+      final original = _scope!;
       final yes = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
-                  title: const Text('راجع اختلاف المسودة عن الصلاحيات الحالية'),
-                  content: SingleChildScrollView(
-                      child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                        const Text(
-                            'تغيرت صلاحيات استخدام مدير بعد حفظ هذه المسودة. حفظها ثم تفعيلها قد يستبدل التغييرات الحالية. قارن القيم وعدل المسودة عند الحاجة. لم نغير اختياراتك تلقائياً.'),
-                        _policyComparison('استخدام المديرين المفعل حالياً',
-                            _review!['active']),
-                        const Divider(),
-                        _policyComparison(
-                            'استخدام المديرين في المسودة المراد حفظها',
-                            _configuration),
-                      ])),
+                  title: const Text('تفعيل السياسة المراجعة'),
+                  content: const Text(
+                      'سيطبق سقف الشركة ونطاق كل مدير معاً. تنتهي صلاحيات المدير المفتوحة القديمة، وأي صلاحية غير محددة لن تصبح مسموحة. هل راجعت الحسابات والفروع وصلاحيات الاستخدام والتفويض؟'),
                   actions: [
                     TextButton(
                         onPressed: () => Navigator.pop(context, false),
-                        child: const Text('رجوع لتعديل المسودة')),
+                        child: const Text('رجوع للمراجعة')),
                     FilledButton(
                         onPressed: () => Navigator.pop(context, true),
-                        child: const Text(
-                            'راجعت الاختلافات وأوافق على حفظ اختيارات المسودة'))
+                        child: const Text('راجعت وأوافق على التفعيل'))
                   ]));
-      if (yes != true || !mounted || !_ready) return;
-      reconciled = _review!['active_revision'];
-    }
-    final scope = _scope!;
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      scope.check();
-      await _decode(await AuthHttp.put(Uri.parse('$_base/draft'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'expected_revision': _review!['revision'],
-            if (reconciled != null) 'reconciled_active_revision': reconciled,
-            'configuration': _configuration
-          })));
-      scope.check();
-      if (!mounted) return;
+      if (yes != true || !mounted || !original.isCurrent || !_ready) return;
       setState(() {
-        _busy = false;
+        _busy = true;
+        _error = null;
       });
-      await _load();
-    } catch (error) {
-      if (mounted)
-        setState(() => _error =
-            'لم يتأكد حفظ المسودة. أعد تحميل المراجعة قبل إعادة الحفظ: $error');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-});
-}
-
-  Future<void> _activate() async {
-return CachePartitions.run(() async {
-
-    if (!_ready || _dirty || _review!['draft'] == null) return;
-    final original = _scope!;
-    final yes = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-                title: const Text('تفعيل السياسة المراجعة'),
-                content: const Text(
-                    'سيطبق سقف الشركة ونطاق كل مدير معاً. تنتهي صلاحيات المدير المفتوحة القديمة، وأي صلاحية غير محددة لن تصبح مسموحة. هل راجعت الحسابات والفروع وصلاحيات الاستخدام والتفويض؟'),
-                actions: [
-                  TextButton(
-                      onPressed: () => Navigator.pop(context, false),
-                      child: const Text('رجوع للمراجعة')),
-                  FilledButton(
-                      onPressed: () => Navigator.pop(context, true),
-                      child: const Text('راجعت وأوافق على التفعيل'))
-                ]));
-    if (yes != true || !mounted || !original.isCurrent || !_ready) return;
-    setState(() {
-      _busy = true;
-      _error = null;
+      try {
+        await _decode(await AuthHttp.post(Uri.parse('$_base/activate'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'expected_revision': _review!['revision'],
+              'source_review_token': _review!['source_review_token'],
+              'confirmed_review': true
+            })));
+        if (!mounted) return;
+        setState(() {
+          _busy = false;
+        });
+        await _load();
+      } catch (error) {
+        if (mounted)
+          setState(() => _error =
+              'لم يتأكد التفعيل. أعد تحميل المراجعة للتحقق قبل تكراره: $error');
+      } finally {
+        if (mounted) setState(() => _busy = false);
+      }
     });
-    try {
-      await _decode(await AuthHttp.post(Uri.parse('$_base/activate'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'expected_revision': _review!['revision'],
-            'source_review_token': _review!['source_review_token'],
-            'confirmed_review': true
-          })));
-      if (!mounted) return;
-      setState(() {
-        _busy = false;
-      });
-      await _load();
-    } catch (error) {
-      if (mounted)
-        setState(() => _error =
-            'لم يتأكد التفعيل. أعد تحميل المراجعة للتحقق قبل تكراره: $error');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-});
-}
+  }
 
+  // يعيد سقف صلاحيات الشركة
   Map<String, dynamic> get _ceiling =>
       _object(_configuration['company_permissions']);
+
+  // يعيد ملفات المديرين
   Map<String, dynamic> get _admins => _object(_configuration['admin_profiles']);
+
+  // يسجّل تغييرًا في الإعدادات
   void _change(void Function() update) {
     if (!_ready) return;
     setState(() {
@@ -283,6 +305,7 @@ return CachePartitions.run(() async {
     });
   }
 
+  // يبني محرر الصلاحيات
   Widget _mapEditor(String title, Map<String, dynamic> values,
       void Function(Map<String, dynamic>) update,
       {bool bounded = false}) {
@@ -369,6 +392,7 @@ return CachePartitions.run(() async {
     ]);
   }
 
+  // يبني بطاقة المدير
   Widget _admin(Map<String, dynamic> account) {
     final uid = account['uid']?.toString() ?? '';
     final profiles = _admins;
@@ -455,19 +479,19 @@ return CachePartitions.run(() async {
     ]));
   }
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) => PopScope(
       canPop: !_dirty && !_busy,
       onPopInvokedWithResult: (didPop, result) async {
-return CachePartitions.run(() async {
-
-        if (didPop || _busy) return;
-        if (await _discardChanges()) {
-          setState(() => _dirty = false);
-          if (context.mounted) Navigator.pop(context);
-        }
-});
-},
+        return CachePartitions.run(() async {
+          if (didPop || _busy) return;
+          if (await _discardChanges()) {
+            setState(() => _dirty = false);
+            if (context.mounted) Navigator.pop(context);
+          }
+        });
+      },
       child: Scaffold(
           appBar: AppBar(
               title: Text('مراجعة صلاحيات ${widget.companyName}'),
@@ -477,12 +501,10 @@ return CachePartitions.run(() async {
                     onPressed: _busy
                         ? null
                         : () async {
-return CachePartitions.run(() async {
-
-                            if (await _discardChanges()) await _load();
-
-});
-},
+                            return CachePartitions.run(() async {
+                              if (await _discardChanges()) await _load();
+                            });
+                          },
                     icon: const Icon(Icons.refresh))
               ]),
           body: Directionality(
@@ -544,21 +566,20 @@ return CachePartitions.run(() async {
                             onPressed: !_ready
                                 ? null
                                 : () async {
-return CachePartitions.run(() async {
-
-                                    if (!await _discardChanges()) return;
-                                    if (!mounted) return;
-                                    await Navigator.push(
-                                        context,
-                                        MaterialPageRoute(
-                                            builder: (_) => CompanyUsersPage(
-                                                companyCode: widget.companyCode,
-                                                companyName:
-                                                    widget.companyName)));
-                                    if (mounted) await _load();
-
-});
-}),
+                                    return CachePartitions.run(() async {
+                                      if (!await _discardChanges()) return;
+                                      if (!mounted) return;
+                                      await Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                              builder: (_) => CompanyUsersPage(
+                                                  companyCode:
+                                                      widget.companyCode,
+                                                  companyName:
+                                                      widget.companyName)));
+                                      if (mounted) await _load();
+                                    });
+                                  }),
                         _mapEditor(
                             'سقف صلاحيات الشركة',
                             _ceiling,

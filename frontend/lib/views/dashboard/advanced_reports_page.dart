@@ -1,3 +1,4 @@
+// frontend/lib/views/dashboard/advanced_reports_page.dart
 import '../../services/cache_partitions.dart';
 import 'dart:async';
 import '../../services/treasury_transfer_service.dart';
@@ -11,6 +12,7 @@ import '../../services/permissions_service.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../services/stock_balance_service.dart';
 
+// صفحة التقارير التحليلية المتقدمة
 class AdvancedReportsPage extends StatefulWidget {
   final String companyCode;
   final String? selectedBranchCode;
@@ -27,10 +29,12 @@ class AdvancedReportsPage extends StatefulWidget {
     required this.toDate,
   });
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<AdvancedReportsPage> createState() => _AdvancedReportsPageState();
 }
 
+// حالة الويدجت AdvancedReportsPage: تدير بيانات الشاشة وتفاعلاتها
 class _AdvancedReportsPageState extends State<AdvancedReportsPage> {
   static const _titles = <int, String>{
     1: 'بيان التدفق النقدي',
@@ -59,41 +63,46 @@ class _AdvancedReportsPageState extends State<AdvancedReportsPage> {
   late DateTime _fromDate;
   late DateTime _toDate;
 
+  // يعيد عنوان التقرير المحدد
   String get _title => _titles[widget.reportId] ?? 'تقرير تحليلي';
 
   // ============================================================
   // دوال مساعدة للحصول على اسم الشركة والفرع
   // ============================================================
 
+  // يعيد اسم الشركة من الكود
   Future<String> _getCompanyName() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final name = prefs.getString('company_name');
+        if (name != null && name.isNotEmpty) return name;
+      } catch (_) {}
+      final Box codingBox = CachePartitions.box('coding_box');
+      final companyData = codingBox.get("${widget.companyCode}_company");
+      if (companyData is Map) {
+        final name = companyData['name']?.toString() ??
+            companyData['company_name']?.toString() ??
+            companyData['companyName']?.toString();
+        if (name != null && name.isNotEmpty) return name;
+      }
+      final directName =
+          codingBox.get("${widget.companyCode}_name")?.toString() ??
+              codingBox.get("${widget.companyCode}_companyName")?.toString();
+      if (directName != null && directName.isNotEmpty) return directName;
+      return widget.companyCode;
+    });
+  }
 
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final name = prefs.getString('company_name');
-      if (name != null && name.isNotEmpty) return name;
-    } catch (_) {}
-    final Box codingBox = CachePartitions.box('coding_box');
-    final companyData = codingBox.get("${widget.companyCode}_company");
-    if (companyData is Map) {
-      final name = companyData['name']?.toString() ??
-          companyData['company_name']?.toString() ??
-          companyData['companyName']?.toString();
-      if (name != null && name.isNotEmpty) return name;
-    }
-    final directName = codingBox.get("${widget.companyCode}_name")?.toString() ??
-        codingBox.get("${widget.companyCode}_companyName")?.toString();
-    if (directName != null && directName.isNotEmpty) return directName;
-    return widget.companyCode;
-});
-}
-
+  // يعيد اسم الفرع من الكود
   String _getBranchName(String? code) {
     if (code == null || code == 'all' || code.isEmpty) return 'كل الفروع';
     final Box codingBox = CachePartitions.box('coding_box');
-    final rawData = codingBox.get("${widget.companyCode}_branches", defaultValue: []);
+    final rawData =
+        codingBox.get("${widget.companyCode}_branches", defaultValue: []);
     for (var item in rawData) {
-      if (item['code']?.toString() == code) return item['name']?.toString() ?? code;
+      if (item['code']?.toString() == code)
+        return item['name']?.toString() ?? code;
     }
     return code;
   }
@@ -102,25 +111,31 @@ return CachePartitions.run(() async {
   // تنسيق الأرقام
   // ============================================================
 
+  // ينسّق الرقم للعرض
   String _formatNumber(num value) {
-  return NumberFormat('#,##0.00', 'en_US').format(value.toDouble());
-}
+    return NumberFormat('#,##0.00', 'en_US').format(value.toDouble());
+  }
 
-String _formatPercent(num value) {
-  return '${NumberFormat('#,##0.00', 'en_US').format(value.toDouble())}%';
-}
+// ينسّق النسبة المئوية للعرض
+  String _formatPercent(num value) {
+    return '${NumberFormat('#,##0.00', 'en_US').format(value.toDouble())}%';
+  }
 
   // ============================================================
   // دوال جلب البيانات (نفسها ولكن تستخدم _fromDate, _toDate)
   // ============================================================
 
+  // يحدد هل الفرع ضمن الفرع المحدد
   bool _branchOk(dynamic value) {
     final b = widget.selectedBranchCode;
     return b == null || b.isEmpty || b == 'all' || value?.toString() == b;
   }
 
-  double _num(dynamic v) => v is num ? v.toDouble() : double.tryParse(v?.toString() ?? '0') ?? 0;
+  // يحوّل القيمة إلى رقم بأمان
+  double _num(dynamic v) =>
+      v is num ? v.toDouble() : double.tryParse(v?.toString() ?? '0') ?? 0;
 
+  // يعيد حركات اليومية المحلية
   List<Map<String, dynamic>> _transactions({DateTime? before}) {
     final box = CachePartitions.box('daily_transactions_box');
     final from = DateTime(_fromDate.year, _fromDate.month, _fromDate.day);
@@ -131,7 +146,8 @@ String _formatPercent(num value) {
       if (raw['company_code']?.toString() != widget.companyCode) continue;
       if (raw['category'] == 'transfer_hidden') continue;
       if (!_branchOk(raw['branch_code'])) continue;
-      final date = DateTime.tryParse(raw['date']?.toString().substring(0, 10) ?? '');
+      final date =
+          DateTime.tryParse(raw['date']?.toString().substring(0, 10) ?? '');
       if (date == null) continue;
       if (before != null) {
         if (!date.isBefore(before)) continue;
@@ -143,6 +159,7 @@ String _formatPercent(num value) {
     return result;
   }
 
+  // يعيد مشتريات الموردين المحلية
   List<Map<String, dynamic>> _purchases() {
     final box = CachePartitions.box('supplier_box');
     final from = DateTime(_fromDate.year, _fromDate.month, _fromDate.day);
@@ -152,7 +169,8 @@ String _formatPercent(num value) {
       if (rawList is! List) continue;
       for (final raw in rawList) {
         if (raw is! Map || raw['is_deleted'] == true) continue;
-        if (raw['company_code']?.toString() != widget.companyCode || !_branchOk(raw['branch_code'])) continue;
+        if (raw['company_code']?.toString() != widget.companyCode ||
+            !_branchOk(raw['branch_code'])) continue;
         final d = DateTime.tryParse(raw['date']?.toString() ?? '');
         if (d == null || d.isBefore(from) || d.isAfter(to)) continue;
         result.add(Map<String, dynamic>.from(raw));
@@ -161,6 +179,7 @@ String _formatPercent(num value) {
     return result;
   }
 
+  // يعيد أصناف المخزون المحلية
   List<Map<String, dynamic>> _inventoryItems() {
     final box = CachePartitions.box('inventory_box');
     final latest = <String, Map<String, dynamic>>{};
@@ -169,7 +188,8 @@ String _formatPercent(num value) {
       if (rawList is! List) continue;
       for (final raw in rawList) {
         if (raw is! Map || raw['is_deleted'] == true) continue;
-        if (raw['company_code']?.toString() != widget.companyCode || !_branchOk(raw['branch_code'])) continue;
+        if (raw['company_code']?.toString() != widget.companyCode ||
+            !_branchOk(raw['branch_code'])) continue;
         final d = DateTime.tryParse(raw['date']?.toString() ?? '');
         if (d == null || d.isAfter(_toDate)) continue;
         if (latestDate == null || d.isAfter(latestDate)) {
@@ -178,13 +198,17 @@ String _formatPercent(num value) {
           final items = raw['items'];
           if (items is List) {
             for (final item in items) {
-              if (item is Map) latest[item['code']?.toString() ?? ''] = Map<String, dynamic>.from(item);
+              if (item is Map)
+                latest[item['code']?.toString() ?? ''] =
+                    Map<String, dynamic>.from(item);
             }
           }
         }
       }
     }
-    return latest.values.where((e) => e['code']?.toString().isNotEmpty == true).toList();
+    return latest.values
+        .where((e) => e['code']?.toString().isNotEmpty == true)
+        .toList();
   }
 
   // ============================================================
@@ -193,111 +217,114 @@ String _formatPercent(num value) {
 // (نفس منطق صفحة البالانس - يأخذ في الاعتبار الجرد + المشتريات
 //  + المرتجعات + الأسعار التاريخية)
 // ============================================================
-Future<double> _inventoryValueAt(DateTime date) async {
-return CachePartitions.run(() async {
+// يحسب قيمة المخزون في تاريخ محدد
+  Future<double> _inventoryValueAt(DateTime date) async {
+    return CachePartitions.run(() async {
+      final codingBox = CachePartitions.box('coding_box');
 
-  final codingBox = CachePartitions.box('coding_box');
-
-  // 1) جلب كل المخازن
-  final rawStores = codingBox.get(
-    '${widget.companyCode}_stores',
-    defaultValue: [],
-  );
-  final List<String> stores = [];
-  if (rawStores is List) {
-    for (final s in rawStores.whereType<Map>()) {
-      final code = s['code']?.toString() ?? '';
-      if (code.isNotEmpty) stores.add(code);
-    }
-  }
-
-  // 2) جلب الفروع المطلوبة
-  final List<String> branches = [];
-  final selectedBranch = widget.selectedBranchCode;
-  if (selectedBranch != null &&
-      selectedBranch != 'all' &&
-      selectedBranch != '') {
-    branches.add(selectedBranch);
-  } else {
-    final rawBranches = codingBox.get(
-      '${widget.companyCode}_branches',
-      defaultValue: [],
-    );
-    if (rawBranches is List) {
-      for (final b in rawBranches.whereType<Map>()) {
-        final code = b['code']?.toString() ?? '';
-        if (code.isNotEmpty) branches.add(code);
-      }
-    }
-  }
-
-  // 3) جمع الإجمالي من كل فرع × كل مخزن
-  double total = 0.0;
-  for (final branchCode in branches) {
-    for (final storeCode in stores) {
-      final value = await StockBalanceService.calculateTotalWholesale(
-        companyCode: widget.companyCode,
-        branchCode: branchCode,
-        storeCode: storeCode,
-        toDate: date,
+      // 1) جلب كل المخازن
+      final rawStores = codingBox.get(
+        '${widget.companyCode}_stores',
+        defaultValue: [],
       );
-      total += value;
-    }
+      final List<String> stores = [];
+      if (rawStores is List) {
+        for (final s in rawStores.whereType<Map>()) {
+          final code = s['code']?.toString() ?? '';
+          if (code.isNotEmpty) stores.add(code);
+        }
+      }
+
+      // 2) جلب الفروع المطلوبة
+      final List<String> branches = [];
+      final selectedBranch = widget.selectedBranchCode;
+      if (selectedBranch != null &&
+          selectedBranch != 'all' &&
+          selectedBranch != '') {
+        branches.add(selectedBranch);
+      } else {
+        final rawBranches = codingBox.get(
+          '${widget.companyCode}_branches',
+          defaultValue: [],
+        );
+        if (rawBranches is List) {
+          for (final b in rawBranches.whereType<Map>()) {
+            final code = b['code']?.toString() ?? '';
+            if (code.isNotEmpty) branches.add(code);
+          }
+        }
+      }
+
+      // 3) جمع الإجمالي من كل فرع × كل مخزن
+      double total = 0.0;
+      for (final branchCode in branches) {
+        for (final storeCode in stores) {
+          final value = await StockBalanceService.calculateTotalWholesale(
+            companyCode: widget.companyCode,
+            branchCode: branchCode,
+            storeCode: storeCode,
+            toDate: date,
+          );
+          total += value;
+        }
+      }
+
+      return total;
+    });
   }
-
-  return total;
-
-});
-}
 
 // ============================================================
 // حساب إجمالي أرصدة الموردين في تاريخ محدد
 // ============================================================
-Future<double> _supplierBalanceAt(DateTime date) async {
-return CachePartitions.run(() async {
+// يحسب رصيد الموردين في تاريخ محدد
+  Future<double> _supplierBalanceAt(DateTime date) async {
+    return CachePartitions.run(() async {
+      double total = 0.0;
+      final purchases = CachePartitions.box('supplier_box');
+      final settlements = CachePartitions.box('supplier_settlement_box');
 
-  double total = 0.0;
-  final purchases = CachePartitions.box('supplier_box');
-  final settlements = CachePartitions.box('supplier_settlement_box');
+      // المشتريات
+      for (final rawList in purchases.values) {
+        if (rawList is! List) continue;
+        for (final raw in rawList.whereType<Map>()) {
+          if (raw['is_deleted'] == true) continue;
+          if (raw['company_code']?.toString() != widget.companyCode) continue;
+          if (!_branchOk(raw['branch_code'])) continue;
+          final d = DateTime.tryParse(raw['date']?.toString() ?? '');
+          if (d == null || d.isAfter(date)) continue;
+          total += _num(raw['total_amount']);
+        }
+      }
 
-  // المشتريات
-  for (final rawList in purchases.values) {
-    if (rawList is! List) continue;
-    for (final raw in rawList.whereType<Map>()) {
-      if (raw['is_deleted'] == true) continue;
-      if (raw['company_code']?.toString() != widget.companyCode) continue;
-      if (!_branchOk(raw['branch_code'])) continue;
-      final d = DateTime.tryParse(raw['date']?.toString() ?? '');
-      if (d == null || d.isAfter(date)) continue;
-      total += _num(raw['total_amount']);
-    }
+      // التسويات
+      for (final rawList in settlements.values) {
+        if (rawList is! List) continue;
+        for (final raw in rawList.whereType<Map>()) {
+          if (raw['is_deleted'] == true) continue;
+          if (raw['company_code']?.toString() != widget.companyCode) continue;
+          if (!_branchOk(raw['branch_code'])) continue;
+          final d = DateTime.tryParse(raw['date']?.toString() ?? '');
+          if (d == null || d.isAfter(date)) continue;
+          total -= _num(raw['amount']);
+        }
+      }
+
+      return total;
+    });
   }
 
-  // التسويات
-  for (final rawList in settlements.values) {
-    if (rawList is! List) continue;
-    for (final raw in rawList.whereType<Map>()) {
-      if (raw['is_deleted'] == true) continue;
-      if (raw['company_code']?.toString() != widget.companyCode) continue;
-      if (!_branchOk(raw['branch_code'])) continue;
-      final d = DateTime.tryParse(raw['date']?.toString() ?? '');
-      if (d == null || d.isAfter(date)) continue;
-      total -= _num(raw['amount']);
-    }
-  }
-
-  return total;
-
-});
-}
-
+  // يعيد أصناف الترميز المحلية
   List<Map<String, dynamic>> _codingItems() {
     final box = CachePartitions.box('coding_box');
     final raw = box.get('${widget.companyCode}_items', defaultValue: []);
     if (raw is! List) return [];
-    return raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+    return raw
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
   }
 
+  // يعيد صفوف الموردين المحلية
   List<Map<String, dynamic>> _supplierRows() {
     final box = CachePartitions.box('supplier_box');
     final sums = <String, double>{};
@@ -305,7 +332,8 @@ return CachePartitions.run(() async {
       if (rawList is! List) continue;
       for (final raw in rawList) {
         if (raw is! Map || raw['is_deleted'] == true) continue;
-        if (raw['company_code']?.toString() != widget.companyCode || !_branchOk(raw['branch_code'])) continue;
+        if (raw['company_code']?.toString() != widget.companyCode ||
+            !_branchOk(raw['branch_code'])) continue;
         final d = DateTime.tryParse(raw['date']?.toString() ?? '');
         if (d == null || d.isAfter(_toDate)) continue;
         final name = raw['supplier_name']?.toString() ?? 'غير محدد';
@@ -317,7 +345,8 @@ return CachePartitions.run(() async {
       if (rawList is! List) continue;
       for (final raw in rawList) {
         if (raw is! Map || raw['is_deleted'] == true) continue;
-        if (raw['company_code']?.toString() != widget.companyCode || !_branchOk(raw['branch_code'])) continue;
+        if (raw['company_code']?.toString() != widget.companyCode ||
+            !_branchOk(raw['branch_code'])) continue;
         final d = DateTime.tryParse(raw['date']?.toString() ?? '');
         if (d == null || d.isAfter(_toDate)) continue;
         final name = raw['supplier_name']?.toString() ?? 'غير محدد';
@@ -341,428 +370,515 @@ return CachePartitions.run(() async {
   // كان سيُنتج أصفاراً توحي بأرقام حقيقية خاطئة.
   static const Set<int> _costDerivedReportIds = {6, 8, 9, 10, 12, 15};
 
+  // يبني بيانات التقرير المحدد
   Future<void> _buildReport() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (_costDerivedReportIds.contains(widget.reportId) &&
+          !PermissionsService().canViewCostPrices) {
+        setState(() {
+          _rows = [];
+          _summary = {
+            'غير متاح':
+                'هذا التقرير يعتمد على بيانات التكلفة ولا يظهر لصلاحيتك',
+          };
+          _loading = false;
+        });
+        return;
+      }
+      final tx = _transactions();
+      final rows = <Map<String, dynamic>>[];
+      Map<String, dynamic> summary = {};
 
-    if (_costDerivedReportIds.contains(widget.reportId) &&
-        !PermissionsService().canViewCostPrices) {
-      setState(() {
-        _rows = [];
-        _summary = {
-          'غير متاح':
-              'هذا التقرير يعتمد على بيانات التكلفة ولا يظهر لصلاحيتك',
-        };
-        _loading = false;
-      });
-      return;
-    }
-    final tx = _transactions();
-    final rows = <Map<String, dynamic>>[];
-    Map<String, dynamic> summary = {};
-
-    switch (widget.reportId) {
-      case 1:
-        final byDay = <String, double>{};
-        for (final t in tx) {
-          final d = t['date'].toString().substring(0, 10);
-          final sign = t['type'] == 'وارد' ? 1 : -1;
-          byDay[d] = (byDay[d] ?? 0) + sign * _num(t['amount']);
-        }
-        rows.addAll(byDay.entries.map<Map<String, dynamic>>((e) => {'التاريخ': e.key, 'صافي التدفق': e.value}).toList()..sort((a, b) => a['التاريخ'].toString().compareTo(b['التاريخ'].toString())));
-        summary = {
-          'صافي التدفق': rows.fold<double>(0.0, (s, r) => s + _num(r['صافي التدفق'])),
-          'متوسط التدفق اليومي': rows.isEmpty ? 0 : rows.fold<double>(0.0, (s, r) => s + _num(r['صافي التدفق'])) / rows.length,
-        };
-        break;
-
-            case 2:
-        final cats = <String, double>{};
-        for (final t in tx.where((e) => e['type'] == 'صادر')) {
-          final c = t['category']?.toString() ?? 'عام';
-          cats[c] = (cats[c] ?? 0) + _num(t['amount']);
-        }
-
-        // ✅ إجمالي كل المصروفات (شامل بضاعة وأرباح) لحساب النسب في الجدول
-        final totalAllExpenses = cats.values.fold<double>(0.0, (s, v) => s + v);
-
-        // ✅ إجمالي المصروفات بدون بضاعة وأرباح
-        final totalExpensesWithoutGoodsAndProfit = cats.entries
-            .where((e) =>
-                e.key != 'بضاعة' &&
-                e.key != 'أرباح' &&
-                e.key != 'ارباح')
-            .fold<double>(0.0, (s, e) => s + e.value);
-
-        // ✅ إجمالي النسبة = مجموع نسب الفئات المتبقية (بدون بضاعة وأرباح)
-        final totalPercentWithoutGoodsAndProfit = totalAllExpenses == 0
-            ? 0.0
-            : (totalExpensesWithoutGoodsAndProfit / totalAllExpenses) * 100;
-
-        // ✅ ترتيب الأعمدة: الفئة -> النسبة -> المبلغ
-        rows.addAll(cats.entries.map<Map<String, dynamic>>((e) => {
-              'الفئة': e.key,
-              'النسبة': totalAllExpenses == 0
-                  ? 0.0
-                  : (e.value / totalAllExpenses) * 100,
-              'المبلغ': e.value,
-            }).toList()
-          ..sort((a, b) => _num(b['المبلغ']).compareTo(_num(a['المبلغ']))));
-
-        summary = {
-          'إجمالي المصروفات': totalExpensesWithoutGoodsAndProfit,
-          'إجمالي النسبة': totalPercentWithoutGoodsAndProfit,
-        };
-        break;
-
-      case 3:
-        final branches = <String, double>{};
-        for (final t in tx) {
-          final b = t['branch_code']?.toString() ?? 'غير محدد';
-          final sign = t['type'] == 'وارد' ? 1 : -1;
-          branches[b] = (branches[b] ?? 0) + sign * _num(t['amount']);
-        }
-        rows.addAll(branches.entries.map<Map<String, dynamic>>((e) => {'الفرع': e.key, 'صافي الربح/الخسارة': e.value}));
-        summary = {'إجمالي صافي الفروع': branches.values.fold(0.0, (s, v) => s + v)};
-        break;
-
-      case 4:
-        final byDay = <String, double>{};
-        final counts = <String, int>{};
-        for (final t in tx.where((e) => e['type'] == 'وارد')) {
-          final d = t['date'].toString().substring(0, 10);
-          byDay[d] = (byDay[d] ?? 0) + _num(t['amount']);
-          counts[d] = (counts[d] ?? 0) + 1;
-        }
-        rows.addAll(byDay.keys.map((d) => {
-              'التاريخ': d,
-              'عدد الأذون': counts[d] ?? 0,
-              'إجمالي المبيعات': byDay[d] ?? 0,
-              'متوسط الإذن': (byDay[d] ?? 0) / ((counts[d] ?? 1)),
-            }));
-        summary = {
-          'متوسط قيمة الإذن': rows.isEmpty ? 0 : rows.fold<double>(0.0, (s, r) => s + _num(r['متوسط الإذن'])) / rows.length,
-        };
-        break;
-
-      case 5:
-        final safes = <String, double>{};
-        for (final t in tx) {
-          final s = t['treasury']?.toString() ?? 'غير محدد';
-          safes[s] = (safes[s] ?? 0) + (t['type'] == 'وارد' ? 1 : -1) * _num(t['amount']);
-        }
-        final effects = TreasuryTransferService().balanceEffects(widget.companyCode,
-            branchCode: widget.selectedBranchCode, fromDate: _fromDate, toDate: _toDate);
-        for (final entry in effects.entries) {
-          safes[entry.key] = (safes[entry.key] ?? 0) + entry.value;
-        }
-        rows.addAll(safes.entries.map<Map<String, dynamic>>((e) => {'الخزينة': e.key, 'الرصيد': e.value}));
-        summary = {'إجمالي أرصدة الخزائن': safes.values.fold(0.0, (s, v) => s + v)};
-        break;
-
-      case 6:
-        final items = _inventoryItems();
-        final coding = _codingItems();
-        final names = {for (final i in coding) i['code']?.toString() ?? '': i['name']?.toString() ?? ''};
-        final purchases = _purchases();
-        final moved = <String, DateTime>{};
-        for (final p in purchases) {
-          final d = DateTime.tryParse(p['date']?.toString() ?? '');
-          final its = p['items'];
-          if (d != null && its is List) for (final x in its.whereType<Map>()) {
-            final c = x['code']?.toString() ?? '';
-            if (c.isNotEmpty && (moved[c] == null || d.isAfter(moved[c]!))) moved[c] = d;
+      switch (widget.reportId) {
+        case 1:
+          final byDay = <String, double>{};
+          for (final t in tx) {
+            final d = t['date'].toString().substring(0, 10);
+            final sign = t['type'] == 'وارد' ? 1 : -1;
+            byDay[d] = (byDay[d] ?? 0) + sign * _num(t['amount']);
           }
-        }
-        for (final i in items) {
-          final c = i['code']?.toString() ?? '';
-          final d = moved[c];
-          if (d == null || _toDate.difference(d).inDays >= 90) {
-            rows.add({
-              'الكود': c,
-              'الصنف': names[c] ?? i['name'] ?? 'غير معروف',
-              'آخر حركة': d == null ? 'لا توجد' : DateFormat('yyyy-MM-dd').format(d),
-              'الكمية': _num(i['quantity']),
-              'قيمة الجملة': _num(i['quantity']) * _num(i['wholesalePrice'] ?? i['wholesale_price']),
-            });
-          }
-        }
-        summary = {'قيمة المخزون البطيء': rows.fold<double>(0.0, (s, r) => s + _num(r['قيمة الجملة']))};
-        break;
+          rows.addAll(byDay.entries
+              .map<Map<String, dynamic>>(
+                  (e) => {'التاريخ': e.key, 'صافي التدفق': e.value})
+              .toList()
+            ..sort((a, b) =>
+                a['التاريخ'].toString().compareTo(b['التاريخ'].toString())));
+          summary = {
+            'صافي التدفق':
+                rows.fold<double>(0.0, (s, r) => s + _num(r['صافي التدفق'])),
+            'متوسط التدفق اليومي': rows.isEmpty
+                ? 0
+                : rows.fold<double>(0.0, (s, r) => s + _num(r['صافي التدفق'])) /
+                    rows.length,
+          };
+          break;
 
-      case 7:
-        rows.add({'الحالة': 'تحتاج بيانات المبيعات التفصيلية للأصناف لحساب النظري مقابل الفعلي بدقة', 'البيانات المتاحة': 'آخر جرد فعلي محفوظ موجود ويمكن عرضه من شاشة رصيد المخزون'});
-        summary = {'الحالة': 'غير مكتمل بدون حركات بيع مرتبطة بكود الصنف'};
-        break;
-
-      case 8:
-        final items = _inventoryItems();
-        final total = items.fold(0.0, (s, i) => s + _num(i['quantity']) * _num(i['wholesalePrice'] ?? i['wholesale_price']));
-        var cumulative = 0.0;
-        items.sort((a, b) => (_num(b['quantity']) * _num(b['wholesalePrice'] ?? b['wholesale_price'])).compareTo(_num(a['quantity']) * _num(a['wholesalePrice'] ?? a['wholesale_price'])));
-        for (final i in items) {
-          final value = _num(i['quantity']) * _num(i['wholesalePrice'] ?? i['wholesale_price']);
-          cumulative += value;
-          rows.add({
-            'الكود': i['code'],
-            'الصنف': i['name'],
-            'الكمية': _num(i['quantity']),
-            'قيمة الجملة': value,
-            'النسبة التراكمية': total == 0 ? 0 : cumulative / total * 100,
-            'ABC': total == 0 ? 'C' : cumulative / total <= .80 ? 'A' : cumulative / total <= .95 ? 'B' : 'C',
-          });
-        }
-        summary = {'إجمالي قيمة المخزون بالجملة': total};
-        break;
-
-      case 9:
-        rows.addAll(_supplierRows().map((e) => {'المورد': e['المورد'], 'حجم التعامل/الرصيد': e['الرصيد'], 'التقييم': 'يُستكمل تلقائياً مع إضافة بيانات مواعيد التسليم والخصومات'}));
-        summary = {'عدد الموردين': rows.length};
-        break;
-
-      case 10:
-        final p = _purchases();
-        double discounts = 0, gross = 0;
-        for (final x in p) {
-          gross += _num(x['total_amount']);
-          final its = x['items'];
-          if (its is List) for (final i in its.whereType<Map>()) discounts += _num(i['discountAmount']);
-        }
-        rows.add({'إجمالي المشتريات': gross, 'إجمالي الخصومات المسجلة': discounts, 'التكلفة بعد الخصم': gross - discounts});
-        summary = {'أثر الخصم': gross == 0 ? 0 : discounts / gross * 100};
-        break;
-
-      case 11:
-        final months = <int, double>{};
-        for (final t in tx.where((e) => e['type'] == 'وارد')) {
-          final d = DateTime.tryParse(t['date']?.toString() ?? '');
-          if (d != null) months[d.month] = (months[d.month] ?? 0) + _num(t['amount']);
-        }
-        for (final e in months.entries) rows.add({'الشهر': e.key, 'المبيعات': e.value});
-        summary = {'أفضل شهر': rows.isEmpty ? 'لا يوجد' : rows.reduce((a, b) => _num(a['المبيعات']) > _num(b['المبيعات']) ? a : b)['الشهر']};
-        break;
-
-      case 12:
-        final p = _purchases();
-        final byCode = <String, double>{};
-        for (final x in p) {
-          final its = x['items'];
-          if (its is List) for (final i in its.whereType<Map>()) {
-            final c = i['code']?.toString() ?? '';
-            byCode[c] = (byCode[c] ?? 0) + _num(i['total']);
-          }
-        }
-        final coding = _codingItems();
-        for (final i in coding) {
-          final c = i['code']?.toString() ?? '';
-          final cost = _num(i['wholesale_price'] ?? i['wholesalePrice']);
-          final sell = _num(i['selling_price'] ?? i['sellingPrice']);
-          if (c.isNotEmpty && sell > 0) {
-            rows.add({
-              'الكود': c,
-              'الصنف': i['name'],
-              'سعر الجملة': cost,
-              'سعر البيع': sell,
-              'الهامش المستهدف': (sell - cost) / sell * 100,
-              'حجم الشراء': byCode[c] ?? 0,
-            });
-          }
-        }
-        summary = {'عدد الأصناف': rows.length};
-        break;
-
-      case 13:
-        rows.add({'الحالة': 'تحليل التجميع يحتاج حركات مبيعات تحتوي على أصناف كل إذن.', 'المتاح': 'يمكن تشغيل التحليل تلقائياً بعد ربط أصناف المبيعات بكود الصنف.'});
-        summary = {'الحالة': 'بانتظار بيانات Basket تفصيلية'};
-        break;
-
-      // ========== التقرير الجديد: تحليل المصروفات بالنسبة للمبيعات ==========
-            // ========== التقرير الجديد: تحليل المصروفات بالنسبة للمبيعات ==========
-      case 14:
-        final cats = <String, double>{};
-        double totalIncome = 0.0;
-
-        for (final t in tx) {
-          if (t['type'] == 'وارد') {
-            totalIncome += _num(t['amount']);
-          } else if (t['type'] == 'صادر') {
+        case 2:
+          final cats = <String, double>{};
+          for (final t in tx.where((e) => e['type'] == 'صادر')) {
             final c = t['category']?.toString() ?? 'عام';
             cats[c] = (cats[c] ?? 0) + _num(t['amount']);
           }
-        }
 
-        final denominator = totalIncome == 0 ? 1.0 : totalIncome;
+          // ✅ إجمالي كل المصروفات (شامل بضاعة وأرباح) لحساب النسب في الجدول
+          final totalAllExpenses =
+              cats.values.fold<double>(0.0, (s, v) => s + v);
 
-        // ✅ إجمالي المصروفات بدون بضاعة وأرباح
-        final totalExpensesWithoutGoodsAndProfit = cats.entries
-            .where((e) =>
-                e.key != 'بضاعة' &&
-                e.key != 'أرباح' &&
-                e.key != 'ارباح')
-            .fold<double>(0.0, (s, e) => s + e.value);
+          // ✅ إجمالي المصروفات بدون بضاعة وأرباح
+          final totalExpensesWithoutGoodsAndProfit = cats.entries
+              .where((e) =>
+                  e.key != 'بضاعة' && e.key != 'أرباح' && e.key != 'ارباح')
+              .fold<double>(0.0, (s, e) => s + e.value);
 
-        // ✅ ترتيب الأعمدة: الفئة -> النسبة من المبيعات -> المبلغ
-        rows.addAll(cats.entries.map<Map<String, dynamic>>((e) => {
-              'الفئة': e.key,
-              'النسبة من المبيعات': (e.value / denominator) * 100,
-              'المبلغ': e.value,
-            }).toList()
-          ..sort((a, b) => _num(b['المبلغ']).compareTo(_num(a['المبلغ']))));
+          // ✅ إجمالي النسبة = مجموع نسب الفئات المتبقية (بدون بضاعة وأرباح)
+          final totalPercentWithoutGoodsAndProfit = totalAllExpenses == 0
+              ? 0.0
+              : (totalExpensesWithoutGoodsAndProfit / totalAllExpenses) * 100;
 
-        summary = {
-          'إجمالي المبيعات': totalIncome,
-          'إجمالي المصروفات': totalExpensesWithoutGoodsAndProfit,
-          'نسبة المصروفات للمبيعات': totalIncome == 0
-              ? 0
-              : (totalExpensesWithoutGoodsAndProfit / totalIncome) * 100,
-        };
-        break;
+          // ✅ ترتيب الأعمدة: الفئة -> النسبة -> المبلغ
+          rows.addAll(cats.entries
+              .map<Map<String, dynamic>>((e) => {
+                    'الفئة': e.key,
+                    'النسبة': totalAllExpenses == 0
+                        ? 0.0
+                        : (e.value / totalAllExpenses) * 100,
+                    'المبلغ': e.value,
+                  })
+              .toList()
+            ..sort((a, b) => _num(b['المبلغ']).compareTo(_num(a['المبلغ']))));
 
-            // ========== التقرير الجديد: صافي ربح الفترة ==========
-            // ========== التقرير الجديد: صافي ربح الفترة ==========
-      case 15:
-        final from = DateTime(_fromDate.year, _fromDate.month, _fromDate.day);
-        final to = DateTime(_toDate.year, _toDate.month, _toDate.day);
+          summary = {
+            'إجمالي المصروفات': totalExpensesWithoutGoodsAndProfit,
+            'إجمالي النسبة': totalPercentWithoutGoodsAndProfit,
+          };
+          break;
 
-        // =========================================================
-        // 1) حساب مبيعات وأرباح الفترة
-        // =========================================================
-        double totalSales = 0.0;    // إجمالي المبيعات
-        double totalProfits = 0.0;  // الأرباح الموزّعة (تصنيف أرباح)
-        double periodIncome = 0.0;
-        double periodExpenses = 0.0;
+        case 3:
+          final branches = <String, double>{};
+          for (final t in tx) {
+            final b = t['branch_code']?.toString() ?? 'غير محدد';
+            final sign = t['type'] == 'وارد' ? 1 : -1;
+            branches[b] = (branches[b] ?? 0) + sign * _num(t['amount']);
+          }
+          rows.addAll(branches.entries.map<Map<String, dynamic>>(
+              (e) => {'الفرع': e.key, 'صافي الربح/الخسارة': e.value}));
+          summary = {
+            'إجمالي صافي الفروع': branches.values.fold(0.0, (s, v) => s + v)
+          };
+          break;
 
-        for (final t in tx) {
-          final amt = _num(t['amount']);
-          if (t['type'] == 'وارد') {
-            totalSales += amt;
-            periodIncome += amt;
-          } else if (t['type'] == 'صادر') {
-            periodExpenses += amt;
-            final c = t['category']?.toString() ?? '';
-            if (c == 'أرباح' || c == 'ارباح') {
-              totalProfits += amt;
+        case 4:
+          final byDay = <String, double>{};
+          final counts = <String, int>{};
+          for (final t in tx.where((e) => e['type'] == 'وارد')) {
+            final d = t['date'].toString().substring(0, 10);
+            byDay[d] = (byDay[d] ?? 0) + _num(t['amount']);
+            counts[d] = (counts[d] ?? 0) + 1;
+          }
+          rows.addAll(byDay.keys.map((d) => {
+                'التاريخ': d,
+                'عدد الأذون': counts[d] ?? 0,
+                'إجمالي المبيعات': byDay[d] ?? 0,
+                'متوسط الإذن': (byDay[d] ?? 0) / ((counts[d] ?? 1)),
+              }));
+          summary = {
+            'متوسط قيمة الإذن': rows.isEmpty
+                ? 0
+                : rows.fold<double>(0.0, (s, r) => s + _num(r['متوسط الإذن'])) /
+                    rows.length,
+          };
+          break;
+
+        case 5:
+          final safes = <String, double>{};
+          for (final t in tx) {
+            final s = t['treasury']?.toString() ?? 'غير محدد';
+            safes[s] = (safes[s] ?? 0) +
+                (t['type'] == 'وارد' ? 1 : -1) * _num(t['amount']);
+          }
+          final effects = TreasuryTransferService().balanceEffects(
+              widget.companyCode,
+              branchCode: widget.selectedBranchCode,
+              fromDate: _fromDate,
+              toDate: _toDate);
+          for (final entry in effects.entries) {
+            safes[entry.key] = (safes[entry.key] ?? 0) + entry.value;
+          }
+          rows.addAll(safes.entries.map<Map<String, dynamic>>(
+              (e) => {'الخزينة': e.key, 'الرصيد': e.value}));
+          summary = {
+            'إجمالي أرصدة الخزائن': safes.values.fold(0.0, (s, v) => s + v)
+          };
+          break;
+
+        case 6:
+          final items = _inventoryItems();
+          final coding = _codingItems();
+          final names = {
+            for (final i in coding)
+              i['code']?.toString() ?? '': i['name']?.toString() ?? ''
+          };
+          final purchases = _purchases();
+          final moved = <String, DateTime>{};
+          for (final p in purchases) {
+            final d = DateTime.tryParse(p['date']?.toString() ?? '');
+            final its = p['items'];
+            if (d != null && its is List)
+              for (final x in its.whereType<Map>()) {
+                final c = x['code']?.toString() ?? '';
+                if (c.isNotEmpty && (moved[c] == null || d.isAfter(moved[c]!)))
+                  moved[c] = d;
+              }
+          }
+          for (final i in items) {
+            final c = i['code']?.toString() ?? '';
+            final d = moved[c];
+            if (d == null || _toDate.difference(d).inDays >= 90) {
+              rows.add({
+                'الكود': c,
+                'الصنف': names[c] ?? i['name'] ?? 'غير معروف',
+                'آخر حركة':
+                    d == null ? 'لا توجد' : DateFormat('yyyy-MM-dd').format(d),
+                'الكمية': _num(i['quantity']),
+                'قيمة الجملة': _num(i['quantity']) *
+                    _num(i['wholesalePrice'] ?? i['wholesale_price']),
+              });
             }
           }
-        }
-        final currentCash = periodIncome - periodExpenses;
+          summary = {
+            'قيمة المخزون البطيء':
+                rows.fold<double>(0.0, (s, r) => s + _num(r['قيمة الجملة']))
+          };
+          break;
 
-        // =========================================================
-        // 2) حساب الحركات قبل بداية الفترة (للحصول على الرصيد السابق)
-        // =========================================================
-        final previousTx = _transactions(before: from);
-        double previousIncome = 0.0;
-        double previousExpenses = 0.0;
-        for (final t in previousTx) {
-          final amt = _num(t['amount']);
-          if (t['type'] == 'وارد') previousIncome += amt;
-          else if (t['type'] == 'صادر') previousExpenses += amt;
-        }
-        final previousCash = previousIncome - previousExpenses;
+        case 7:
+          rows.add({
+            'الحالة':
+                'تحتاج بيانات المبيعات التفصيلية للأصناف لحساب النظري مقابل الفعلي بدقة',
+            'البيانات المتاحة':
+                'آخر جرد فعلي محفوظ موجود ويمكن عرضه من شاشة رصيد المخزون'
+          });
+          summary = {'الحالة': 'غير مكتمل بدون حركات بيع مرتبطة بكود الصنف'};
+          break;
 
-        // =========================================================
-        // 3) قيمة المخزون بداية ونهاية الفترة
-        // =========================================================
-        final startInvValue = await _inventoryValueAt(
-          from.subtract(const Duration(days: 1)),
-        );
-        final endInvValue = await _inventoryValueAt(to);
+        case 8:
+          final items = _inventoryItems();
+          final total = items.fold(
+              0.0,
+              (s, i) =>
+                  s +
+                  _num(i['quantity']) *
+                      _num(i['wholesalePrice'] ?? i['wholesale_price']));
+          var cumulative = 0.0;
+          items.sort((a, b) => (_num(b['quantity']) *
+                  _num(b['wholesalePrice'] ?? b['wholesale_price']))
+              .compareTo(_num(a['quantity']) *
+                  _num(a['wholesalePrice'] ?? a['wholesale_price'])));
+          for (final i in items) {
+            final value = _num(i['quantity']) *
+                _num(i['wholesalePrice'] ?? i['wholesale_price']);
+            cumulative += value;
+            rows.add({
+              'الكود': i['code'],
+              'الصنف': i['name'],
+              'الكمية': _num(i['quantity']),
+              'قيمة الجملة': value,
+              'النسبة التراكمية': total == 0 ? 0 : cumulative / total * 100,
+              'ABC': total == 0
+                  ? 'C'
+                  : cumulative / total <= .80
+                      ? 'A'
+                      : cumulative / total <= .95
+                          ? 'B'
+                          : 'C',
+            });
+          }
+          summary = {'إجمالي قيمة المخزون بالجملة': total};
+          break;
 
-        // =========================================================
-        // 4) أرصدة الموردين بداية ونهاية الفترة
-        // =========================================================
-        final currentSupplierBalance = await _supplierBalanceAt(to);
-        final previousSupplierBalance = await _supplierBalanceAt(
-          from.subtract(const Duration(days: 1)),
-        );
+        case 9:
+          rows.addAll(_supplierRows().map((e) => {
+                'المورد': e['المورد'],
+                'حجم التعامل/الرصيد': e['الرصيد'],
+                'التقييم':
+                    'يُستكمل تلقائياً مع إضافة بيانات مواعيد التسليم والخصومات'
+              }));
+          summary = {'عدد الموردين': rows.length};
+          break;
 
-        // =========================================================
-        // 5) صافي الجرد (الحالي والسابق) وصافي الأرباح
-        // =========================================================
-        final currentNet = endInvValue + currentCash - currentSupplierBalance;
-        final previousNet = startInvValue + previousCash - previousSupplierBalance;
-        final netProfit = currentNet - previousNet;
+        case 10:
+          final p = _purchases();
+          double discounts = 0, gross = 0;
+          for (final x in p) {
+            gross += _num(x['total_amount']);
+            final its = x['items'];
+            if (its is List)
+              for (final i in its.whereType<Map>())
+                discounts += _num(i['discountAmount']);
+          }
+          rows.add({
+            'إجمالي المشتريات': gross,
+            'إجمالي الخصومات المسجلة': discounts,
+            'التكلفة بعد الخصم': gross - discounts
+          });
+          summary = {'أثر الخصم': gross == 0 ? 0 : discounts / gross * 100};
+          break;
 
-        // =========================================================
-        // 6) زيادة الجرد = المتبقي بعد توزيع الأرباح
-        //    (نفس منطق التقرير الموسع: صافي الأرباح - الأرباح الموزعة)
-        // =========================================================
-        final inventoryIncrease = netProfit - totalProfits;
+        case 11:
+          final months = <int, double>{};
+          for (final t in tx.where((e) => e['type'] == 'وارد')) {
+            final d = DateTime.tryParse(t['date']?.toString() ?? '');
+            if (d != null)
+              months[d.month] = (months[d.month] ?? 0) + _num(t['amount']);
+          }
+          for (final e in months.entries)
+            rows.add({'الشهر': e.key, 'المبيعات': e.value});
+          summary = {
+            'أفضل شهر': rows.isEmpty
+                ? 'لا يوجد'
+                : rows.reduce((a, b) =>
+                    _num(a['المبيعات']) > _num(b['المبيعات']) ? a : b)['الشهر']
+          };
+          break;
 
-        // =========================================================
-        // 7) إجمالي الأرباح = الأرباح الموزعة + زيادة الجرد
-        //    (= صافي الأرباح)
-        // =========================================================
-        final totalProfit = totalProfits + inventoryIncrease;
+        case 12:
+          final p = _purchases();
+          final byCode = <String, double>{};
+          for (final x in p) {
+            final its = x['items'];
+            if (its is List)
+              for (final i in its.whereType<Map>()) {
+                final c = i['code']?.toString() ?? '';
+                byCode[c] = (byCode[c] ?? 0) + _num(i['total']);
+              }
+          }
+          final coding = _codingItems();
+          for (final i in coding) {
+            final c = i['code']?.toString() ?? '';
+            final cost = _num(i['wholesale_price'] ?? i['wholesalePrice']);
+            final sell = _num(i['selling_price'] ?? i['sellingPrice']);
+            if (c.isNotEmpty && sell > 0) {
+              rows.add({
+                'الكود': c,
+                'الصنف': i['name'],
+                'سعر الجملة': cost,
+                'سعر البيع': sell,
+                'الهامش المستهدف': (sell - cost) / sell * 100,
+                'حجم الشراء': byCode[c] ?? 0,
+              });
+            }
+          }
+          summary = {'عدد الأصناف': rows.length};
+          break;
 
-        // =========================================================
-        // 8) النسب من إجمالي المبيعات
-        // =========================================================
-        final profitPercentOfSales =
-            totalSales == 0 ? 0.0 : (totalProfit / totalSales) * 100;
+        case 13:
+          rows.add({
+            'الحالة':
+                'تحليل التجميع يحتاج حركات مبيعات تحتوي على أصناف كل إذن.',
+            'المتاح':
+                'يمكن تشغيل التحليل تلقائياً بعد ربط أصناف المبيعات بكود الصنف.'
+          });
+          summary = {'الحالة': 'بانتظار بيانات Basket تفصيلية'};
+          break;
 
-        // =========================================================
-        // 9) بناء الصفوف (5 صفوف موحدة بـ 3 أعمدة)
-        // =========================================================
-        rows.add({
-          'البند': 'إجمالي مبيعات الفترة',
-          'القيمة': totalSales,
-          'النسبة': '',
-        });
-        rows.add({
-          'البند': 'إجمالي أرباح (تصنيف أرباح)',
-          'القيمة': totalProfits,
-          'النسبة': '',
-        });
-        rows.add({
-          'البند': 'إجمالي زيادة الجرد',
-          'القيمة': inventoryIncrease,
-          'النسبة': '',
-        });
-        rows.add({
-          'البند': 'إجمالي الأرباح',
-          'القيمة': totalProfit,
-          'النسبة': '',
-        });
-        rows.add({
-          'البند': 'نسبة الأرباح من المبيعات',
-          'القيمة': 0.0,
-          'النسبة': profitPercentOfSales,
-        });
+        // ========== التقرير الجديد: تحليل المصروفات بالنسبة للمبيعات ==========
+        // ========== التقرير الجديد: تحليل المصروفات بالنسبة للمبيعات ==========
+        case 14:
+          final cats = <String, double>{};
+          double totalIncome = 0.0;
 
-        summary = {
-          'إجمالي المبيعات': totalSales,
-          'إجمالي الأرباح': totalProfit,
-          'نسبة الأرباح من المبيعات': profitPercentOfSales,
-        };
-        break;
-    }
+          for (final t in tx) {
+            if (t['type'] == 'وارد') {
+              totalIncome += _num(t['amount']);
+            } else if (t['type'] == 'صادر') {
+              final c = t['category']?.toString() ?? 'عام';
+              cats[c] = (cats[c] ?? 0) + _num(t['amount']);
+            }
+          }
 
-    _rows = rows;
-    _summary = summary;
-});
-}
+          final denominator = totalIncome == 0 ? 1.0 : totalIncome;
+
+          // ✅ إجمالي المصروفات بدون بضاعة وأرباح
+          final totalExpensesWithoutGoodsAndProfit = cats.entries
+              .where((e) =>
+                  e.key != 'بضاعة' && e.key != 'أرباح' && e.key != 'ارباح')
+              .fold<double>(0.0, (s, e) => s + e.value);
+
+          // ✅ ترتيب الأعمدة: الفئة -> النسبة من المبيعات -> المبلغ
+          rows.addAll(cats.entries
+              .map<Map<String, dynamic>>((e) => {
+                    'الفئة': e.key,
+                    'النسبة من المبيعات': (e.value / denominator) * 100,
+                    'المبلغ': e.value,
+                  })
+              .toList()
+            ..sort((a, b) => _num(b['المبلغ']).compareTo(_num(a['المبلغ']))));
+
+          summary = {
+            'إجمالي المبيعات': totalIncome,
+            'إجمالي المصروفات': totalExpensesWithoutGoodsAndProfit,
+            'نسبة المصروفات للمبيعات': totalIncome == 0
+                ? 0
+                : (totalExpensesWithoutGoodsAndProfit / totalIncome) * 100,
+          };
+          break;
+
+        // ========== التقرير الجديد: صافي ربح الفترة ==========
+        // ========== التقرير الجديد: صافي ربح الفترة ==========
+        case 15:
+          final from = DateTime(_fromDate.year, _fromDate.month, _fromDate.day);
+          final to = DateTime(_toDate.year, _toDate.month, _toDate.day);
+
+          // =========================================================
+          // 1) حساب مبيعات وأرباح الفترة
+          // =========================================================
+          double totalSales = 0.0; // إجمالي المبيعات
+          double totalProfits = 0.0; // الأرباح الموزّعة (تصنيف أرباح)
+          double periodIncome = 0.0;
+          double periodExpenses = 0.0;
+
+          for (final t in tx) {
+            final amt = _num(t['amount']);
+            if (t['type'] == 'وارد') {
+              totalSales += amt;
+              periodIncome += amt;
+            } else if (t['type'] == 'صادر') {
+              periodExpenses += amt;
+              final c = t['category']?.toString() ?? '';
+              if (c == 'أرباح' || c == 'ارباح') {
+                totalProfits += amt;
+              }
+            }
+          }
+          final currentCash = periodIncome - periodExpenses;
+
+          // =========================================================
+          // 2) حساب الحركات قبل بداية الفترة (للحصول على الرصيد السابق)
+          // =========================================================
+          final previousTx = _transactions(before: from);
+          double previousIncome = 0.0;
+          double previousExpenses = 0.0;
+          for (final t in previousTx) {
+            final amt = _num(t['amount']);
+            if (t['type'] == 'وارد')
+              previousIncome += amt;
+            else if (t['type'] == 'صادر') previousExpenses += amt;
+          }
+          final previousCash = previousIncome - previousExpenses;
+
+          // =========================================================
+          // 3) قيمة المخزون بداية ونهاية الفترة
+          // =========================================================
+          final startInvValue = await _inventoryValueAt(
+            from.subtract(const Duration(days: 1)),
+          );
+          final endInvValue = await _inventoryValueAt(to);
+
+          // =========================================================
+          // 4) أرصدة الموردين بداية ونهاية الفترة
+          // =========================================================
+          final currentSupplierBalance = await _supplierBalanceAt(to);
+          final previousSupplierBalance = await _supplierBalanceAt(
+            from.subtract(const Duration(days: 1)),
+          );
+
+          // =========================================================
+          // 5) صافي الجرد (الحالي والسابق) وصافي الأرباح
+          // =========================================================
+          final currentNet = endInvValue + currentCash - currentSupplierBalance;
+          final previousNet =
+              startInvValue + previousCash - previousSupplierBalance;
+          final netProfit = currentNet - previousNet;
+
+          // =========================================================
+          // 6) زيادة الجرد = المتبقي بعد توزيع الأرباح
+          //    (نفس منطق التقرير الموسع: صافي الأرباح - الأرباح الموزعة)
+          // =========================================================
+          final inventoryIncrease = netProfit - totalProfits;
+
+          // =========================================================
+          // 7) إجمالي الأرباح = الأرباح الموزعة + زيادة الجرد
+          //    (= صافي الأرباح)
+          // =========================================================
+          final totalProfit = totalProfits + inventoryIncrease;
+
+          // =========================================================
+          // 8) النسب من إجمالي المبيعات
+          // =========================================================
+          final profitPercentOfSales =
+              totalSales == 0 ? 0.0 : (totalProfit / totalSales) * 100;
+
+          // =========================================================
+          // 9) بناء الصفوف (5 صفوف موحدة بـ 3 أعمدة)
+          // =========================================================
+          rows.add({
+            'البند': 'إجمالي مبيعات الفترة',
+            'القيمة': totalSales,
+            'النسبة': '',
+          });
+          rows.add({
+            'البند': 'إجمالي أرباح (تصنيف أرباح)',
+            'القيمة': totalProfits,
+            'النسبة': '',
+          });
+          rows.add({
+            'البند': 'إجمالي زيادة الجرد',
+            'القيمة': inventoryIncrease,
+            'النسبة': '',
+          });
+          rows.add({
+            'البند': 'إجمالي الأرباح',
+            'القيمة': totalProfit,
+            'النسبة': '',
+          });
+          rows.add({
+            'البند': 'نسبة الأرباح من المبيعات',
+            'القيمة': 0.0,
+            'النسبة': profitPercentOfSales,
+          });
+
+          summary = {
+            'إجمالي المبيعات': totalSales,
+            'إجمالي الأرباح': totalProfit,
+            'نسبة الأرباح من المبيعات': profitPercentOfSales,
+          };
+          break;
+      }
+
+      _rows = rows;
+      _summary = summary;
+    });
+  }
 
   // ============================================================
   // دورة الحياة
   // ============================================================
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
     _fromDate = widget.fromDate;
     _toDate = widget.toDate;
-    if (widget.reportId == 5 && CachePartitions.isBoxOpen(TreasuryTransferService.effectsBox)) {
-      _treasuryEffectsSubscription = CachePartitions.box(TreasuryTransferService.effectsBox).watch().listen((_) {
-        if (mounted) _buildReport().then((_) {if (mounted) setState(() {});});
+    if (widget.reportId == 5 &&
+        CachePartitions.isBoxOpen(TreasuryTransferService.effectsBox)) {
+      _treasuryEffectsSubscription =
+          CachePartitions.box(TreasuryTransferService.effectsBox)
+              .watch()
+              .listen((_) {
+        if (mounted)
+          _buildReport().then((_) {
+            if (mounted) setState(() {});
+          });
       });
     }
-  // _buildReport().then((_) { if (mounted) setState(() { _loading = false; }); });
-  _buildReport().then((_) {
-    if (mounted) setState(() => _loading = false);
-  });
-
+    // _buildReport().then((_) { if (mounted) setState(() { _loading = false; }); });
+    _buildReport().then((_) {
+      if (mounted) setState(() => _loading = false);
+    });
   }
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     _treasuryEffectsSubscription?.cancel();
@@ -773,43 +889,44 @@ return CachePartitions.run(() async {
   // دوال اختيار التاريخ
   // ============================================================
 
+  // يفتح نافذة اختيار التاريخ
   Future<void> _selectDate(BuildContext context, bool isFrom) async {
-return CachePartitions.run(() async {
-
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: isFrom ? _fromDate : _toDate,
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2030),
-      builder: (context, child) => Theme(
-        data: Theme.of(context).copyWith(
-          colorScheme: const ColorScheme.dark(
-            primary: AppTheme.datePickerPrimary,
-            onPrimary: AppTheme.datePickerOnPrimary,
-            surface: AppTheme.datePickerSurface,
-            onSurface: AppTheme.datePickerOnSurface,
+    return CachePartitions.run(() async {
+      final picked = await showDatePicker(
+        context: context,
+        initialDate: isFrom ? _fromDate : _toDate,
+        firstDate: DateTime(2020),
+        lastDate: DateTime(2030),
+        builder: (context, child) => Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.dark(
+              primary: AppTheme.datePickerPrimary,
+              onPrimary: AppTheme.datePickerOnPrimary,
+              surface: AppTheme.datePickerSurface,
+              onSurface: AppTheme.datePickerOnSurface,
+            ),
           ),
+          child: child!,
         ),
-        child: child!,
-      ),
-    );
-    if (picked != null) {
-      setState(() {
-        if (isFrom) {
-          _fromDate = picked;
-          if (_toDate.isBefore(_fromDate)) _toDate = _fromDate;
-        } else {
-          _toDate = picked;
-          if (_fromDate.isAfter(_toDate)) _fromDate = _toDate;
-        }
-      });
-      _buildReport(); // ← غيّرها إلى:
-await _buildReport();
-if (mounted) setState(() {});
-    }
-});
-}
+      );
+      if (picked != null) {
+        setState(() {
+          if (isFrom) {
+            _fromDate = picked;
+            if (_toDate.isBefore(_fromDate)) _toDate = _fromDate;
+          } else {
+            _toDate = picked;
+            if (_fromDate.isAfter(_toDate)) _fromDate = _toDate;
+          }
+        });
+        _buildReport(); // ← غيّرها إلى:
+        await _buildReport();
+        if (mounted) setState(() {});
+      }
+    });
+  }
 
+  // يبني زر اختيار تاريخ
   Widget _dateButton(String label, DateTime date, VoidCallback onTap) {
     return InkWell(
       onTap: onTap,
@@ -823,9 +940,17 @@ if (mounted) setState(() {});
         ),
         child: Column(
           children: [
-            Text(label, style: TextStyle(color: AppTheme.textSoftFor(context), fontSize: 12, fontFamily: 'Cairo')),
+            Text(label,
+                style: TextStyle(
+                    color: AppTheme.textSoftFor(context),
+                    fontSize: 12,
+                    fontFamily: 'Cairo')),
             const SizedBox(height: 4),
-            Text(DateFormat('yyyy-MM-dd').format(date), style: TextStyle(color: AppTheme.textMainFor(context), fontSize: 14, fontWeight: FontWeight.bold)),
+            Text(DateFormat('yyyy-MM-dd').format(date),
+                style: TextStyle(
+                    color: AppTheme.textMainFor(context),
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold)),
           ],
         ),
       ),
@@ -836,119 +961,128 @@ if (mounted) setState(() {});
   // دوال التصدير (مع إضافة اسم الشركة والفرع)
   // ============================================================
 
+  // يصدّر البيانات إلى ملف Excel
   Future<void> _exportExcel() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      final companyName = await _getCompanyName();
+      final branchName = _getBranchName(widget.selectedBranchCode);
+      final period =
+          'من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}';
 
-  final companyName = await _getCompanyName();
-  final branchName = _getBranchName(widget.selectedBranchCode);
-  final period = 'من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}';
-
-  final formattedRows = _rows.map((row) {
-    final newRow = <String, dynamic>{};
-    for (final entry in row.entries) {
-      final key = entry.key;
-      final value = entry.value;
-      if (value is num) {
-        if (key.contains('نسبة')) {
-          newRow[key] = '${NumberFormat('#,##0.00', 'en_US').format(value.toDouble())}%';
-        } else {
-          newRow[key] = NumberFormat('#,##0.00', 'en_US').format(value.toDouble());
+      final formattedRows = _rows.map((row) {
+        final newRow = <String, dynamic>{};
+        for (final entry in row.entries) {
+          final key = entry.key;
+          final value = entry.value;
+          if (value is num) {
+            if (key.contains('نسبة')) {
+              newRow[key] =
+                  '${NumberFormat('#,##0.00', 'en_US').format(value.toDouble())}%';
+            } else {
+              newRow[key] =
+                  NumberFormat('#,##0.00', 'en_US').format(value.toDouble());
+            }
+          } else {
+            newRow[key] = value;
+          }
         }
-      } else {
-        newRow[key] = value;
-      }
-    }
-    return newRow;
-  }).toList();
+        return newRow;
+      }).toList();
 
-  final formattedSummary = <String, dynamic>{};
-  for (final entry in _summary.entries) {
-    final key = entry.key;
-    final value = entry.value;
-    if (value is num) {
-      if (key.contains('نسبة') || key.contains('%')) {
-        formattedSummary[key] = '${NumberFormat('#,##0.00', 'en_US').format(value.toDouble())}%';
-      } else {
-        formattedSummary[key] = NumberFormat('#,##0.00', 'en_US').format(value.toDouble());
-      }
-    } else {
-      formattedSummary[key] = value;
-    }
-  }
-
-  await ExportService.exportToExcel(
-    formattedRows,
-    _title,
-    _rows.isEmpty ? [] : _rows.first.keys.toList(),
-    _rows.isEmpty ? [] : _rows.first.keys.toList(),
-    companyName: companyName,
-    branchName: branchName,
-    period: period,
-    summary: formattedSummary,
-  );
-
-});
-}
-
-  Future<void> _exportPdf() async {
-return CachePartitions.run(() async {
-
-    final companyName = await _getCompanyName();
-    final branchName = _getBranchName(widget.selectedBranchCode);
-    final period = 'من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}';
-
-    // تحويل الصفوف إلى نصوص منسقة للتصدير (للأرقام فقط)
-    final formattedRows = _rows.map((row) {
-      final newRow = <String, dynamic>{};
-      for (final entry in row.entries) {
+      final formattedSummary = <String, dynamic>{};
+      for (final entry in _summary.entries) {
         final key = entry.key;
         final value = entry.value;
         if (value is num) {
-          if (key.contains('نسبة')) {
-            newRow[key] = '${NumberFormat('#,##0.00', 'en_US').format(value)}%';
+          if (key.contains('نسبة') || key.contains('%')) {
+            formattedSummary[key] =
+                '${NumberFormat('#,##0.00', 'en_US').format(value.toDouble())}%';
           } else {
-            newRow[key] = NumberFormat('#,##0.00', 'en_US').format(value);
+            formattedSummary[key] =
+                NumberFormat('#,##0.00', 'en_US').format(value.toDouble());
           }
         } else {
-          newRow[key] = value;
+          formattedSummary[key] = value;
         }
       }
-      return newRow;
-    }).toList();
 
-    // تحويل الملخص إلى نصوص منسقة
-    final formattedSummary = <String, dynamic>{};
-    for (final entry in _summary.entries) {
-      final key = entry.key;
-      final value = entry.value;
-      if (value is num) {
-        if (key.contains('نسبة') || key.contains('%')) {
-          formattedSummary[key] = '${NumberFormat('#,##0.00', 'en_US').format(value)}%';
+      await ExportService.exportToExcel(
+        formattedRows,
+        _title,
+        _rows.isEmpty ? [] : _rows.first.keys.toList(),
+        _rows.isEmpty ? [] : _rows.first.keys.toList(),
+        companyName: companyName,
+        branchName: branchName,
+        period: period,
+        summary: formattedSummary,
+      );
+    });
+  }
+
+  // يصدّر التقرير إلى ملف PDF
+  Future<void> _exportPdf() async {
+    return CachePartitions.run(() async {
+      final companyName = await _getCompanyName();
+      final branchName = _getBranchName(widget.selectedBranchCode);
+      final period =
+          'من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}';
+
+      // تحويل الصفوف إلى نصوص منسقة للتصدير (للأرقام فقط)
+      final formattedRows = _rows.map((row) {
+        final newRow = <String, dynamic>{};
+        for (final entry in row.entries) {
+          final key = entry.key;
+          final value = entry.value;
+          if (value is num) {
+            if (key.contains('نسبة')) {
+              newRow[key] =
+                  '${NumberFormat('#,##0.00', 'en_US').format(value)}%';
+            } else {
+              newRow[key] = NumberFormat('#,##0.00', 'en_US').format(value);
+            }
+          } else {
+            newRow[key] = value;
+          }
+        }
+        return newRow;
+      }).toList();
+
+      // تحويل الملخص إلى نصوص منسقة
+      final formattedSummary = <String, dynamic>{};
+      for (final entry in _summary.entries) {
+        final key = entry.key;
+        final value = entry.value;
+        if (value is num) {
+          if (key.contains('نسبة') || key.contains('%')) {
+            formattedSummary[key] =
+                '${NumberFormat('#,##0.00', 'en_US').format(value)}%';
+          } else {
+            formattedSummary[key] =
+                NumberFormat('#,##0.00', 'en_US').format(value);
+          }
         } else {
-          formattedSummary[key] = NumberFormat('#,##0.00', 'en_US').format(value);
+          formattedSummary[key] = value;
         }
-      } else {
-        formattedSummary[key] = value;
       }
-    }
 
-    await ExportService.exportToPDF(
-      data: formattedRows,
-      title: _title,
-      headers: _rows.isEmpty ? [] : _rows.first.keys.toList(),
-      keys: _rows.isEmpty ? [] : _rows.first.keys.toList(),
-      companyName: companyName,
-      branchName: branchName,
-      period: period,
-      summary: formattedSummary,
-    );
-});
-}
+      await ExportService.exportToPDF(
+        data: formattedRows,
+        title: _title,
+        headers: _rows.isEmpty ? [] : _rows.first.keys.toList(),
+        keys: _rows.isEmpty ? [] : _rows.first.keys.toList(),
+        companyName: companyName,
+        branchName: branchName,
+        period: period,
+        summary: formattedSummary,
+      );
+    });
+  }
 
   // ============================================================
   // بناء الواجهة
   // ============================================================
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -969,7 +1103,8 @@ return CachePartitions.run(() async {
                   value: 'excel',
                   child: Row(
                     children: [
-                      Icon(Icons.table_chart, color: AppTheme.successFor(context)),
+                      Icon(Icons.table_chart,
+                          color: AppTheme.successFor(context)),
                       SizedBox(width: 8),
                       Text('Excel'),
                     ],
@@ -979,7 +1114,8 @@ return CachePartitions.run(() async {
                   value: 'pdf',
                   child: Row(
                     children: [
-                      Icon(Icons.picture_as_pdf, color: AppTheme.dangerFor(context)),
+                      Icon(Icons.picture_as_pdf,
+                          color: AppTheme.dangerFor(context)),
                       SizedBox(width: 8),
                       Text('PDF'),
                     ],
@@ -1007,9 +1143,13 @@ return CachePartitions.run(() async {
                       // أزرار اختيار التاريخ
                       Row(
                         children: [
-                          Expanded(child: _dateButton("من", _fromDate, () => _selectDate(context, true))),
+                          Expanded(
+                              child: _dateButton("من", _fromDate,
+                                  () => _selectDate(context, true))),
                           const SizedBox(width: 10),
-                          Expanded(child: _dateButton("إلى", _toDate, () => _selectDate(context, false))),
+                          Expanded(
+                              child: _dateButton("إلى", _toDate,
+                                  () => _selectDate(context, false))),
                         ],
                       ),
                       const SizedBox(height: 8),
@@ -1026,23 +1166,34 @@ return CachePartitions.run(() async {
                                     FutureBuilder<String>(
                                       future: _getCompanyName(),
                                       builder: (ctx, snapshot) {
-                                        final name = snapshot.data ?? widget.companyCode;
+                                        final name =
+                                            snapshot.data ?? widget.companyCode;
                                         return Text(
                                           name,
-                                          style: TextStyle(color: AppTheme.textMainFor(context), fontFamily: 'Cairo', fontSize: 14, fontWeight: FontWeight.bold),
+                                          style: TextStyle(
+                                              color:
+                                                  AppTheme.textMainFor(context),
+                                              fontFamily: 'Cairo',
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.bold),
                                         );
                                       },
                                     ),
                                     Text(
                                       'من ${DateFormat('yyyy-MM-dd').format(_fromDate)} إلى ${DateFormat('yyyy-MM-dd').format(_toDate)}',
-                                      style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo', fontSize: 12),
+                                      style: TextStyle(
+                                          color: AppTheme.textSoftFor(context),
+                                          fontFamily: 'Cairo',
+                                          fontSize: 12),
                                     ),
                                   ],
                                 ),
                               ),
                               Text(
                                 'الفرع: ${_getBranchName(widget.selectedBranchCode)}',
-                                style: TextStyle(color: AppTheme.accentFor(context), fontFamily: 'Cairo'),
+                                style: TextStyle(
+                                    color: AppTheme.accentFor(context),
+                                    fontFamily: 'Cairo'),
                               ),
                             ],
                           ),
@@ -1056,50 +1207,61 @@ return CachePartitions.run(() async {
                               ? Center(
                                   child: Text(
                                     'لا توجد بيانات كافية للفترة المحددة',
-                                    style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo'),
+                                    style: TextStyle(
+                                        color: AppTheme.textSoftFor(context),
+                                        fontFamily: 'Cairo'),
                                   ),
                                 )
                               : SingleChildScrollView(
                                   scrollDirection: Axis.horizontal,
                                   child: SingleChildScrollView(
                                     child: DataTable(
-                                      headingRowColor: WidgetStateProperty.all(GlassStyle.fill10For(context)),
+                                      headingRowColor: WidgetStateProperty.all(
+                                          GlassStyle.fill10For(context)),
                                       columns: _rows.first.keys
                                           .map((k) => DataColumn(
                                                 label: Text(
                                                   k,
-                                                  style: TextStyle(color: AppTheme.accentFor(context), fontFamily: 'Cairo'),
+                                                  style: TextStyle(
+                                                      color: AppTheme.accentFor(
+                                                          context),
+                                                      fontFamily: 'Cairo'),
                                                 ),
                                               ))
                                           .toList(),
                                       rows: _rows
                                           .map(
                                             (r) => DataRow(
-                                              cells: r.entries
-                                                  .map(
-                                                    (entry) {
-                                                      final key = entry.key;
-                                                      final value = entry.value;
-                                                      String displayText;
-                                                      if (value is num) {
-                                                        // إذا كان المفتاح يحتوي على 'نسبة' نضيف %
-                                                        if (key.contains('نسبة')) {
-                                                          displayText = _formatPercent(value);
-                                                        } else {
-                                                          displayText = _formatNumber(value);
-                                                        }
-                                                      } else {
-                                                        displayText = value.toString();
-                                                      }
-                                                      return DataCell(
-                                                        Text(
-                                                          displayText,
-                                                          style: TextStyle(color: AppTheme.textSoftFor(context), fontFamily: 'Cairo'),
-                                                        ),
-                                                      );
-                                                    },
-                                                  )
-                                                  .toList(),
+                                              cells: r.entries.map(
+                                                (entry) {
+                                                  final key = entry.key;
+                                                  final value = entry.value;
+                                                  String displayText;
+                                                  if (value is num) {
+                                                    // إذا كان المفتاح يحتوي على 'نسبة' نضيف %
+                                                    if (key.contains('نسبة')) {
+                                                      displayText =
+                                                          _formatPercent(value);
+                                                    } else {
+                                                      displayText =
+                                                          _formatNumber(value);
+                                                    }
+                                                  } else {
+                                                    displayText =
+                                                        value.toString();
+                                                  }
+                                                  return DataCell(
+                                                    Text(
+                                                      displayText,
+                                                      style: TextStyle(
+                                                          color: AppTheme
+                                                              .textSoftFor(
+                                                                  context),
+                                                          fontFamily: 'Cairo'),
+                                                    ),
+                                                  );
+                                                },
+                                              ).toList(),
                                             ),
                                           )
                                           .toList(),
@@ -1115,35 +1277,36 @@ return CachePartitions.run(() async {
                           child: Wrap(
                             spacing: 8,
                             runSpacing: 8,
-                            children: _summary.entries
-                                .map(
-                                  (e) {
-                                    final key = e.key;
-                                    final value = e.value;
-                                    String displayText;
-                                    if (value is num) {
-                                      if (key.contains('نسبة') || key.contains('%')) {
-                                        displayText = _formatPercent(value);
-                                      } else {
-                                        displayText = _formatNumber(value);
-                                      }
-                                    } else {
-                                      displayText = value.toString();
-                                    }
-                                    return Container(
-                                      padding: const EdgeInsets.all(8),
-                                      decoration: BoxDecoration(
-                                        color: GlassStyle.fill06For(context),
-                                        borderRadius: BorderRadius.circular(8),
-                                      ),
-                                      child: Text(
-                                        '$key: $displayText',
-                                        style: TextStyle(color: AppTheme.warningFor(context), fontFamily: 'Cairo'),
-                                      ),
-                                    );
-                                  },
-                                )
-                                .toList(),
+                            children: _summary.entries.map(
+                              (e) {
+                                final key = e.key;
+                                final value = e.value;
+                                String displayText;
+                                if (value is num) {
+                                  if (key.contains('نسبة') ||
+                                      key.contains('%')) {
+                                    displayText = _formatPercent(value);
+                                  } else {
+                                    displayText = _formatNumber(value);
+                                  }
+                                } else {
+                                  displayText = value.toString();
+                                }
+                                return Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: GlassStyle.fill06For(context),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    '$key: $displayText',
+                                    style: TextStyle(
+                                        color: AppTheme.warningFor(context),
+                                        fontFamily: 'Cairo'),
+                                  ),
+                                );
+                              },
+                            ).toList(),
                           ),
                         ),
                     ],

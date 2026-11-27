@@ -1,3 +1,4 @@
+# backend/app/routes/notifications.py
 import time
 from datetime import datetime, timedelta
 from typing import Any, Dict
@@ -15,8 +16,7 @@ from app.core.permissions import has_section_permission
 from app.core.schemas import FcmDeviceModel
 from app.core.fcm_service import is_fcm_enabled
 
-
-
+# راوتر الإشعارات
 router = APIRouter()
 _SECTIONS = {
     "daily", "purchases", "settlements", "coding", "inventory",
@@ -34,6 +34,7 @@ _CLEANUP_CACHE: Dict[tuple[str, str], float] = {}
 _CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60  # 24 ساعة
 
 
+# يحدد هل وقت تنظيف الإشعارات القديمة للمستخدم جه
 def _should_cleanup(uid: str, company_code: str) -> bool:
     """
     يحدد إذا كان لازم ينفذ DELETE للإشعارات القديمة.
@@ -49,6 +50,7 @@ def _should_cleanup(uid: str, company_code: str) -> bool:
     return False
 
 
+# يستخرج بروفايل المستخدم من الطلب
 def _profile(request: Request) -> Dict[str, Any]:
     profile = getattr(request.state, "auth_user", None)
     if not isinstance(profile, dict) or not profile.get("uid"):
@@ -56,6 +58,7 @@ def _profile(request: Request) -> Dict[str, Any]:
     return profile
 
 
+# يحوّل تفضيلات الإشعارات إلى JSON
 def _settings_json(pref: NotificationPreference | None) -> dict:
     return {
         "sections": {key: (pref.sections.get(key, key not in {"sales", "sales_returns", "customer_payments", "stock_transfers"}) if pref and isinstance(pref.sections, dict) else key not in {"sales", "sales_returns", "customer_payments", "stock_transfers"}) for key in _SECTIONS},
@@ -64,6 +67,7 @@ def _settings_json(pref: NotificationPreference | None) -> dict:
     }
 
 
+# مسار قائمة إشعارات المستخدم
 @router.get("")
 async def list_notifications(
     request: Request,
@@ -121,7 +125,7 @@ async def list_notifications(
     }
     targets = (
         await targets_for_codes(db, str(profile["company_code"]), event_codes.values())
-        if has_section_permission(profile,'الموارد البشرية','canViewOwnHRData') else {}
+        if has_section_permission(profile, 'الموارد البشرية', 'canViewOwnHRData') else {}
     )
     items = []
     for item in rows:
@@ -131,7 +135,7 @@ async def list_notifications(
             target = targets.get(code, HRTarget(code=code))
             if not target_allowed(profile, target):
                 continue
-        if not recipient_allowed(profile,item.section,item.branch_code,target):
+        if not recipient_allowed(profile, item.section, item.branch_code, target):
             continue
         items.append({
             "id": item.id,
@@ -160,6 +164,7 @@ async def list_notifications(
     }
 
 
+# مسار قراءة إعدادات الإشعارات
 @router.get("/settings")
 async def get_notification_settings(request: Request, db: AsyncSession = Depends(get_db)):
     profile = _profile(request)
@@ -170,6 +175,7 @@ async def get_notification_settings(request: Request, db: AsyncSession = Depends
     return _settings_json(result.scalar_one_or_none())
 
 
+# مسار حفظ إعدادات الإشعارات
 @router.put("/settings")
 async def save_notification_settings(
     request: Request,
@@ -224,6 +230,7 @@ async def save_notification_settings(
     return {"status": "success", **_settings_json(pref)}
 
 
+# مسار تعليم كل الإشعارات كمقروءة
 @router.post("/read-all")
 async def mark_all_read(request: Request, db: AsyncSession = Depends(get_db)):
     profile = _profile(request)
@@ -240,6 +247,7 @@ async def mark_all_read(request: Request, db: AsyncSession = Depends(get_db)):
     return {"status": "success"}
 
 
+# مسار تعليم إشعارات حدث معين كمقروءة
 @router.post("/event/{event_id}/read")
 async def mark_event_read(event_id: str, request: Request, db: AsyncSession = Depends(get_db)):
     profile = _profile(request)
@@ -256,6 +264,7 @@ async def mark_event_read(event_id: str, request: Request, db: AsyncSession = De
     return {"status": "success"}
 
 
+# مسار تعليم إشعار واحد كمقروء
 @router.post("/{notification_id}/read")
 async def mark_read(notification_id: int, request: Request, db: AsyncSession = Depends(get_db)):
     profile = _profile(request)
@@ -273,6 +282,7 @@ async def mark_read(notification_id: int, request: Request, db: AsyncSession = D
     return {"status": "success"}
 
 
+# مسار مسح كل الإشعارات
 @router.delete("")
 async def clear_notifications(request: Request, db: AsyncSession = Depends(get_db)):
     profile = _profile(request)
@@ -284,6 +294,7 @@ async def clear_notifications(request: Request, db: AsyncSession = Depends(get_d
     return {"status": "success"}
 
 
+# مسار حذف إشعار واحد
 @router.delete("/{notification_id}")
 async def delete_notification(notification_id: int, request: Request, db: AsyncSession = Depends(get_db)):
     profile = _profile(request)
@@ -304,6 +315,8 @@ async def delete_notification(notification_id: int, request: Request, db: AsyncS
 # FCM Device Registration (System Push Notifications)
 # ============================================================
 
+
+# مسار تسجيل جهاز لاستقبال الإشعارات
 @router.post("/register-device")
 async def register_device(
     request: Request,
@@ -355,6 +368,7 @@ async def register_device(
     }
 
 
+# مسار إلغاء تسجيل جهاز الإشعارات
 @router.delete("/register-device")
 async def unregister_device(
     request: Request,
@@ -380,6 +394,7 @@ async def unregister_device(
     return {"status": "success"}
 
 
+# مسار فحص هل الجهاز الحالي مسجّل للمستخدم
 @router.get("/device-status")
 async def device_status(
     request: Request,

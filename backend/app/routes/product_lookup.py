@@ -1,3 +1,4 @@
+# backend/app/routes/product_lookup.py
 """Product barcode lookup with shared Neon cache and free public data sources."""
 import asyncio
 import json
@@ -21,6 +22,7 @@ import urllib.request
 from html.parser import HTMLParser
 import logging
 
+# راوتر البحث عن المنتجات بالباركود أو بالاسم
 router = APIRouter()
 _LOOKUP_LOCKS: dict[str, asyncio.Lock] = {}
 _NEGATIVE_CACHE: dict[str, float] = {}
@@ -28,6 +30,7 @@ _NEGATIVE_CACHE_SECONDS = 900
 _PRICE_TTL = timedelta(days=7)
 
 
+# يتحقق من صحة رقم الباركود (GTIN/EAN/UPC) بالـchecksum
 def _valid_ean13(code: str) -> bool:
     # يدعم GTIN-8 وUPC-A وEAN-13 وGTIN-14، ولا يعتبر صحة الرقم إثباتًا للتسجيل الرسمي.
     if len(code) not in {8, 12, 13, 14} or not code.isdigit():
@@ -38,6 +41,7 @@ def _valid_ean13(code: str) -> bool:
     return (10 - total % 10) % 10 == int(code[-1])
 
 
+# يطلب رابط ويرجّع الرد كـJSON (أو None لو فشل)
 def _get_json(url: str) -> dict[str, Any] | None:
     request = Request(
         url,
@@ -56,6 +60,7 @@ def _get_json(url: str) -> dict[str, Any] | None:
         return None
 
 
+# يجيب بيانات منتج من Open Food Facts بالباركود
 def _off_product(code: str) -> dict[str, Any] | None:
     url = (
         f"https://world.openfoodfacts.org/api/v3/product/{code}.json"
@@ -83,6 +88,7 @@ def _off_product(code: str) -> dict[str, Any] | None:
     }
 
 
+# يجيب أسعار منتج من Open Prices (بالجنيه المصري فقط)
 def _open_prices(code: str) -> dict[str, Any] | None:
     # Open Prices is community-contributed; accept only Egyptian-pound records with a valid date/value.
     query = urlencode({
@@ -138,6 +144,7 @@ def _open_prices(code: str) -> dict[str, Any] | None:
     }
 
 
+# يبني نتيجة البحث من صف الكتالوج أو من المصادر الخارجية
 def _result(row: ProductCatalog | None, code: str) -> dict[str, Any]:
     if row is None:
         return {
@@ -186,6 +193,7 @@ def _result(row: ProductCatalog | None, code: str) -> dict[str, Any]:
     }
 
 
+# مسار البحث عن منتج بالباركود (من الكتالوج ثم المصادر الخارجية)
 @router.get("/lookup/{barcode}")
 async def lookup_product(barcode: str, refresh: bool = Query(False)):
     code = barcode.strip()
@@ -325,6 +333,7 @@ async def lookup_product(barcode: str, refresh: bool = Query(False)):
             return _result(row, code)
 
 
+# يشيل المنطقة الزمنية من الوقت
 def _naive(value: datetime) -> datetime:
     return value.replace(tzinfo=None) if value.tzinfo else value
 
@@ -332,6 +341,7 @@ def _naive(value: datetime) -> datetime:
 # البحث بالاسم في أمازون مصر فقط — مستقل عن مسار الباركود
 
 
+# يجيب صفحة بحث المتجر كـHTML
 def _search_page_html(url: str) -> str:
     request = urllib.request.Request(
         url,
@@ -361,12 +371,14 @@ def _search_page_html(url: str) -> str:
         return ""
 
 
+# ينظّف نص البحث من وسوم HTML
 def _clean_search_text(value: str) -> str:
     value = re.sub(r"<[^>]+>", " ", value or "")
     value = html.unescape(value)
     return re.sub(r"\s+", " ", value).strip()
 
 
+# يستخرج المنتجات من JSON داخل الصفحة
 def _products_from_json(value):
     products = []
     if isinstance(value, dict):
@@ -402,7 +414,7 @@ def _products_from_json(value):
     return products
 
 
-
+# يستخرج كروت المنتجات من صفحة أمازون
 def _amazon_card_products(page: str, base_url: str) -> list[dict]:
     import html
     import re
@@ -412,12 +424,14 @@ def _amazon_card_products(page: str, base_url: str) -> list[dict]:
     results = []
     seen = set()
 
+    # ينظّف نص المنتج من كيانات HTML
     def clean_text(value: str) -> str:
         value = html.unescape(value or "")
         value = re.sub(r"<[^>]+>", " ", value)
         value = re.sub(r"[\u200e\u200f\u202a-\u202e\u2066-\u2069]", "", value)
         return re.sub(r"\s+", " ", value).strip()
 
+    # يستخرج سعر المنتج من كارت نتيجة البحث
     def extract_price(card: str):
         # الأولوية للسعر الكامل الموجود داخل a-offscreen.
         match = re.search(
@@ -566,7 +580,7 @@ def _amazon_card_products(page: str, base_url: str) -> list[dict]:
     return results
 
 
-
+# يستخرج منتجات المتجر من صفحة البحث
 def _extract_store_products(page: str, store: str, base_url: str, query: str):
     if not page:
         return []
@@ -621,6 +635,7 @@ def _extract_store_products(page: str, store: str, base_url: str, query: str):
     return results
 
 
+# يبحث عن منتجات في متجر معين (أمازون مصر افتراضيًا)
 def _search_store_products(query: str, store: str = "Amazon Egypt"):
     base_url = "https://www.amazon.eg"
     search_url = base_url + "/s?k=" + urllib.parse.quote_plus(query)
@@ -637,6 +652,7 @@ def _search_store_products(query: str, store: str = "Amazon Egypt"):
         return []
 
 
+# مسار البحث عن المنتجات بالاسم
 @router.get("/search")
 async def search_products_by_name(query: str):
     query = query.strip()

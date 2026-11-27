@@ -1,3 +1,4 @@
+// frontend/lib/views/dashboard/transfers/stock_transfers_page.dart
 import '../../../services/cache_partitions.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -8,11 +9,24 @@ import '../../../services/stock_balance_service.dart';
 import '../../../services/transfers_service.dart';
 import '../commercial/commercial_shared.dart';
 
+// صفحة تحويل مخزني
 class StockTransfersPage extends StatefulWidget {
-  final String companyCode; final String? branchCode; final String? userName; final JMap? editItem;
-  const StockTransfersPage({super.key, required this.companyCode, this.branchCode, this.userName, this.editItem});
-  @override State<StockTransfersPage> createState() => _StockTransfersPageState();
+  final String companyCode;
+  final String? branchCode;
+  final String? userName;
+  final JMap? editItem;
+  const StockTransfersPage(
+      {super.key,
+      required this.companyCode,
+      this.branchCode,
+      this.userName,
+      this.editItem});
+  // ينشئ كائن الحالة المرتبط بهذه الصفحة
+  @override
+  State<StockTransfersPage> createState() => _StockTransfersPageState();
 }
+
+// حالة الويدجت StockTransfersPage: تدير بيانات الشاشة وتفاعلاتها
 class _StockTransfersPageState extends State<StockTransfersPage> {
   final _service = TransfersService();
   List<JMap> _branches = [], _products = [];
@@ -27,7 +41,9 @@ class _StockTransfersPageState extends State<StockTransfersPage> {
   String? _fromBranch, _toBranch, _fromStore, _toStore;
   bool _busy = false;
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
+  // يحرّر الاشتراكات والمؤقتات عند إغلاق الصفحة
   void dispose() {
     _catalogSubscription?.cancel();
     _catalogDebounce?.cancel();
@@ -37,12 +53,14 @@ class _StockTransfersPageState extends State<StockTransfersPage> {
     super.dispose();
   }
 
+  // يعيد مخازن الفرع المصدر
   List<JMap> get _fromStores =>
       storesForBranch(widget.companyCode, _fromBranch);
 
-  List<JMap> get _toStores =>
-      storesForBranch(widget.companyCode, _toBranch);
+  // يعيد مخازن الفرع الوجهة
+  List<JMap> get _toStores => storesForBranch(widget.companyCode, _toBranch);
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
@@ -52,8 +70,9 @@ class _StockTransfersPageState extends State<StockTransfersPage> {
         .toList();
     _products = catalog(widget.companyCode, 'items');
     _productIndex = ProductIndex(_products, searchBarcode: false);
-    _catalogSubscription =
-        CachePartitions.box('coding_box').watch().listen((_) => _onCatalogChanged());
+    _catalogSubscription = CachePartitions.box('coding_box')
+        .watch()
+        .listen((_) => _onCatalogChanged());
 
     _fromBranch = widget.editItem?['from_branch_code']?.toString() ??
         widget.branchCode ??
@@ -88,6 +107,7 @@ class _StockTransfersPageState extends State<StockTransfersPage> {
     }
   }
 
+  // يحدّث القوائم عند تغيّر الكتالوج
   /// تحديث قوائم الفروع والأصناف عند مزامنة الكتالوج دون لمس الأصناف المضافة
   /// أو الاختيارات الحالية. الفروع تُرشَّح بنفس صلاحيات الوصول.
   void _onCatalogChanged() {
@@ -104,99 +124,100 @@ class _StockTransfersPageState extends State<StockTransfersPage> {
     });
   }
 
+  // يتحقق من البيانات ويحفظها
   Future<void> _save() async {
-return CachePartitions.run(() async {
-
-    if (_fromBranch == null ||
-        _toBranch == null ||
-        _fromStore == null ||
-        _toStore == null ||
-        _items.isEmpty) {
-      return;
-    }
-
-    setState(() => _busy = true);
-
-    try {
-      final stock = await StockBalanceService.calculateBalances(
-        companyCode: widget.companyCode,
-        branchCode: _fromBranch!,
-        storeCode: _fromStore!,
-        toDate: DateTime.now(),
-      );
-
-      final balances = {
-        for (final s in stock) '${s['code']}': n(s['quantity']),
-      };
-
-      if (widget.editItem != null &&
-          widget.editItem!['from_branch_code']?.toString() == _fromBranch &&
-          widget.editItem!['from_store_code']?.toString() == _fromStore &&
-          widget.editItem!['items'] is List) {
-        for (final old
-            in (widget.editItem!['items'] as List).whereType<Map>()) {
-          final code = '${old['code']}';
-          balances[code] = (balances[code] ?? 0) + n(old['quantity']);
-        }
+    return CachePartitions.run(() async {
+      if (_fromBranch == null ||
+          _toBranch == null ||
+          _fromStore == null ||
+          _toStore == null ||
+          _items.isEmpty) {
+        return;
       }
 
-      for (final item in _items) {
-        if (n(item.qty.text) >
-            (balances['${item.product['code']}'] ?? 0)) {
-          throw Exception(
-            'الكمية غير متاحة في المخزن المصدر للصنف '
-            '${item.product['name']}',
+      setState(() => _busy = true);
+
+      try {
+        final stock = await StockBalanceService.calculateBalances(
+          companyCode: widget.companyCode,
+          branchCode: _fromBranch!,
+          storeCode: _fromStore!,
+          toDate: DateTime.now(),
+        );
+
+        final balances = {
+          for (final s in stock) '${s['code']}': n(s['quantity']),
+        };
+
+        if (widget.editItem != null &&
+            widget.editItem!['from_branch_code']?.toString() == _fromBranch &&
+            widget.editItem!['from_store_code']?.toString() == _fromStore &&
+            widget.editItem!['items'] is List) {
+          for (final old
+              in (widget.editItem!['items'] as List).whereType<Map>()) {
+            final code = '${old['code']}';
+            balances[code] = (balances[code] ?? 0) + n(old['quantity']);
+          }
+        }
+
+        for (final item in _items) {
+          if (n(item.qty.text) > (balances['${item.product['code']}'] ?? 0)) {
+            throw Exception(
+              'الكمية غير متاحة في المخزن المصدر للصنف '
+              '${item.product['name']}',
+            );
+          }
+        }
+
+        await _service.save({
+          'id': widget.editItem?['id']?.toString() ?? _service.newId(),
+          'company_code': widget.companyCode,
+          if (widget.editItem != null)
+            'base_updated_at': widget.editItem!['updated_at'],
+          'from_branch_code': _fromBranch,
+          'from_store_code': _fromStore,
+          'to_branch_code': _toBranch,
+          'to_store_code': _toStore,
+          'serial': widget.editItem?['serial'] ?? 0,
+          'date': widget.editItem?['date'] ??
+              DateFormat('yyyy-MM-dd').format(DateTime.now()),
+          'items': _items
+              .map((item) => {
+                    'code': item.product['code'],
+                    'name': item.product['name'],
+                    'quantity': n(item.qty.text),
+                    'price': n(item.price.text),
+                  })
+              .toList(),
+          'statement': widget.editItem?['statement'] ?? '',
+          'employee': widget.userName ?? '',
+        });
+
+        if (widget.editItem == null) {
+          for (final item in _items) {
+            item.dispose();
+          }
+          _items.clear();
+        }
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('تم حفظ التحويل')),
           );
         }
-      }
-
-      await _service.save({
-        'id': widget.editItem?['id']?.toString() ?? _service.newId(),
-        'company_code': widget.companyCode,
-        if (widget.editItem != null) 'base_updated_at': widget.editItem!['updated_at'],
-        'from_branch_code': _fromBranch,
-        'from_store_code': _fromStore,
-        'to_branch_code': _toBranch,
-        'to_store_code': _toStore,
-        'serial': widget.editItem?['serial'] ?? 0,
-        'date': widget.editItem?['date'] ??
-            DateFormat('yyyy-MM-dd').format(DateTime.now()),
-        'items': _items
-            .map((item) => {
-                  'code': item.product['code'],
-                  'name': item.product['name'],
-                  'quantity': n(item.qty.text),
-                  'price': n(item.price.text),
-                })
-            .toList(),
-        'statement': widget.editItem?['statement'] ?? '',
-        'employee': widget.userName ?? '',
-      });
-
-      if (widget.editItem == null) {
-        for (final item in _items) {
-          item.dispose();
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('$e')),
+          );
         }
-        _items.clear();
+      } finally {
+        if (mounted) setState(() => _busy = false);
       }
+    });
+  }
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم حفظ التحويل')),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('$e')),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-});
-}
-
+  // يبني قائمة منسدلة
   Widget _dd(
     String title,
     String? value,
@@ -218,12 +239,11 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     return CommercialPageFrame(
-      title: widget.editItem == null
-          ? 'تحويل مخزني'
-          : 'تعديل تحويل مخزني',
+      title: widget.editItem == null ? 'تحويل مخزني' : 'تعديل تحويل مخزني',
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -239,8 +259,7 @@ return CachePartitions.run(() async {
                     if (!_fromStores.any(
                       (e) => '${e['code']}' == _fromStore,
                     )) {
-                      _fromStore =
-                          _fromStores.firstOrNull?['code']?.toString();
+                      _fromStore = _fromStores.firstOrNull?['code']?.toString();
                     }
                   });
                 }),

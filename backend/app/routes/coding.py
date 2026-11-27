@@ -15,6 +15,7 @@ from app.core.permissions import (
 from app.core.schemas import CodingModel
 from app.core.sync import manager
 
+# اسم تصنيف صلاحيات التكويد
 _CATEGORY = "التكويد"
 
 # نفس خريطة الواجهة (coding_page._canAddSelectedCategory): القسم → مفتاح الإضافة
@@ -37,6 +38,7 @@ _VALID_CATEGORIES = {
 }
 
 
+# يحدد مفتاح صلاحية الإضافة حسب التصنيف (نفس منطق الواجهة)
 def _add_permission_key(category: str) -> str:
     """نفس منطق الواجهة (_canAddSelectedCategory):
     - فئة غير صالحة أصلاً = رفض مغلق.
@@ -52,6 +54,7 @@ def _add_permission_key(category: str) -> str:
 
 # صلاحيات بديلة بتخوّل رؤية سعر الشراء (الجملة) والأرباح:
 # "سعر الشراء" في التكويد، أو "عرض سعر الجملة" في المبيعات/رصيد المخزون.
+# صلاحيات بديلة بتسمح برؤية سعر الشراء (الجملة) والأرباح
 _COST_PERMISSION_CHECKS = [
     ("التكويد", "سعر الشراء"),
     ("المبيعات", "عرض سعر الجملة"),
@@ -83,6 +86,7 @@ _CODING_VIEW_CHECKS = [
 ]
 
 
+# يفحص هل المستخدم يقدر يشوف التكلفة
 def _may_view_costs(profile: dict) -> bool:
     return any(
         has_section_permission(profile, category, key)
@@ -90,6 +94,7 @@ def _may_view_costs(profile: dict) -> bool:
     )
 
 
+# يتحقق إن الفرع مسموح للمستخدم
 def _check_branch(profile: dict, branch_code) -> None:
     allowed = allowed_branches_for_profile(profile)
     if allowed and branch_code and str(branch_code) not in allowed:
@@ -100,7 +105,7 @@ def _check_branch(profile: dict, branch_code) -> None:
 
 import datetime
 
-
+# راوتر الكودنج
 router = APIRouter()
 
 
@@ -158,6 +163,8 @@ DEFAULT_CATEGORIES_DATA = {
 # Helper
 # ============================================================
 
+
+# يحوّل سجل الكودنج إلى JSON مع إخفاء التكلفة لمن ملوش حق
 def serialize_coding(
     doc: CodingRecord,
     action: str | None = None,
@@ -196,6 +203,8 @@ def serialize_coding(
 #    إضافة أو تحديث
 # ============================================================
 
+
+# مسار حفظ كود (إضافة أو تعديل) مع فحص الصلاحيات والتعارض
 @router.post("/save")
 async def save_code(
     data: CodingModel,
@@ -412,6 +421,8 @@ async def save_code(
 # المحذوف لا يظهر
 # ============================================================
 
+
+# مسار قائمة الأكواد حسب التصنيف
 @router.get("/list/{company_code}/{category}")
 async def list_codes(
     company_code: str,
@@ -690,6 +701,8 @@ async def list_codes(
 # 3. حذف تكويد - Soft Delete
 # ============================================================
 
+
+# مسار حذف كود
 @router.delete(
     "/delete/{company_code}/{category}/{code}"
 )
@@ -814,6 +827,8 @@ async def delete_code(
 # لأن الجهاز Offline يحتاج يعرف أن السجل تم حذفه.
 # ============================================================
 
+
+# مسار فيد v2 لتغييرات الكودنج (تجريبي)
 @router.get("/changes-v2/{company_code}")
 async def get_coding_changes_v2(
     request: Request,
@@ -850,6 +865,7 @@ async def get_coding_changes_v2(
     return out
 
 
+# مسار التغييرات منذ آخر مزامنة للكودنج
 @router.get("/changes/{company_code}")
 async def get_coding_changes(
     company_code: str,

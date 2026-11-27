@@ -1,7 +1,9 @@
+// frontend/lib/services/hr_cache_scope.dart
 import 'cache_partitions.dart';
 import 'employee_identity.dart';
 import 'permission_hierarchy.dart';
 
+// نطاق ذاكرة الموارد البشرية المؤقتة للاحتفاظ المالي
 /// Financial retention only. Section access and write authority are separate.
 class HRCacheScope {
   static const moneyFields = {
@@ -23,11 +25,16 @@ class HRCacheScope {
     'overtime_bonus',
     'amount',
   };
+
+  // يحدد هل يملك المستخدم الصلاحية المحددة
   static bool right(Map<String, dynamic>? permissions, String key) =>
       PermissionHierarchy.allows(permissions, 'الموارد البشرية', key);
+
+  // يحدد هل المفتاح خاص بالموارد البشرية للشركة
   static bool isHRKey(String key, String company) =>
       key == '${company}_employees' || key.startsWith('${company}_hr_');
 
+  // يعيد أكواد الموظف الخاصة بالمستخدم
   static Set<String> ownCodes(
       {required String company,
       required String? uid,
@@ -49,6 +56,7 @@ class HRCacheScope {
         .toSet();
   }
 
+  // يزيل المبالغ المالية من القيمة
   static dynamic withoutAmounts(dynamic value) {
     if (value is Map)
       return {
@@ -60,6 +68,7 @@ class HRCacheScope {
     return value;
   }
 
+  // يطبق نطاق الصلاحيات على الذاكرة المؤقتة
   static Future<bool> apply(
       {required String company,
       required String? uid,
@@ -69,82 +78,82 @@ class HRCacheScope {
       List<String>? viewable,
       bool invalidateTotals = false,
       bool compact = false}) async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      if (!CachePartitions.isBoxOpen('coding_box')) return false;
+      final box = CachePartitions.box('coding_box');
+      final own = ownCodes(
+          company: company,
+          uid: uid,
+          verifiedEmail: verifiedEmail,
+          permissions: permissions);
+      final salary = right(permissions, 'canViewSalaryAmounts');
+      final employees = box.get('${company}_employees');
+      final byCode = <String, Map>{
+        if (employees is List)
+          for (final row in employees.whereType<Map>())
+            (row['code'] ?? '').toString(): row
+      };
+      bool visible(String code) {
+        if (own.contains(code)) return true;
+        if (viewable != null && viewable.isNotEmpty && !viewable.contains(code))
+          return false;
+        if (branches == null || branches.isEmpty || branches.contains('all'))
+          return true;
+        return branches.contains(byCode[code]?['branch_code']?.toString());
+      }
 
-    if (!CachePartitions.isBoxOpen('coding_box')) return false;
-    final box = CachePartitions.box('coding_box');
-    final own = ownCodes(
-        company: company,
-        uid: uid,
-        verifiedEmail: verifiedEmail,
-        permissions: permissions);
-    final salary = right(permissions, 'canViewSalaryAmounts');
-    final employees = box.get('${company}_employees');
-    final byCode = <String, Map>{
-      if (employees is List)
-        for (final row in employees.whereType<Map>())
-          (row['code'] ?? '').toString(): row
-    };
-    bool visible(String code) {
-      if (own.contains(code)) return true;
-      if (viewable != null && viewable.isNotEmpty && !viewable.contains(code))
-        return false;
-      if (branches == null || branches.isEmpty || branches.contains('all'))
-        return true;
-      return branches.contains(byCode[code]?['branch_code']?.toString());
-    }
-
-    var changed = false;
-    for (final key in box.keys.toList()) {
-      final name = key.toString();
-      if (name.startsWith('salary_report_${company}__')) {
-        final rest = name.substring('salary_report_${company}__'.length);
-        final boundary = rest.lastIndexOf('__');
-        final code = boundary < 1 ? '' : rest.substring(0, boundary);
-        if (code.isEmpty ||
-            (!salary && !own.contains(code)) ||
-            !visible(code)) {
-          await box.delete(key);
+      var changed = false;
+      for (final key in box.keys.toList()) {
+        final name = key.toString();
+        if (name.startsWith('salary_report_${company}__')) {
+          final rest = name.substring('salary_report_${company}__'.length);
+          final boundary = rest.lastIndexOf('__');
+          final code = boundary < 1 ? '' : rest.substring(0, boundary);
+          if (code.isEmpty ||
+              (!salary && !own.contains(code)) ||
+              !visible(code)) {
+            await box.delete(key);
+            changed = true;
+          }
+          continue;
+        }
+        if (name.startsWith('branch_salaries_${company}__')) {
+          // An old aggregate cannot be safely re-scoped or partially redacted.
+          if (invalidateTotals ||
+              !salary ||
+              !right(permissions, 'canViewBranchSalaryReport')) {
+            await box.delete(key);
+            changed = true;
+          }
+          continue;
+        }
+        if (!isHRKey(name, company)) continue;
+        final rows = box.get(key);
+        if (rows is! List) continue;
+        var edited = false;
+        final out = rows.map((row) {
+          if (row is! Map) return row;
+          final code =
+              (row[name == '${company}_employees' ? 'code' : 'employee_code'] ??
+                      '')
+                  .toString();
+          if (salary || own.contains(code)) return row;
+          final clean = withoutAmounts(row);
+          // Compare recursively without importing the permission service.
+          if (_containsAmounts(row)) edited = true;
+          return clean;
+        }).toList();
+        if (edited) {
+          await box.put(key, out);
           changed = true;
         }
-        continue;
       }
-      if (name.startsWith('branch_salaries_${company}__')) {
-        // An old aggregate cannot be safely re-scoped or partially redacted.
-        if (invalidateTotals ||
-            !salary ||
-            !right(permissions, 'canViewBranchSalaryReport')) {
-          await box.delete(key);
-          changed = true;
-        }
-        continue;
-      }
-      if (!isHRKey(name, company)) continue;
-      final rows = box.get(key);
-      if (rows is! List) continue;
-      var edited = false;
-      final out = rows.map((row) {
-        if (row is! Map) return row;
-        final code =
-            (row[name == '${company}_employees' ? 'code' : 'employee_code'] ??
-                    '')
-                .toString();
-        if (salary || own.contains(code)) return row;
-        final clean = withoutAmounts(row);
-        // Compare recursively without importing the permission service.
-        if (_containsAmounts(row)) edited = true;
-        return clean;
-      }).toList();
-      if (edited) {
-        await box.put(key, out);
-        changed = true;
-      }
-    }
-    if (changed || compact) await box.compact();
-    return changed;
-});
-}
+      if (changed || compact) await box.compact();
+      return changed;
+    });
+  }
 
+  // يحدد هل القيمة تحتوي مبالغ مالية
   static bool _containsAmounts(dynamic value) {
     if (value is Map)
       return value.entries.any((entry) =>

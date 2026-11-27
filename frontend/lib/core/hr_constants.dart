@@ -1,5 +1,6 @@
-// lib/core/hr_constants.dart
+// frontend/lib/core/hr_constants.dart
 
+// ثوابت الموارد البشرية: الحالات والأنواع وأسماء الأشهر والأيام
 /// ثوابت الموارد البشرية (HR)
 ///
 /// ⚠️ مهم جداً:
@@ -22,13 +23,13 @@ class HRConstants {
   // ============================================================
 
   static const Map<String, double> defaultDelayRules = {
-    'delay_10min': 0.0,                 // حتى 10 دقائق → بدون خصم
-    'delay_15min': 0.25,                // 10-30 دقيقة → ربع يوم
-    'delay_30min': 0.5,                 // 30-60 دقيقة → نصف يوم
-    'delay_60min': 1.0,                 // 60-120 دقيقة → يوم كامل
-    'delay_120min': 2.0,                // أكثر من 120 دقيقة → يومان
-    'absence': 3.0,                     // غياب بدون إذن → 3 أيام
-    'absence_with_permission': 1.0,     // غياب بإذن → يوم كامل
+    'delay_10min': 0.0, // حتى 10 دقائق → بدون خصم
+    'delay_15min': 0.25, // 10-30 دقيقة → ربع يوم
+    'delay_30min': 0.5, // 30-60 دقيقة → نصف يوم
+    'delay_60min': 1.0, // 60-120 دقيقة → يوم كامل
+    'delay_120min': 2.0, // أكثر من 120 دقيقة → يومان
+    'absence': 3.0, // غياب بدون إذن → 3 أيام
+    'absence_with_permission': 1.0, // غياب بإذن → يوم كامل
   };
 
   // ============================================================
@@ -111,18 +112,21 @@ class HRConstants {
   // 6. Helpers لتواريخ
   // ============================================================
 
+  // يعيد اسم الشهر بالعربية من رقمه
   /// إرجاع اسم الشهر بالعربي من رقمه (1-12)
   static String monthNameAr(int month) {
     if (month < 1 || month > 12) return '';
     return monthNamesAr[month - 1];
   }
 
+  // يعيد اسم اليوم بالعربية من رقمه
   /// إرجاع اسم اليوم بالعربي من رقمه (0-6)
   static String weekdayNameAr(int weekday) {
     if (weekday < 0 || weekday > 6) return '';
     return weekdayNamesAr[weekday];
   }
 
+  // ينسّق التاريخ كنص بصيغة السنة-الشهر-اليوم
   /// تنسيق التاريخ كنص ISO: YYYY-MM-DD
   static String dateToStr(DateTime dt) {
     return '${dt.year}-'
@@ -130,11 +134,13 @@ class HRConstants {
         '${dt.day.toString().padLeft(2, '0')}';
   }
 
+  // ينسّق الشهر كنص بصيغة السنة-الشهر
   /// تنسيق الشهر كنص ISO: YYYY-MM
   static String monthToStr(DateTime dt) {
     return '${dt.year}-${dt.month.toString().padLeft(2, '0')}';
   }
 
+  // يحدد هل التاريخ يوافق يوم الإجازة الأسبوعية
   /// هل التاريخ ده إجازة أسبوعية؟
   ///
   /// [weeklyDay] = 0 (الأحد) ... 5 (الجمعة) ... 6 (السبت)
@@ -148,6 +154,7 @@ class HRConstants {
     return ourDay == weeklyDay;
   }
 
+  // يحسب عدد أيام الشهر
   /// عدد أيام الشهر
   static int daysInMonth(DateTime month) {
     return DateTime(month.year, month.month + 1, 0).day;

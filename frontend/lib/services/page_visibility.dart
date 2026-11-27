@@ -1,3 +1,5 @@
+// frontend/lib/services/page_visibility.dart
+// يحدد ظهور عناصر القائمة (لا يمنح صلاحية بيانات)
 /// Menu choices only. Never supplies a data or operation permission.
 class PageVisibility {
   static const keys = <String>{
@@ -42,16 +44,21 @@ class PageVisibility {
     'إظهار تحليل هامش الربح الفعلي',
     'إظهار تحليل تجميع المنتجات',
   };
+
+  // يحدد هل عنصر القائمة ظاهر
   static bool visible(Map? permissions, String label, {bool fallback = true}) {
     final general = permissions?['صلاحيات عامة'];
     final value = general is Map ? general['إظهار $label'] : null;
     return value is bool ? value : fallback;
   }
+
+  // يجهّز خريطة الصلاحيات للحفظ
   /// Untouched compatibility defaults are display-only, never new assignments.
   static Map<String, Map<String, bool>> forSave(
-      Map<String, Map<String, bool>> draft, Map<String, Map<String, bool>> source,
+      Map<String, Map<String, bool>> draft,
+      Map<String, Map<String, bool>> source,
       Map<String, Map<String, bool>> displayed) {
-    final result = draft.map((c,v)=>MapEntry(c,Map<String,bool>.from(v)));
+    final result = draft.map((c, v) => MapEntry(c, Map<String, bool>.from(v)));
     for (final key in keys) {
       if (!(source['صلاحيات عامة']?.containsKey(key) ?? false) &&
           draft['صلاحيات عامة']?[key] == displayed['صلاحيات عامة']?[key]) {

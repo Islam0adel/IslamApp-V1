@@ -1,4 +1,4 @@
-// lib/services/fcm_service.dart
+// frontend/lib/services/fcm_service.dart
 //
 // خدمة إشعارات النظام عبر Firebase Cloud Messaging (Web Push).
 //
@@ -25,6 +25,7 @@ import '../core/constants.dart';
 import 'app_badge.dart';
 import 'auth_http.dart';
 
+// معالج رسائل Firebase الواردة والتطبيق في الخلفية
 /// معالج الرسائل في الخلفية.
 /// على الويب، Service Worker هو الذي يعرض الإشعار فعلياً،
 /// لكن Firebase يتطلب تعريف هذه الدالة حتى لا يرمي استثناء.
@@ -33,6 +34,7 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   debugPrint('FCM background message: ${message.messageId}');
 }
 
+// خدمة الإشعارات الفورية عبر Firebase
 class FcmService {
   static final FcmService instance = FcmService._();
   FcmService._();
@@ -49,9 +51,11 @@ class FcmService {
   StreamSubscription<RemoteMessage>? _onMessageSub;
   StreamSubscription<String>? _onTokenRefreshSub;
 
+  // يحدد هل المنصة مدعومة
   /// هل النظام مدعوم؟
   bool get isSupported => kIsWeb;
 
+  // يهيّئ الخدمة مرة واحدة عند بدء التطبيق
   /// التهيئة الأساسية (تُستدعى مرة واحدة من main.dart)
   Future<void> initialize({
     void Function(RemoteMessage)? onForegroundMessage,
@@ -93,6 +97,7 @@ class FcmService {
     }
   }
 
+  // يحرّر اشتراكات الخدمة
   Future<void> dispose() async {
     await _onMessageSub?.cancel();
     await _onTokenRefreshSub?.cancel();
@@ -101,12 +106,14 @@ class FcmService {
     _initialized = false;
   }
 
+  // يحدد هل فعّل المستخدم إشعارات النظام
   /// هل المستخدم فعّل إشعارات النظام سابقاً؟
   Future<bool> isSystemNotificationsEnabled() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(_prefsKeyEnabled) ?? false;
   }
 
+  // يحدد هل التنبيهات مكتومة
   /// Alerts muted: pushes still arrive (and feed background sync), but the
   /// service worker shows them without sound or vibration.
   Future<bool> isAlertsMuted() async {
@@ -114,6 +121,7 @@ class FcmService {
     return prefs.getBool(_prefsKeyMuted) ?? false;
   }
 
+  // يضبط كتم التنبيهات على مستوى التطبيق
   /// Turn the app-level alerts off/on WITHOUT touching the token, the server
   /// registration or the browser permission. If push was never enabled there
   /// is nothing to keep: returns not_registered so the caller can say so.
@@ -127,6 +135,7 @@ class FcmService {
     return {'success': true, 'muted': muted};
   }
 
+  // يفعّل إشعارات النظام ويسجّل الجهاز
   /// ⭐ تفعيل إشعارات النظام:
   ///   1. طلب إذن
   ///   2. الحصول على token
@@ -181,6 +190,7 @@ class FcmService {
     }
   }
 
+  // يوقف إشعارات النظام ويلغي تسجيل الجهاز
   /// ⭐ إيقاف إشعارات النظام:
   ///   1. إبلاغ السيرفر
   ///   2. حذف الـ token محلياً
@@ -214,6 +224,7 @@ class FcmService {
     }
   }
 
+  // يستعيد تسجيل الجهاز عند فتح التطبيق إذا كان مفعّلًا
   /// ⭐ عند فتح التطبيق: لو المستخدم فعّل الإشعارات قبل كده،
   /// نعيد تسجيل الجهاز تلقائياً (بدون طلب إذن جديد).
   Future<void> restoreRegistrationIfEnabled() async {
@@ -248,6 +259,7 @@ class FcmService {
   // الاتصال مع الباك إند
   // ============================================================
 
+  // يرسل رمز الجهاز إلى الخادم لتسجيله
   Future<void> _sendRegistrationToServer(String token) async {
     try {
       final response = await AuthHttp.post(
@@ -266,6 +278,7 @@ class FcmService {
     }
   }
 
+  // يرسل رمز الجهاز إلى الخادم لإلغاء تسجيله
   Future<void> _sendUnregistrationToServer(String token) async {
     try {
       await AuthHttp.delete(

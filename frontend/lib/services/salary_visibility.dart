@@ -1,4 +1,6 @@
+// frontend/lib/services/salary_visibility.dart
 // Salary-report visibility contract. Calculations are not changed.
+// قواعد ظهور بيانات الرواتب
 class SalaryVisibility {
   static const reportSafeKeys = <String>{
     "absence",
@@ -40,6 +42,8 @@ class SalaryVisibility {
   static const lineSafeKeys = <String>{"date", "label", "note", "type"};
   static const branchTopKeys = <String>{"company_code", "month", "branch_code"};
   static const branchTotalKeys = <String>{"employees_count"};
+
+  // يزيل الحقول الحساسة من تقرير الراتب
   static Map<String, dynamic> report(Map<String, dynamic> data) {
     final out = {
       for (final entry in data.entries)
@@ -57,6 +61,7 @@ class SalaryVisibility {
     return out;
   }
 
+  // يزيل الحقول الحساسة من إجماليات الفرع
   static Map<String, dynamic> branch(Map<String, dynamic> data) {
     final totals = data['totals'];
     final employees = data['employees'];

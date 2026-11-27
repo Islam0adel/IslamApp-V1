@@ -1,5 +1,7 @@
+// frontend/lib/services/sync_read_access.dart
 import 'permissions_service.dart';
 
+// يحدد صلاحيات القراءة المقابلة لكل وحدة مزامنة
 /// Mirrors the read endpoints' OR grants. Visibility is never data authority.
 /// Write queues deliberately do not use this plan.
 class SyncReadAccess {
@@ -94,6 +96,8 @@ class SyncReadAccess {
       ['الموارد البشرية', 'canViewBranchSalaryReport'],
     ],
   };
+
+  // يحدد هل يملك المستخدم صلاحية قراءة الوحدة
   static bool allows(String module) {
     final p = PermissionsService();
     final grants = checks[module];

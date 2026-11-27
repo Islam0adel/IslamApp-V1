@@ -25,7 +25,6 @@ from app.core.sync import manager
 
 import datetime
 
-
 # ------------------------------------------------------------------
 # صلاحيات الموظفين والـ HR:
 # - سجل الموظفين: عرض أساسي (كود/اسم/فرع) عبر "عرض الموظفين"،
@@ -33,6 +32,7 @@ import datetime
 # ------------------------------------------------------------------
 # صلاحيات تؤهّل لرؤية كامل بيانات الموظف (شخصية ووظيفية)،
 # مطابقة لاستخدام الواجهة في hr_dashboard/employees_list/profile:
+# اسم قسم الموارد البشرية وقوائم صلاحيات عرض الموظفين
 _HR_SECTION = "الموارد البشرية"
 _HR_PERMISSIONS = (
     (_HR_SECTION, "canViewEmployees"),
@@ -65,6 +65,7 @@ _REFERENCE_WORK_FIELDS = {
 }
 
 
+# يفحص هل المستخدم عنده صلاحية عرض الموارد البشرية
 def _can_view_hr(profile: dict) -> bool:
     return any(
         has_section_permission(profile, category, key)
@@ -72,6 +73,7 @@ def _can_view_hr(profile: dict) -> bool:
     )
 
 
+# يحدد هل المستخدم يرى سجله الشخصي فقط (من غير صلاحية أوسع)
 def _is_own_only_viewer(profile: dict) -> bool:
     """canViewOwnHRData فقط دون أي صلاحية HR أوسع → يرى سجله فقط."""
     return (
@@ -80,10 +82,12 @@ def _is_own_only_viewer(profile: dict) -> bool:
     )
 
 
+# يفحص هل المستند يخص حساب المستخدم نفسه
 def _is_own_doc(profile: dict, doc) -> bool:
     return HRTarget.from_employee(doc).matches_account(profile)
 
 
+# يبني بيانات الموظف المرسلة حسب صلاحية من يشوفه
 def _employee_payload(
     doc,
     *,
@@ -116,6 +120,7 @@ def _employee_payload(
     return data
 
 
+# يتحقق إن الفرع مسموح للمستخدم
 def _check_branch(profile: dict, branch_code) -> None:
     allowed = allowed_branches_for_profile(profile)
     if allowed and branch_code and str(branch_code) not in allowed:
@@ -125,6 +130,7 @@ def _check_branch(profile: dict, branch_code) -> None:
         )
 
 
+# يتحقق إن شركة المسار هي شركة الجلسة (صاحب البرنامج مستثنى)
 def _check_tenant(profile: dict, company_code: str) -> None:
     """فحص صريح: شركة المسار = شركة الجلسة (صاحب البرنامج يتجاوز)."""
     from app.core.auth_middleware import _effective_role
@@ -134,6 +140,7 @@ def _check_tenant(profile: dict, company_code: str) -> None:
         raise HTTPException(status_code=403, detail="غير مصرح لهذه الشركة")
 
 
+# يرجّع قائمة الموظفين اللي المستخدم يقدر يشوفهم في الموارد البشرية
 def _hr_viewable_codes(profile: dict):
     """قائمة الموظفين المرئيين لهذا المستخدم في HR (فارغة/غائبة = الكل)."""
     value = profile.get("hr_viewable_employees")
@@ -142,6 +149,7 @@ def _hr_viewable_codes(profile: dict):
     return None
 
 
+# يبني شرط فلترة الفروع للاستعلامات (None = كل الفروع)
 def _branch_filter_clause(profile: dict):
     """فلتر فروع للاستعلامات، None = كل الفروع.
 
@@ -159,6 +167,7 @@ def _branch_filter_clause(profile: dict):
     )
 
 
+# يبني شرط ظهور الموظفين للمستخدم
 def _employee_visibility_clause(profile):
     own = employee_self_clause(profile)
     if _is_own_only_viewer(profile):
@@ -174,11 +183,14 @@ def _employee_visibility_clause(profile):
     return broad
 
 
+# راوتر الموظفين
 router = APIRouter()
 # ============================================================
 # ⭐ Helper: توليد كود الموظف التالي (serial تلقائي)
 # ============================================================
 
+
+# يجيب كود الموظف التالي للشركة
 async def _get_next_employee_code(
     db: AsyncSession,
     company_code: str,
@@ -190,15 +202,15 @@ async def _get_next_employee_code(
     - لو مفيش أي كود رقمي → يرجع "1"
     """
     from sqlalchemy import cast, Integer, func
-    
+
     stmt = select(func.max(cast(Employee.code, Integer))).where(
         Employee.company_code == company_code,
         Employee.code.op('~')('^[0-9]+$'),   # PostgreSQL regex
     )
-    
+
     result = await db.execute(stmt)
     max_code = result.scalar()
-    
+
     return str((max_code or 0) + 1)
 
 
@@ -206,6 +218,8 @@ async def _get_next_employee_code(
 # Helper: تحويل التواريخ من نص لـ datetime
 # ============================================================
 
+
+# يحوّل قيمة تاريخ نصية لتاريخ
 def _parse_date(value):
     """
     يحوّل نص ISO 8601 لـ datetime.
@@ -223,6 +237,7 @@ def _parse_date(value):
         return None
 
 
+# يحوّل التاريخ لنص ISO
 def _date_to_iso(value):
     """
     يحوّل datetime لنص ISO 8601.
@@ -238,6 +253,8 @@ def _date_to_iso(value):
 # (نفس شكل CodingSyncModel عشان الواجهة تستخدمه بسهولة)
 # ============================================================
 
+
+# يحوّل سجل الموظف إلى JSON مع إخفاء الحقول الحساسة
 def serialize_employee(
     doc: Employee,
     action: str | None = None,
@@ -297,6 +314,8 @@ def serialize_employee(
 # Helpers — HR data serializers (للـ profile endpoint)
 # ============================================================
 
+
+# يحوّل سجل حضور إلى JSON للملف الشخصي
 def _serialize_attendance(doc: HRAttendance):
     return {
         "id": doc.id,
@@ -311,6 +330,7 @@ def _serialize_attendance(doc: HRAttendance):
     }
 
 
+# يحوّل سجل إجازة إلى JSON للملف الشخصي
 def _serialize_vacation(doc: HRVacation):
     return {
         "id": doc.id,
@@ -322,6 +342,7 @@ def _serialize_vacation(doc: HRVacation):
     }
 
 
+# يحوّل سجل تسوية إلى JSON للملف الشخصي
 def _serialize_adjustment(doc: HRAdjustment):
     return {
         "id": doc.id,
@@ -335,6 +356,7 @@ def _serialize_adjustment(doc: HRAdjustment):
     }
 
 
+# يحوّل إعدادات الموظف إلى JSON
 def _serialize_settings(doc: HREmployeeSettings | None):
     if not doc:
         # القيم الافتراضية (مطابقة للفرونت)
@@ -366,6 +388,8 @@ def _serialize_settings(doc: HREmployeeSettings | None):
 # 1. حفظ موظف (إضافة أو تحديث)
 # ============================================================
 
+
+# مسار حفظ موظف (إضافة أو تعديل)
 @router.post("/save")
 async def save_employee(
     data: EmployeeModel,
@@ -561,6 +585,8 @@ async def save_employee(
 # 2. جلب قائمة الموظفين (غير المحذوفين)
 # ============================================================
 
+
+# مسار قائمة الموظفين
 @router.get("/list/{company_code}")
 async def list_employees(
     company_code: str,
@@ -619,6 +645,8 @@ async def list_employees(
 # 3. جلب موظف واحد بالتفصيل (للـ HR profile)
 # ============================================================
 
+
+# مسار بيانات موظف بالكود
 @router.get("/get/{company_code}/{code}")
 async def get_employee(
     company_code: str,
@@ -678,6 +706,8 @@ async def get_employee(
 # 4. حذف موظف (Soft Delete)
 # ============================================================
 
+
+# مسار حذف موظف
 @router.delete("/delete/{company_code}/{code}")
 async def delete_employee(
     company_code: str,
@@ -771,6 +801,8 @@ async def delete_employee(
 # - Settings (مواعيد + delay_rules)
 # ============================================================
 
+
+# مسار الملف الشخصي للموظف (حضور وإجازات وتسويات)
 @router.get("/profile/{company_code}/{code}")
 async def get_employee_profile(
     company_code: str,
@@ -973,6 +1005,8 @@ async def get_employee_profile(
 # الجهاز Offline يحتاج يعرف أن السجل تم حذفه.
 # ============================================================
 
+
+# مسار التغييرات منذ آخر مزامنة للموظفين
 @router.get("/changes/{company_code}")
 
 # ============================================================
@@ -1074,6 +1108,8 @@ async def get_employee_changes(
             detail=str(e),
         )
 
+
+# مسار فيد v2 للموظفين (تجريبي)
 @router.get("/changes-v2/{company_code}")
 async def get_employee_changes_v2(
     company_code: str,

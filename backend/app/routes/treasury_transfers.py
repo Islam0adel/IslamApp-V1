@@ -1,3 +1,4 @@
+# backend/app/routes/treasury_transfers.py
 """Independent treasury transfer records. Never writes legacy journal rows."""
 import datetime
 import logging
@@ -14,11 +15,13 @@ from app.core.permissions import require_section_permission, require_any_section
 from app.core.treasury_permissions import can_view_treasury_effects
 from app.core.sync import manager
 
+# راوتر تحويلات الخزائن
 router = APIRouter()
 CATEGORY = "تحويلات الخزائن"
 log = logging.getLogger(__name__)
 
 
+# نموذج بيانات تحويل الخزينة
 class TreasuryTransferModel(BaseModel):
     id: str = Field(min_length=1, max_length=36)
     company_code: str = Field(min_length=1, max_length=50)
@@ -32,6 +35,7 @@ class TreasuryTransferModel(BaseModel):
     date: str
     base_updated_at: datetime.datetime | None = None
 
+    # يتحقق إن التاريخ بصيغة صحيحة
     @field_validator("date")
     @classmethod
     def valid_date(cls, value):
@@ -40,6 +44,7 @@ class TreasuryTransferModel(BaseModel):
         return value
 
 
+# يتحقق من نطاق المستخدم (الشركة والفرع) ويرجّع بروفايله
 def _scope(request, company, branch=None):
     profile = request.state.auth_user
     if _effective_role(profile) != "super_admin" and str(profile.get("company_code")) != company:
@@ -51,6 +56,7 @@ def _scope(request, company, branch=None):
     return profile
 
 
+# يحوّل صف التحويل لشكل الرد
 def serialize(row):
     fields = ("id", "company_code", "branch_code", "serial", "from_treasury",
               "to_treasury", "amount", "statement", "employee", "date", "is_deleted")
@@ -59,16 +65,19 @@ def serialize(row):
     return result
 
 
+# يبني رد النجاح مع الإجراء والسجل
 def _response(row, action):
     return {"status": "success", "action": action, "record": serialize(row)}
 
 
+# يحوّل التاريخ لقيمة نسخة للمقارنة
 def _version(value):
     if value.tzinfo:
         value = value.astimezone(datetime.timezone.utc).replace(tzinfo=None)
     return value
 
 
+# يبعت إشعار وتحديث لحظي بالتغيير
 async def _notify(row, action, revision=None, payload=None):
     payload = payload if payload is not None else serialize(row)
     messages = [
@@ -83,6 +92,7 @@ async def _notify(row, action, revision=None, payload=None):
             log.exception("Treasury transfer notification failed after commit")
 
 
+# حفظ تحويل خزينة (جديد أو تعديل) مع فحص التعارض
 @router.post("/save")
 async def save_transfer(request: Request, data: TreasuryTransferModel,
                         db: AsyncSession = Depends(get_db)):
@@ -148,6 +158,7 @@ async def save_transfer(request: Request, data: TreasuryTransferModel,
             raise HTTPException(500, "فشل حفظ التحويل")
 
 
+# قائمة تحويلات الخزائن للشركة
 @router.get("/list/{company_code}")
 async def list_transfers(request: Request, company_code: str,
                          branch_code: str | None = None,
@@ -173,6 +184,7 @@ async def list_transfers(request: Request, company_code: str,
     return [serialize(row) for row in rows]
 
 
+# آثار التحويلات على أرصدة الخزائن
 @router.get("/effects/{company_code}")
 async def transfer_effects(request: Request, company_code: str,
                            db: AsyncSession = Depends(get_db)):
@@ -195,6 +207,7 @@ async def transfer_effects(request: Request, company_code: str,
             for key, value in sorted(grouped.items()) if value != 0]
 
 
+# حذف تحويل خزينة
 @router.post("/delete/{company_code}/{record_id}")
 async def delete_transfer(request: Request, company_code: str, record_id: str,
                           db: AsyncSession = Depends(get_db),
@@ -234,6 +247,7 @@ async def delete_transfer(request: Request, company_code: str, record_id: str,
         raise HTTPException(500, "فشل حذف التحويل")
 
 
+# التغييرات منذ آخر مزامنة لتحويلات الخزائن
 @router.get('/changes/{mode}/{company_code}')
 async def treasury_changes(request: Request, mode: str, company_code: str,
                            cursor: int = 0, scope: str = '',

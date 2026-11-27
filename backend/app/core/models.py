@@ -1,3 +1,4 @@
+# backend/app/core/models.py
 from sqlalchemy import (
     Column,
     String,
@@ -19,6 +20,7 @@ from app.core.database import Base
 # ==========================================
 # 1. جدول الشركات (Companies)
 # ==========================================
+# جدول الشركات (companies)
 class Company(Base):
     __tablename__ = "companies"
 
@@ -58,6 +60,7 @@ class Company(Base):
 
 # Stored separately so existing company rows remain on their current policy
 # until a reviewed configuration is explicitly activated by the new workflow.
+# جدول سياسة صلاحيات الشركة (مسوّدة ومفعّلة)
 class CompanyPermissionPolicy(Base):
     __tablename__ = "company_permission_policies"
 
@@ -75,6 +78,7 @@ class CompanyPermissionPolicy(Base):
 # ==========================================
 # 2. جدول الفروع (Branches)
 # ==========================================
+# جدول فروع الشركة
 class Branch(Base):
     __tablename__ = "branches"
 
@@ -130,6 +134,7 @@ class Branch(Base):
 # ==========================================
 # 3. جدول التكويدات (Coding Records)
 # ==========================================
+# جدول سجلات الكودنج (الحسابات والأكواد)
 class CodingRecord(Base):
     __tablename__ = "coding_records"
 
@@ -262,6 +267,7 @@ class CodingRecord(Base):
 # ==========================================
 # 4. جدول اليوميات (Transactions)
 # ==========================================
+# جدول المعاملات اليومية (اليوميات)
 class Transaction(Base):
     __tablename__ = "transactions"
 
@@ -393,6 +399,7 @@ class Transaction(Base):
 # ==========================================
 # 5. جدول الجردات (Inventories)
 # ==========================================
+# جدول سجلات المخزون
 class InventoryRecord(Base):
     __tablename__ = "inventory_records"
 
@@ -512,6 +519,7 @@ class InventoryRecord(Base):
 # ==========================================
 # 6. جدول حركات الموردين
 # ==========================================
+# جدول سجلات الموردين
 class SupplierRecord(Base):
     __tablename__ = "supplier_records"
 
@@ -651,9 +659,11 @@ class SupplierRecord(Base):
     ),
 )
 
+
 # ==========================================
 # 7. تسويات الموردين
 # ==========================================
+# جدول تسويات الموردين
 class SupplierSettlementRecord(Base):
     __tablename__ = "supplier_settlements"
 
@@ -768,6 +778,7 @@ class SupplierSettlementRecord(Base):
 # Commercial operations are stored separately from the existing daily cash
 # journal. This keeps sales cash balances independent until the user enables
 # a future journal integration.
+# جدول فواتير المبيعات
 class SaleRecord(Base):
     __tablename__ = "sales"
     id = Column(String(36), primary_key=True)
@@ -793,6 +804,7 @@ class SaleRecord(Base):
     __table_args__ = (Index("idx_sales_company_branch_serial", "company_code", "branch_code", "serial", unique=True), Index("idx_sales_company_changes", "company_code", "updated_at"))
 
 
+# جدول مرتجعات المبيعات
 class SaleReturnRecord(Base):
     __tablename__ = "sale_returns"
     id = Column(String(36), primary_key=True)
@@ -817,6 +829,7 @@ class SaleReturnRecord(Base):
     __table_args__ = (Index("idx_returns_company_branch_serial", "company_code", "branch_code", "serial", unique=True), Index("idx_returns_company_changes", "company_code", "updated_at"))
 
 
+# جدول دفعات العملاء
 class CustomerPaymentRecord(Base):
     __tablename__ = "customer_payments"
     id = Column(String(36), primary_key=True)
@@ -835,6 +848,7 @@ class CustomerPaymentRecord(Base):
     __table_args__ = (Index("idx_customer_payments_company_branch_serial", "company_code", "branch_code", "serial", unique=True), Index("idx_customer_payments_company_changes", "company_code", "updated_at"))
 
 
+# جدول تحويلات المخازن
 class StockTransferRecord(Base):
     __tablename__ = "stock_transfers"
     id = Column(String(36), primary_key=True)
@@ -852,9 +866,11 @@ class StockTransferRecord(Base):
     is_deleted = Column(Boolean, nullable=False, default=False, server_default="false")
     __table_args__ = (Index("idx_transfers_company_serial", "company_code", "serial", unique=True), Index("idx_transfers_company_changes", "company_code", "updated_at"))
 
+
 # ==========================================
 # 8. إشعارات المستخدمين وسجل التدقيق
 # ==========================================
+# جدول الإشعارات (صندوق الوارد)
 class Notification(Base):
     __tablename__ = "notifications"
 
@@ -881,6 +897,7 @@ class Notification(Base):
     )
 
 
+# جدول تفضيلات الإشعارات لكل مستخدم
 class NotificationPreference(Base):
     __tablename__ = "notification_preferences"
 
@@ -898,6 +915,7 @@ class NotificationPreference(Base):
     )
 
 
+# جدول سجل التدقيق (من عمل إيه ومتى)
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 
@@ -914,9 +932,11 @@ class AuditLog(Base):
     details = Column(JSON, nullable=False, default=dict)
     created_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
 
+
 # ==========================================
 # 9. كتالوج المنتجات والبحث بالباركود
 # ==========================================
+# جدول كتالوج المنتجات
 class ProductCatalog(Base):
     __tablename__ = "product_catalog"
 
@@ -943,12 +963,15 @@ class ProductCatalog(Base):
     price_checked_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
 # ==========================================
 # 10. جدول الموظفين (Employees)
 #
 # مستقل تمامًا عن CodingRecord
 # مصمم للتوسع (HR System)
 # ==========================================
+# جدول الموظفين
 class Employee(Base):
     __tablename__ = "employees"
 
@@ -1151,11 +1174,13 @@ class Employee(Base):
         ),
     )
 
+
 # ==========================================
 # 11. الحضور اليومي (HR Attendance)
 #
 # سجل واحد لكل موظف في اليوم
 # ==========================================
+# جدول حضور الموظفين
 class HRAttendance(Base):
     __tablename__ = "hr_attendance"
 
@@ -1287,6 +1312,7 @@ class HRAttendance(Base):
 # ==========================================
 # 12. الإجازات الرسمية والأسبوعية
 # ==========================================
+# جدول إجازات الموظفين
 class HRVacation(Base):
     __tablename__ = "hr_vacations"
 
@@ -1402,6 +1428,7 @@ class HRVacation(Base):
 # كل صف = بند واحد في شهر معين
 # السلفة = صفوف متعددة (قسط لكل شهر)
 # ==========================================
+# جدول تسويات الموظفين (خصومات ومكافآت وسلف)
 class HRAdjustment(Base):
     __tablename__ = "hr_adjustments"
 
@@ -1526,6 +1553,7 @@ class HRAdjustment(Base):
 #
 # لو مش موجود، بنستخدم الافتراضيات
 # ==========================================
+# جدول إعدادات الموارد البشرية للشركة
 class HRSettings(Base):
     __tablename__ = "hr_settings"
 
@@ -1588,6 +1616,7 @@ class HRSettings(Base):
         ),
     )
 
+
 # ==========================================
 # 15. إعدادات الموظف في HR
 #
@@ -1595,6 +1624,7 @@ class HRSettings(Base):
 # - مواعيد العمل الثابتة
 # - مرونة المواعيد
 # ==========================================
+# جدول إعدادات الموارد البشرية لكل موظف
 class HREmployeeSettings(Base):
     __tablename__ = "hr_employee_settings"
 
@@ -1684,6 +1714,7 @@ class HREmployeeSettings(Base):
 # ==========================================
 # 16. FCM Device Tokens (Push Notifications)
 # ==========================================
+# جدول رموز FCM لأجهزة المستخدمين
 class UserFcmToken(Base):
     """
     رموز الأجهزة المسجّلة لإشعارات النظام (FCM).
@@ -1741,6 +1772,7 @@ class UserFcmToken(Base):
     )
 
 
+# جدول تحويلات الخزائن (تحويل مستقل واحد)
 class TreasuryTransferRecord(Base):
     """One independent transfer, not two daily-journal vouchers."""
     __tablename__ = "treasury_transfers"
@@ -1763,6 +1795,7 @@ class TreasuryTransferRecord(Base):
     )
 
 
+# جدول إيصالات إنشاء العمليات التجارية لمنع تكرار الإنشاء
 class CommercialCreationReceipt(Base):
     """Owner-bound proof of one commercial create, not a second document copy."""
     __tablename__ = "commercial_creation_receipts"
@@ -1777,6 +1810,7 @@ class CommercialCreationReceipt(Base):
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 
 
+# جدول إيصالات حفظ اليومية لمنع تكرار الحفظ
 class JournalSaveReceipt(Base):
     """Immutable owner-bound acknowledgement of a journal save intention."""
     __tablename__ = "journal_save_receipts"
@@ -1790,6 +1824,7 @@ class JournalSaveReceipt(Base):
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 
 
+# جدول حالة تزامن الخزائن للشركة (ساعة المعاملات)
 class TreasurySyncState(Base):
     """Transactional per-company clock, held through treasury commit."""
     __tablename__ = 'treasury_sync_states'
@@ -1798,6 +1833,7 @@ class TreasurySyncState(Base):
     initialized = Column(Boolean, nullable=False, default=False)
 
 
+# جدول آخر حالة لكل تحويل خزينة (يشمل المحذوف)
 class TreasurySyncEntry(Base):
     """Latest state per transfer, including tombstones. No unbounded event history."""
     __tablename__ = 'treasury_sync_entries'

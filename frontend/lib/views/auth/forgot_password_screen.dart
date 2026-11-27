@@ -1,3 +1,4 @@
+// frontend/lib/views/auth/forgot_password_screen.dart
 import '../../core/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -6,13 +7,16 @@ import 'dart:convert';
 import '../../core/constants.dart';
 import '../../services/auth_http.dart';
 
+// شاشة استعادة كلمة المرور
 class ForgotPasswordScreen extends StatefulWidget {
   const ForgotPasswordScreen({super.key});
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<ForgotPasswordScreen> createState() => _ForgotPasswordScreenState();
 }
 
+// حالة الويدجت ForgotPasswordScreen: تدير بيانات الشاشة وتفاعلاتها
 class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   final _emailController = TextEditingController();
   final _emailNode = FocusNode();
@@ -20,6 +24,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   bool _isLoading = false;
   bool _emailSent = false;
 
+  // يرسل طلب استعادة كلمة المرور
   Future<void> _handleSend() async {
     final email = _emailController.text.trim().toLowerCase();
 
@@ -116,6 +121,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     }
   }
 
+  // يعرض رسالة سريعة بالنص واللون المحددين
   void _showSnackBar(String msg, Color color) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -125,6 +131,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     );
   }
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     _emailController.dispose();
@@ -132,6 +139,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     super.dispose();
   }
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -174,7 +182,6 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 30),
-
                 GlassCard(
                   child: Column(
                     children: [
@@ -215,9 +222,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                           ),
                         ),
                       ),
-
                       const SizedBox(height: 10),
-
                       _isLoading
                           ? CircularProgressIndicator(
                               color: Theme.of(context).colorScheme.onPrimary,
@@ -245,7 +250,6 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                                 ),
                               ),
                             ),
-
                       if (_emailSent) ...[
                         const SizedBox(height: 20),
                         Divider(color: AppTheme.border(context)),

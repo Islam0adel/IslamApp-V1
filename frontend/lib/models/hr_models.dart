@@ -1,7 +1,6 @@
-// lib/models/hr_models.dart
+// frontend/lib/models/hr_models.dart
 
 import '../core/hr_constants.dart';
-
 
 // ============================================================
 // Helper functions
@@ -9,17 +8,20 @@ import '../core/hr_constants.dart';
 // (top-level, قابلة للاستخدام من أي موديل في الملف)
 // ============================================================
 
+// يحوّل قيمة ديناميكية إلى عدد عشري بأمان
 double _toDouble(dynamic value) {
   if (value is num) return value.toDouble();
   return double.tryParse(value?.toString() ?? '') ?? 0.0;
 }
 
+// يحوّل قيمة ديناميكية إلى عدد صحيح بأمان
 int _toInt(dynamic value) {
   if (value is int) return value;
   if (value is num) return value.toInt();
   return int.tryParse(value?.toString() ?? '') ?? 0;
 }
 
+// يحوّل قيمة ديناميكية إلى عدد صحيح يقبل القيمة الفارغة
 int? _toIntNullable(dynamic value) {
   if (value == null) return null;
   if (value is int) return value;
@@ -27,6 +29,7 @@ int? _toIntNullable(dynamic value) {
   return int.tryParse(value.toString());
 }
 
+// يحوّل قيمة ديناميكية إلى قيمة منطقية بأمان
 bool _toBool(dynamic value) {
   if (value is bool) return value;
   if (value is String) {
@@ -36,11 +39,11 @@ bool _toBool(dynamic value) {
   return false;
 }
 
-
 // ============================================================
 // 1. HRAttendanceModel — سجل الحضور اليومي
 // ============================================================
 
+// نموذج سجل حضور الموظف
 /// نموذج سجل حضور الموظف في يوم واحد
 ///
 /// المفتاح الفريد في النظام: (companyCode, employeeCode, date)
@@ -55,8 +58,8 @@ class HRAttendanceModel {
   // الحالة: present / absent / vacation / late / permission
   final String status;
 
-  final String checkIn;   // "HH:MM"
-  final String checkOut;  // "HH:MM"
+  final String checkIn; // "HH:MM"
+  final String checkOut; // "HH:MM"
 
   final int lateMinutes;
   final int earlyLeaveMinutes;
@@ -83,6 +86,7 @@ class HRAttendanceModel {
     this.isDeleted = false,
   });
 
+  // ينشئ كائنًا من خريطة بيانات قادمة من الخادم أو التخزين المحلي
   factory HRAttendanceModel.fromMap(Map<String, dynamic> map) {
     return HRAttendanceModel(
       id: _toIntNullable(map['id']),
@@ -102,6 +106,7 @@ class HRAttendanceModel {
     );
   }
 
+  // يحوّل الكائن إلى خريطة (Map) جاهزة للتخزين أو الإرسال
   Map<String, dynamic> toMap() {
     return {
       if (id != null) 'id': id,
@@ -121,6 +126,7 @@ class HRAttendanceModel {
     };
   }
 
+  // ينشئ نسخة معدّلة من الكائن مع استبدال الحقول المحددة فقط
   HRAttendanceModel copyWith({
     int? id,
     String? companyCode,
@@ -155,25 +161,27 @@ class HRAttendanceModel {
     );
   }
 
+  // يحدد هل الحالة تُعد حضورًا فعليًا
   /// هل السجل ده "حضور فعلي" (يستحق راتب)؟
   ///
   /// يشمل: present, late, permission
   bool get isPresentStatus =>
       status == 'present' || status == 'late' || status == 'permission';
 
+  // يحدد هل السجل مكتمل بوقتي الدخول والخروج
   /// هل السجل مكتمل (فيه check_in + check_out)؟
-  bool get isComplete =>
-      checkIn.isNotEmpty && checkOut.isNotEmpty;
+  bool get isComplete => checkIn.isNotEmpty && checkOut.isNotEmpty;
 
+  // يحدد هل السجل ما زال معلقًا ولم يُرفع للخادم
   /// هل السجل لسه ما اترفعش على السيرفر؟
   bool get isPending => id == null;
 }
-
 
 // ============================================================
 // 2. HRVacationModel — إجازة (رسمية/أسبوعية/استثنائية)
 // ============================================================
 
+// نموذج الإجازة
 /// نموذج الإجازة
 ///
 /// نطاق الإجازة:
@@ -203,6 +211,7 @@ class HRVacationModel {
     this.isDeleted = false,
   });
 
+  // ينشئ كائنًا من خريطة بيانات قادمة من الخادم أو التخزين المحلي
   factory HRVacationModel.fromMap(Map<String, dynamic> map) {
     return HRVacationModel(
       id: _toIntNullable(map['id']),
@@ -210,10 +219,9 @@ class HRVacationModel {
       branchCode: (map['branch_code'] == null || map['branch_code'] == '')
           ? null
           : map['branch_code'].toString(),
-      employeeCode:
-          (map['employee_code'] == null || map['employee_code'] == '')
-              ? null
-              : map['employee_code'].toString(),
+      employeeCode: (map['employee_code'] == null || map['employee_code'] == '')
+          ? null
+          : map['employee_code'].toString(),
       date: map['date']?.toString() ?? '',
       name: map['name']?.toString() ?? '',
       type: map['type']?.toString() ?? 'official',
@@ -222,6 +230,7 @@ class HRVacationModel {
     );
   }
 
+  // يحوّل الكائن إلى خريطة (Map) جاهزة للتخزين أو الإرسال
   Map<String, dynamic> toMap() {
     return {
       if (id != null) 'id': id,
@@ -236,6 +245,7 @@ class HRVacationModel {
     };
   }
 
+  // يحدد هل الإجازة تنطبق على الفرع المحدد
   /// هل تنطبق على الفرع المحدد؟
   bool appliesToBranch(String? targetBranch) {
     if (branchCode == null) return true;
@@ -243,6 +253,7 @@ class HRVacationModel {
     return branchCode == targetBranch;
   }
 
+  // يحدد هل الإجازة تنطبق على الموظف المحدد
   /// هل تنطبق على الموظف المحدد؟
   bool appliesToEmployee(String? targetEmployee) {
     if (employeeCode == null) return true;
@@ -250,6 +261,7 @@ class HRVacationModel {
     return employeeCode == targetEmployee;
   }
 
+  // يحدد هل الإجازة تنطبق على موظف في فرع معين
   /// هل تنطبق على موظف في فرع معين؟ (التحقق المشترك)
   ///
   /// المنطق:
@@ -262,6 +274,7 @@ class HRVacationModel {
     return appliesToBranch(targetBranch);
   }
 
+  // يعيد وصف نطاق الإجازة للعرض
   /// تسمية النطاق (للعرض في الواجهة)
   String get scopeLabel {
     if (employeeCode != null) return 'موظف: $employeeCode';
@@ -269,12 +282,15 @@ class HRVacationModel {
     return 'كل الفروع';
   }
 
+  // يحدد هل الإجازة أسبوعية
   /// هل هي إجازة أسبوعية؟
   bool get isWeekly => type == 'weekly';
 
+  // يحدد هل الإجازة رسمية
   /// هل هي إجازة رسمية؟
   bool get isOfficial => type == 'official';
 
+  // ينشئ نسخة معدّلة من الكائن مع استبدال الحقول المحددة فقط
   HRVacationModel copyWith({
     int? id,
     String? companyCode,
@@ -292,8 +308,7 @@ class HRVacationModel {
       id: id ?? this.id,
       companyCode: companyCode ?? this.companyCode,
       branchCode: clearBranch ? null : (branchCode ?? this.branchCode),
-      employeeCode:
-          clearEmployee ? null : (employeeCode ?? this.employeeCode),
+      employeeCode: clearEmployee ? null : (employeeCode ?? this.employeeCode),
       date: date ?? this.date,
       name: name ?? this.name,
       type: type ?? this.type,
@@ -303,11 +318,11 @@ class HRVacationModel {
   }
 }
 
-
 // ============================================================
 // 3. HRAdjustmentModel — تسوية مالية (خصم/مكافأة/سلفة)
 // ============================================================
 
+// نموذج التسوية المالية
 /// نموذج التسوية المالية
 ///
 /// الأنواع:
@@ -321,11 +336,11 @@ class HRAdjustmentModel {
   final String employeeCode;
   final String month; // "YYYY-MM"
   final String? date; // ⭐ جديد: "YYYY-MM-DD" (للخصومات المرتبطة بيوم)
-  final String type;  // deduction / bonus / loan
+  final String type; // deduction / bonus / loan
   final double amount;
   final String reason;
   final String installmentRef; // للسلف: "1/3", "2/3", ...
-  final String status;          // approved / pending / cancelled
+  final String status; // approved / pending / cancelled
   final String createdBy;
   final bool isDeleted;
 
@@ -335,7 +350,7 @@ class HRAdjustmentModel {
     required this.branchCode,
     required this.employeeCode,
     required this.month,
-    this.date,  // ⭐ جديد
+    this.date, // ⭐ جديد
     required this.type,
     required this.amount,
     this.reason = '',
@@ -345,6 +360,7 @@ class HRAdjustmentModel {
     this.isDeleted = false,
   });
 
+  // ينشئ كائنًا من خريطة بيانات قادمة من الخادم أو التخزين المحلي
   factory HRAdjustmentModel.fromMap(Map<String, dynamic> map) {
     return HRAdjustmentModel(
       id: _toIntNullable(map['id']),
@@ -354,7 +370,7 @@ class HRAdjustmentModel {
       month: map['month']?.toString() ?? '',
       date: map['date'] == null || map['date'] == ''
           ? null
-          : map['date'].toString(),  // ⭐ جديد
+          : map['date'].toString(), // ⭐ جديد
       type: map['type']?.toString() ?? '',
       amount: _toDouble(map['amount']),
       reason: map['reason']?.toString() ?? '',
@@ -365,6 +381,7 @@ class HRAdjustmentModel {
     );
   }
 
+  // يحوّل الكائن إلى خريطة (Map) جاهزة للتخزين أو الإرسال
   Map<String, dynamic> toMap() {
     return {
       if (id != null) 'id': id,
@@ -372,7 +389,7 @@ class HRAdjustmentModel {
       'branch_code': branchCode,
       'employee_code': employeeCode,
       'month': month,
-      if (date != null && date!.isNotEmpty) 'date': date,  // ⭐ جديد
+      if (date != null && date!.isNotEmpty) 'date': date, // ⭐ جديد
       'type': type,
       'amount': amount,
       'reason': reason,
@@ -383,6 +400,7 @@ class HRAdjustmentModel {
     };
   }
 
+  // ينشئ نسخة معدّلة من الكائن مع استبدال الحقول المحددة فقط
   HRAdjustmentModel copyWith({
     int? id,
     String? companyCode,
@@ -390,7 +408,7 @@ class HRAdjustmentModel {
     String? employeeCode,
     String? month,
     String? date,
-    bool clearDate = false,  // ⭐ جديد
+    bool clearDate = false, // ⭐ جديد
     String? type,
     double? amount,
     String? reason,
@@ -416,6 +434,7 @@ class HRAdjustmentModel {
     );
   }
 
+  // يعيد اسم نوع التسوية بالعربية
   /// تسمية النوع بالعربي
   String get typeLabel {
     switch (type) {
@@ -430,30 +449,36 @@ class HRAdjustmentModel {
     }
   }
 
+  // يحدد هل التسوية سلفة
   /// هل دي سلفة؟
   bool get isLoan => type == 'loan';
 
+  // يحدد هل التسوية مكافأة
   /// هل دي مكافأة؟
   bool get isBonus => type == 'bonus';
 
+  // يحدد هل التسوية خصم
   /// هل ده خصم؟
   bool get isDeduction => type == 'deduction';
 
+  // يحدد هل التسوية معتمدة
   /// هل التسوية معتمدة؟
   bool get isApproved => status == 'approved';
 
+  // يحدد هل التسوية قسط سلفة
   /// هل هي قسط سلفة (لسه فيه أقساط)؟
   bool get isLoanInstallment => type == 'loan' && installmentRef.isNotEmpty;
 
+  // يحدد هل للتسوية تاريخ محدد
   /// هل هي خصم مربوط بتاريخ معين؟
   bool get hasDate => date != null && date!.isNotEmpty;
 }
-
 
 // ============================================================
 // 4. HREmployeeSettingsModel — إعدادات الموظف في HR
 // ============================================================
 
+// نموذج إعدادات الموظف في الموارد البشرية
 /// نموذج إعدادات الموظف
 ///
 /// ⚠️ مهم:
@@ -468,12 +493,13 @@ class HREmployeeSettingsModel {
   /// null = مفيش إجازة أسبوعية
   final int? weeklyVacationDay;
 
-  final String defaultCheckIn;  // "HH:MM"
+  final String defaultCheckIn; // "HH:MM"
   final String defaultCheckOut; // "HH:MM"
 
   /// مرونة المواعيد: لو true، حساب الحضور بالمدة مش بالتوقيت
   final bool flexibleHours;
-  final bool useFixedMonthDays; 
+  final bool useFixedMonthDays;
+
   /// قواعد التأخير والغياب
   /// كل قيمة = عدد أيام الخصم
   final Map<String, double> delayRules;
@@ -486,10 +512,11 @@ class HREmployeeSettingsModel {
     this.defaultCheckIn = '09:00',
     this.defaultCheckOut = '17:00',
     this.flexibleHours = false,
-    this.useFixedMonthDays = true, 
+    this.useFixedMonthDays = true,
     Map<String, double>? delayRules,
   }) : delayRules = delayRules ?? Map.from(HRConstants.defaultDelayRules);
 
+  // ينشئ كائنًا من خريطة بيانات قادمة من الخادم أو التخزين المحلي
   factory HREmployeeSettingsModel.fromMap(Map<String, dynamic> map) {
     // تحويل delay_rules مع دمج القيم الافتراضية
     final Map<String, double> parsedRules =
@@ -516,11 +543,12 @@ class HREmployeeSettingsModel {
       flexibleHours: _toBool(map['flexible_hours']),
       useFixedMonthDays: map['use_fixed_month_days'] == null
           ? true
-          : _toBool(map['use_fixed_month_days']), 
+          : _toBool(map['use_fixed_month_days']),
       delayRules: parsedRules,
     );
   }
 
+  // يحوّل الكائن إلى خريطة (Map) جاهزة للتخزين أو الإرسال
   Map<String, dynamic> toMap() {
     return {
       if (id != null) 'id': id,
@@ -530,11 +558,12 @@ class HREmployeeSettingsModel {
       'default_check_in': defaultCheckIn,
       'default_check_out': defaultCheckOut,
       'flexible_hours': flexibleHours,
-      'use_fixed_month_days': useFixedMonthDays,  
+      'use_fixed_month_days': useFixedMonthDays,
       'delay_rules': delayRules,
     };
   }
 
+  // ينشئ نسخة معدّلة من الكائن مع استبدال الحقول المحددة فقط
   HREmployeeSettingsModel copyWith({
     int? id,
     String? companyCode,
@@ -544,38 +573,39 @@ class HREmployeeSettingsModel {
     String? defaultCheckIn,
     String? defaultCheckOut,
     bool? flexibleHours,
-    bool? useFixedMonthDays, 
+    bool? useFixedMonthDays,
     Map<String, double>? delayRules,
   }) {
     return HREmployeeSettingsModel(
       id: id ?? this.id,
       companyCode: companyCode ?? this.companyCode,
       employeeCode: employeeCode ?? this.employeeCode,
-      weeklyVacationDay: clearWeekly
-          ? null
-          : (weeklyVacationDay ?? this.weeklyVacationDay),
+      weeklyVacationDay:
+          clearWeekly ? null : (weeklyVacationDay ?? this.weeklyVacationDay),
       defaultCheckIn: defaultCheckIn ?? this.defaultCheckIn,
       defaultCheckOut: defaultCheckOut ?? this.defaultCheckOut,
       flexibleHours: flexibleHours ?? this.flexibleHours,
-      useFixedMonthDays: useFixedMonthDays ?? this.useFixedMonthDays, 
+      useFixedMonthDays: useFixedMonthDays ?? this.useFixedMonthDays,
       delayRules: delayRules ?? Map.from(this.delayRules),
     );
   }
 
+  // يحدد هل للموظف يوم إجازة أسبوعية
   /// هل الموظف عنده إجازة أسبوعية محددة؟
   bool get hasWeeklyVacation => weeklyVacationDay != null;
 
+  // يعيد اسم يوم الإجازة الأسبوعية بالعربية
   /// اسم يوم الإجازة الأسبوعية بالعربي (أو null لو مفيش)
   String? get weeklyDayLabel => weeklyVacationDay != null
       ? HRConstants.weekdayNameAr(weeklyVacationDay!)
       : null;
 
+  // يحدد هل التاريخ يوافق إجازة الموظف الأسبوعية
   /// هل التاريخ المحدد إجازة أسبوعية للموظف؟
   bool isWeeklyVacation(DateTime date) {
     return HRConstants.isWeeklyVacation(date, weeklyVacationDay);
   }
 }
-
 
 // ============================================================
 // نهاية ملف hr_models.dart

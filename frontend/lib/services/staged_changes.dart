@@ -1,4 +1,4 @@
-// lib/services/staged_changes.dart
+// frontend/lib/services/staged_changes.dart
 //
 // Merges changes that the service worker downloaded while the app was closed.
 // The worker never writes to Hive. It only stores batches in its own store.
@@ -8,6 +8,7 @@
 import 'dart:convert';
 import 'package:crypto/crypto.dart';
 
+// دفعة مرحلية واحدة نزّلها الـservice worker لنطاق واحد
 /// One download made by the service worker for one scope.
 class StagedBatch {
   StagedBatch({
@@ -20,6 +21,7 @@ class StagedBatch {
     this.toCursor,
     this.fingerprint,
   });
+
   /// Read-scope fingerprint the batch was fetched under (company + allowed branches).
   final String? fingerprint;
 
@@ -40,6 +42,7 @@ class StagedBatch {
   final DateTime to;
   final List<Map<String, dynamic>> items;
 
+  // ينشئ كائنًا من بيانات JSON
   factory StagedBatch.fromJson(Map<String, dynamic> j) => StagedBatch(
         id: j['id'].toString(),
         scopeKey: j['scopeKey'].toString(),
@@ -59,6 +62,7 @@ class StagedBatch {
       );
 }
 
+// واجهة مخزن الدفعات المرحلية
 abstract class StagedStore {
   /// Batches of exactly this scope, oldest first.
   Future<List<StagedBatch>> read(String scopeKey);
@@ -68,6 +72,7 @@ abstract class StagedStore {
   Future<int> recordFailure(String scopeKey, String batchId);
 }
 
+// واجهة هدف دمج الدفعات المرحلية
 abstract class StagedTarget {
   /// Local `updated_at` of the record the item would replace, if any.
   DateTime? localStamp(Map<String, dynamic> item);
@@ -78,6 +83,7 @@ abstract class StagedTarget {
   Future<void> writeCursor(DateTime value);
 }
 
+// تقرير نتيجة دمج الدفعات المرحلية
 class StagedMergeReport {
   StagedMergeReport({
     this.batchesMerged = 0,
@@ -90,13 +96,17 @@ class StagedMergeReport {
   int batchesMerged, itemsApplied, itemsSkippedStale, batchesDiscarded;
   int itemsAlreadyCurrent = 0;
   bool stoppedAtGap, failed, poisonDropped = false;
+
+  // يعيد وصف التقرير نصًا
   @override
   String toString() =>
       'merged=$batchesMerged applied=$itemsApplied same=$itemsAlreadyCurrent stale=$itemsSkippedStale '
       'discarded=$batchesDiscarded gap=$stoppedAtGap failed=$failed';
 }
 
+// فئة دمج التغييرات المرحلية
 class StagedChanges {
+  // يبني مفتاح النطاق
   static String scopeKey({
     required String uid,
     required String company,
@@ -106,11 +116,12 @@ class StagedChanges {
   }) {
     final sorted = branches.toList()..sort();
     return sha256
-        .convert(
-            utf8.encode(jsonEncode([uid, company, role, sorted, permissionSignature])))
+        .convert(utf8.encode(
+            jsonEncode([uid, company, role, sorted, permissionSignature])))
         .toString();
   }
 
+  // يحوّل ختم الوقت إلى تاريخ
   /// The backend writes updated_at as UTC without a zone suffix. DateTime.parse
   /// would treat that as local time (wrong by hours in Cairo), so no suffix = UTC.
   static DateTime? stamp(Object? v) {
@@ -120,6 +131,7 @@ class StagedChanges {
     return DateTime.tryParse(hasZone ? text : '${text}Z')?.toUtc();
   }
 
+  // يدمج الدفعات المرحلية المحفوظة
   /// Safe to call at every open. Anything unclear is left to the normal
   /// incremental sync, which stays authoritative.
   static Future<StagedMergeReport> merge({
@@ -204,6 +216,7 @@ class StagedChanges {
     return report;
   }
 
+  // يحلل المؤشر إلى زوج قابل للمقارنة
   /// "tx:id" -> comparable pair, null when malformed.
   static List<BigInt>? parseCursor(String? c) {
     if (c == null) return null;
@@ -213,11 +226,13 @@ class StagedChanges {
     return (a == null || b == null) ? null : [a, b];
   }
 
+  // يقارن مؤشرين
   static int compareCursor(List<BigInt> x, List<BigInt> y) {
     final c = x[0].compareTo(y[0]);
     return c != 0 ? c : x[1].compareTo(y[1]);
   }
 
+  // يدمج الدفعات المرحلية للنسخة الثانية من الخلاصة
   /// Merge for the commit-safe feed. Same safety rules as [merge]: contiguity (a batch must
   /// start at the app cursor), cursor moves only after a whole batch is applied, stale guard,
   /// scope checks, poison batch drop. Anything unclear is left to the normal sync.
@@ -235,8 +250,9 @@ class StagedChanges {
     int maxAttempts = 3,
   }) async {
     final report = StagedMergeReport();
-    final batches =
-        (await store.read(currentScopeKey)).where((b) => b.toCursor != null).toList();
+    final batches = (await store.read(currentScopeKey))
+        .where((b) => b.toCursor != null)
+        .toList();
     if (batches.isEmpty) return report;
     var cursorStr = await readCursor();
     var cursor = parseCursor(cursorStr);
@@ -253,7 +269,9 @@ class StagedChanges {
         break;
       }
       // Batches older than maxBatchAge are not trusted (the delete ledger only covers 14 days).
-      final ms = batch.id.contains('-') ? int.tryParse(batch.id.split('-').first) : null;
+      final ms = batch.id.contains('-')
+          ? int.tryParse(batch.id.split('-').first)
+          : null;
       if (ms != null &&
           (now ?? DateTime.now()).toUtc().difference(
                   DateTime.fromMillisecondsSinceEpoch(ms, isUtc: true)) >
@@ -296,11 +314,16 @@ class StagedChanges {
             continue;
           }
           // Same version already stored (an earlier attempt applied it): do not write it again.
-          if (item['action'] != 'delete' && incoming != null && local != null && local == incoming) {
+          if (item['action'] != 'delete' &&
+              incoming != null &&
+              local != null &&
+              local == incoming) {
             report.itemsAlreadyCurrent++;
             continue;
           }
-          if (item['action'] != 'delete' && deletedStamp != null && incoming != null) {
+          if (item['action'] != 'delete' &&
+              deletedStamp != null &&
+              incoming != null) {
             final ds = await deletedStamp(item);
             if (ds != null && !incoming.isAfter(ds)) {
               report.itemsSkippedStale++;
@@ -336,37 +359,52 @@ class StagedChanges {
   }
 }
 
+// نتيجة التحقق من الخادم: مسموح أو مرفوض أو غير متاح
 /// Result of the server check that decides whether staged rows may stay visible.
 enum StagedVerdict { allowed, denied, unreachable }
 
+// تقرير نتيجة الدمج مع التحقق اللاحق
 /// Outcome of [StagedChanges.mergeShowThenVerify] (experiment mode "b").
 class ShowThenVerifyReport {
   ShowThenVerifyReport(this.merge, this.verdict, {this.rolledBack = 0});
   final StagedMergeReport merge;
   final StagedVerdict verdict;
+
   /// Rows removed or restored because the verdict was [StagedVerdict.denied].
   final int rolledBack;
 }
 
+// هدف دمج يسجّل تراجعًا لكل تغيير
 class _UndoTarget implements StagedTarget {
   _UndoTarget(this.inner, this.capture);
   final StagedTarget inner;
-  final Future<Future<void> Function()> Function(Map<String, dynamic> item) capture;
+  final Future<Future<void> Function()> Function(Map<String, dynamic> item)
+      capture;
   final List<Future<void> Function()> undo = [];
+
+  // يعيد ختم الوقت المحلي للعنصر
   @override
   DateTime? localStamp(Map<String, dynamic> item) => inner.localStamp(item);
+
+  // يطبق العنصر ويسجّل نسخة للتراجع
   @override
   Future<void> apply(Map<String, dynamic> item) async {
     undo.add(await capture(item));
     await inner.apply(item);
   }
+
+  // يقرأ المؤشر المحفوظ
   @override
   Future<DateTime?> readCursor() => inner.readCursor();
+
+  // يكتب المؤشر
   @override
   Future<void> writeCursor(DateTime v) => inner.writeCursor(v);
 }
 
+// فئة الدمج ثم التحقق التجريبية
 class StagedShowThenVerify {
+  // تشغّل الدمج ثم التحقق التجريبي
   /// EXPERIMENT (mode b): merge per the last saved permissions first, then ask the server.
   /// Denied: every row this merge applied is restored or removed and the cursor goes back.
   /// Unreachable: rows stay shown and are reported unverified. Not used by the app.
@@ -377,7 +415,8 @@ class StagedShowThenVerify {
     required Future<String?> Function() readCursor,
     required Future<void> Function(String) writeCursor,
     required bool Function() scopeStillCurrent,
-    required Future<Future<void> Function()> Function(Map<String, dynamic> item) capture,
+    required Future<Future<void> Function()> Function(Map<String, dynamic> item)
+        capture,
     required Future<StagedVerdict> Function() verify,
     void Function()? onShown,
     String? currentFingerprint,
@@ -385,9 +424,13 @@ class StagedShowThenVerify {
     final cursorBefore = await readCursor();
     final wrapped = _UndoTarget(target, capture);
     final r = await StagedChanges.mergeV2(
-      currentScopeKey: currentScopeKey, store: store, target: wrapped,
-      readCursor: readCursor, writeCursor: writeCursor,
-      scopeStillCurrent: scopeStillCurrent, currentFingerprint: currentFingerprint,
+      currentScopeKey: currentScopeKey,
+      store: store,
+      target: wrapped,
+      readCursor: readCursor,
+      writeCursor: writeCursor,
+      scopeStillCurrent: scopeStillCurrent,
+      currentFingerprint: currentFingerprint,
     );
     onShown?.call();
     final v = await verify();

@@ -1,3 +1,4 @@
+# backend/app/core/feed_migrator.py
 """EXPERIMENT (guarded): apply the v2 feed migrations (001-010) from the backend at startup.
 
 - Cheap startup check first: one query on feed_epoch. When every feed is present nothing
@@ -22,6 +23,7 @@ from urllib.parse import parse_qsl, unquote, urlparse
 
 import psycopg2
 
+# ثوابت المهاجر: عدد الفيدات المتوقعة ومفتاح القفل وأقل إصدار PostgreSQL
 EXPECTED_FEEDS = 14
 ADVISORY_LOCK_KEY = 727403
 MIN_SERVER_VERSION_NUM = 140000  # the SQL files state PostgreSQL 14+ (xid8, OR REPLACE TRIGGER)
@@ -47,12 +49,14 @@ FILES = [
 ]
 
 
+# خطأ فشل الاتصال بقاعدة البيانات برسالة من غير باسورد أو الرابط الخام
 class MigratorConnectError(RuntimeError):
     """Connection failure whose message never carries credentials or the raw URL."""
 
 
 # libpq parameters psycopg2 accepts; driver-specific ones (asyncpg's `ssl`,
 # SQLAlchemy / pgbouncer options, ...) are dropped so a copied URL cannot crash us.
+# باراميترات libpq اللي psycopg2 بيقبلها (غير دي بتتشال من الرابط)
 _LIBPQ_PARAMS = {
     "sslmode", "sslcert", "sslkey", "sslrootcert", "sslcrl", "channel_binding",
     "connect_timeout", "application_name", "options", "hostaddr", "keepalives",
@@ -63,6 +67,7 @@ _SSL_ALIASES = {"require": "require", "verify-ca": "verify-ca", "verify-full": "
                 "disable": "disable", "false": "disable", "0": "disable"}
 
 
+# يحوّل عنوان الـpooler لعنوان الاتصال المباشر بـNeon
 def _direct_host(host: str) -> str:
     # Neon's pooled endpoint is the direct endpoint id with "-pooler" appended.
     # Session advisory locks and CREATE INDEX CONCURRENTLY are unreliable through
@@ -72,6 +77,7 @@ def _direct_host(host: str) -> str:
     return host
 
 
+# يحلّل رابط قاعدة البيانات إلى باراميترات اتصال psycopg2
 def connect_params() -> dict:
     """Parse the database URL into psycopg2 kwargs (host/dbname/user may be logged;
     password and the raw URL never are)."""
@@ -102,6 +108,7 @@ def connect_params() -> dict:
     return {k: v for k, v in params.items() if v is not None}
 
 
+# يفتح اتصال psycopg2 مباشر بقاعدة البيانات
 def _connect():
     params = connect_params()
     try:
@@ -115,6 +122,7 @@ def _connect():
     return conn
 
 
+# يطبع الخطأ بعد إخفاء الباسورد والروابط
 def _safe_repr(exc) -> str:
     """repr() of an exception with the password and raw URLs blanked out."""
     msg = repr(exc)
@@ -129,6 +137,7 @@ def _safe_repr(exc) -> str:
     return msg
 
 
+# يرجّع مجموعة الفيدات المطبّقة فعلًا من جدول feed_epoch
 def _existing_feeds(cur) -> set:
     try:
         cur.execute("select feed from feed_epoch")
@@ -137,6 +146,7 @@ def _existing_feeds(cur) -> set:
         return set()
 
 
+# يرجّع الفهارس الغير صالحة (من محاولة قديمة فشلت)
 def _invalid_indexes(cur, names):
     bad = []
     for name in names:
@@ -148,6 +158,7 @@ def _invalid_indexes(cur, names):
     return bad
 
 
+# يقسم ملف SQL لجزء المعاملة وجزء بناء الفهارس
 def _split_parts(sql: str):
     # every file is: one BEGIN..COMMIT block (columns/trigger/epoch), then the
     # CREATE INDEX CONCURRENTLY statements that must run outside any transaction.
@@ -161,6 +172,7 @@ def _split_parts(sql: str):
     return part1, statements
 
 
+# يطبّق ملف هجرة واحد (أو يتخطاه لو متطبق)
 def _apply_file(cur, fname, feeds, index_names, done_feeds, log):
     if all(f in done_feeds for f in feeds) and not _invalid_indexes(cur, index_names):
         return "skipped"
@@ -177,6 +189,7 @@ def _apply_file(cur, fname, feeds, index_names, done_feeds, log):
     return "applied"
 
 
+# يطبّق كل ملفات الهجرة بالترتيب تحت قفل واحد
 def _apply_all_sync(log=print):
     applied, failed, skipped = [], [], []
     conn = _connect()
@@ -229,6 +242,7 @@ def _apply_all_sync(log=print):
     return ("ok", applied, failed, skipped)
 
 
+# فحص سريع وقت التشغيل: كام فيد متطبق (-1 لو مجهول)
 async def applied_feed_count() -> int:
     """Cheap startup check: one pooled query, no lock. -1 when unknown."""
     try:
@@ -241,6 +255,7 @@ async def applied_feed_count() -> int:
         return -1
 
 
+# يشغّل تطبيق الهجرة في الخلفية من غير ما يوقّع السيرفر لو فشل
 async def run_background():
     try:
         _, _, failed, _ = await asyncio.to_thread(_apply_all_sync)
@@ -251,5 +266,6 @@ async def run_background():
         print(f"⚠️ v2 feed migrator crashed: {_safe_repr(exc)}. Feeds keep serving the old sync.")
 
 
+# تشغيل الهجرة يدويًا من سطر الأوامر
 if __name__ == "__main__":
     asyncio.run(run_background())

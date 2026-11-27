@@ -1,3 +1,4 @@
+// frontend/lib/services/treasury_transfer_service.dart
 import 'cache_partitions.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -8,10 +9,15 @@ import 'auth_http.dart';
 import 'permissions_service.dart';
 import 'read_authorization_snapshot.dart';
 
+// استثناء فشل تحويل الخزينة
 class TreasuryTransferFailure implements Exception {
   final int statusCode;
   const TreasuryTransferFailure(this.statusCode);
+
+  // يحدد هل نتيجة الطلب غير مؤكدة
   bool get uncertain => statusCode >= 500 || statusCode == 408;
+
+  // يعيد رسالة الفشل للعرض
   @override
   String toString() {
     if (statusCode == 403) return 'ليس لديك صلاحية لهذه العملية.';
@@ -24,16 +30,26 @@ class TreasuryTransferFailure implements Exception {
   }
 }
 
+// خدمة تحويلات الخزائن: تتم في المقدمة وبتأكيد الخادم
 /// Foreground, server-confirmed transfers. This is not an offline queue.
 class TreasuryTransferService {
   static const recordsBox = 'treasury_transfers_box';
   static const effectsBox = 'treasury_effects_box';
   static final Map<String, Future<void>> _reads = {};
+
+  // يعيد خدمة الصلاحيات
   PermissionsService get _permissions => PermissionsService();
+
+  // يعيد معرّف المستخدم الحالي
   String? get _uid => FirebaseAuth.instance.currentUser?.uid;
+
+  // يبني مفتاح المستخدم والشركة
   String _key(String uid, String company) => jsonEncode([uid, company]);
+
+  // يعيد عنوان تحويلات الخزائن في الخادم
   String get _base => '${ApiConstants.baseUrl}/treasury-transfers';
 
+  // ينشئ معرّفًا جديدًا للتحويل
   String newId() {
     final random = Random.secure();
     final bytes = List.generate(16, (_) => random.nextInt(256));
@@ -43,10 +59,12 @@ class TreasuryTransferService {
     return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}';
   }
 
+  // يحدد هل الصندوق مسموح به
   bool _allowed(String box) => box == recordsBox
       ? _permissions.canViewTreasuryTransfers
       : _permissions.canReadTreasuryEffects;
 
+  // يقيّد القيمة بسجلات الشركة
   List<Map<String, dynamic>> _scoped(dynamic value, String company) {
     if (value is! List) return [];
     return value
@@ -59,6 +77,7 @@ class TreasuryTransferService {
         .toList();
   }
 
+  // يقرأ السجلات المحلية للشركة
   List<Map<String, dynamic>> _local(String boxName, String company) {
     final uid = _uid;
     if (uid == null ||
@@ -71,12 +90,14 @@ class TreasuryTransferService {
     return _scoped(envelope['records'], company);
   }
 
+  // يحدد نطاق القراءة للصندوق
   String _readScope(String box) {
     final branches = List<String>.from(_permissions.allowedBranches ?? [])
       ..sort();
     return jsonEncode([_allowed(box), branches]);
   }
 
+  // يحدد هل توجد لقطة محققة للصندوق
   /// Empty verified snapshots are data too, not a reason to fetch on every open.
   bool hasSnapshot(String box, String company) {
     final uid = _uid;
@@ -91,6 +112,7 @@ class TreasuryTransferService {
         value['read_scope'] == _readScope(box);
   }
 
+  // يضمن تحميل بيانات الخزائن
   Future<void> ensureCached(String company) async {
     return CachePartitions.run(() async {
       await Future.wait([
@@ -102,6 +124,7 @@ class TreasuryTransferService {
     });
   }
 
+  // يعيد السجلات المحلية للشركة
   List<Map<String, dynamic>> localRecords(String company,
       {String? branchCode}) {
     final records = _local(recordsBox, company)
@@ -111,11 +134,13 @@ class TreasuryTransferService {
     return records;
   }
 
+  // يحدد هل الفرع يطابق المرشح
   bool _branchMatches(String? filter, dynamic value) =>
       filter == null ||
       {'', 'all', 'الكل', 'كل الفروع'}.contains(filter) ||
       value?.toString() == filter;
 
+  // يحسب أثر التحويلات على الأرصدة
   /// Minimal signed effects only. They must not enter gross receipts/payments.
   Map<String, double> balanceEffects(String company,
       {String? branchCode, DateTime? fromDate, DateTime? toDate}) {
@@ -135,14 +160,18 @@ class TreasuryTransferService {
     return result;
   }
 
+  // يبني سجلًا مختصرًا من القيد
   Map<String, dynamic> _projectEntry(Map raw, String box) =>
       Map<String, dynamic>.from(raw);
 
+  // يعيد السجلات غير المحذوفة
   List<Map<String, dynamic>> _records(
           List<Map<String, dynamic>> entries, String box, String company) =>
       entries.where((e) => e['is_deleted'] != true).toList();
 
   static Future<void> _eventTail = Future<void>.value();
+
+  // يطبق حدثًا واردًا على البيانات المحلية
   Future<void> applyEvent(Map<String, dynamic> raw, {required bool effects}) {
     final receivedUid = _uid;
     final receivedEpoch = ReadAuthorizationEpoch.value;
@@ -190,6 +219,7 @@ class TreasuryTransferService {
     return work;
   }
 
+  // يحدّث البيانات من الخادم
   Future<List<Map<String, dynamic>>> _refresh(
       String boxName, String company) async {
     return CachePartitions.run(() async {
@@ -302,6 +332,7 @@ class TreasuryTransferService {
   /// response (live or staged). Failures never affect the refresh.
   static void Function(String company)? onCheckpointChanged;
 
+  // يتحقق من استجابة السجلات ويطبقها
   /// Validates a /changes/records response against the stored envelope and writes the merged
   /// result. Used by the live refresh and (later) by staged responses, so both go through the same
   /// protocol, scope, cursor and per-ID revision rules. Moved out of _refresh unchanged.
@@ -372,10 +403,9 @@ class TreasuryTransferService {
             raw['revision'] > decoded['cursor']) {
           // On server reset, preserve only an event that actually arrived
           // during this request, not old ahead-of-server restored data.
-          final before =
-              old is Map ? (old['entries'] as List? ?? []) : [];
-          final wasPresent = before.whereType<Map>().any((e) =>
-              e['id'] == raw['id'] && e['revision'] == raw['revision']);
+          final before = old is Map ? (old['entries'] as List? ?? []) : [];
+          final wasPresent = before.whereType<Map>().any(
+              (e) => e['id'] == raw['id'] && e['revision'] == raw['revision']);
           if (decoded['reset'] == true && wasPresent) continue;
           entries[raw['id'].toString()] = Map<String, dynamic>.from(raw);
         }
@@ -392,16 +422,21 @@ class TreasuryTransferService {
       'cursor': decoded['cursor'],
       'server_scope': decoded['scope']
     });
-    try { onCheckpointChanged?.call(company); } catch (_) {}
+    try {
+      onCheckpointChanged?.call(company);
+    } catch (_) {}
     return records;
   }
 
+  // يعيد نقطة تحقق المؤشر والنطاق
   /// Cursor and server scope of this owner's current valid records snapshot, for the worker to
   /// continue from. Null when there is no valid snapshot or read access is not held now.
   ({int cursor, String scope})? stagedCheckpoint(String company) {
     try {
       final uid = _uid;
-      if (uid == null || !_allowed(recordsBox) || !CachePartitions.isBoxOpen(recordsBox)) return null;
+      if (uid == null ||
+          !_allowed(recordsBox) ||
+          !CachePartitions.isBoxOpen(recordsBox)) return null;
       final old = CachePartitions.box(recordsBox).get(_key(uid, company));
       if (old is Map &&
           old['protocol'] == 2 &&
@@ -410,12 +445,16 @@ class TreasuryTransferService {
           old['company_code'] == company &&
           old['cursor'] is int &&
           (old['server_scope'] ?? '').toString().isNotEmpty) {
-        return (cursor: old['cursor'] as int, scope: old['server_scope'].toString());
+        return (
+          cursor: old['cursor'] as int,
+          scope: old['server_scope'].toString()
+        );
       }
     } catch (_) {}
     return null;
   }
 
+  // يطبق سجلات مرحلية من استجابة التغييرات
   /// Applies a /changes/records response that the service worker fetched while the app was
   /// closed. Same validation as the live refresh (_applyRecordsResponse), run against the CURRENT
   /// permission, owner and read scope, not the ones at staging time. The response is applied
@@ -444,7 +483,8 @@ class TreasuryTransferService {
         final completer = Completer<bool>();
         final work = previous.then((_) async {
           try {
-            if (_uid != uid || !_allowed(recordsBox) ||
+            if (_uid != uid ||
+                !_allowed(recordsBox) ||
                 epoch != ReadAuthorizationEpoch.value ||
                 readScope != _readScope(recordsBox)) {
               completer.complete(false);
@@ -457,7 +497,8 @@ class TreasuryTransferService {
                 old['owner_uid'] == uid &&
                 old['company_code'] == company;
             final curCursor = valid ? (old['cursor'] as int? ?? 0) : 0;
-            final curScope = valid ? (old['server_scope'] ?? '').toString() : '';
+            final curScope =
+                valid ? (old['server_scope'] ?? '').toString() : '';
             if (curCursor != fromCursor || curScope != fromScope) {
               completer.complete(false);
               return;
@@ -490,16 +531,22 @@ class TreasuryTransferService {
     }
   }
 
+  // يحدّث السجلات من الخادم
   Future<List<Map<String, dynamic>>> refreshRecords(String company) =>
       _refresh(recordsBox, company);
+
+  // يحدّث الأرصدة من الخادم
   Future<List<Map<String, dynamic>>> refreshEffects(String company) =>
       _refresh(effectsBox, company);
+
+  // يزامن بيانات الخزائن للشركة
   Future<void> sync(String company) async {
     return CachePartitions.run(() async {
       await Future.wait([refreshRecords(company), refreshEffects(company)]);
     });
   }
 
+  // يعيد ضبط بيانات الخزائن للشركة
   Future<void> reset(String company) async {
     return CachePartitions.run(() async {
       final uid = _uid;
@@ -512,6 +559,7 @@ class TreasuryTransferService {
     });
   }
 
+  // يحفظ تحويل خزينة
   Future<Map<String, dynamic>> save(Map<String, dynamic> transfer) async {
     return CachePartitions.run(() async {
       final uid = _uid;
@@ -549,6 +597,7 @@ class TreasuryTransferService {
     });
   }
 
+  // يحذف تحويل خزينة
   Future<Map<String, dynamic>> delete(Map<String, dynamic> transfer) async {
     return CachePartitions.run(() async {
       final uid = _uid;

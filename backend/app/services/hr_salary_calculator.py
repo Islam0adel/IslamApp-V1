@@ -32,6 +32,7 @@ from app.core.models import (
 # قيم افتراضية (لو مفيش إعدادات)
 # ============================================================
 
+# ثوابت حساب الراتب (ساعات العمل الافتراضية وغيرها)
 DEFAULT_WORK_HOURS_PER_DAY = 8.0
 DEFAULT_LATE_GRACE_MINUTES = 15
 DEFAULT_OVERTIME_MULTIPLIER = 1.5
@@ -56,6 +57,8 @@ DEFAULT_DELAY_RULES = {
     'absence_with_permission': 1.0,     # غياب بإذن → نصف يوم
 }
 
+
+# يحوّل وقت HH:MM إلى دقائق من منتصف الليل
 def _time_to_minutes(t: str) -> int:
     """يحوّل 'HH:MM' إلى عدد دقائق من منتصف الليل"""
     if not t:
@@ -71,6 +74,8 @@ def _time_to_minutes(t: str) -> int:
 # Helper: تحديد أيام الخصم من دقائق التأخير
 # ============================================================
 
+
+# يحسب أيام خصم التأخير حسب دقائق التأخير وقواعد الشركة
 def _get_delay_deduction_days(late_minutes: int, rules: dict) -> float:
     """
     يرجع عدد أيام الخصم حسب دقائق التأخير
@@ -98,6 +103,8 @@ def _get_delay_deduction_days(late_minutes: int, rules: dict) -> float:
 # Helper: جلب إعدادات HR
 # ============================================================
 
+
+# يجيب إعدادات الموارد البشرية للشركة أو الموظف
 async def _get_settings(
     db: AsyncSession,
     company_code: str,
@@ -154,6 +161,8 @@ async def _get_settings(
 # Helper: عدد أيام الشهر
 # ============================================================
 
+
+# يرجّع عدد أيام الشهر من نص YYYY-MM
 def _days_in_month(month: str) -> int:
     """month = 'YYYY-MM' → عدد أيام الشهر"""
     parts = month.split('-')
@@ -171,6 +180,8 @@ def _days_in_month(month: str) -> int:
 # Helper: هل التاريخ إجازة أسبوعية؟
 # ============================================================
 
+
+# يحدد هل التاريخ يوافق يوم الإجازة الأسبوعية
 def _is_weekly_vacation(date_str: str, weekly_day: int) -> bool:
     """
     date_str = 'YYYY-MM-DD'
@@ -189,6 +200,8 @@ def _is_weekly_vacation(date_str: str, weekly_day: int) -> bool:
 # الدالة الرئيسية: حساب الراتب
 # ============================================================
 
+
+# يحسب راتب الموظف الشهري من الحضور والإجازات والتسويات
 async def calculate_salary(
     db: AsyncSession,
     company_code: str,
@@ -581,7 +594,7 @@ async def calculate_salary(
         'default_check_in': default_check_in,
         'default_check_out': default_check_out,
         'weekly_vacation_day': weekly_day,
-        'use_fixed_month_days': use_fixed_month_days, 
+        'use_fixed_month_days': use_fixed_month_days,
 
         # الحضور
         'base_salary': round(base_salary, 2),
@@ -593,7 +606,7 @@ async def calculate_salary(
         'future_days': future_days,       # ⭐ جديد
         'absent_days': absent_days,
         'vacation_days': vacation_days,
-        'future_days': future_days,  
+        'future_days': future_days,
         'permission_days': permission_days,
         'late_minutes_total': total_late_minutes,
         'overtime_minutes_total': total_overtime_minutes,

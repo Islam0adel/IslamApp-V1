@@ -1,14 +1,18 @@
+// frontend/lib/services/permission_editor_snapshot.dart
 import 'page_visibility.dart';
 import 'company_permission_policy.dart';
 import 'branch_scope.dart';
 import 'read_authorization_snapshot.dart';
 
+// لقطة محرر الصلاحيات: قراءة واحدة حالية من الخادم
 /// One current server read. Neither cached job codes nor operating access
 /// can supply delegation or a write version.
 class PermissionEditorSnapshot {
   PermissionEditorSnapshot._(this.data, [this.readScope]);
   final Map<String, dynamic> data;
   final ReadAuthorizationSnapshot? readScope;
+
+  // ينشئ نسخة من اللقطة مرتبطة بنطاق القراءة
   PermissionEditorSnapshot withReadScope(ReadAuthorizationSnapshot scope) {
     scope.check();
     if (readScope != null && !identical(readScope, scope)) {
@@ -18,6 +22,7 @@ class PermissionEditorSnapshot {
     return PermissionEditorSnapshot._(data, scope);
   }
 
+  // ينشئ كائنًا من بيانات JSON
   factory PermissionEditorSnapshot.fromJson(Map<String, dynamic> value) {
     if (value['email'] is! String ||
         value['uid'] is! String ||
@@ -39,18 +44,38 @@ class PermissionEditorSnapshot {
     }
     return PermissionEditorSnapshot._(Map<String, dynamic>.from(value));
   }
+
+  // يعيد بريد المستخدم
   String get email => data['email'];
+
+  // يعيد معرّف المستخدم
   String get uid => data['uid'];
+
+  // يعيد إصدار الملف
   String get version => data['profile_version'];
+
+  // يعيد رقم مراجعة سياسة الشركة
   int? get revision => data['company_policy_revision'];
+
+  // يحدد هل سياسة الشركة مفعّلة
   bool get active => data['company_policy_active'] == true;
+
+  // يحدد هل المستخدم مدير المنصة
   bool get root => data['platform_admin'] == true;
+
+  // يعيد خريطة الصلاحيات الحالية
   Map<String, Map<String, bool>> get permissions => (data['permissions'] as Map)
       .map((k, v) => MapEntry(k.toString(), Map<String, bool>.from(v)));
+
+  // يعيد الصلاحيات القابلة للتفويض
   Set<PermissionRight> get delegated =>
       CompanyPermissionPolicy.grants(data['delegable_permissions']);
+
+  // يعيد الفروع القابلة للتفويض
   List<String> get branchDelegation =>
       List<String>.from(data['delegable_branches'] ?? []);
+
+  // يعيد الفروع المسموح بها للمستخدم
   List<String> get branches {
     final raw = data['allowed_branches'];
     if (raw is List && raw.every((v) => v is String)) {
@@ -61,22 +86,33 @@ class PermissionEditorSnapshot {
     return [];
   }
 
+  // يعيد الموظفين الذين يحق عرضهم
   List<String>? get employees => data['hr_viewable_employees'] is List
       ? List<String>.from(data['hr_viewable_employees'])
       : null;
+
+  // يعيد فرع البدء الافتراضي
   String get startup => (data['startup_branch_code'] ?? '').toString();
+
+  // يعيد خيارات الحقل المحدد
   List<Map<String, String>> choices(String field) =>
       (data[field] as List? ?? [])
           .map((v) => Map<String, String>.from(v))
           .toList();
+
+  // يحدد هل النطاق ضمن الفروع المفوضة
   bool _inside(List<String> scope) =>
       branchDelegation.contains('all') ||
       (scope.isNotEmpty &&
           !scope.contains('all') &&
           scope.every(branchDelegation.contains));
+
+  // يحدد هل الصلاحية مقيدة بالنطاق
   bool _scoped(PermissionRight right) =>
       right.category != 'صلاحيات عامة' &&
       right != (category: 'الموارد البشرية', key: 'canViewOwnHRData');
+
+  // يعيد الصلاحيات المعروضة للمحرر
   Set<PermissionRight> _exposed(dynamic current) =>
       CompanyPermissionPolicy.grants(
               CompanyPermissionPolicy.effectivePermissions(
@@ -84,6 +120,8 @@ class PermissionEditorSnapshot {
           .union(CompanyPermissionPolicy.grants(current))
           .where(_scoped)
           .toSet();
+
+  // يحدد هل يمكن تبديل الصلاحية للقيمة الجديدة
   bool canToggle(String category, String key, bool next, dynamic current,
       List<String> draftBranches) {
     if (!active) return true;
@@ -95,7 +133,8 @@ class PermissionEditorSnapshot {
     final before = CompanyPermissionPolicy.grants(current),
         after = CompanyPermissionPolicy.grants(changed);
     final delta = before.difference(after).union(after.difference(before));
-    if (category == 'صلاحيات عامة' && PageVisibility.keys.contains(key) &&
+    if (category == 'صلاحيات عامة' &&
+        PageVisibility.keys.contains(key) &&
         (current[category] is Map ? current[category][key] : null) != next) {
       delta.add((category: category, key: key));
     }
@@ -109,6 +148,7 @@ class PermissionEditorSnapshot {
         (!delta.any(_scoped) || (_inside(branches) && _inside(draftBranches)));
   }
 
+  // يحدد هل يمكن تعديل الفرع
   bool canEditBranch(String code, dynamic current) {
     if (!active || root) return true;
     return (branchDelegation.contains('all') ||
@@ -116,6 +156,7 @@ class PermissionEditorSnapshot {
         _exposed(current).every(delegated.contains);
   }
 
+  // يحدد هل يمكن تعديل الموظفين المسموح بهم
   bool canEditEmployees(dynamic current, List<String> draftBranches) =>
       !active ||
       root ||
@@ -124,11 +165,14 @@ class PermissionEditorSnapshot {
           _exposed(current)
               .where((r) => r.category == 'الموارد البشرية')
               .every(delegated.contains));
+
+  // يقارن مجموعتين من النصوص
   static bool sameSet(Iterable<String>? a, Iterable<String>? b) {
     final x = (a ?? []).toSet(), y = (b ?? []).toSet();
     return x.length == y.length && x.containsAll(y);
   }
 
+  // يحدد هل اللقطة تطابق المصدر المعطى
   bool matchesSource(Map<String, dynamic> source) {
     try {
       CompanyPermissionPolicy.validateMap(source['permissions']);
@@ -176,6 +220,7 @@ class PermissionEditorSnapshot {
   }
 }
 
+// دليل أهداف الصلاحيات المرتبط بالنطاق المحدد
 /// A minimal selector result bound to the exact read that fetched it.
 class PermissionTargetDirectory {
   PermissionTargetDirectory(this.companyCode, this.users, this.readScope);

@@ -1,5 +1,5 @@
+// frontend/lib/views/dashboard/notifications_page.dart
 import '../../services/cache_partitions.dart';
-// lib/views/dashboard/notifications_page.dart
 
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -9,18 +9,22 @@ import '../../services/notification_router.dart';
 import '../../views/widgets/glass_card.dart';
 import '../../services/permissions_service.dart';
 
+// صفحة الإشعارات
 class NotificationsPage extends StatefulWidget {
   final String companyCode;
   const NotificationsPage({super.key, required this.companyCode});
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<NotificationsPage> createState() => _NotificationsPageState();
 }
 
+// حالة الويدجت NotificationsPage: تدير بيانات الشاشة وتفاعلاتها
 class _NotificationsPageState extends State<NotificationsPage> {
   final NotificationsService _service = NotificationsService.instance;
   final Map<String, String> _branchNames = {};
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
@@ -28,10 +32,12 @@ class _NotificationsPageState extends State<NotificationsPage> {
     _loadBranches();
   }
 
+  // يحمّل قائمة الفروع من التخزين المحلي
   void _loadBranches() {
     if (!CachePartitions.isBoxOpen('coding_box')) return;
     final box = CachePartitions.box('coding_box');
-    final branches = box.get('${widget.companyCode}_branches', defaultValue: []);
+    final branches =
+        box.get('${widget.companyCode}_branches', defaultValue: []);
     if (branches is! List) return;
 
     for (final branch in branches) {
@@ -44,14 +50,15 @@ class _NotificationsPageState extends State<NotificationsPage> {
     }
   }
 
+  // يحدّث بيانات الشاشة
   Future<void> _refresh() async {
-return CachePartitions.run(() async {
+    return CachePartitions.run(() async {
+      await _service.refreshUnreadFromServer(companyCode: widget.companyCode);
+      if (mounted) setState(() {});
+    });
+  }
 
-    await _service.refreshUnreadFromServer(companyCode: widget.companyCode);
-    if (mounted) setState(() {});
-});
-}
-
+  // يعيد اسم الفرع للإشعار
   String _branchLabel(Map<String, dynamic> item) {
     final code = (item['branch_code'] ?? '').toString().trim();
     final directName =
@@ -62,16 +69,15 @@ return CachePartitions.run(() async {
     return _branchNames[code] ?? code;
   }
 
+  // ينسّق التاريخ للعرض
   String _formatDate(String value) {
     if (value.trim().isEmpty) return '';
 
     try {
       final input = value.trim();
-      final hasTimezone =
-          RegExp(r'(Z|[+-]\d{2}:?\d{2})$', caseSensitive: false)
-              .hasMatch(input);
-      final parsed =
-          DateTime.parse(hasTimezone ? input : '${input}Z').toUtc();
+      final hasTimezone = RegExp(r'(Z|[+-]\d{2}:?\d{2})$', caseSensitive: false)
+          .hasMatch(input);
+      final parsed = DateTime.parse(hasTimezone ? input : '${input}Z').toUtc();
       final year = parsed.year;
 
       final aprilEnd = DateTime.utc(year, 5, 0);
@@ -98,6 +104,7 @@ return CachePartitions.run(() async {
     }
   }
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     if (!PermissionsService().canShowNotifications) {
@@ -176,25 +183,21 @@ return CachePartitions.run(() async {
             tooltip: 'تحديد الكل كمقروء',
             icon: const Icon(Icons.done_all),
             onPressed: () async {
-return CachePartitions.run(() async {
-
-              await _service.markAllRead(companyCode: widget.companyCode);
-              if (mounted) setState(() {});
-
-});
-},
+              return CachePartitions.run(() async {
+                await _service.markAllRead(companyCode: widget.companyCode);
+                if (mounted) setState(() {});
+              });
+            },
           ),
           IconButton(
             tooltip: 'مسح الإشعارات',
             icon: const Icon(Icons.delete_outline),
             onPressed: () async {
-return CachePartitions.run(() async {
-
-              await _service.clear(companyCode: widget.companyCode);
-              if (mounted) setState(() {});
-
-});
-},
+              return CachePartitions.run(() async {
+                await _service.clear(companyCode: widget.companyCode);
+                if (mounted) setState(() {});
+              });
+            },
           ),
         ],
       ),
@@ -208,7 +211,8 @@ return CachePartitions.run(() async {
         ),
         child: SafeArea(
           child: ValueListenableBuilder(
-            valueListenable: CachePartitions.box('notifications_box').listenable(),
+            valueListenable:
+                CachePartitions.box('notifications_box').listenable(),
             builder: (context, box, _) {
               final items = _service.getNotifications(
                 companyCode: widget.companyCode,
@@ -221,8 +225,7 @@ return CachePartitions.run(() async {
                         physics: const AlwaysScrollableScrollPhysics(),
                         children: [
                           SizedBox(
-                            height:
-                                MediaQuery.of(context).size.height * 0.55,
+                            height: MediaQuery.of(context).size.height * 0.55,
                             child: Center(
                               child: Column(
                                 mainAxisSize: MainAxisSize.min,
@@ -250,8 +253,7 @@ return CachePartitions.run(() async {
                         physics: const AlwaysScrollableScrollPhysics(),
                         padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
                         itemCount: items.length,
-                        separatorBuilder: (_, __) =>
-                            const SizedBox(height: 10),
+                        separatorBuilder: (_, __) => const SizedBox(height: 10),
                         itemBuilder: (context, index) {
                           final item = items[index];
                           return _buildSwipeableItem(item);
@@ -273,6 +275,7 @@ return CachePartitions.run(() async {
   // - Tap عادي → markRead + فتح الصفحة
   // ============================================================
 
+  // يبني عنصر إشعار قابلًا للسحب
   Widget _buildSwipeableItem(Map<String, dynamic> item) {
     final read = item['read'] == true;
     // ⭐ key فريد لكل إشعار — مطلوب لـ Dismissible
@@ -351,77 +354,76 @@ return CachePartitions.run(() async {
 
       // ⭐ confirmDismiss → نتحكم في هل العنصر يتشال ولا يرجع
       confirmDismiss: (direction) async {
-return CachePartitions.run(() async {
-
-        if (direction == DismissDirection.startToEnd) {
-          // ─── Swipe يمين → markRead فقط ───
-          if (!read) {
-            await _service.markRead(item['id'].toString());
-          }
-          if (mounted) setState(() {});
-          // ⭐ return false → يرجع مكانه (مش يتشال)
-          return false;
-        } else if (direction == DismissDirection.endToStart) {
-          // ─── Swipe يسار → حذف ───
-          final confirmed = await showDialog<bool>(
-            context: context,
-            builder: (ctx) => AlertDialog(
-              backgroundColor: AppTheme.dialogBackground(context),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(15),
-              ),
-              title: Text(
-                'حذف الإشعار',
-                style: TextStyle(
-                  fontFamily: 'Cairo',
-                  color: AppTheme.textMainFor(context),
-                  fontWeight: FontWeight.bold,
+        return CachePartitions.run(() async {
+          if (direction == DismissDirection.startToEnd) {
+            // ─── Swipe يمين → markRead فقط ───
+            if (!read) {
+              await _service.markRead(item['id'].toString());
+            }
+            if (mounted) setState(() {});
+            // ⭐ return false → يرجع مكانه (مش يتشال)
+            return false;
+          } else if (direction == DismissDirection.endToStart) {
+            // ─── Swipe يسار → حذف ───
+            final confirmed = await showDialog<bool>(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                backgroundColor: AppTheme.dialogBackground(context),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(15),
                 ),
-              ),
-              content: Text(
-                'هل تريد حذف هذا الإشعار نهائياً؟',
-                style: TextStyle(
-                  fontFamily: 'Cairo',
-                  color: AppTheme.textMutedFor(context),
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx, false),
-                  child: Text(
-                    'إلغاء',
-                    style: TextStyle(
-                      fontFamily: 'Cairo',
-                      color: AppTheme.textMutedFor(context),
-                    ),
+                title: Text(
+                  'حذف الإشعار',
+                  style: TextStyle(
+                    fontFamily: 'Cairo',
+                    color: AppTheme.textMainFor(context),
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx, true),
-                  child: Text(
-                    'حذف',
-                    style: TextStyle(
-                      fontFamily: 'Cairo',
-                      color: AppTheme.dangerStrongFor(context),
-                      fontWeight: FontWeight.bold,
-                    ),
+                content: Text(
+                  'هل تريد حذف هذا الإشعار نهائياً؟',
+                  style: TextStyle(
+                    fontFamily: 'Cairo',
+                    color: AppTheme.textMutedFor(context),
                   ),
                 ),
-              ],
-            ),
-          );
-
-          if (confirmed == true) {
-            await _service.deleteNotification(
-              notificationId: item['id'].toString(),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: Text(
+                      'إلغاء',
+                      style: TextStyle(
+                        fontFamily: 'Cairo',
+                        color: AppTheme.textMutedFor(context),
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: Text(
+                      'حذف',
+                      style: TextStyle(
+                        fontFamily: 'Cairo',
+                        color: AppTheme.dangerStrongFor(context),
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             );
-            return true; // ⭐ يتشال
+
+            if (confirmed == true) {
+              await _service.deleteNotification(
+                notificationId: item['id'].toString(),
+              );
+              return true; // ⭐ يتشال
+            }
+            return false; // المستخدم لغى → يرجع
           }
-          return false; // المستخدم لغى → يرجع
-        }
-        return false;
-});
-},
+          return false;
+        });
+      },
 
       // ────────────────────────────────────────────
       // المحتوى (البطاقة نفسها)
@@ -430,6 +432,7 @@ return CachePartitions.run(() async {
     );
   }
 
+  // يبني بطاقة إشعار
   Widget _buildNotificationCard(Map<String, dynamic> item) {
     final read = item['read'] == true;
     final branch = _branchLabel(item);
@@ -466,10 +469,7 @@ return CachePartitions.run(() async {
             padding: const EdgeInsets.only(top: 6),
             child: Text(
               [
-                if ((item['actor_name'] ?? '')
-                    .toString()
-                    .trim()
-                    .isNotEmpty)
+                if ((item['actor_name'] ?? '').toString().trim().isNotEmpty)
                   'بواسطة: ${item['actor_name']}',
                 if ((item['body'] ?? '').toString().trim().isNotEmpty)
                   item['body'].toString(),
@@ -484,19 +484,17 @@ return CachePartitions.run(() async {
             ),
           ),
           onTap: () async {
-return CachePartitions.run(() async {
+            return CachePartitions.run(() async {
+              if (!read) {
+                await _service.markRead(item['id'].toString());
+                if (mounted) setState(() {});
+              }
 
-            if (!read) {
-              await _service.markRead(item['id'].toString());
-              if (mounted) setState(() {});
-            }
-
-            await NotificationRouter.openNotification(
-              Map<String, dynamic>.from(item),
-            );
-
-});
-},
+              await NotificationRouter.openNotification(
+                Map<String, dynamic>.from(item),
+              );
+            });
+          },
         ),
       ),
     );

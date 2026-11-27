@@ -1,5 +1,6 @@
-// lib/models/employee_model.dart
+// frontend/lib/models/employee_model.dart
 
+// نموذج بيانات الموظف
 /// نموذج الموظف — مستقل تمامًا عن CodingModel
 /// يحتوي على حقول HR كاملة + توافق مع الواجهة
 class EmployeeModel {
@@ -42,14 +43,12 @@ class EmployeeModel {
     required this.code,
     required this.name,
     this.isDeleted = false,
-
     this.phone = '',
     this.email = '',
     this.nationalId = '',
     this.address = '',
     this.gender = '',
     this.birthDate = '',
-
     this.jobTitle = '',
     this.department = '',
     this.branchCode = '',
@@ -59,10 +58,8 @@ class EmployeeModel {
     this.contractType = '',
     this.status = 'active',
     this.managerUid = '',
-
     this.userUid = '',
     this.userEmail = '',
-
     this.emergencyContact = '',
     this.bankAccount = '',
     this.bankName = '',
@@ -74,19 +71,18 @@ class EmployeeModel {
   // From Map
   // ============================================================
 
+  // ينشئ كائنًا من خريطة بيانات قادمة من الخادم أو التخزين المحلي
   factory EmployeeModel.fromMap(Map<String, dynamic> map) {
     return EmployeeModel(
       code: map['code']?.toString() ?? '',
       name: map['name']?.toString() ?? '',
       isDeleted: _toBool(map['is_deleted']),
-
       phone: map['phone']?.toString() ?? '',
       email: map['email']?.toString() ?? '',
       nationalId: map['national_id']?.toString() ?? '',
       address: map['address']?.toString() ?? '',
       gender: map['gender']?.toString() ?? '',
       birthDate: map['birth_date']?.toString() ?? '',
-
       jobTitle: map['job_title']?.toString() ?? '',
       department: map['department']?.toString() ?? '',
       branchCode: map['branch_code']?.toString() ?? '',
@@ -96,10 +92,8 @@ class EmployeeModel {
       contractType: map['contract_type']?.toString() ?? '',
       status: map['status']?.toString() ?? 'active',
       managerUid: map['manager_uid']?.toString() ?? '',
-
       userUid: map['user_uid']?.toString() ?? '',
       userEmail: map['user_email']?.toString() ?? '',
-
       emergencyContact: map['emergency_contact']?.toString() ?? '',
       bankAccount: map['bank_account']?.toString() ?? '',
       bankName: map['bank_name']?.toString() ?? '',
@@ -114,19 +108,18 @@ class EmployeeModel {
   // To Map (للحفظ في Hive + إرسال للـ API)
   // ============================================================
 
+  // يحوّل الكائن إلى خريطة (Map) جاهزة للتخزين أو الإرسال
   Map<String, dynamic> toMap() {
     return {
       'code': code,
       'name': name,
       'is_deleted': isDeleted,
-
       'phone': phone,
       'email': email,
       'national_id': nationalId,
       'address': address,
       'gender': gender,
       'birth_date': birthDate,
-
       'job_title': jobTitle,
       'department': department,
       'branch_code': branchCode,
@@ -136,10 +129,8 @@ class EmployeeModel {
       'contract_type': contractType,
       'status': status,
       'manager_uid': managerUid,
-
       'user_uid': userUid,
       'user_email': userEmail,
-
       'emergency_contact': emergencyContact,
       'bank_account': bankAccount,
       'bank_name': bankName,
@@ -152,6 +143,7 @@ class EmployeeModel {
   // Copy with (للـ edit form)
   // ============================================================
 
+  // ينشئ نسخة معدّلة من الكائن مع استبدال الحقول المحددة فقط
   EmployeeModel copyWith({
     String? code,
     String? name,
@@ -213,11 +205,13 @@ class EmployeeModel {
 // Helpers
 // ============================================================
 
+// يحوّل قيمة ديناميكية إلى عدد عشري بأمان
 double _toDouble(dynamic value) {
   if (value is num) return value.toDouble();
   return double.tryParse(value?.toString() ?? '') ?? 0.0;
 }
 
+// يحوّل قيمة ديناميكية إلى قيمة منطقية بأمان
 bool _toBool(dynamic value) {
   if (value is bool) return value;
   if (value is String) return value.toLowerCase() == 'true' || value == '1';

@@ -10,6 +10,7 @@ import sys
 from datetime import datetime
 
 
+# يشغّل أمر git ويرجّع نتيجته ويوقف لو git مش متسطب
 def run(cmd):
     try:
         return subprocess.run(cmd, capture_output=True, text=True)
@@ -18,6 +19,7 @@ def run(cmd):
         sys.exit(1)
 
 
+# يطبع رسالة فشل خطوة من غير نص الخطأ الخام ويوقف
 def fail(stage, code):
     # من غير ما نطبع نص خطأ Git الخام (ممكن يحتوي عناوين أو بيانات دخول)
     print(f"❌ خطوة «{stage}» فشلت (كود الخطأ: {code}).")
@@ -25,6 +27,7 @@ def fail(stage, code):
     sys.exit(1)
 
 
+# الدالة الرئيسية: تتحقق من الفرع والـremote وتحفظ وترفع على development
 def main():
     # 1. التأكد إننا جوه مستودع Git
     if not os.path.exists(".git"):
@@ -96,6 +99,7 @@ def main():
         print("✅ تم الرفع على development بنجاح.")
 
 
+# تشغيل السكريبت مباشرة مع معالجة الإلغاء والأخطاء
 if __name__ == "__main__":
     try:
         main()

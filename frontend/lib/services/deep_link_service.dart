@@ -1,4 +1,4 @@
-// lib/services/deep_link_service.dart
+// frontend/lib/services/deep_link_service.dart
 //
 // ⭐ نمط "Pending Notification":
 //    بدل ما نفتح الصفحة مباشرة (قبل المزامنة)، نخزن الإشعار
@@ -17,6 +17,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:universal_html/html.dart' as html;
 
+// خدمة الروابط العميقة: تستقبل الإشعارات من الرابط أو الـservice worker
 class DeepLinkService {
   static final DeepLinkService instance = DeepLinkService._();
   DeepLinkService._();
@@ -31,10 +32,13 @@ class DeepLinkService {
   final StreamController<Map<String, dynamic>> _pendingStream =
       StreamController<Map<String, dynamic>>.broadcast();
 
+  // يعيد تدفق الإشعارات المعلقة
   Stream<Map<String, dynamic>> get pendingStream => _pendingStream.stream;
 
+  // يعيد الإشعار المعلق الحالي
   Map<String, dynamic>? get pendingNotification => _pendingNotification;
 
+  // يهيّئ الخدمة ويبدأ الاستماع
   void initialize() {
     if (_initialized) return;
     if (!kIsWeb) return;
@@ -47,6 +51,7 @@ class DeepLinkService {
   // ────────────────────────────────────────────────────────
   // 1) SW messages (التطبيق مفتوح)
   // ────────────────────────────────────────────────────────
+  // يستمع لرسائل الـservice worker
   void _listenServiceWorkerMessages() {
     try {
       html.window.onMessage.listen((event) {
@@ -70,6 +75,7 @@ class DeepLinkService {
   // ────────────────────────────────────────────────────────
   // 2) URL param (التطبيق كان مقفول)
   // ────────────────────────────────────────────────────────
+  // يفحص رابط الفتح الأولي
   Future<void> _checkInitialUrl() async {
     if (_handledInitialUrl) return;
     _handledInitialUrl = true;
@@ -94,6 +100,7 @@ class DeepLinkService {
     }
   }
 
+  // ينظّف عنوان الصفحة من معاملات الإشعار
   void _cleanUrl() {
     try {
       html.window.history.replaceState(null, '', '/');
@@ -104,6 +111,7 @@ class DeepLinkService {
   // ⭐ Queue + Consume
   // ────────────────────────────────────────────────────────
 
+  // يضيف إشعارًا معلقًا ويبلّغ المستمعين
   /// يضيف إشعار معلق + يبلّغ أي مستمع (HomePage)
   void _queuePending(Map<String, dynamic> notification) {
     _pendingNotification = notification;
@@ -112,6 +120,7 @@ class DeepLinkService {
     }
   }
 
+  // يعيد الإشعار المعلق ويفرغه
   /// يستدعيه HomePage بعد ما المزامنة تخلص
   /// يرجع الإشعار (ويحذفه من pending) أو null.
   Map<String, dynamic>? consumePendingNotification() {

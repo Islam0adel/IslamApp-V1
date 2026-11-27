@@ -1,3 +1,4 @@
+# backend/app/core/employees_changes_v2.py
 """EXPERIMENT (isolated copy only): commit-safe change feed for employees. Needs migration 003.
 
 Cursor "tx:id" (same watermark rule as transactions/coding). Rows are filtered per viewer with the
@@ -13,6 +14,8 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from app.core.changes_v2 import parse_cursor, MAX_ID
 from app.core.models import Employee
 
+
+# يجيب تغييرات الموظفين بعد المؤشر مع مراعاة الفروع المسموحة وهوية الموظف
 async def fetch(db, company, cursor, limit, visibility, allowed_branches, identities, serialize):
     ctx, cid = parse_cursor(cursor)
     r = await db.execute(text("select pg_snapshot_xmin(pg_current_snapshot())::text, pg_snapshot_xmax(pg_current_snapshot())::text"))

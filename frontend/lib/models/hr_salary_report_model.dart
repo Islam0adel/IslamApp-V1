@@ -1,6 +1,6 @@
-// lib/models/hr_salary_report_model.dart
+// frontend/lib/models/hr_salary_report_model.dart
 
-
+// نموذج سطر تسوية في تقرير الراتب
 class HRAdjustmentLine {
   final String type; // bonus / deduction / loan
   final String label;
@@ -12,6 +12,7 @@ class HRAdjustmentLine {
     required this.amount,
   });
 
+  // ينشئ كائنًا من خريطة بيانات قادمة من الخادم أو التخزين المحلي
   factory HRAdjustmentLine.fromMap(Map<String, dynamic> map) {
     return HRAdjustmentLine(
       type: map['type']?.toString() ?? '',
@@ -21,7 +22,7 @@ class HRAdjustmentLine {
   }
 }
 
-
+// نموذج تفصيل حضور يوم في تقرير الراتب
 class HRAttendanceDetail {
   final String date;
   final String status;
@@ -41,6 +42,7 @@ class HRAttendanceDetail {
     required this.overtimeMinutes,
   });
 
+  // ينشئ كائنًا من خريطة بيانات قادمة من الخادم أو التخزين المحلي
   factory HRAttendanceDetail.fromMap(Map<String, dynamic> map) {
     return HRAttendanceDetail(
       date: map['date']?.toString() ?? '',
@@ -53,6 +55,7 @@ class HRAttendanceDetail {
     );
   }
 
+  // يعيد اسم حالة الحضور بالعربية
   String get statusLabel {
     switch (status) {
       case 'present':
@@ -75,7 +78,7 @@ class HRAttendanceDetail {
   }
 }
 
-
+// نموذج تقرير راتب الموظف
 class HRSalaryReportModel {
   final String companyCode;
   final String branchCode;
@@ -144,11 +147,12 @@ class HRSalaryReportModel {
     required this.deductionsTotal,
     required this.loansTotal,
     required this.netSalary,
-    required this.debtRemaining,   // ⭐
+    required this.debtRemaining, // ⭐
     required this.adjustmentLines,
     required this.attendanceDetails,
   });
 
+  // ينشئ كائنًا من خريطة بيانات قادمة من الخادم أو التخزين المحلي
   factory HRSalaryReportModel.fromMap(Map<String, dynamic> map) {
     return HRSalaryReportModel(
       companyCode: map['company_code']?.toString() ?? '',
@@ -178,20 +182,23 @@ class HRSalaryReportModel {
       deductionsTotal: _toDouble(map['deductions_total']),
       loansTotal: _toDouble(map['loans_total']),
       netSalary: _toDouble(map['net_salary']),
-      debtRemaining: _toDouble(map['debt_remaining']),   // ⭐
+      debtRemaining: _toDouble(map['debt_remaining']), // ⭐
       adjustmentLines: (map['adjustment_lines'] as List?)
               ?.whereType<Map>()
-              .map((e) => HRAdjustmentLine.fromMap(Map<String, dynamic>.from(e)))
+              .map(
+                  (e) => HRAdjustmentLine.fromMap(Map<String, dynamic>.from(e)))
               .toList() ??
           [],
       attendanceDetails: (map['attendance_details'] as List?)
               ?.whereType<Map>()
-              .map((e) => HRAttendanceDetail.fromMap(Map<String, dynamic>.from(e)))
+              .map((e) =>
+                  HRAttendanceDetail.fromMap(Map<String, dynamic>.from(e)))
               .toList() ??
           [],
     );
   }
 
+  // يحوّل التقرير إلى نص عادي للنسخ أو المشاركة
   /// نص التقرير للنسخ / المشاركة
   String toPlainText() {
     final buffer = StringBuffer();
@@ -202,7 +209,8 @@ class HRSalaryReportModel {
     buffer.writeln('الفرع: $branchCode');
     buffer.writeln('─────────────────────');
 
-    buffer.writeln('الراتب الأساسي (الشهري): ${baseSalary.toStringAsFixed(2)} ج.م');
+    buffer.writeln(
+        'الراتب الأساسي (الشهري): ${baseSalary.toStringAsFixed(2)} ج.م');
     buffer.writeln('أيام الشهر: $workDays (عدّى منها: $elapsedDays)');
     if (futureDays > 0) {
       buffer.writeln('⚠️ $futureDays يوم لم يأتِ بعد — غير محسوب في المستحق');
@@ -219,43 +227,50 @@ class HRSalaryReportModel {
     buffer.writeln('  + المستحق: ${basePay.toStringAsFixed(2)}');
 
     if (absenceDeduction > 0) {
-      buffer.writeln('  - غياب ($absentDays يوم): -${absenceDeduction.toStringAsFixed(2)}');
+      buffer.writeln(
+          '  - غياب ($absentDays يوم): -${absenceDeduction.toStringAsFixed(2)}');
     }
     if (lateDeduction > 0) {
-      buffer.writeln('  - تأخير ($lateMinutesTotal د): -${lateDeduction.toStringAsFixed(2)}');
+      buffer.writeln(
+          '  - تأخير ($lateMinutesTotal د): -${lateDeduction.toStringAsFixed(2)}');
     }
     if (earlyLeaveDeduction > 0) {
-      buffer.writeln('  - انصراف مبكر: -${earlyLeaveDeduction.toStringAsFixed(2)}');
+      buffer.writeln(
+          '  - انصراف مبكر: -${earlyLeaveDeduction.toStringAsFixed(2)}');
     }
     if (overtimeBonus > 0) {
-      buffer.writeln('  + إضافي ($overtimeMinutesTotal د): +${overtimeBonus.toStringAsFixed(2)}');
+      buffer.writeln(
+          '  + إضافي ($overtimeMinutesTotal د): +${overtimeBonus.toStringAsFixed(2)}');
     }
 
     for (final line in adjustmentLines) {
       final sign = line.amount >= 0 ? '+' : '';
-      buffer.writeln('  $sign${line.amount.toStringAsFixed(2)} - ${line.label}');
+      buffer
+          .writeln('  $sign${line.amount.toStringAsFixed(2)} - ${line.label}');
     }
 
     buffer.writeln('─────────────────────');
     buffer.writeln('💰 الصافي: ${netSalary.toStringAsFixed(2)} ج.م');
     if (netSalary < 0) {
-      buffer.writeln('⚠️ مدين للشركة بـ ${debtRemaining.toStringAsFixed(2)} ج.م');
+      buffer
+          .writeln('⚠️ مدين للشركة بـ ${debtRemaining.toStringAsFixed(2)} ج.م');
     }
 
     return buffer.toString();
   }
 }
 
-
 // ============================================================
 // Helpers
 // ============================================================
 
+// يحوّل قيمة ديناميكية إلى عدد عشري بأمان
 double _toDouble(dynamic value) {
   if (value is num) return value.toDouble();
   return double.tryParse(value?.toString() ?? '') ?? 0.0;
 }
 
+// يحوّل قيمة ديناميكية إلى عدد صحيح بأمان
 int _toInt(dynamic value) {
   if (value is int) return value;
   if (value is num) return value.toInt();

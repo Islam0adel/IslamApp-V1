@@ -1,5 +1,7 @@
+// frontend/lib/core/theme.dart
 import 'package:flutter/material.dart';
 
+// فئة الثيم: ألوان التطبيق وتدرجاته وثيما الوضعين الفاتح والداكن
 /// ============================================================================
 ///  AppTheme  —  المرجع الوحيد لألوان التطبيق (النصوص / الأيقونات / الحالات / الخلفيات)
 /// ============================================================================
@@ -72,69 +74,178 @@ class AppTheme {
   // 2) دوال الألوان حسب الوضع (فاتح / داكن) — بتاخد context
   // ==========================================================================
 
+  // يحدد هل التطبيق في الوضع الداكن
   /// هل التطبيق الآن في الوضع الداكن؟
-  static bool isDark(BuildContext context) => Theme.of(context).brightness == Brightness.dark;
+  static bool isDark(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark;
 
+  // يعيد لون النص الأساسي حسب الوضع
   /// النص الأساسي حسب الوضع.
-  static Color textPrimary(BuildContext context) => isDark(context) ? darkText : lightText;
+  static Color textPrimary(BuildContext context) =>
+      isDark(context) ? darkText : lightText;
 
+  // يعيد لون النص الثانوي حسب الوضع
   /// النص الثانوي حسب الوضع.
-  static Color textSecondary(BuildContext context) => isDark(context) ? darkTextSecondary : lightTextSecondary;
+  static Color textSecondary(BuildContext context) =>
+      isDark(context) ? darkTextSecondary : lightTextSecondary;
 
+  // يعيد لون السطح حسب الوضع
   /// لون السطح (الكروت) حسب الوضع.
-  static Color surface(BuildContext context) => isDark(context) ? darkSurface : lightSurface;
+  static Color surface(BuildContext context) =>
+      isDark(context) ? darkSurface : lightSurface;
 
+  // يعيد لون السطح البديل حسب الوضع
   /// لون السطح البديل حسب الوضع.
-  static Color surfaceAlt(BuildContext context) => isDark(context) ? darkSurfaceAlt : lightSurfaceAlt;
+  static Color surfaceAlt(BuildContext context) =>
+      isDark(context) ? darkSurfaceAlt : lightSurfaceAlt;
 
+  // يعيد لون الحدود حسب الوضع
   /// لون الحدود حسب الوضع.
-  static Color border(BuildContext context) => isDark(context) ? darkBorder : lightBorder;
+  static Color border(BuildContext context) =>
+      isDark(context) ? darkBorder : lightBorder;
 
   // ألوان الواجهة التكيفية: استخدمها داخل الصفحات بدل الألوان الثابتة.
   // في Light Mode النصوص كحلي/رمادي غامق، وفي Dark Mode تحتفظ بدرجاتها الفاتحة.
-  static Color textMainFor(BuildContext context) => isDark(context) ? const Color.fromARGB(245, 252, 247, 247) : lightText;
-  static Color textStrongFor(BuildContext context) => isDark(context) ? const Color(0xCCFFFFFF) : const Color(0xFF243B5A);
-  static Color textSoftFor(BuildContext context) => isDark(context) ? Colors.white70 : lightTextSecondary;
-  static Color textMutedFor(BuildContext context) => isDark(context) ? Colors.white60 : const Color(0xFF65758B);
-  static Color textHintFor(BuildContext context) => isDark(context) ? Colors.white54 : const Color(0xFF687A90);
-  static Color textFaintFor(BuildContext context) => isDark(context) ? Colors.white38 : const Color(0xFF8492A5);
-  static Color accentFor(BuildContext context) => isDark(context) ? Colors.cyanAccent : const Color(0xFF2457A7);
-  static Color accentAltFor(BuildContext context) => isDark(context) ? Colors.cyan : const Color(0xFF3569A8);
-  static Color onAccentFor(BuildContext context) => isDark(context) ? Colors.black : Colors.white;
+  // يعيد لون النص الرئيسي حسب الوضع
+  static Color textMainFor(BuildContext context) =>
+      isDark(context) ? const Color.fromARGB(245, 252, 247, 247) : lightText;
+
+  // يعيد لون النص القوي حسب الوضع
+  static Color textStrongFor(BuildContext context) =>
+      isDark(context) ? const Color(0xCCFFFFFF) : const Color(0xFF243B5A);
+
+  // يعيد لون النص الخافت حسب الوضع
+  static Color textSoftFor(BuildContext context) =>
+      isDark(context) ? Colors.white70 : lightTextSecondary;
+
+  // يعيد لون النص المكتوم حسب الوضع
+  static Color textMutedFor(BuildContext context) =>
+      isDark(context) ? Colors.white60 : const Color(0xFF65758B);
+
+  // يعيد لون نص التلميح حسب الوضع
+  static Color textHintFor(BuildContext context) =>
+      isDark(context) ? Colors.white54 : const Color(0xFF687A90);
+
+  // يعيد لون النص الباهت حسب الوضع
+  static Color textFaintFor(BuildContext context) =>
+      isDark(context) ? Colors.white38 : const Color(0xFF8492A5);
+
+  // يعيد لون التمييز الأساسي حسب الوضع
+  static Color accentFor(BuildContext context) =>
+      isDark(context) ? Colors.cyanAccent : const Color(0xFF2457A7);
+
+  // يعيد لون التمييز البديل حسب الوضع
+  static Color accentAltFor(BuildContext context) =>
+      isDark(context) ? Colors.cyan : const Color(0xFF3569A8);
+
+  // يعيد لون النص فوق لون التمييز حسب الوضع
+  static Color onAccentFor(BuildContext context) =>
+      isDark(context) ? Colors.black : Colors.white;
+
   // ألوان حقول الدخول: نص غامق على سطح فاتح، ونص فاتح على سطح داكن.
-  static Color inputFill(BuildContext context) => isDark(context) ? Colors.white.withValues(alpha: 0.05) : lightSurface;
-  static Color inputBorder(BuildContext context) => isDark(context) ? Colors.white.withValues(alpha: 0.10) : lightBorder;
-  static Color inputFocus(BuildContext context) => isDark(context) ? Colors.white : primaryLight;
-  static Color buttonOverlay(BuildContext context) => isDark(context) ? Colors.white.withValues(alpha: 0.20) : primaryLight.withValues(alpha: 0.08);
+  // يعيد لون تعبئة حقول الإدخال حسب الوضع
+  static Color inputFill(BuildContext context) =>
+      isDark(context) ? Colors.white.withValues(alpha: 0.05) : lightSurface;
+
+  // يعيد لون حدود حقول الإدخال حسب الوضع
+  static Color inputBorder(BuildContext context) =>
+      isDark(context) ? Colors.white.withValues(alpha: 0.10) : lightBorder;
+
+  // يعيد لون حدود حقول الإدخال عند التركيز حسب الوضع
+  static Color inputFocus(BuildContext context) =>
+      isDark(context) ? Colors.white : primaryLight;
+
+  // يعيد لون تراكب الأزرار حسب الوضع
+  static Color buttonOverlay(BuildContext context) => isDark(context)
+      ? Colors.white.withValues(alpha: 0.20)
+      : primaryLight.withValues(alpha: 0.08);
+
   // خلفية أزرار شاشات الدخول: نحافظ على الشفافية الداكنة، ونستخدم كحلي واضح في الوضع الفاتح.
-  static Color authActionBackground(BuildContext context) => isDark(context) ? Colors.white.withValues(alpha: 0.20) : primaryLight;
-  static Color checkboxActive(BuildContext context) => isDark(context) ? Colors.white : primaryLight;
-  static Color checkboxCheck(BuildContext context) => isDark(context) ? Colors.black : Colors.white;
+  // يعيد لون خلفية أزرار شاشات الدخول حسب الوضع
+  static Color authActionBackground(BuildContext context) =>
+      isDark(context) ? Colors.white.withValues(alpha: 0.20) : primaryLight;
+
+  // يعيد لون مربع الاختيار المفعّل حسب الوضع
+  static Color checkboxActive(BuildContext context) =>
+      isDark(context) ? Colors.white : primaryLight;
+
+  // يعيد لون علامة الاختيار حسب الوضع
+  static Color checkboxCheck(BuildContext context) =>
+      isDark(context) ? Colors.black : Colors.white;
 
   // ألوان الحالات: درجات زاهية في Dark Mode ودرجات أهدأ وأوضح في Light Mode.
-  static Color successFor(BuildContext context) => isDark(context) ? success : const Color(0xFF23804A);
-  static Color successStrongFor(BuildContext context) => isDark(context) ? successStrong : const Color(0xFF176B3A);
-  static Color successDeepFor(BuildContext context) => isDark(context) ? successDeep : const Color(0xFF176B3A);
-  static Color dangerFor(BuildContext context) => isDark(context) ? danger : const Color(0xFFC62828);
-  static Color dangerStrongFor(BuildContext context) => isDark(context) ? dangerStrong : const Color(0xFFB42318);
-  static Color dangerSoftFor(BuildContext context) => isDark(context) ? dangerSoft : const Color(0xFFCF5555);
-  static Color warningFor(BuildContext context) => isDark(context) ? warning : const Color(0xFF946200);
-  static Color warningOrangeFor(BuildContext context) => isDark(context) ? warningOrange : const Color(0xFFB45309);
-  static Color warningOrangeSoftFor(BuildContext context) => isDark(context) ? warningOrangeSoft : const Color(0xFFC56A14);
-  static Color infoFor(BuildContext context) => isDark(context) ? info : const Color(0xFF2457A7);
-  static Color infoSoftFor(BuildContext context) => isDark(context) ? infoSoft : const Color(0xFF3569A8);
-  static Color extraPurpleFor(BuildContext context) => isDark(context) ? extraPurple : const Color(0xFF7450A6);
-  static Color extraPurpleDeepFor(BuildContext context) => isDark(context) ? extraPurpleDeep : const Color(0xFF6741A5);
-  static Color extraTealFor(BuildContext context) => isDark(context) ? extraTeal : const Color(0xFF147D76);
-  static Color extraBlueGreyFor(BuildContext context) => isDark(context) ? extraBlueGrey : const Color(0xFF52677D);
-  static Color neutralFor(BuildContext context) => isDark(context) ? neutral : const Color(0xFF64748B);
+  // يعيد لون النجاح حسب الوضع
+  static Color successFor(BuildContext context) =>
+      isDark(context) ? success : const Color(0xFF23804A);
+
+  // يعيد لون النجاح القوي حسب الوضع
+  static Color successStrongFor(BuildContext context) =>
+      isDark(context) ? successStrong : const Color(0xFF176B3A);
+
+  // يعيد لون النجاح الداكن حسب الوضع
+  static Color successDeepFor(BuildContext context) =>
+      isDark(context) ? successDeep : const Color(0xFF176B3A);
+
+  // يعيد لون الخطر حسب الوضع
+  static Color dangerFor(BuildContext context) =>
+      isDark(context) ? danger : const Color(0xFFC62828);
+
+  // يعيد لون الخطر القوي حسب الوضع
+  static Color dangerStrongFor(BuildContext context) =>
+      isDark(context) ? dangerStrong : const Color(0xFFB42318);
+
+  // يعيد لون الخطر الخفيف حسب الوضع
+  static Color dangerSoftFor(BuildContext context) =>
+      isDark(context) ? dangerSoft : const Color(0xFFCF5555);
+
+  // يعيد لون التحذير حسب الوضع
+  static Color warningFor(BuildContext context) =>
+      isDark(context) ? warning : const Color(0xFF946200);
+
+  // يعيد لون التحذير البرتقالي حسب الوضع
+  static Color warningOrangeFor(BuildContext context) =>
+      isDark(context) ? warningOrange : const Color(0xFFB45309);
+
+  // يعيد لون التحذير البرتقالي الخفيف حسب الوضع
+  static Color warningOrangeSoftFor(BuildContext context) =>
+      isDark(context) ? warningOrangeSoft : const Color(0xFFC56A14);
+
+  // يعيد لون المعلومات حسب الوضع
+  static Color infoFor(BuildContext context) =>
+      isDark(context) ? info : const Color(0xFF2457A7);
+
+  // يعيد لون المعلومات الخفيف حسب الوضع
+  static Color infoSoftFor(BuildContext context) =>
+      isDark(context) ? infoSoft : const Color(0xFF3569A8);
+
+  // يعيد اللون البنفسجي الإضافي حسب الوضع
+  static Color extraPurpleFor(BuildContext context) =>
+      isDark(context) ? extraPurple : const Color(0xFF7450A6);
+
+  // يعيد اللون البنفسجي الداكن الإضافي حسب الوضع
+  static Color extraPurpleDeepFor(BuildContext context) =>
+      isDark(context) ? extraPurpleDeep : const Color(0xFF6741A5);
+
+  // يعيد اللون الأخضر المزرق الإضافي حسب الوضع
+  static Color extraTealFor(BuildContext context) =>
+      isDark(context) ? extraTeal : const Color(0xFF147D76);
+
+  // يعيد اللون الرمادي المزرق الإضافي حسب الوضع
+  static Color extraBlueGreyFor(BuildContext context) =>
+      isDark(context) ? extraBlueGrey : const Color(0xFF52677D);
+
+  // يعيد اللون المحايد حسب الوضع
+  static Color neutralFor(BuildContext context) =>
+      isDark(context) ? neutral : const Color(0xFF64748B);
 
   // تدرج موحد لشاشات الدخول، حتى تتغير ألوانه من هذا الملف فقط.
+  // يعيد تدرج خلفية شاشات الدخول حسب الوضع
   static List<Color> authGradient(BuildContext context) => isDark(context)
       ? const [Colors.black, Color(0xFF1A237E), Colors.black]
       : const [Color(0xFFF7F9FC), Color(0xFFE7EDF5), Color(0xFFF4F7FB)];
 
   // شاشة التسجيل كان لها تدرج داكن من نقطتين؛ نحافظ عليه كما هو في Dark Mode.
+  // يعيد تدرج خلفية شاشة التسجيل حسب الوضع
   static List<Color> registerGradient(BuildContext context) => isDark(context)
       ? const [Color(0xFF1A237E), Colors.black]
       : const [Color(0xFFF7F9FC), Color(0xFFE7EDF5), Color(0xFFF4F7FB)];
@@ -144,58 +255,107 @@ class AppTheme {
   // ==========================================================================
 
   /// تدرج خلفية الصفحات "الفاتحة فعلاً" (بيستخدمه المخزون وأرصدة المخزون والموردين).
-  static const List<Color> lightPageGradient = [Color(0xFFF3F6FA), Color(0xFFE7EDF6), Color(0xFFF7F9FC)];
+  static const List<Color> lightPageGradient = [
+    Color(0xFFF3F6FA),
+    Color(0xFFE7EDF6),
+    Color(0xFFF7F9FC)
+  ];
 
   /// تدرج خلفية الصفحات "الداكنة" (أسود ← نيلي ← أسود).
-  static const List<Color> darkPageGradient = [Colors.black, Color(0xFF1A237E), Colors.black];
+  static const List<Color> darkPageGradient = [
+    Colors.black,
+    Color(0xFF1A237E),
+    Colors.black
+  ];
 
+  // يعيد تدرج خلفية الصفحات العامة حسب الوضع
   /// تدرج خلفية صفحات المخزون وأرصدة المخزون والموردين (فاتح / داكن).
-  static List<Color> pageGradient(BuildContext context) => isDark(context) ? darkPageGradient : lightPageGradient;
+  static List<Color> pageGradient(BuildContext context) =>
+      isDark(context) ? darkPageGradient : lightPageGradient;
 
   // ---- تدرجات صفحات الداش بورد ----
 
   /// تدرج الوضع الفاتح للداش بورد (درجات هادئة من الأبيض والرمادي المزرق).
   /// ده نفس اللون اللي كان مكرر في كل صفحة.
-  static const List<Color> dashLightGradient = [Color(0xFFF7F9FC), Color(0xFFEAF0F7), Color(0xFFF4F7FB)];
+  static const List<Color> dashLightGradient = [
+    Color(0xFFF7F9FC),
+    Color(0xFFEAF0F7),
+    Color(0xFFF4F7FB)
+  ];
 
   /// التدرج الداكن الرئيسي (أسود ← نيلي ← أسود) — التقارير، المورّدين، الكودينج، اليومية.
-  static const List<Color> dashDarkGradientMain = [Colors.black, Color(0xFF1A237E), Colors.black];
+  static const List<Color> dashDarkGradientMain = [
+    Colors.black,
+    Color(0xFF1A237E),
+    Colors.black
+  ];
 
   /// التدرج الداكن "الأزرق" — صفحة التقارير وصفحة تحويل الخزينة.
-  static const List<Color> dashDarkGradientBlue = [darkBackground, Color.fromARGB(238, 48, 98, 248)];
+  static const List<Color> dashDarkGradientBlue = [
+    darkBackground,
+    Color.fromARGB(238, 48, 98, 248)
+  ];
 
   /// التدرج الداكن (نيلي ← أسود) — صفحة شركات الأدمن وصفحة إعادة الضبط.
-  static const List<Color> dashDarkGradientIndigo = [Color(0xFF1A237E), Colors.black];
+  static const List<Color> dashDarkGradientIndigo = [
+    Color(0xFF1A237E),
+    Colors.black
+  ];
 
   /// التدرج الداكن العميق (كحلي غامق ← أزرق ← كحلي غامق) — الصفحة الرئيسية ولوحة الموردين.
-  static const List<Color> dashDarkGradientDeep = [Color(0xFF020617), Color.fromARGB(255, 47, 54, 190), Color(0xFF020617)];
+  static const List<Color> dashDarkGradientDeep = [
+    Color(0xFF020617),
+    Color.fromARGB(255, 47, 54, 190),
+    Color(0xFF020617)
+  ];
 
   /// تدرج الوضع الداكن لصفحتي الصلاحيات والإعدادات.
-  static const List<Color> dashDarkGradientSoft = [Color.fromARGB(255, 33, 31, 147), Color(0xFF161B22)];
+  static const List<Color> dashDarkGradientSoft = [
+    Color.fromARGB(255, 33, 31, 147),
+    Color(0xFF161B22)
+  ];
 
   /// تدرج الوضع الفاتح لصفحة الصلاحيات.
-  static const List<Color> permissionsLightGradient = [Color(0xFFF7F9FC), Color(0xFFE8EEF6)];
+  static const List<Color> permissionsLightGradient = [
+    Color(0xFFF7F9FC),
+    Color(0xFFE8EEF6)
+  ];
 
   /// تدرج الوضع الفاتح لصفحة الإعدادات.
-  static const List<Color> settingsLightGradient = [Color(0xFFF7F9FC), Color(0xFFE8EEF6)];
+  static const List<Color> settingsLightGradient = [
+    Color(0xFFF7F9FC),
+    Color(0xFFE8EEF6)
+  ];
 
+  // يعيد التدرج الرئيسي لخلفية لوحة التحكم حسب الوضع
   /// خلفية الداش بورد الرئيسية (التقارير - الموردين - الكودينج - اليومية - المخزون التاريخي...).
-  static List<Color> dashGradientMain(BuildContext context) => isDark(context) ? dashDarkGradientMain : dashLightGradient;
+  static List<Color> dashGradientMain(BuildContext context) =>
+      isDark(context) ? dashDarkGradientMain : dashLightGradient;
 
+  // يعيد التدرج الأزرق لخلفية لوحة التحكم حسب الوضع
   /// خلفية الداش بورد الزرقاء (صفحة التقارير - تحويل الخزينة).
-  static List<Color> dashGradientBlue(BuildContext context) => isDark(context) ? dashDarkGradientBlue : dashLightGradient;
+  static List<Color> dashGradientBlue(BuildContext context) =>
+      isDark(context) ? dashDarkGradientBlue : dashLightGradient;
 
+  // يعيد التدرج النيلي لخلفية لوحة التحكم حسب الوضع
   /// خلفية الداش بورد (نيلي ← أسود) — شركات الأدمن وإعادة الضبط.
-  static List<Color> dashGradientIndigo(BuildContext context) => isDark(context) ? dashDarkGradientIndigo : dashLightGradient;
+  static List<Color> dashGradientIndigo(BuildContext context) =>
+      isDark(context) ? dashDarkGradientIndigo : dashLightGradient;
 
+  // يعيد التدرج العميق لخلفية لوحة التحكم حسب الوضع
   /// خلفية الداش بورد العميقة — الصفحة الرئيسية ولوحة الموردين.
-  static List<Color> dashGradientDeep(BuildContext context) => isDark(context) ? dashDarkGradientDeep : dashLightGradient;
+  static List<Color> dashGradientDeep(BuildContext context) =>
+      isDark(context) ? dashDarkGradientDeep : dashLightGradient;
 
+  // يعيد تدرج خلفية صفحة الصلاحيات حسب الوضع
   /// خلفية صفحة الصلاحيات.
-  static List<Color> permissionsGradient(BuildContext context) => isDark(context) ? dashDarkGradientSoft : permissionsLightGradient;
+  static List<Color> permissionsGradient(BuildContext context) =>
+      isDark(context) ? dashDarkGradientSoft : permissionsLightGradient;
 
+  // يعيد تدرج خلفية صفحة الإعدادات حسب الوضع
   /// خلفية صفحة الإعدادات.
-  static List<Color> settingsGradient(BuildContext context) => isDark(context) ? dashDarkGradientSoft : settingsLightGradient;
+  static List<Color> settingsGradient(BuildContext context) =>
+      isDark(context) ? dashDarkGradientSoft : settingsLightGradient;
 
   // ==========================================================================
   // 4) ألوان النصوص والأيقونات (فوق خلفيات الداش بورد الداكنة)
@@ -248,7 +408,8 @@ class AppTheme {
   static const Color successStrong = Colors.green;
 
   /// النجاح العميق (درجة 700): زر أخضر داكن.
-  static const Color successDeep = Color(0xFF00C853); // = Colors.greenAccent.shade700
+  static const Color successDeep =
+      Color(0xFF00C853); // = Colors.greenAccent.shade700
 
   /// الخطر / المصروف / السالب (أحمر فاتح): المبالغ السالبة - الحذف - الأيقونات التحذيرية - العدّاد.
   static const Color danger = Colors.redAccent;
@@ -257,7 +418,8 @@ class AppTheme {
   static const Color dangerStrong = Colors.red;
 
   /// الخطر الناعم (أحمر فاتح جداً): نص تنبيه خفيف.
-  static const Color dangerSoft = Color(0xFFFF8A80); // = Colors.redAccent.shade100
+  static const Color dangerSoft =
+      Color(0xFFFF8A80); // = Colors.redAccent.shade100
 
   /// التحذير / قيد الانتظار (أصفر كهرماني): الإجماليات - الأيقونات المميزة - زر التعديل - تبويب مختار.
   static const Color warning = Colors.amber;
@@ -294,11 +456,18 @@ class AppTheme {
   // ==========================================================================
 
   // ألوان النوافذ والقوائم المتوافقة مع الثيم. استخدم هذه الدوال في الواجهات.
-  static Color dialogBackground(BuildContext context) => isDark(context) ? dialogBg : lightSurface;
-  static Color dropdownBackground(BuildContext context) => isDark(context) ? dropdownBgNavy : lightSurface;
-  static Color sheetBackground(BuildContext context) => isDark(context) ? sheetBgNavy : lightSurface;
-  
-  
+  // يعيد لون خلفية نافذة الحوار حسب الوضع
+  static Color dialogBackground(BuildContext context) =>
+      isDark(context) ? dialogBg : lightSurface;
+
+  // يعيد لون خلفية القوائم المنسدلة حسب الوضع
+  static Color dropdownBackground(BuildContext context) =>
+      isDark(context) ? dropdownBgNavy : lightSurface;
+
+  // يعيد لون خلفية الأوراق السفلية حسب الوضع
+  static Color sheetBackground(BuildContext context) =>
+      isDark(context) ? sheetBgNavy : lightSurface;
+
   /// خلفية نافذة الحوار AlertDialog (نيلي غامق).
   static const Color dialogBg = Color(0xFF1A237E);
 
@@ -325,8 +494,10 @@ class AppTheme {
 
   /// خلفية لوحة داخلية نيلي غامق (BoxDecoration).
   static const Color panelDeepBg = Color(0xFF1A237E);
+
+  // يعيد لون اللوحة المنبثقة حسب الوضع
   static Color modalPanelFor(BuildContext context) =>
-    isDark(context) ? panelDeepBg : lightSurface;
+      isDark(context) ? panelDeepBg : lightSurface;
 
   /// خلفية زر رئيسي نيلي (ElevatedButton).
   static const Color buttonPrimaryBg = Color(0xFF1A237E);
@@ -369,76 +540,134 @@ class AppTheme {
     // اللون الأساسي
     primaryColor: primaryLight,
     // مخطط الألوان: primary للأزرار/التفاعل، surface للأسطح، secondary للثانوي، onXXX للنصوص فوقها
-    colorScheme: ColorScheme.light(primary: primaryLight, onPrimary: Colors.white, surface: lightSurface, onSurface: lightText, secondary: lightSecondary, onSecondary: Colors.white, secondaryContainer: lightChipSelected, onSecondaryContainer: lightText),
+    colorScheme: ColorScheme.light(
+        primary: primaryLight,
+        onPrimary: Colors.white,
+        surface: lightSurface,
+        onSurface: lightText,
+        secondary: lightSecondary,
+        onSecondary: Colors.white,
+        secondaryContainer: lightChipSelected,
+        onSecondaryContainer: lightText),
     // خلفية الشاشة
     scaffoldBackgroundColor: lightBackground,
     // خلفية القوائم والنوافذ
     canvasColor: lightSurface,
-    cardTheme: const CardThemeData(color: lightSurface, surfaceTintColor: Colors.transparent),
+    cardTheme: const CardThemeData(
+        color: lightSurface, surfaceTintColor: Colors.transparent),
     fontFamily: 'Cairo',
     // شريط العنوان: خلفية + لون النص + لون الأيقونات
-    appBarTheme: const AppBarTheme(backgroundColor: lightSurface, foregroundColor: lightText, elevation: 0, iconTheme: IconThemeData(color: lightText)),
+    appBarTheme: const AppBarTheme(
+        backgroundColor: lightSurface,
+        foregroundColor: lightText,
+        elevation: 0,
+        iconTheme: IconThemeData(color: lightText)),
     // ألوان النصوص العامة
-    textTheme: const TextTheme(bodyLarge: TextStyle(color: lightText), bodyMedium: TextStyle(color: lightText), bodySmall: TextStyle(color: lightTextSecondary), titleLarge: TextStyle(color: lightText), titleMedium: TextStyle(color: lightText), titleSmall: TextStyle(color: lightText)),
+    textTheme: const TextTheme(
+        bodyLarge: TextStyle(color: lightText),
+        bodyMedium: TextStyle(color: lightText),
+        bodySmall: TextStyle(color: lightTextSecondary),
+        titleLarge: TextStyle(color: lightText),
+        titleMedium: TextStyle(color: lightText),
+        titleSmall: TextStyle(color: lightText)),
     // لون الأيقونات العام
     iconTheme: const IconThemeData(color: lightText),
     // لون الفواصل
     dividerColor: lightBorder,
     // التبويبات: المختار / غير المختار / المؤشر
-    tabBarTheme: const TabBarThemeData(labelColor: primaryLight, unselectedLabelColor: lightTextSecondary, indicatorColor: primaryLight),
+    tabBarTheme: const TabBarThemeData(
+        labelColor: primaryLight,
+        unselectedLabelColor: lightTextSecondary,
+        indicatorColor: primaryLight),
     // أزرار النص
-    textButtonTheme: TextButtonThemeData(style: TextButton.styleFrom(foregroundColor: primaryLight)),
+    textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(foregroundColor: primaryLight)),
     // أزرار الحدود: لون النص + لون الحد
-    outlinedButtonTheme: OutlinedButtonThemeData(style: OutlinedButton.styleFrom(foregroundColor: primaryLight, side: const BorderSide(color: lightBorder))),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+            foregroundColor: primaryLight,
+            side: const BorderSide(color: lightBorder))),
     // حقول الإدخال
     inputDecorationTheme: _inputTheme(lightText, lightSurface, lightBorder),
     // الأزرار المرتفعة
     elevatedButtonTheme: _buttonTheme(primaryLight, Colors.white),
     // الـ Chip: الخلفية - المختار - لون النص - الحد
-    chipTheme: ChipThemeData(backgroundColor: lightSurfaceAlt, selectedColor: lightChipSelected, labelStyle: const TextStyle(color: lightText), secondaryLabelStyle: const TextStyle(color: lightText), side: const BorderSide(color: lightBorder)),
+    chipTheme: ChipThemeData(
+        backgroundColor: lightSurfaceAlt,
+        selectedColor: lightChipSelected,
+        labelStyle: const TextStyle(color: lightText),
+        secondaryLabelStyle: const TextStyle(color: lightText),
+        side: const BorderSide(color: lightBorder)),
   );
 
   /// الثيم الداكن للتطبيق.
   static final darkTheme = ThemeData(
-  brightness: Brightness.dark,
-  primaryColor: primaryDark,
-  // ✅ إضافة colorScheme صريحة
-  colorScheme: ColorScheme.dark(
-    primary: primaryDark,
-    onPrimary: Colors.white,
-    surface: darkSurface,
-    onSurface: darkText,
-    secondary: lightSecondary,
-    onSecondary: Colors.white,
-    secondaryContainer: darkSurfaceAlt,
-    onSecondaryContainer: darkText,
-  ),
-  cardTheme: const CardThemeData(color: darkSurface, surfaceTintColor: Colors.transparent),
-  textButtonTheme: TextButtonThemeData(style: TextButton.styleFrom(foregroundColor: accent)),
-  outlinedButtonTheme: OutlinedButtonThemeData(style: OutlinedButton.styleFrom(foregroundColor: accent, side: const BorderSide(color: darkBorder))),
-  scaffoldBackgroundColor: darkBackground,
-  fontFamily: 'Cairo',
-  inputDecorationTheme: _inputTheme(Colors.white, Colors.white.withValues(alpha: 0.05), Colors.transparent),
-  elevatedButtonTheme: _buttonTheme(primaryDark, Colors.white, elevation: 10),
-);
+    brightness: Brightness.dark,
+    primaryColor: primaryDark,
+    // ✅ إضافة colorScheme صريحة
+    colorScheme: ColorScheme.dark(
+      primary: primaryDark,
+      onPrimary: Colors.white,
+      surface: darkSurface,
+      onSurface: darkText,
+      secondary: lightSecondary,
+      onSecondary: Colors.white,
+      secondaryContainer: darkSurfaceAlt,
+      onSecondaryContainer: darkText,
+    ),
+    cardTheme: const CardThemeData(
+        color: darkSurface, surfaceTintColor: Colors.transparent),
+    textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(foregroundColor: accent)),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+            foregroundColor: accent,
+            side: const BorderSide(color: darkBorder))),
+    scaffoldBackgroundColor: darkBackground,
+    fontFamily: 'Cairo',
+    inputDecorationTheme: _inputTheme(
+        Colors.white, Colors.white.withValues(alpha: 0.05), Colors.transparent),
+    elevatedButtonTheme: _buttonTheme(primaryDark, Colors.white, elevation: 10),
+  );
 
+  // ينشئ ثيم حقول الإدخال بالألوان المحددة
   /// ثيم حقول الإدخال: textColor للنص والتركيز، fill للخلفية، borderColor للحد.
-  static InputDecorationTheme _inputTheme(Color textColor, Color fill, Color borderColor) => InputDecorationTheme(
-    filled: true,
-    // خلفية الحقل
-    fillColor: fill,
-    border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide(color: borderColor)),
-    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide(color: borderColor)),
-    // حد الحقل عند التركيز عليه
-    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide(color: textColor, width: 1.4)),
-    // لون عنوان الحقل (Label)
-    labelStyle: TextStyle(color: textColor.withValues(alpha: 0.8)),
-    // لون النص التوضيحي (Hint)
-    hintStyle: TextStyle(color: textColor.withValues(alpha: 0.65)),
-  );
+  static InputDecorationTheme _inputTheme(
+          Color textColor, Color fill, Color borderColor) =>
+      InputDecorationTheme(
+        filled: true,
+        // خلفية الحقل
+        fillColor: fill,
+        border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(15),
+            borderSide: BorderSide(color: borderColor)),
+        enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(15),
+            borderSide: BorderSide(color: borderColor)),
+        // حد الحقل عند التركيز عليه
+        focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(15),
+            borderSide: BorderSide(color: textColor, width: 1.4)),
+        // لون عنوان الحقل (Label)
+        labelStyle: TextStyle(color: textColor.withValues(alpha: 0.8)),
+        // لون النص التوضيحي (Hint)
+        hintStyle: TextStyle(color: textColor.withValues(alpha: 0.65)),
+      );
 
+  // ينشئ ثيم الأزرار المرتفعة بالألوان المحددة
   /// ثيم الأزرار المرتفعة: color خلفية الزر، foreground لون النص، والزر المعطّل بشفافية.
-  static ElevatedButtonThemeData _buttonTheme(Color color, Color foreground, {double elevation = 3}) => ElevatedButtonThemeData(
-    style: ElevatedButton.styleFrom(backgroundColor: color, foregroundColor: foreground, disabledBackgroundColor: color.withValues(alpha: 0.35), disabledForegroundColor: foreground.withValues(alpha: 0.7), padding: const EdgeInsets.symmetric(vertical: 15), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)), elevation: elevation, shadowColor: color.withValues(alpha: elevation == 10 ? 0.4 : 0.2)),
-  );
+  static ElevatedButtonThemeData _buttonTheme(Color color, Color foreground,
+          {double elevation = 3}) =>
+      ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+            backgroundColor: color,
+            foregroundColor: foreground,
+            disabledBackgroundColor: color.withValues(alpha: 0.35),
+            disabledForegroundColor: foreground.withValues(alpha: 0.7),
+            padding: const EdgeInsets.symmetric(vertical: 15),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+            elevation: elevation,
+            shadowColor: color.withValues(alpha: elevation == 10 ? 0.4 : 0.2)),
+      );
 }

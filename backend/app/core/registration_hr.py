@@ -1,9 +1,11 @@
+# backend/app/core/registration_hr.py
 """Registration may bind an unowned HR record, never steal another identity."""
 from fastapi import HTTPException
 from sqlalchemy import select
 from app.core.models import Company, Employee
 
 
+# يتأكد إن موظف الموارد البشرية مش مربوط بحساب تاني قبل ربطه
 def require_hr_owner(employee, uid, email):
     old_uid = str(employee.user_uid or '').strip()
     old_email = str(employee.user_email or '').strip().lower()
@@ -11,6 +13,7 @@ def require_hr_owner(employee, uid, email):
         raise HTTPException(status_code=409, detail='الموظف مرتبط بحساب آخر. راجع الإدارة قبل إكمال التسجيل')
 
 
+# يربط حساب مسجّل جديد بسجل الموظف بعد قفل الشركة لمنع التسابق
 async def link_registration_employee(session, *, company_code, employee_code, uid, email, invited_phone='', assigned_employee_code=''):
     # Company-first lock matches HR creation and serializes competing claims.
     company = await session.scalar(select(Company).where(Company.code == company_code).with_for_update())

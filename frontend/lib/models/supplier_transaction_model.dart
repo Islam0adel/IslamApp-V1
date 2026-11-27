@@ -1,5 +1,6 @@
-// lib/models/supplier_transaction_model.dart
+// frontend/lib/models/supplier_transaction_model.dart
 
+// نموذج صنف في حركة المورد
 class SupplierItem {
   String code;
   String name;
@@ -27,6 +28,7 @@ class SupplierItem {
     this.total = 0.0,
   });
 
+  // يحوّل الكائن إلى خريطة (Map) جاهزة للتخزين أو الإرسال
   Map<String, dynamic> toMap() => {
         'code': code,
         'name': name,
@@ -38,6 +40,7 @@ class SupplierItem {
         'total': total,
       };
 
+  // ينشئ كائنًا من خريطة بيانات قادمة من الخادم أو التخزين المحلي
   factory SupplierItem.fromMap(
     Map<String, dynamic> map,
   ) {
@@ -46,8 +49,7 @@ class SupplierItem {
       name: map['name']?.toString() ?? '',
       quantity: _toDouble(map['quantity']),
       price: _toDouble(map['price']),
-      type: map['type']?.toString() ??
-          'وارد (دخول بضاعة)',
+      type: map['type']?.toString() ?? 'وارد (دخول بضاعة)',
       discountRate: _toDouble(
         map['discountRate'],
       ),
@@ -59,11 +61,11 @@ class SupplierItem {
   }
 }
 
-
 // ============================================================
 // Supplier Transaction
 // ============================================================
 
+// نموذج حركة المورد
 class SupplierTransactionModel {
   String companyCode;
   String branchCode;
@@ -107,33 +109,24 @@ class SupplierTransactionModel {
     required this.supplierName,
     required this.paymentMethod,
     required this.treasury,
-
     this.isAddToStore = false,
 
     // ✅ افتراضياً لا يتم إضافة/تعديل التكويد
     this.isAddToCoding = false,
-
     this.employee = 'غير محدد',
-
     this.items = const [],
-
     this.totalAmount = 0.0,
-
     this.paidAmount = 0.0,
-
     this.docId,
-
     DateTime? updatedAt,
-
     this.isDeleted = false,
-  }) : updatedAt =
-            updatedAt ?? DateTime.now();
-
+  }) : updatedAt = updatedAt ?? DateTime.now();
 
   // ============================================================
   // To Map
   // ============================================================
 
+  // يحوّل الكائن إلى خريطة (Map) جاهزة للتخزين أو الإرسال
   Map<String, dynamic> toMap() => {
         'company_code': companyCode,
         'branch_code': branchCode,
@@ -167,20 +160,18 @@ class SupplierTransactionModel {
         // المشتريات لا تسجل دفعة
         'paid_amount': paidAmount,
 
-        'updated_at':
-            updatedAt.toUtc().toIso8601String(),
+        'updated_at': updatedAt.toUtc().toIso8601String(),
 
         'is_deleted': isDeleted,
 
-        if (docId != null)
-          'doc_id': docId,
+        if (docId != null) 'doc_id': docId,
       };
-
 
   // ============================================================
   // From Map
   // ============================================================
 
+  // ينشئ كائنًا من خريطة بيانات قادمة من الخادم أو التخزين المحلي
   factory SupplierTransactionModel.fromMap(
     Map<String, dynamic> map,
   ) {
@@ -208,106 +199,82 @@ class SupplierTransactionModel {
       }
     }
 
-
     // ----------------------------------------------------------
     // updated_at
     // ----------------------------------------------------------
 
-    DateTime parsedUpdatedAt =
-        DateTime.now();
+    DateTime parsedUpdatedAt = DateTime.now();
 
-    final dynamic rawUpdatedAt =
-        map['updated_at'];
+    final dynamic rawUpdatedAt = map['updated_at'];
 
     if (rawUpdatedAt != null) {
       try {
-        parsedUpdatedAt =
-            DateTime.parse(
+        parsedUpdatedAt = DateTime.parse(
           rawUpdatedAt.toString(),
         );
       } catch (_) {
-        parsedUpdatedAt =
-            DateTime.now();
+        parsedUpdatedAt = DateTime.now();
       }
     }
-
 
     // ----------------------------------------------------------
     // Build Model
     // ----------------------------------------------------------
 
     return SupplierTransactionModel(
-      companyCode:
-          map['company_code']?.toString() ?? '',
+      companyCode: map['company_code']?.toString() ?? '',
 
-      branchCode:
-          map['branch_code']?.toString() ?? '',
+      branchCode: map['branch_code']?.toString() ?? '',
 
-      storeCode:
-          map['store_code']?.toString() ?? '',
+      storeCode: map['store_code']?.toString() ?? '',
 
-      serial:
-          _toInt(map['serial']),
+      serial: _toInt(map['serial']),
 
-      date:
-          map['date']?.toString() ?? '',
+      date: map['date']?.toString() ?? '',
 
-      supplierName:
-          map['supplier_name']?.toString() ?? '',
+      supplierName: map['supplier_name']?.toString() ?? '',
 
-      paymentMethod:
-          map['payment_method']?.toString() ?? '',
+      paymentMethod: map['payment_method']?.toString() ?? '',
 
-      treasury:
-          map['treasury']?.toString() ?? '',
+      treasury: map['treasury']?.toString() ?? '',
 
-      isAddToStore:
-          _toBool(
+      isAddToStore: _toBool(
         map['is_add_to_store'],
       ),
 
       // ✅ قراءة اختيار تحديث التكويد
-      isAddToCoding:
-          _toBool(
+      isAddToCoding: _toBool(
         map['is_add_to_coding'],
       ),
 
-      employee:
-          map['employee']?.toString() ??
-              'غير محدد',
+      employee: map['employee']?.toString() ?? 'غير محدد',
 
-      items:
-          parsedItems,
+      items: parsedItems,
 
-      totalAmount:
-          _toDouble(
+      totalAmount: _toDouble(
         map['total_amount'],
       ),
 
-      paidAmount:
-          _toDouble(
+      paidAmount: _toDouble(
         map['paid_amount'],
       ),
 
-      docId:
-          map['doc_id']?.toString(),
+      docId: map['doc_id']?.toString(),
 
-      updatedAt:
-          parsedUpdatedAt,
+      updatedAt: parsedUpdatedAt,
 
-      isDeleted:
-          _toBool(
+      isDeleted: _toBool(
         map['is_deleted'],
       ),
     );
   }
 }
 
-
 // ============================================================
 // Helpers
 // ============================================================
 
+// يحوّل قيمة ديناميكية إلى عدد عشري بأمان
 double _toDouble(dynamic value) {
   if (value is num) {
     return value.toDouble();
@@ -319,7 +286,7 @@ double _toDouble(dynamic value) {
       0.0;
 }
 
-
+// يحوّل قيمة ديناميكية إلى عدد صحيح بأمان
 int _toInt(dynamic value) {
   if (value is int) {
     return value;
@@ -335,15 +302,14 @@ int _toInt(dynamic value) {
       0;
 }
 
-
+// يحوّل قيمة ديناميكية إلى قيمة منطقية بأمان
 bool _toBool(dynamic value) {
   if (value is bool) {
     return value;
   }
 
   if (value is String) {
-    return value.toLowerCase() == 'true' ||
-        value == '1';
+    return value.toLowerCase() == 'true' || value == '1';
   }
 
   if (value is num) {

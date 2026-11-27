@@ -1,3 +1,4 @@
+// frontend/lib/views/dashboard/permissions_page.dart
 import '../../services/page_visibility.dart';
 import '../../services/cache_partitions.dart';
 import '../../services/permission_bulk_edit.dart';
@@ -18,13 +19,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/permissions_service.dart';
 import '../../services/presence_service.dart'; // ← NEW
 
+// صفحة إدارة الصلاحيات
 class PermissionsPage extends StatefulWidget {
   const PermissionsPage({super.key});
 
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
   @override
   State<PermissionsPage> createState() => _PermissionsPageState();
 }
 
+// حالة الويدجت PermissionsPage: تدير بيانات الشاشة وتفاعلاتها
 class _PermissionsPageState extends State<PermissionsPage> {
   String? selectedUserId;
   String? selectedUserJobCode;
@@ -37,25 +41,37 @@ class _PermissionsPageState extends State<PermissionsPage> {
   bool _revalidating = false;
   bool _revalidateAgain = false;
   String _startupBranch = '';
+
+  // يعيد الفروع المحددة
   List<String> get _draftBranches =>
       _allowAllBranches ? ['all'] : List<String>.from(_selectedBranchCodes);
+
+  // يحدد هل المحرر جاهز
   bool get _editorReady =>
       _editor != null &&
       _editorError == null &&
       !_saving &&
       !_revalidating &&
       (_editorScope?.isCurrent ?? false);
+
+  // يحدد هل يمكن تبديل الصلاحية
   bool _canToggle(String category, String key, bool next) =>
       _editorReady &&
       _editor!.canToggle(category, key, next, userPermissions, _draftBranches);
+
+  // يحدد هل يمكن تعديل الفرع
   bool _canEditBranch(String code) =>
       _editorReady && _editor!.canEditBranch(code, userPermissions);
+
+  // يحدد هل يمكن تعديل الموظفين
   bool get _canEditEmployees =>
       _editorReady &&
       _editor!.canEditEmployees(userPermissions, _draftBranches);
 
   // ✅ NEW: حالة is_active للمستخدم المختار (افتراضي = نشط)
   bool _selectedUserIsActive = true;
+
+  // يحدد هل الحساب جذري ذاتي
   bool get _rootSelfStatus =>
       _editor?.root == true && _editor?.data['is_self'] == true;
 
@@ -80,6 +96,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
   int _contextRequestId = 0;
   ReadAuthorizationSnapshot? _pageContext;
 
+  // يهيّئ حالة الشاشة عند إنشائها
   @override
   void initState() {
     super.initState();
@@ -88,6 +105,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
     _loadCompanyCode();
   }
 
+  // يستجيب لتغيّر دليل المستخدمين
   void _directoryHint() {
     final company = WebSocketSyncService.userDirectoryChanges.value.company;
     if (!mounted ||
@@ -97,6 +115,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
     _actorScopeChanged(force: true);
   }
 
+  // يقرأ دليل المستخدمين المستهدف
   Future<List<Map<String, dynamic>>> _readTargetDirectory(
       {bool forceRefresh = false}) async {
     return CachePartitions.run(() async {
@@ -124,6 +143,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
     });
   }
 
+  // يحدّث دليل المستخدمين المستهدف
   void _refreshTargetDirectory({bool forceRefresh = false}) {
     if (!mounted) return;
     if (_targetsLoading) {
@@ -137,6 +157,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
     });
   }
 
+  // يستجيب لتغيّر نطاق المنفّذ
   Future<void> _actorScopeChanged({bool force = false}) async {
     return CachePartitions.run(() async {
       if (!mounted) return;
@@ -210,6 +231,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
     });
   }
 
+  // يحمّل رمز الشركة
   Future<void> _loadCompanyCode() async {
     return CachePartitions.run(() async {
       final request = ++_contextRequestId;
@@ -242,6 +264,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
     });
   }
 
+  // يؤكد إعادة تحميل المحرر
   Future<void> _confirmEditorReload() async {
     return CachePartitions.run(() async {
       if (selectedUserId == null || _saving) return;
@@ -267,6 +290,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
     });
   }
 
+  // يحفظ الصلاحيات
   Future<void> savePermissions() async {
     return CachePartitions.run(() async {
       if (!_editorReady || selectedUserId == null) return;
@@ -285,7 +309,9 @@ class _PermissionsPageState extends State<PermissionsPage> {
       }
       setState(() => _saving = true);
       try {
-        await PermissionsService().savePermissions(PageVisibility.forSave(userPermissions, editor.permissions, _displayedPermissions),
+        await PermissionsService().savePermissions(
+            PageVisibility.forSave(
+                userPermissions, editor.permissions, _displayedPermissions),
             targetEmail: target,
             allowedBranches:
                 PermissionEditorSnapshot.sameSet(branches, editor.branches)
@@ -328,6 +354,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
     });
   }
 
+  // ينشئ الصلاحيات الافتراضية
   Map<String, Map<String, bool>> _createDefaultPermissions(
     String jobCode,
   ) {
@@ -345,6 +372,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
     return allPermissions;
   }
 
+  // يحمّل صلاحيات المستخدم
   Future<void> _loadUserPermissions(String userId, String jobCode) async {
     return CachePartitions.run(() async {
       final requestId = ++_loadUserRequestId;
@@ -367,17 +395,37 @@ class _PermissionsPageState extends State<PermissionsPage> {
           (values[category] ??= {}).addAll(perms);
         });
         for (final key in PageVisibility.keys) {
-          if (!(editor.permissions['صلاحيات عامة']?.containsKey(key) ?? false)) {
+          if (!(editor.permissions['صلاحيات عامة']?.containsKey(key) ??
+              false)) {
             final label = key.substring('إظهار '.length);
             var fallback = true;
             final rights = editor.permissions;
-            if (label == 'رصيد المخزون') fallback = rights['صلاحيات عامة']?['إظهار حركة الجرد'] == true;
-            if (label == 'تحويلات الخزائن') fallback = ['إضافة','معاينة','تعديل'].any((k)=>rights['تحويلات الخزائن']?[k] == true);
-            if (label == 'المبيعات والعملاء') fallback = ['المبيعات','المرتجعات','حسابات العملاء','أرصدة خزائن المبيعات'].any((c)=>(rights[c] ?? {}).entries.any((e)=>e.value && ['إضافة','تعديل','معاينة','إضافة تحصيل','تعديل تحصيل','عرض الأرصدة'].contains(e.key)));
+            if (label == 'رصيد المخزون')
+              fallback = rights['صلاحيات عامة']?['إظهار حركة الجرد'] == true;
+            if (label == 'تحويلات الخزائن')
+              fallback = ['إضافة', 'معاينة', 'تعديل']
+                  .any((k) => rights['تحويلات الخزائن']?[k] == true);
+            if (label == 'المبيعات والعملاء')
+              fallback = [
+                'المبيعات',
+                'المرتجعات',
+                'حسابات العملاء',
+                'أرصدة خزائن المبيعات'
+              ].any((c) => (rights[c] ?? {}).entries.any((e) =>
+                  e.value &&
+                  [
+                    'إضافة',
+                    'تعديل',
+                    'معاينة',
+                    'إضافة تحصيل',
+                    'تعديل تحصيل',
+                    'عرض الأرصدة'
+                  ].contains(e.key)));
             values['صلاحيات عامة']![key] = fallback;
           }
         }
-        _displayedPermissions = values.map((c,v)=>MapEntry(c,Map<String,bool>.from(v)));
+        _displayedPermissions =
+            values.map((c, v) => MapEntry(c, Map<String, bool>.from(v)));
         setState(() {
           _editor = editor;
           _editorScope = scope;
@@ -402,6 +450,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
     });
   }
 
+  // يعالج إزالة المستخدم من الحضور
   Future<void> _handleRemoveFromPresence() async {
     return CachePartitions.run(() async {
       if (selectedUserId == null) return;
@@ -475,6 +524,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
   // ============================================================
   // ✅ NEW: حظر / إلغاء حظر المستخدم (is_active في Firestore)
   // ============================================================
+  // يعالج تبديل الحظر
   Future<void> _handleToggleBlock(bool newValue) async {
     return CachePartitions.run(() async {
       if (!_editorReady ||
@@ -581,6 +631,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
     });
   }
 
+  // يحرّر الموارد المستخدمة عند إغلاق الشاشة
   @override
   void dispose() {
     PermissionsService().removeListener(_actorScopeChanged);
@@ -588,6 +639,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
     super.dispose();
   }
 
+  // يبني محدد المستخدم
   Widget _buildUserSelector() => FutureBuilder<List<Map<String, dynamic>>>(
       future: _targetsFuture,
       builder: (context, snapshot) {
@@ -658,6 +710,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
                       }));
       });
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     // final isDark =
@@ -882,6 +935,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
     );
   }
 
+  // يبني أزرار الإجراءات الجماعية
   Widget _bulkActions(String category, Iterable<String> keys) {
     final group = keys.toList();
     Map<String, Map<String, bool>> plan(bool next) => bulkPermissionEdit(
@@ -908,6 +962,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
             : null);
   }
 
+  // يبني تبويب الصلاحيات
   Widget buildPermissionsTab(String tabName) {
     var permissionsMap = userPermissions[tabName] ?? {};
 
@@ -1202,6 +1257,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
   // ⭐ HR: تبويب الموارد البشرية (6 مجموعات + فلترة)
   // ============================================================
 
+  // يبني تبويب صلاحيات الموارد البشرية
   Widget _buildHrPermissionsTab() {
     return ListView(
       padding: const EdgeInsets.all(20),
@@ -1323,6 +1379,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
   // قسم HR واحد (Header + Switch لكل صلاحية)
   // ──────────────────────────────────────────────────────────
 
+  // يبني قسم الموارد البشرية
   Widget _buildHrSection({
     required String title,
     required IconData icon,
@@ -1407,6 +1464,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
   // تسمية الصلاحية بالعربي
   // ──────────────────────────────────────────────────────────
 
+  // يعيد اسم صلاحية الموارد البشرية
   String _hrPermissionLabel(String key) {
     const labels = {
       // A
@@ -1450,6 +1508,7 @@ class _PermissionsPageState extends State<PermissionsPage> {
   // قسم فلترة الموظفين
   // ──────────────────────────────────────────────────────────
 
+  // يبني قسم تصفية الموظفين
   Widget _buildHrEmployeesFilterSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

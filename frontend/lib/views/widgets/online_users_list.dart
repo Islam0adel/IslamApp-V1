@@ -1,4 +1,4 @@
-// lib/views/widgets/online_users_list.dart
+// frontend/lib/views/widgets/online_users_list.dart
 
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
@@ -7,6 +7,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../../core/theme.dart';
 import 'glass_card.dart';
 
+// قائمة المستخدمين المتصلين
 class OnlineUsersList extends StatelessWidget {
   final String companyCode;
   final String selectedBranchCode;
@@ -19,10 +20,11 @@ class OnlineUsersList extends StatelessWidget {
     this.myAllowedBranches,
   });
 
+  // يحدد هل يملك المستخدم صلاحية كل الفروع
   /// هل أنا عندي صلاحية "كل الفروع"؟
-  bool get _hasAllBranches =>
-      myAllowedBranches?.contains('all') ?? false;
+  bool get _hasAllBranches => myAllowedBranches?.contains('all') ?? false;
 
+  // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<DatabaseEvent>(
@@ -78,7 +80,8 @@ class OnlineUsersList extends StatelessWidget {
           } else if (lastSeen == null) {
             statusText = 'لم يسجل حضوره بعد';
           } else {
-            statusText = 'آخر ظهور ${_formatDuration(now.difference(lastSeen))}';
+            statusText =
+                'آخر ظهور ${_formatDuration(now.difference(lastSeen))}';
           }
 
           users.add({
@@ -139,9 +142,7 @@ class OnlineUsersList extends StatelessWidget {
                       child: Text(
                         '$onlineCount / $totalCount',
                         style: TextStyle(
-                          color: onlineCount > 0
-                              ? Colors.green
-                              : Colors.red,
+                          color: onlineCount > 0 ? Colors.green : Colors.red,
                           fontFamily: 'Cairo',
                           fontSize: 11,
                           fontWeight: FontWeight.bold,
@@ -156,8 +157,8 @@ class OnlineUsersList extends StatelessWidget {
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
                 itemCount: users.length,
-                separatorBuilder: (_, __) => Divider(
-                    color: GlassStyle.line10For(context), height: 1),
+                separatorBuilder: (_, __) =>
+                    Divider(color: GlassStyle.line10For(context), height: 1),
                 itemBuilder: (context, index) {
                   final u = users[index];
                   final isOnline = u['is_online'] == true;
@@ -167,8 +168,8 @@ class OnlineUsersList extends StatelessWidget {
 
                   return ListTile(
                     dense: true,
-                    contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 2),
+                    contentPadding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
                     leading: Stack(
                       clipBehavior: Clip.none,
                       children: [
@@ -214,9 +215,8 @@ class OnlineUsersList extends StatelessWidget {
                               color: AppTheme.textMainFor(context),
                               fontFamily: 'Cairo',
                               fontSize: 13,
-                              fontWeight: isMe
-                                  ? FontWeight.bold
-                                  : FontWeight.normal,
+                              fontWeight:
+                                  isMe ? FontWeight.bold : FontWeight.normal,
                             ),
                           ),
                         ),
@@ -285,6 +285,7 @@ class OnlineUsersList extends StatelessWidget {
     );
   }
 
+  // يبني بطاقة فارغة
   Widget _emptyCard(BuildContext context) {
     return GlassCard(
       child: Padding(
@@ -302,6 +303,7 @@ class OnlineUsersList extends StatelessWidget {
     );
   }
 
+  // يعيد وصف المدة نصًا
   String _formatDuration(Duration d) {
     if (d.inSeconds < 60) return 'منذ لحظات';
     if (d.inMinutes < 60) {

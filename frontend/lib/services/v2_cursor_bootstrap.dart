@@ -1,3 +1,5 @@
+// frontend/lib/services/v2_cursor_bootstrap.dart
+// مخزن مؤشر النسخة الثانية للخلاصة الآمنة
 /// Cursor bootstrap for the commit-safe change feed, kept free of Flutter/Firebase so it can
 /// be tested with failures injected.
 ///
@@ -11,11 +13,16 @@ class V2CursorStore {
   final Future<void> Function(String) remove;
   final String key; // e.g. last_sync_daily_C1
 
+  // يعيد مفتاح المؤشر
   String get cursorKey => '${key}_v2';
+
+  // يعيد مفتاح النطاق
   String get scopeKey => '${key}_v2scope';
 }
 
+// فئة تهيئة مؤشر النسخة الثانية
 class V2Bootstrap {
+  // تهيّئ المؤشر من الخادم
   /// [fetchLatest] returns "cursor|scope" or null (offline / refused).
   static Future<bool> run({
     required V2CursorStore store,
@@ -32,6 +39,7 @@ class V2Bootstrap {
     return true;
   }
 
+  // يمسح المؤشر المحفوظ
   static Future<void> clear(V2CursorStore store) async {
     await store.remove(store.cursorKey);
     await store.remove(store.scopeKey);
