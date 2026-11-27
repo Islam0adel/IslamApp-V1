@@ -450,13 +450,8 @@ class _DailyPageState extends State<DailyPage> with WidgetsBindingObserver {
     }
 
     return PopScope(
-      canPop: false,
-      onPopInvoked: (didPop) async {
-        return CachePartitions.run(() async {
-          if (didPop) return;
-          if (context.mounted) Navigator.pop(context);
-        });
-      },
+      // السماح بالرجوع الطبيعي لتعمل إيماءة السحب من الحافة على iOS
+      canPop: true,
       child: Scaffold(
         extendBodyBehindAppBar: true,
         appBar: AppBar(

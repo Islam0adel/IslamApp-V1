@@ -120,7 +120,7 @@ class _AppLoadingScreenState extends State<AppLoadingScreen>
               // 4 نقط
               FadeTransition(
                 opacity: _dotsFadeController,
-                child: _buildDots(),
+                child: RepaintBoundary(child: _buildDots()),
               ),
             ],
           ),

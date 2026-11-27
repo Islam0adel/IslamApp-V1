@@ -403,10 +403,7 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
                                 final name = company['name']?.toString() ?? '';
                                 final isActive = company['is_active'] != false;
 
-                                return GestureDetector(
-                                  onTap: () =>
-                                      _showEditCompanyDialog(code, name),
-                                  child: GlassCard(
+                                return GlassCard(
                                     margin: const EdgeInsets.only(bottom: 12),
                                     child: ListTile(
                                       leading: CircleAvatar(
@@ -460,8 +457,8 @@ class _AdminCompaniesScreenState extends State<AdminCompaniesScreen> {
                                             )
                                           ]),
                                     ),
-                                  ),
-                                );
+                                    onTap: () =>
+                                        _showEditCompanyDialog(code, name));
                               },
                             ),
                           ),

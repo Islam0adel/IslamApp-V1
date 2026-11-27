@@ -141,10 +141,7 @@ class ReportsDashboardPage extends StatelessWidget {
   // يبني بطاقة تقرير
   Widget _card(BuildContext context, String title, IconData icon, Color color,
           VoidCallback onTap) =>
-      InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: GlassCard(
+      GlassCard(
           child: Padding(
             padding: const EdgeInsets.all(14),
             child: Row(
@@ -174,8 +171,8 @@ class ReportsDashboardPage extends StatelessWidget {
               ],
             ),
           ),
-        ),
-      );
+          onTap: onTap,
+          opensPage: true);
 
   // يبني واجهة العنصر ويعيد شجرة العناصر
   @override

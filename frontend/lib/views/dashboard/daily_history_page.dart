@@ -568,15 +568,8 @@ class _DailyHistoryPageState extends State<DailyHistoryPage> {
     final Box dailyBox = CachePartitions.box('daily_transactions_box');
 
     return PopScope(
-      canPop: false,
-      onPopInvoked: (didPop) async {
-        return CachePartitions.run(() async {
-          if (didPop) return;
-          if (context.mounted) {
-            Navigator.pop(context);
-          }
-        });
-      },
+      // السماح بالرجوع الطبيعي لتعمل إيماءة السحب من الحافة على iOS
+      canPop: true,
       child: ValueListenableBuilder(
         valueListenable: dailyBox.listenable(),
         builder: (context, Box box, child) {

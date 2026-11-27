@@ -1312,10 +1312,8 @@ class _AttendancePageState extends State<AttendancePage> {
 
           // زر اختيار الشهر
           GlassCard(
-            padding: const EdgeInsets.all(4),
-            child: InkWell(
+              padding: const EdgeInsets.all(4),
               onTap: _isSaving ? null : _pickMonth,
-              borderRadius: BorderRadius.circular(10),
               child: Padding(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 12,
@@ -1360,9 +1358,7 @@ class _AttendancePageState extends State<AttendancePage> {
                     ),
                   ],
                 ),
-              ),
-            ),
-          ),
+              )),
 
           const SizedBox(height: 10),
 

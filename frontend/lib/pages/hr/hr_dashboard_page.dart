@@ -613,10 +613,7 @@ class _HRDashboardPageState extends State<HRDashboardPage> {
     required Color color,
     required VoidCallback onTap,
   }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(15),
-      child: GlassCard(
+    return GlassCard(
         child: Padding(
           padding: const EdgeInsets.all(4),
           child: Row(
@@ -668,8 +665,8 @@ class _HRDashboardPageState extends State<HRDashboardPage> {
             ],
           ),
         ),
-      ),
-    );
+        onTap: onTap,
+        opensPage: true);
   }
 
   // ============================================================

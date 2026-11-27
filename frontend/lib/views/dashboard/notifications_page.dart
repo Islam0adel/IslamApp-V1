@@ -439,6 +439,19 @@ class _NotificationsPageState extends State<NotificationsPage> {
     final createdAt = (item['created_at'] ?? '').toString();
 
     return GlassCard(
+      opensPage: true,
+      onTap: () async {
+        return CachePartitions.run(() async {
+          if (!read) {
+            await _service.markRead(item['id'].toString());
+            if (mounted) setState(() {});
+          }
+
+          await NotificationRouter.openNotification(
+            Map<String, dynamic>.from(item),
+          );
+        });
+      },
       child: Material(
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(16),
@@ -483,18 +496,6 @@ class _NotificationsPageState extends State<NotificationsPage> {
               ),
             ),
           ),
-          onTap: () async {
-            return CachePartitions.run(() async {
-              if (!read) {
-                await _service.markRead(item['id'].toString());
-                if (mounted) setState(() {});
-              }
-
-              await NotificationRouter.openNotification(
-                Map<String, dynamic>.from(item),
-              );
-            });
-          },
         ),
       ),
     );

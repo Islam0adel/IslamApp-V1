@@ -2153,14 +2153,8 @@ class _SupplierPageState extends State<SupplierPage> {
     final isMobile = MediaQuery.of(context).size.width < 600;
 
     return PopScope(
-      canPop: false,
-      onPopInvoked: (didPop) {
-        if (!didPop && mounted) {
-          Navigator.pop(
-            context,
-          );
-        }
-      },
+      // السماح بالرجوع الطبيعي لتعمل إيماءة السحب من الحافة على iOS
+      canPop: true,
       child: Scaffold(
         extendBodyBehindAppBar: true,
         appBar: AppBar(

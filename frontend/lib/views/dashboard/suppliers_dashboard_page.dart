@@ -226,9 +226,8 @@ class SuppliersDashboardPage extends StatelessWidget {
     required VoidCallback onTap,
   }) {
     return GlassCard(
-      child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
+        opensPage: true,
         child: Padding(
           padding: const EdgeInsets.all(16.0),
           child: Row(
@@ -277,9 +276,7 @@ class SuppliersDashboardPage extends StatelessWidget {
               ),
             ],
           ),
-        ),
-      ),
-    );
+        ));
   }
 
   // void _showUnderDevelopment(BuildContext context, String feature) {

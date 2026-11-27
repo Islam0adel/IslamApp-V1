@@ -1,6 +1,9 @@
 // frontend/lib/views/widgets/glass_card.dart
+import 'dart:math' as math;
 import 'dart:ui';
+import 'dart:ui' as ui show Gradient;
 import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart';
 import '../../core/theme.dart';
 
 // أنماط الزجاج: ألوان التعبئة والخطوط والحدود حسب الوضع
@@ -385,16 +388,35 @@ class GlassCard extends StatelessWidget {
   final EdgeInsetsGeometry? margin;
   final EdgeInsetsGeometry? padding;
 
+  /// عند تمرير دالة يصبح الكارت قابلًا للضغط ويظهر تأثير «الضغط على الماء».
+  /// وعند عدم تمريرها يبقى الكارت ساكنًا بنفس شكله السابق تمامًا.
+  final VoidCallback? onTap;
+
+  /// هل يفتح الضغط صفحة جديدة؟ إن كان كذلك تبدأ الموجة القصيرة عند اللمس،
+  /// وإلا تبدأ الموجة الكاملة عند رفع الإصبع.
+  final bool opensPage;
+
   const GlassCard({
     super.key,
     required this.child,
     this.margin,
     this.padding,
+    this.onTap,
+    this.opensPage = false,
   });
 
   // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
+    if (onTap != null) {
+      return _TappableGlassCard(
+        margin: margin,
+        padding: padding,
+        onTap: onTap!,
+        opensPage: opensPage,
+        child: child,
+      );
+    }
     return Container(
       margin: margin,
       child: ClipRRect(
@@ -421,4 +443,251 @@ class GlassCard extends StatelessWidget {
       ),
     );
   }
+}
+
+// ============================================================================
+//  تأثير «الضغط على الماء» للكروت القابلة للضغط فقط
+//   • عند اللمس: ينخفض الكارت ببطء وتظهر حفرة ضوئية ناعمة تحت الإصبع.
+//   • موجة واحدة تنتشر وتخفت تدريجيًا بلا اهتزاز.
+//   • الدالة onTap تُنفَّذ فورًا عند رفع الإصبع ولا يُؤخَّر أي انتقال.
+//   • عند تفعيل «تقليل الحركة» يبقى تظليل بسيط عند الضغط فقط.
+//   • لا يوجد RepaintBoundary حول الكارت حتى لا يتغير تمويه الخلفية.
+// ============================================================================
+class _TappableGlassCard extends StatefulWidget {
+  final Widget child;
+  final EdgeInsetsGeometry? margin;
+  final EdgeInsetsGeometry? padding;
+  final VoidCallback onTap;
+  final bool opensPage;
+
+  const _TappableGlassCard({
+    required this.child,
+    required this.margin,
+    required this.padding,
+    required this.onTap,
+    required this.opensPage,
+  });
+
+  // ينشئ كائن الحالة المرتبط بهذا العنصر
+  @override
+  State<_TappableGlassCard> createState() => _TappableGlassCardState();
+}
+
+// حالة الكارت القابل للضغط: تدير حركة الضغط والموجة والتركيز
+class _TappableGlassCardState extends State<_TappableGlassCard>
+    with TickerProviderStateMixin {
+  // قيمة الضغط: 0 = سكون و1 = أقصى ضغط (غير محدودة ليستقر النابض بنعومة)
+  late final AnimationController _press =
+      AnimationController.unbounded(vsync: this, value: 0);
+  late final AnimationController _ripple = AnimationController(
+    vsync: this,
+    duration: Duration(milliseconds: widget.opensPage ? 520 : 1400),
+  );
+  Offset _at = Offset.zero;
+  bool _focused = false;
+  bool _reduced = false;
+
+  // يحرّر المتحكمات عند إغلاق الكارت
+  @override
+  void dispose() {
+    _press.dispose();
+    _ripple.dispose();
+    super.dispose();
+  }
+
+  // يحدّث تفضيل تقليل الحركة عند تغيّره
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _reduced = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+  }
+
+  // عند نزول الإصبع: ضغط بطيء وناعم دون ارتداد
+  void _onDown(TapDownDetails d) {
+    _at = d.localPosition;
+    if (_reduced) {
+      _press.value = 1;
+      return;
+    }
+    _ripple.reset();
+    if (widget.opensPage) _ripple.forward(from: 0);
+    _press.animateTo(1,
+        duration: const Duration(milliseconds: 420),
+        curve: Curves.easeOutCubic);
+  }
+
+  // عند رفع الإصبع أو إلغاء اللمس (مثل التحوّل إلى تمرير): عودة هادئة بنابض واحد
+  void _release({required bool completed}) {
+    if (_reduced) {
+      _press.value = 0;
+      return;
+    }
+    if (completed && !widget.opensPage) _ripple.forward(from: 0);
+    _press.animateWith(SpringSimulation(
+      SpringDescription.withDampingRatio(mass: 1, stiffness: 120, ratio: 0.9),
+      _press.value,
+      0,
+      _press.velocity,
+    ));
+  }
+
+  // يبني واجهة العنصر ويعيد شجرة العناصر
+  @override
+  Widget build(BuildContext context) {
+    final ring = Theme.of(context).colorScheme.primary;
+    return Container(
+      margin: widget.margin,
+      child: AnimatedBuilder(
+        animation: Listenable.merge([_press, _ripple]),
+        builder: (context, child) {
+          final p = _press.value.clamp(-0.2, 1.2);
+          return Transform.scale(
+            scale: _reduced ? 1.0 : 1 - 0.028 * p,
+            child: child,
+          );
+        },
+        child: InkWell(
+          onTap: widget.onTap,
+          onTapDown: _onDown,
+          onTapUp: (_) => _release(completed: true),
+          onTapCancel: () => _release(completed: false),
+          onFocusChange: (v) => setState(() => _focused = v),
+          borderRadius: BorderRadius.circular(GlassStyle.radius),
+          splashFactory: NoSplash.splashFactory,
+          highlightColor: Colors.transparent,
+          hoverColor: Colors.transparent,
+          focusColor: Colors.transparent,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(GlassStyle.radius),
+            child: CustomPaint(
+              foregroundPainter: _WaterPressPainter(
+                press: _press,
+                ripple: _ripple,
+                at: () => _at,
+                reduced: _reduced,
+                focused: _focused,
+                ringColor: ring,
+              ),
+              child: BackdropFilter(
+                // تأثير التمويه (الزجاج)
+                filter: ImageFilter.blur(
+                    sigmaX: GlassStyle.blur, sigmaY: GlassStyle.blur),
+                child: Container(
+                  padding: widget.padding ?? GlassStyle.padding,
+                  decoration: BoxDecoration(
+                    // خلفية الكارت
+                    color: GlassStyle.cardFill(context),
+                    borderRadius: BorderRadius.circular(GlassStyle.radius),
+                    // حد الكارت
+                    border: Border.all(
+                      color: GlassStyle.cardBorder(context),
+                      width: GlassStyle.borderWidth,
+                    ),
+                  ),
+                  child: widget.child,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// رسّام الحفرة والموجة (يعيد الرسم عند تغيّر المتحكمين فقط)
+class _WaterPressPainter extends CustomPainter {
+  final Animation<double> press;
+  final Animation<double> ripple;
+  final Offset Function() at;
+  final bool reduced;
+  final bool focused;
+  final Color ringColor;
+
+  _WaterPressPainter({
+    required this.press,
+    required this.ripple,
+    required this.at,
+    required this.reduced,
+    required this.focused,
+    required this.ringColor,
+  }) : super(repaint: Listenable.merge([press, ripple]));
+
+  // يرسم تأثير الضغط فوق الكارت
+  @override
+  void paint(Canvas canvas, Size size) {
+    final p = press.value.clamp(0.0, 1.0);
+    final point = at();
+    if (reduced) {
+      // تقليل الحركة: تظليل ثابت بسيط عند الضغط دون حركة أو موجة
+      if (p > 0) {
+        canvas.drawRect(Offset.zero & size,
+            Paint()..color = Colors.white.withValues(alpha: 0.10 * p));
+      }
+    } else {
+      // الحفرة الضوئية تحت الإصبع
+      if (p > 0.001) {
+        final r = 30 + 70 * p;
+        final shader = ui.Gradient.radial(point, r, [
+          Colors.black.withValues(alpha: 0.10 * p),
+          Colors.white.withValues(alpha: 0.05 * p),
+          Colors.transparent,
+        ], [
+          0.0,
+          0.65,
+          1.0
+        ]);
+        canvas.drawCircle(point, r, Paint()..shader = shader);
+      }
+      // موجة واحدة تنتشر وتخفت تدريجيًا
+      final t0 = ripple.value;
+      if (t0 > 0 && t0 < 1) {
+        final maxR =
+            math.sqrt(size.width * size.width + size.height * size.height);
+        final t = Curves.easeOutCubic.transform(t0);
+        final fade = math.pow(1 - t0, 1.8).toDouble();
+        final radius = 12 + (maxR * 0.85) * t;
+        final width = 5 + 14 * t;
+        for (final w in const [(1.0, 1.0), (0.78, 0.45)]) {
+          final rr = radius * w.$1;
+          final op = (0.50 * fade * w.$2).clamp(0.0, 1.0);
+          canvas.drawCircle(
+              point,
+              rr,
+              Paint()
+                ..style = PaintingStyle.stroke
+                ..strokeWidth = width * w.$1
+                ..color = Colors.white.withValues(alpha: op)
+                ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3));
+          canvas.drawCircle(
+              point,
+              math.max(0, rr - width * 0.9),
+              Paint()
+                ..style = PaintingStyle.stroke
+                ..strokeWidth = width * 0.8 * w.$1
+                ..color = Colors.black.withValues(alpha: op * 0.35)
+                ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4));
+        }
+      }
+    }
+    // حلقة التركيز عند التنقل بلوحة المفاتيح
+    if (focused) {
+      canvas.drawRRect(
+          RRect.fromRectAndRadius((Offset.zero & size).deflate(1.5),
+              const Radius.circular(GlassStyle.radius)),
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2
+            ..color = ringColor);
+    }
+  }
+
+  // يحدد هل يلزم إعادة الرسم
+  @override
+  bool shouldRepaint(_WaterPressPainter old) =>
+      old.reduced != reduced ||
+      old.focused != focused ||
+      old.ringColor != ringColor ||
+      old.press != press ||
+      old.ripple != ripple;
 }

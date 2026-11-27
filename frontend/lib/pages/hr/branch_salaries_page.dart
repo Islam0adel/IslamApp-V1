@@ -463,10 +463,8 @@ class _BranchSalariesPageState extends State<BranchSalariesPage> {
   // يبني منتقي الشهر
   Widget _buildMonthPicker() {
     return GlassCard(
-      padding: const EdgeInsets.all(4),
-      child: InkWell(
+        padding: const EdgeInsets.all(4),
         onTap: _isLoading ? null : _pickMonth,
-        borderRadius: BorderRadius.circular(10),
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Row(
@@ -508,9 +506,7 @@ class _BranchSalariesPageState extends State<BranchSalariesPage> {
               ),
             ],
           ),
-        ),
-      ),
-    );
+        ));
   }
 
   // يبني منتقي الفرع

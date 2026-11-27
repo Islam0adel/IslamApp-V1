@@ -181,13 +181,8 @@ class _CodingPageState extends State<CodingPage> with TickerProviderStateMixin {
     }
 
     return PopScope(
-      canPop: false,
-      onPopInvoked: (didPop) async {
-        return CachePartitions.run(() async {
-          if (didPop) return;
-          if (context.mounted) Navigator.pop(context);
-        });
-      },
+      // السماح بالرجوع الطبيعي لتعمل إيماءة السحب من الحافة على iOS
+      canPop: true,
       child: Scaffold(
         extendBodyBehindAppBar: true,
         appBar: AppBar(

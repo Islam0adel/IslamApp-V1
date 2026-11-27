@@ -1555,10 +1555,7 @@ class _HomePageState extends State<HomePage>
   // يبني عنصر قائمة
   Widget _menuItem(
       String title, IconData icon, Color color, VoidCallback onTap) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(15),
-      child: GlassCard(
+    return GlassCard(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -1575,8 +1572,8 @@ class _HomePageState extends State<HomePage>
             ),
           ],
         ),
-      ),
-    );
+        onTap: onTap,
+        opensPage: true);
   }
 
   // يبني الأزرار السفلية
@@ -1750,7 +1747,7 @@ class _ActivityDurationTextState extends State<_ActivityDurationText> {
     final remainingSeconds = _secondsElapsed % 60;
     final text =
         '${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
-    return Text(text, style: widget.style);
+    return RepaintBoundary(child: Text(text, style: widget.style));
   }
 }
 
@@ -1801,36 +1798,38 @@ class _LiveClockChipState extends State<_LiveClockChip> {
   // يبني واجهة العنصر ويعيد شجرة العناصر
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: GlassStyle.fill05For(context),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: GlassStyle.line10For(context)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(widget.icon, color: widget.color, size: 16),
-          const SizedBox(width: 6),
-          Text(
-            "${widget.label}: ",
-            style: TextStyle(
-              color: AppTheme.textSoftFor(context),
-              fontSize: 11,
-              fontFamily: 'Cairo',
+    return RepaintBoundary(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: GlassStyle.fill05For(context),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: GlassStyle.line10For(context)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(widget.icon, color: widget.color, size: 16),
+            const SizedBox(width: 6),
+            Text(
+              "${widget.label}: ",
+              style: TextStyle(
+                color: AppTheme.textSoftFor(context),
+                fontSize: 11,
+                fontFamily: 'Cairo',
+              ),
             ),
-          ),
-          Text(
-            _value,
-            style: TextStyle(
-              color: AppTheme.textMainFor(context),
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-              fontFamily: 'Cairo',
+            Text(
+              _value,
+              style: TextStyle(
+                color: AppTheme.textMainFor(context),
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                fontFamily: 'Cairo',
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

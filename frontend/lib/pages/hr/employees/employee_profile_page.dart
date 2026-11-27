@@ -811,10 +811,8 @@ class _EmployeeProfilePageState extends State<EmployeeProfilePage>
       children: [
         // Month picker
         GlassCard(
-          padding: const EdgeInsets.all(12),
-          child: InkWell(
+            padding: const EdgeInsets.all(12),
             onTap: _pickMonth,
-            borderRadius: BorderRadius.circular(10),
             child: Row(
               children: [
                 Icon(
@@ -853,9 +851,7 @@ class _EmployeeProfilePageState extends State<EmployeeProfilePage>
                   size: 14,
                 ),
               ],
-            ),
-          ),
-        ),
+            )),
         const SizedBox(height: 12),
 
         // Records

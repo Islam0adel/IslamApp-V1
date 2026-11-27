@@ -484,6 +484,11 @@ class _SupplierSettlementPageState extends State<SupplierSettlementPage> {
 
     if (!PermissionsService().canShowSupplierSettlements) {
       return Scaffold(
+        // شريط علوي ليظهر زر الرجوع عند سحب الصلاحية والصفحة مفتوحة
+        appBar: AppBar(
+          backgroundColor: AppTheme.appBarBg,
+          elevation: 0,
+        ),
         body: Center(
           child: Text(
             'ليس لديك صلاحية لعرض التسويات',
