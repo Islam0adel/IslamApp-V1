@@ -178,9 +178,11 @@ class _CompleteRegistrationScreenState
             end: Alignment.bottomRight,
           ),
         ),
+        // تمتد الواجهة خلف شريط المتصفح السفلي، ويُضاف هامش سفلي في نهاية المحتوى ليبقى آخر عنصر ظاهرًا فوق الشريط.
         child: SafeArea(
+          bottom: false,
           child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+            padding: EdgeInsets.fromLTRB(20, 20, 20, 20 + MediaQuery.viewPaddingOf(context).bottom),
             child: Column(
               children: [
                 // Back button

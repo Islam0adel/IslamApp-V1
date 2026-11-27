@@ -1014,9 +1014,12 @@ class _HomePageState extends State<HomePage>
             end: Alignment.bottomRight,
           ),
         ),
+        // تمتد الواجهة خلف شريط المتصفح السفلي، ويُضاف هامش سفلي في نهاية القائمة ليبقى آخر عنصر ظاهرًا فوق الشريط.
         child: SafeArea(
+          bottom: false,
           child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
+            padding: EdgeInsets.fromLTRB(
+                15, 10, 15, 10 + MediaQuery.viewPaddingOf(context).bottom),
             child: Column(
               children: [
                 const Text(

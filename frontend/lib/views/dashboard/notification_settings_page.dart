@@ -421,9 +421,11 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
             end: Alignment.bottomRight,
           ),
         ),
+        // تمتد الواجهة خلف شريط المتصفح السفلي، ويُضاف هامش سفلي في نهاية المحتوى ليبقى آخر عنصر ظاهرًا فوق الشريط.
         child: SafeArea(
+          bottom: false,
           child: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+            padding: EdgeInsets.fromLTRB(16, 12, 16, 24 + MediaQuery.viewPaddingOf(context).bottom),
             children: [
               // ⭐ إشعارات النظام أولاً (macro-switch)
               _buildSystemPushSection(),

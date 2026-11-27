@@ -333,9 +333,11 @@ class _ProductLookupPageState extends State<ProductLookupPage> {
 
     return Scaffold(
       appBar: AppBar(title: const Text('البحث عن المنتجات')),
+      // تمتد الواجهة خلف شريط المتصفح السفلي، ويُضاف هامش سفلي في نهاية المحتوى ليبقى آخر عنصر ظاهرًا فوق الشريط.
       body: SafeArea(
+        bottom: false,
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + MediaQuery.viewPaddingOf(context).bottom),
           children: [
             GlassCard(
               child: Column(

@@ -54,10 +54,13 @@ class SuppliersDashboardPage extends StatelessWidget {
             end: Alignment.bottomRight,
           ),
         ),
+        // تمتد الواجهة خلف شريط المتصفح السفلي، ويُضاف هامش سفلي في نهاية المحتوى ليبقى آخر عنصر ظاهرًا فوق الشريط.
         child: SafeArea(
+          bottom: false,
           child: Padding(
-            padding: const EdgeInsets.all(16.0),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
             child: ListView(
+              padding: EdgeInsets.only(bottom: 16 + MediaQuery.viewPaddingOf(context).bottom),
               children: [
                 // ✅ زر المشتريات (صفحة الموردين الحالية)
                 if (PermissionsService().pageVisible('المشتريات'))

@@ -388,12 +388,12 @@ class GlassCard extends StatelessWidget {
   final EdgeInsetsGeometry? margin;
   final EdgeInsetsGeometry? padding;
 
-  /// عند تمرير دالة يصبح الكارت قابلًا للضغط ويظهر تأثير «الضغط على الماء».
+  /// عند تمرير دالة يصبح الكارت قابلًا للضغط ويظهر تأثير الوميض الزجاجي.
   /// وعند عدم تمريرها يبقى الكارت ساكنًا بنفس شكله السابق تمامًا.
   final VoidCallback? onTap;
 
-  /// هل يفتح الضغط صفحة جديدة؟ إن كان كذلك تبدأ الموجة القصيرة عند اللمس،
-  /// وإلا تبدأ الموجة الكاملة عند رفع الإصبع.
+  /// هل يفتح الضغط صفحة جديدة؟ إن كان كذلك يبدأ الوميض القصير عند اللمس،
+  /// وإلا يبدأ الوميض الكامل عند رفع الإصبع.
   final bool opensPage;
 
   const GlassCard({
@@ -446,9 +446,9 @@ class GlassCard extends StatelessWidget {
 }
 
 // ============================================================================
-//  تأثير «الضغط على الماء» للكروت القابلة للضغط فقط
-//   • عند اللمس: ينخفض الكارت ببطء وتظهر حفرة ضوئية ناعمة تحت الإصبع.
-//   • موجة واحدة تنتشر وتخفت تدريجيًا بلا اهتزاز.
+//  تأثير الوميض الزجاجي للكروت القابلة للضغط فقط
+//   • عند اللمس: ينخفض الكارت قليلًا ويومض توهّج ناعم من نقطة اللمس.
+//   • يعبر لمعان قطري واحد الكارت وتضيء حافته ثم تخفت تدريجيًا بلا حلقات.
 //   • الدالة onTap تُنفَّذ فورًا عند رفع الإصبع ولا يُؤخَّر أي انتقال.
 //   • عند تفعيل «تقليل الحركة» يبقى تظليل بسيط عند الضغط فقط.
 //   • لا يوجد RepaintBoundary حول الكارت حتى لا يتغير تمويه الخلفية.
@@ -473,13 +473,13 @@ class _TappableGlassCard extends StatefulWidget {
   State<_TappableGlassCard> createState() => _TappableGlassCardState();
 }
 
-// حالة الكارت القابل للضغط: تدير حركة الضغط والموجة والتركيز
+// حالة الكارت القابل للضغط: تدير حركة الضغط والوميض والتركيز
 class _TappableGlassCardState extends State<_TappableGlassCard>
     with TickerProviderStateMixin {
   // قيمة الضغط: 0 = سكون و1 = أقصى ضغط (غير محدودة ليستقر النابض بنعومة)
   late final AnimationController _press =
       AnimationController.unbounded(vsync: this, value: 0);
-  late final AnimationController _ripple = AnimationController(
+  late final AnimationController _flash = AnimationController(
     vsync: this,
     duration: Duration(milliseconds: widget.opensPage ? 520 : 1400),
   );
@@ -491,7 +491,7 @@ class _TappableGlassCardState extends State<_TappableGlassCard>
   @override
   void dispose() {
     _press.dispose();
-    _ripple.dispose();
+    _flash.dispose();
     super.dispose();
   }
 
@@ -509,8 +509,8 @@ class _TappableGlassCardState extends State<_TappableGlassCard>
       _press.value = 1;
       return;
     }
-    _ripple.reset();
-    if (widget.opensPage) _ripple.forward(from: 0);
+    _flash.reset();
+    if (widget.opensPage) _flash.forward(from: 0);
     _press.animateTo(1,
         duration: const Duration(milliseconds: 420),
         curve: Curves.easeOutCubic);
@@ -522,7 +522,7 @@ class _TappableGlassCardState extends State<_TappableGlassCard>
       _press.value = 0;
       return;
     }
-    if (completed && !widget.opensPage) _ripple.forward(from: 0);
+    if (completed && !widget.opensPage) _flash.forward(from: 0);
     _press.animateWith(SpringSimulation(
       SpringDescription.withDampingRatio(mass: 1, stiffness: 120, ratio: 0.9),
       _press.value,
@@ -538,7 +538,7 @@ class _TappableGlassCardState extends State<_TappableGlassCard>
     return Container(
       margin: widget.margin,
       child: AnimatedBuilder(
-        animation: Listenable.merge([_press, _ripple]),
+        animation: Listenable.merge([_press, _flash]),
         builder: (context, child) {
           final p = _press.value.clamp(-0.2, 1.2);
           return Transform.scale(
@@ -560,13 +560,16 @@ class _TappableGlassCardState extends State<_TappableGlassCard>
           child: ClipRRect(
             borderRadius: BorderRadius.circular(GlassStyle.radius),
             child: CustomPaint(
-              foregroundPainter: _WaterPressPainter(
+              foregroundPainter: _FlashPainter(
                 press: _press,
-                ripple: _ripple,
+                flash: _flash,
                 at: () => _at,
                 reduced: _reduced,
                 focused: _focused,
                 ringColor: ring,
+                glowColor: AppTheme.isDark(context)
+                    ? Colors.white
+                    : Color.lerp(ring, Colors.white, 0.25)!,
               ),
               child: BackdropFilter(
                 // تأثير التمويه (الزجاج)
@@ -595,79 +598,99 @@ class _TappableGlassCardState extends State<_TappableGlassCard>
   }
 }
 
-// رسّام الحفرة والموجة (يعيد الرسم عند تغيّر المتحكمين فقط)
-class _WaterPressPainter extends CustomPainter {
+// رسّام الوميض (يعيد الرسم عند تغيّر المتحكمين فقط)
+class _FlashPainter extends CustomPainter {
   final Animation<double> press;
-  final Animation<double> ripple;
+  final Animation<double> flash;
   final Offset Function() at;
   final bool reduced;
   final bool focused;
   final Color ringColor;
+  final Color glowColor;
 
-  _WaterPressPainter({
+  _FlashPainter({
     required this.press,
-    required this.ripple,
+    required this.flash,
     required this.at,
     required this.reduced,
     required this.focused,
     required this.ringColor,
-  }) : super(repaint: Listenable.merge([press, ripple]));
+    required this.glowColor,
+  }) : super(repaint: Listenable.merge([press, flash]));
 
-  // يرسم تأثير الضغط فوق الكارت
+  // منحنى الوميض: صعود سريع إلى الذروة ثم خفوت ناعم طويل
+  static double _envelope(double t) {
+    const peak = 0.16;
+    if (t <= peak) return Curves.easeOut.transform(t / peak);
+    final k = (t - peak) / (1 - peak);
+    return math.pow(1 - k, 2.2).toDouble();
+  }
+
+  // يرسم تأثير الوميض فوق الكارت
   @override
   void paint(Canvas canvas, Size size) {
     final p = press.value.clamp(0.0, 1.0);
-    final point = at();
+    final rect = Offset.zero & size;
+    final rrect =
+        RRect.fromRectAndRadius(rect, const Radius.circular(GlassStyle.radius));
     if (reduced) {
-      // تقليل الحركة: تظليل ثابت بسيط عند الضغط دون حركة أو موجة
+      // تقليل الحركة: تظليل ثابت بسيط عند الضغط دون حركة أو وميض
       if (p > 0) {
-        canvas.drawRect(Offset.zero & size,
-            Paint()..color = Colors.white.withValues(alpha: 0.10 * p));
+        canvas.drawRect(
+            rect, Paint()..color = Colors.white.withValues(alpha: 0.10 * p));
       }
     } else {
-      // الحفرة الضوئية تحت الإصبع
-      if (p > 0.001) {
-        final r = 30 + 70 * p;
-        final shader = ui.Gradient.radial(point, r, [
-          Colors.black.withValues(alpha: 0.10 * p),
-          Colors.white.withValues(alpha: 0.05 * p),
-          Colors.transparent,
-        ], [
-          0.0,
-          0.65,
-          1.0
-        ]);
-        canvas.drawCircle(point, r, Paint()..shader = shader);
-      }
-      // موجة واحدة تنتشر وتخفت تدريجيًا
-      final t0 = ripple.value;
+      final t0 = flash.value;
       if (t0 > 0 && t0 < 1) {
-        final maxR =
+        final e = _envelope(t0);
+        final point = at();
+        canvas.save();
+        canvas.clipRRect(rrect);
+        // 1) توهّج ناعم ينتشر من نقطة اللمس دون حلقات
+        final reach =
             math.sqrt(size.width * size.width + size.height * size.height);
-        final t = Curves.easeOutCubic.transform(t0);
-        final fade = math.pow(1 - t0, 1.8).toDouble();
-        final radius = 12 + (maxR * 0.85) * t;
-        final width = 5 + 14 * t;
-        for (final w in const [(1.0, 1.0), (0.78, 0.45)]) {
-          final rr = radius * w.$1;
-          final op = (0.50 * fade * w.$2).clamp(0.0, 1.0);
-          canvas.drawCircle(
-              point,
-              rr,
+        final glowR = reach * (0.45 + 0.35 * Curves.easeOutCubic.transform(t0));
+        canvas.drawRect(
+            rect,
+            Paint()
+              ..shader = ui.Gradient.radial(point, glowR, [
+                glowColor.withValues(alpha: 0.20 * e),
+                glowColor.withValues(alpha: 0.07 * e),
+                glowColor.withValues(alpha: 0.0),
+              ], const [
+                0.0,
+                0.55,
+                1.0
+              ]));
+        // 2) لمعان قطري يعبر الكارت مرة واحدة
+        final sweep =
+            Curves.easeInOutCubic.transform((t0 / 0.7).clamp(0.0, 1.0));
+        final pos = -0.25 + 1.5 * sweep;
+        final band = 0.22;
+        final sheenA = 0.22 * math.sin(math.pi * (t0 / 0.7).clamp(0.0, 1.0));
+        if (sheenA > 0.002) {
+          canvas.drawRect(
+              rect,
               Paint()
-                ..style = PaintingStyle.stroke
-                ..strokeWidth = width * w.$1
-                ..color = Colors.white.withValues(alpha: op)
-                ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3));
-          canvas.drawCircle(
-              point,
-              math.max(0, rr - width * 0.9),
-              Paint()
-                ..style = PaintingStyle.stroke
-                ..strokeWidth = width * 0.8 * w.$1
-                ..color = Colors.black.withValues(alpha: op * 0.35)
-                ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4));
+                ..shader = ui.Gradient.linear(rect.topLeft, rect.bottomRight, [
+                  glowColor.withValues(alpha: 0.0),
+                  glowColor.withValues(alpha: sheenA),
+                  glowColor.withValues(alpha: 0.0),
+                ], [
+                  (pos - band).clamp(0.0, 1.0),
+                  pos.clamp(0.0, 1.0),
+                  (pos + band).clamp(0.0, 1.0),
+                ]));
         }
+        canvas.restore();
+        // 3) إضاءة الحافة: حد الكارت يلمع ثم يخفت
+        canvas.drawRRect(
+            rrect.deflate(GlassStyle.borderWidth / 2),
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = GlassStyle.borderWidth
+              ..color = glowColor.withValues(alpha: 0.55 * e)
+              ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 1.2));
       }
     }
     // حلقة التركيز عند التنقل بلوحة المفاتيح
@@ -684,10 +707,11 @@ class _WaterPressPainter extends CustomPainter {
 
   // يحدد هل يلزم إعادة الرسم
   @override
-  bool shouldRepaint(_WaterPressPainter old) =>
+  bool shouldRepaint(_FlashPainter old) =>
       old.reduced != reduced ||
       old.focused != focused ||
       old.ringColor != ringColor ||
+      old.glowColor != glowColor ||
       old.press != press ||
-      old.ripple != ripple;
+      old.flash != flash;
 }

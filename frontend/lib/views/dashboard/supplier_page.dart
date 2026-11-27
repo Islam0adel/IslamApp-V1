@@ -2244,7 +2244,9 @@ class _SupplierPageState extends State<SupplierPage> {
         body: Container(
           decoration: BoxDecoration(
               gradient: LinearGradient(colors: AppTheme.pageGradient(context))),
+          // تمتد الواجهة خلف شريط المتصفح السفلي، ويُضاف هامش سفلي في نهاية المحتوى ليبقى آخر عنصر ظاهرًا فوق الشريط.
           child: SafeArea(
+            bottom: false,
             child: (_isLoading || _isSaving)
                 ? Center(
                     child: CircularProgressIndicator(
@@ -2253,10 +2255,7 @@ class _SupplierPageState extends State<SupplierPage> {
                   )
                 : SingleChildScrollView(
                     controller: _scrollController,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 4,
-                    ),
+                    padding: EdgeInsets.fromLTRB(6, 4, 6, 4 + MediaQuery.viewPaddingOf(context).bottom),
                     child: Column(
                       children: [
                         // ========================

@@ -246,9 +246,11 @@ class ReportsDashboardPage extends StatelessWidget {
             end: Alignment.bottomRight,
           ),
         ),
+        // تمتد الواجهة خلف شريط المتصفح السفلي، ويُضاف هامش سفلي في نهاية القائمة ليبقى آخر عنصر ظاهرًا فوق الشريط.
         child: SafeArea(
+          bottom: false,
           child: Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
             child: Column(
               children: [
                 Text(
@@ -262,6 +264,8 @@ class ReportsDashboardPage extends StatelessWidget {
                 const SizedBox(height: 10),
                 Expanded(
                   child: ListView(
+                    padding: EdgeInsets.only(
+                        bottom: 12 + MediaQuery.viewPaddingOf(context).bottom),
                     children: cards,
                   ),
                 ),

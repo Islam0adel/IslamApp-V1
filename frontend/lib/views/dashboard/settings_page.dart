@@ -127,12 +127,14 @@ class _SettingsPageState extends State<SettingsPage>
                 ),
               ),
             ),
+            // تمتد الواجهة خلف شريط المتصفح السفلي، ويُضاف هامش سفلي في نهاية القائمة ليبقى آخر عنصر ظاهرًا فوق الشريط.
             SafeArea(
+              bottom: false,
               child: FadeTransition(
                 opacity: _controller,
                 child: SingleChildScrollView(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                  padding: EdgeInsets.fromLTRB(
+                      20, 10, 20, 10 + MediaQuery.viewPaddingOf(context).bottom),
                   child: Column(
                     children: [
                       GlassCard(

@@ -546,14 +546,16 @@ class _SupplierSettlementPageState extends State<SupplierSettlementPage> {
             end: Alignment.bottomRight,
           ),
         ),
+        // تمتد الواجهة خلف شريط المتصفح السفلي، ويُضاف هامش سفلي في نهاية المحتوى ليبقى آخر عنصر ظاهرًا فوق الشريط.
         child: SafeArea(
+          bottom: false,
           child: _isLoading
               ? Center(
                   child: CircularProgressIndicator(
                       color: AppTheme.textMainFor(context)),
                 )
               : SingleChildScrollView(
-                  padding: const EdgeInsets.all(12),
+                  padding: EdgeInsets.fromLTRB(12, 12, 12, 12 + MediaQuery.viewPaddingOf(context).bottom),
                   child: Column(
                     children: [
                       _buildBalanceCard(),
